@@ -16,9 +16,11 @@ from fastapi import HTTPException, status
 from .supabase_client import UserClient
 
 # Columns returned to the client for tree reconstruction.
+# `connections` (uuid[]) lists other-branch nodes imported into this node, so the
+# frontend can draw memory-link edges (Stage 3a).
 NODE_SELECT = (
     "id,session_id,parent_id,question,answer,label,is_navigator,"
-    "navigator_question,position_x,position_y,created_at"
+    "navigator_question,position_x,position_y,connections,created_at"
 )
 # Same, plus the node's concept tags embedded (PostgREST nested select). RLS
 # (node_tags select via can_access_session, tags select via owner) keeps it to
@@ -129,22 +131,34 @@ async def get_session_nodes(
 # ----------------------------------------------------------------------------
 # Nodes + context
 # ----------------------------------------------------------------------------
-def assemble_history(
-    nodes: list[dict[str, Any]], parent_node_id: str | None
-) -> list[tuple[str, str]]:
-    """Ancestor chain (root -> ... -> parent) as ordered (question, answer)."""
-    if not parent_node_id:
+def ancestor_chain_nodes(
+    nodes: list[dict[str, Any]], node_id: str | None
+) -> list[dict[str, Any]]:
+    """Ancestor chain node dicts (root -> ... -> node_id), siblings excluded."""
+    if not node_id:
         return []
     by_id = {n["id"]: n for n in nodes}
     chain: list[dict[str, Any]] = []
-    cursor = by_id.get(parent_node_id)
+    cursor = by_id.get(node_id)
     guard = 0
     while cursor is not None and guard < 10000:
         chain.append(cursor)
         cursor = by_id.get(cursor.get("parent_id"))
         guard += 1
     chain.reverse()  # root first
-    return [(n.get("question") or "", n.get("answer") or "") for n in chain]
+    return chain
+
+
+def assemble_history(
+    nodes: list[dict[str, Any]], parent_node_id: str | None
+) -> list[tuple[str, str]]:
+    """Ancestor chain (root -> ... -> parent) as ordered (question, answer)."""
+    chain = ancestor_chain_nodes(nodes, parent_node_id)
+    return [
+        (n.get("question") or "", n.get("answer") or "")
+        for n in chain
+        if not n.get("is_navigator")
+    ]
 
 
 async def append_node(

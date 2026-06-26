@@ -3,6 +3,7 @@ import type {
   ChatDoneEvent,
   ChatNavigatorEvent,
   ChatStartEvent,
+  ConnectionResponse,
   CooccurrenceRow,
   SessionDetail,
   SessionRow,
@@ -126,6 +127,37 @@ export async function deleteNode(id: string): Promise<void> {
       headers: await authHeaders(),
     }),
   );
+}
+
+// ── 노드 기억 연결 (Stage 3a) ────────────────────────────────────────
+
+/** target 노드에 source 노드를 기억 연결로 추가. */
+export async function addConnection(
+  targetId: string,
+  sourceId: string,
+): Promise<ConnectionResponse> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/nodes/${targetId}/connections`, {
+      method: "POST",
+      headers: await authHeaders(true),
+      body: JSON.stringify({ source_node_id: sourceId }),
+    }),
+  );
+  return res.json();
+}
+
+/** target 노드에서 source 기억 연결을 해제. */
+export async function removeConnection(
+  targetId: string,
+  sourceId: string,
+): Promise<ConnectionResponse> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/nodes/${targetId}/connections/${sourceId}`, {
+      method: "DELETE",
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
 }
 
 // ── SSE 스트리밍 채팅 ────────────────────────────────────────────────

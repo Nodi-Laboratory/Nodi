@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo } from "react";
-import { spaceTargetFromId } from "@/lib/api";
-import { useSessionDetail } from "@/lib/queries";
+import { useQueryClient } from "@tanstack/react-query";
+import { addConnection, removeConnection, spaceTargetFromId } from "@/lib/api";
+import { sessionKey, useSessionDetail } from "@/lib/queries";
 import { useWorkspaceChat } from "@/lib/useWorkspaceChat";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
+import type { SessionDetail } from "@/lib/types";
 import { SessionList } from "./SessionList";
 import { ChatPanel } from "./ChatPanel";
 import { SessionGraph } from "./SessionGraph";
@@ -15,6 +17,7 @@ import { SessionGraph } from "./SessionGraph";
  */
 export function WorkspaceInner({ spaceId }: { spaceId: string }) {
   const target = spaceTargetFromId(spaceId);
+  const queryClient = useQueryClient();
 
   const reset = useWorkspaceStore((s) => s.reset);
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
@@ -47,6 +50,52 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     [nodes, chat, setActiveNode],
   );
 
+  // 세션 상세 캐시의 특정 노드 connections 패치
+  const patchConnections = useCallback(
+    (nodeId: string, connections: string[]) => {
+      queryClient.setQueryData<SessionDetail>(
+        sessionKey(activeSessionId),
+        (old) =>
+          old
+            ? {
+                ...old,
+                nodes: old.nodes.map((n) =>
+                  n.id === nodeId ? { ...n, connections } : n,
+                ),
+              }
+            : old,
+      );
+    },
+    [queryClient, activeSessionId],
+  );
+
+  // 기억 연결: source 노드를 현재 노드(target=activeNodeId)로 연결
+  const handleConnectSource = useCallback(
+    async (sourceId: string) => {
+      const targetId = activeNodeId;
+      if (!targetId || targetId === sourceId) return;
+      try {
+        const resp = await addConnection(targetId, sourceId);
+        patchConnections(targetId, resp.connections);
+      } catch {
+        /* 실패 시 캐시 유지(백엔드가 self/소유권 검증) */
+      }
+    },
+    [activeNodeId, patchConnections],
+  );
+
+  const handleRemoveConnection = useCallback(
+    async (targetId: string, sourceId: string) => {
+      try {
+        const resp = await removeConnection(targetId, sourceId);
+        patchConnections(targetId, resp.connections);
+      } catch {
+        /* 무시 */
+      }
+    },
+    [patchConnections],
+  );
+
   const spaceLabel = spaceId === "personal" ? "개인 공간" : "학급 공간";
 
   return (
@@ -71,6 +120,8 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             rootNodeId={rootNodeId}
             activeNodeId={activeNodeId}
             onNodeClick={handleNodeClick}
+            onConnectSource={handleConnectSource}
+            onRemoveConnection={handleRemoveConnection}
           />
         </div>
       </div>

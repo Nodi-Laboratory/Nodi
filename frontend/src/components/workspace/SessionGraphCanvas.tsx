@@ -2,14 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
-import { LocateFixed } from "lucide-react";
+import { LocateFixed, Link2, X } from "lucide-react";
 import type { NodeRow } from "@/lib/types";
 import { buildNested, pathIdSet, buildById, type TreeNode } from "@/lib/tree";
 
 /**
  * 세션 그래프 뷰 — D3 수직 트리(위→아래), 원형 노드 + 라벨 아래.
- * Conversation-Tree의 D3 패턴을 우리 데이터 모델(1노드=Q+A, parent_id)과
- * 노란 팔레트(§9)에 맞게 재작성. 줌/팬/드래그 + 현재경로 하이라이트 + 네비게이터(점선) 렌더.
+ * 줌/팬/드래그(서브트리 동반) + 현재경로 하이라이트 + 네비게이터(점선) + 기억 연결선.
  */
 
 // 디자인 토큰(§9) 대응 색상
@@ -23,6 +22,7 @@ const C = {
   navStroke: "#7a7a6e", // --fg-muted (네비게이터 점선)
   navFill: "#fffdf7", // --bg-elevated
   labelMuted: "#7a7a6e",
+  conn: "#c2702a", // --warning (기억 연결선 — 트리 링크와 구별)
 } as const;
 
 const R = 11; // 노드 반지름
@@ -33,33 +33,71 @@ interface Props {
   rootNodeId: string | null;
   activeNodeId: string | null;
   onNodeClick: (id: string) => void;
+  /** 기억 연결: source 노드를 현재 노드(target=activeNodeId)로 연결. */
+  onConnectSource: (sourceId: string) => void;
+  /** 기억 연결 해제. */
+  onRemoveConnection: (targetId: string, sourceId: string) => void;
 }
 
 type HNode = d3.HierarchyPointNode<TreeNode>;
+interface ConnPair {
+  source: string;
+  target: string;
+  key: string;
+}
 
 export default function SessionGraphCanvas({
   nodes,
   rootNodeId,
   activeNodeId,
   onNodeClick,
+  onConnectSource,
+  onRemoveConnection,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const contentGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const linkGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const connGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const nodeGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const transformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity.translate(0, 60).scale(0.9));
   const posRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const prevRootRef = useRef<string | null>(null);
+
+  // D3 핸들러에서 최신 값을 보기 위한 ref들
   const onNodeClickRef = useRef(onNodeClick);
+  const onConnectSourceRef = useRef(onConnectSource);
+  const onRemoveConnectionRef = useRef(onRemoveConnection);
+  const activeNodeIdRef = useRef(activeNodeId);
+  const connectModeRef = useRef(false);
 
   const [dim, setDim] = useState({ width: 0, height: 0 });
+  const [connectMode, setConnectMode] = useState(false);
 
-  // 최신 콜백을 ref에 보관 (D3 핸들러에서 stale closure 방지)
+  // 연결 대상(activeNode)이 없으면 모드는 자동으로 비활성(파생값 — effect setState 회피)
+  const effectiveConnectMode = connectMode && !!activeNodeId;
+
   useEffect(() => {
     onNodeClickRef.current = onNodeClick;
-  }, [onNodeClick]);
+    onConnectSourceRef.current = onConnectSource;
+    onRemoveConnectionRef.current = onRemoveConnection;
+    activeNodeIdRef.current = activeNodeId;
+  }, [onNodeClick, onConnectSource, onRemoveConnection, activeNodeId]);
+
+  useEffect(() => {
+    connectModeRef.current = effectiveConnectMode;
+  }, [effectiveConnectMode]);
+
+  // Esc로 연결 모드 취소
+  useEffect(() => {
+    if (!effectiveConnectMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setConnectMode(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [effectiveConnectMode]);
 
   // 컨테이너 크기 추적
   useEffect(() => {
@@ -80,6 +118,21 @@ export default function SessionGraphCanvas({
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
+    // 기억 연결선 화살표 마커
+    const defs = svg.append("defs");
+    defs
+      .append("marker")
+      .attr("id", "mem-arrow")
+      .attr("viewBox", "0 0 10 10")
+      .attr("refX", 9)
+      .attr("refY", 5)
+      .attr("markerWidth", 6)
+      .attr("markerHeight", 6)
+      .attr("orient", "auto-start-reverse")
+      .append("path")
+      .attr("d", "M0,0 L10,5 L0,10 z")
+      .attr("fill", C.conn);
+
     const bg = svg
       .append("rect")
       .attr("width", "100%")
@@ -89,7 +142,9 @@ export default function SessionGraphCanvas({
 
     const g = svg.append("g");
     contentGRef.current = g;
+    // z 순서: 트리 링크(하) → 기억 연결선(중) → 노드(상)
     linkGRef.current = g.append("g").attr("class", "links");
+    connGRef.current = g.append("g").attr("class", "connections");
     nodeGRef.current = g.append("g").attr("class", "nodes");
 
     const zoom = d3
@@ -126,7 +181,7 @@ export default function SessionGraphCanvas({
 
   // 데이터 렌더링
   useEffect(() => {
-    if (!contentGRef.current || !linkGRef.current || !nodeGRef.current) return;
+    if (!contentGRef.current || !linkGRef.current || !nodeGRef.current || !connGRef.current) return;
     if (dim.width === 0) return;
 
     // 세션(루트) 변경 시 위치 캐시 초기화
@@ -137,10 +192,12 @@ export default function SessionGraphCanvas({
 
     const nested = buildNested(nodes, rootNodeId);
     const linkLayer = linkGRef.current;
+    const connLayer = connGRef.current;
     const nodeLayer = nodeGRef.current;
 
     if (!nested) {
       linkLayer.selectAll("*").remove();
+      connLayer.selectAll("*").remove();
       nodeLayer.selectAll("*").remove();
       return;
     }
@@ -168,16 +225,13 @@ export default function SessionGraphCanvas({
       .x((d) => d.x)
       .y((d) => d.y);
 
-    // ── 링크 ──
+    // ── 트리 링크 ──
     linkLayer
       .selectAll<SVGPathElement, d3.HierarchyPointLink<TreeNode>>("path.link")
       .data(root.links(), (d) => d.target.data.data.id)
       .join(
         (enter) =>
-          enter
-            .append("path")
-            .attr("class", "link")
-            .attr("fill", "none"),
+          enter.append("path").attr("class", "link").attr("fill", "none"),
         (update) => update,
         (exit) => exit.remove(),
       )
@@ -190,15 +244,83 @@ export default function SessionGraphCanvas({
       .attr("d", linkGen);
 
     const redrawLinks = () =>
-      linkLayer.selectAll<SVGPathElement, d3.HierarchyPointLink<TreeNode>>(
-        "path.link",
-      ).attr("d", linkGen);
+      linkLayer
+        .selectAll<SVGPathElement, d3.HierarchyPointLink<TreeNode>>("path.link")
+        .attr("d", linkGen);
 
-    // ── 노드 ──
-    // id → d3 계층 노드 (드래그 시 서브트리 좌표 갱신용 빠른 조회)
+    // ── 기억 연결선(같은 세션 내) ──
     const nodeById = new Map<string, HNode>();
     allNodes.forEach((n) => nodeById.set(n.data.data.id, n));
 
+    const connD = (sourceId: string, targetId: string): string => {
+      const s = posRef.current.get(sourceId);
+      const t = posRef.current.get(targetId);
+      if (!s || !t) return "";
+      const my = (s.y + t.y) / 2;
+      return `M${s.x},${s.y} C${s.x},${my} ${t.x},${my} ${t.x},${t.y}`;
+    };
+
+    const redrawConnections = () =>
+      connLayer
+        .selectAll<SVGGElement, ConnPair>("g.conn")
+        .each(function (cp) {
+          const path = connD(cp.source, cp.target);
+          const sel = d3.select(this);
+          sel.select<SVGPathElement>("path.conn-visible").attr("d", path);
+          sel.select<SVGPathElement>("path.conn-hit").attr("d", path);
+        });
+
+    // 같은 세션 그래프에 source/target 둘 다 있는 연결만 선으로
+    const connPairs: ConnPair[] = [];
+    for (const n of nodes) {
+      for (const src of n.connections ?? []) {
+        if (src !== n.id && nodeById.has(src) && nodeById.has(n.id)) {
+          connPairs.push({ source: src, target: n.id, key: `${n.id}<-${src}` });
+        }
+      }
+    }
+
+    const connSel = connLayer
+      .selectAll<SVGGElement, ConnPair>("g.conn")
+      .data(connPairs, (d) => d.key);
+
+    connSel.exit().remove();
+
+    const connEnter = connSel
+      .enter()
+      .append("g")
+      .attr("class", "conn")
+      .style("cursor", "pointer");
+    connEnter.append("title").text("클릭하면 기억 연결 해제");
+    connEnter
+      .append("path")
+      .attr("class", "conn-visible")
+      .attr("fill", "none")
+      .attr("stroke", C.conn)
+      .attr("stroke-width", 2)
+      .attr("stroke-dasharray", "5 4")
+      .attr("marker-end", "url(#mem-arrow)")
+      .attr("pointer-events", "none");
+    connEnter
+      .append("path")
+      .attr("class", "conn-hit")
+      .attr("fill", "none")
+      .attr("stroke", "transparent")
+      .attr("stroke-width", 12);
+
+    const connMerged = connEnter.merge(connSel);
+    connMerged
+      .select<SVGPathElement>("path.conn-visible")
+      .attr("d", (d) => connD(d.source, d.target));
+    connMerged
+      .select<SVGPathElement>("path.conn-hit")
+      .attr("d", (d) => connD(d.source, d.target))
+      .on("click", function (event, d) {
+        event.stopPropagation();
+        onRemoveConnectionRef.current(d.target, d.source);
+      });
+
+    // ── 드래그(서브트리 동반 이동 + y 제약) ──
     const drag = d3
       .drag<SVGGElement, HNode>()
       .on("start", function (event, d) {
@@ -211,7 +333,6 @@ export default function SessionGraphCanvas({
       .on("drag", function (event, d) {
         const s = d as unknown as { _moved: boolean; _dist: number };
         s._dist += Math.hypot(event.dx, event.dy);
-        // 클릭/드래그 구분 데드존(작은 흔들림은 클릭으로 유지)
         if (!s._moved && s._dist < 4) return;
         s._moved = true;
 
@@ -221,7 +342,6 @@ export default function SessionGraphCanvas({
         const newX = cur.x + event.dx;
         let newY = cur.y + event.dy;
 
-        // y 제약: 자식은 항상 부모보다 아래(화면상 y가 더 큼). 부모 위로 못 올림.
         if (d.parent) {
           const pPos = posRef.current.get(d.parent.data.data.id);
           if (pPos) newY = Math.max(newY, pPos.y + MIN_CHILD_Y_GAP);
@@ -231,7 +351,6 @@ export default function SessionGraphCanvas({
         const moveDY = newY - cur.y;
         if (moveDX === 0 && moveDY === 0) return;
 
-        // 서브트리(자신 + 모든 자손) 동반 이동 — 상대 위치 유지(평행 이동).
         const subtreeIds = d.descendants().map((n) => n.data.data.id);
         for (const id of subtreeIds) {
           const p = posRef.current.get(id);
@@ -245,7 +364,6 @@ export default function SessionGraphCanvas({
           }
         }
 
-        // 이동한 노드 transform 갱신 + 링크 재계산
         const movedSet = new Set(subtreeIds);
         nodeLayer
           .selectAll<SVGGElement, HNode>("g.node")
@@ -255,8 +373,10 @@ export default function SessionGraphCanvas({
             return `translate(${p.x},${p.y})`;
           });
         redrawLinks();
+        redrawConnections();
       });
 
+    // ── 노드 ──
     const sel = nodeLayer
       .selectAll<SVGGElement, HNode>("g.node")
       .data(allNodes, (d) => d.data.data.id);
@@ -269,13 +389,9 @@ export default function SessionGraphCanvas({
       .attr("class", "node")
       .style("cursor", "pointer");
 
-    // 히트 영역
     enter.append("circle").attr("class", "hit").attr("r", R + 10).attr("fill", "transparent");
-    // 활성 노드 halo
     enter.append("circle").attr("class", "halo").attr("fill", "none");
-    // 코어
     enter.append("circle").attr("class", "core").attr("r", R).attr("stroke-width", 2);
-    // 라벨
     enter
       .append("text")
       .attr("class", "label")
@@ -284,11 +400,31 @@ export default function SessionGraphCanvas({
       .style("font-size", "11px")
       .style("font-family", "var(--font-sans), sans-serif")
       .style("pointer-events", "none");
-    // 툴팁(전체 질문/제안 질문)
+    // 다른 세션 연결 배지
+    const badge = enter
+      .append("g")
+      .attr("class", "linkbadge")
+      .style("pointer-events", "none")
+      .style("display", "none");
+    badge
+      .append("circle")
+      .attr("cx", R + 5)
+      .attr("cy", -(R + 5))
+      .attr("r", 7)
+      .attr("fill", C.conn);
+    badge
+      .append("text")
+      .attr("class", "linkbadge-text")
+      .attr("x", R + 5)
+      .attr("y", -(R + 5))
+      .attr("text-anchor", "middle")
+      .attr("dominant-baseline", "central")
+      .style("font-size", "9px")
+      .style("font-weight", "700")
+      .attr("fill", "#ffffff");
     enter.append("title").attr("class", "tip");
 
     const merged = enter.merge(sel);
-
     merged.attr("transform", (d) => `translate(${d.x},${d.y})`);
 
     merged.each(function (d) {
@@ -317,7 +453,22 @@ export default function SessionGraphCanvas({
         .attr("fill", isNav ? C.labelMuted : isPath ? C.nodeLabel : C.labelMuted)
         .style("font-weight", isPath ? 600 : 400);
 
-      // 툴팁: 네비게이터는 제안 질문, 일반은 질문 원문
+      // 다른 세션 source(현재 그래프에 없는 연결) 개수 → 배지
+      const crossCount = (node.connections ?? []).filter(
+        (id) => !nodeById.has(id),
+      ).length;
+      const badgeSel = g.select<SVGGElement>("g.linkbadge");
+      if (crossCount > 0) {
+        badgeSel.style("display", null);
+        badgeSel.select("text.linkbadge-text").text(String(crossCount));
+        badgeSel.select("title").remove();
+        badgeSel
+          .append("title")
+          .text(`다른 세션에서 가져온 기억 연결 ${crossCount}개`);
+      } else {
+        badgeSel.style("display", "none");
+      }
+
       const tip = isNav
         ? `💡 ${node.navigator_question ?? ""}`
         : (node.question ?? "");
@@ -329,7 +480,16 @@ export default function SessionGraphCanvas({
     merged.on("click", function (event, d) {
       event.stopPropagation();
       if ((d as unknown as { _moved?: boolean })._moved) return;
-      onNodeClickRef.current(d.data.data.id);
+      const node = d.data.data;
+      // 기억 연결 모드: 다른 분기의 source 노드를 현재 노드로 연결
+      if (connectModeRef.current) {
+        if (node.is_navigator) return;
+        if (node.id === activeNodeIdRef.current) return; // self/target 제외
+        onConnectSourceRef.current(node.id);
+        setConnectMode(false);
+        return;
+      }
+      onNodeClickRef.current(node.id);
     });
   }, [nodes, activeNodeId, rootNodeId, dim.width, dim.height]);
 
@@ -340,6 +500,41 @@ export default function SessionGraphCanvas({
       style={{ touchAction: "none" }}
     >
       <svg ref={svgRef} className="block h-full w-full" />
+
+      {/* 기억 연결 모드 토글 */}
+      <button
+        type="button"
+        onClick={() => setConnectMode((v) => !v)}
+        disabled={!activeNodeId}
+        title={
+          activeNodeId
+            ? "기억 연결: 다른 분기의 노드를 현재 노드로 연결"
+            : "연결할 현재 노드를 먼저 선택하세요"
+        }
+        className={`absolute left-3 top-3 flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors disabled:opacity-50 ${
+          effectiveConnectMode
+            ? "border-warning bg-warning text-white"
+            : "border-accent-border/50 bg-bg text-fg-muted hover:text-fg"
+        }`}
+      >
+        <Link2 size={14} />
+        기억 연결
+      </button>
+
+      {/* 모드 안내 배너 */}
+      {effectiveConnectMode && (
+        <div className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-warning/60 bg-bg px-3 py-1.5 text-xs text-warning shadow">
+          다른 분기의 노드를 클릭해 현재 노드로 기억을 연결하세요.
+          <button
+            type="button"
+            onClick={() => setConnectMode(false)}
+            className="flex items-center gap-0.5 text-fg-muted hover:text-fg"
+          >
+            <X size={12} />취소
+          </button>
+        </div>
+      )}
+
       <button
         type="button"
         onClick={() => recenter(activeNodeId)}

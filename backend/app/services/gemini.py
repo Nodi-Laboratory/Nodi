@@ -62,13 +62,39 @@ def _build_contents(
     return contents
 
 
+def _system_instruction(reference_context: str | None) -> str:
+    """Base instruction, plus a SOURCE-LABELLED imported-branch block if any.
+
+    The imported branch lives in the system instruction (not interleaved with
+    the live ancestor-chain turns) so the model treats it as clearly-separated
+    reference material rather than the current conversation (architecture §5).
+    """
+    if not reference_context:
+        return _SYSTEM_INSTRUCTION
+    return (
+        _SYSTEM_INSTRUCTION
+        + "\n\n아래는 사용자가 다른 대화 분기에서 끌어온 참고 자료입니다. "
+        "현재 분기 대화와 출처를 구분해 활용하되, 답변에 자연스럽게 반영하세요. "
+        "현재 분기에서 실제로 오간 대화가 아님에 유의하세요.\n\n"
+        + reference_context
+    )
+
+
 async def stream_answer(
-    history: list[tuple[str, str]], question: str
+    history: list[tuple[str, str]],
+    question: str,
+    reference_context: str | None = None,
 ) -> AsyncIterator[str]:
-    """Yield answer text deltas for the SSE `token` events."""
+    """Yield answer text deltas for the SSE `token` events.
+
+    `reference_context` (optional) is imported other-branch content (Stage 3a),
+    injected separately from the live ancestor chain.
+    """
     client = get_client()
     contents = _build_contents(history, question)
-    config = types.GenerateContentConfig(system_instruction=_SYSTEM_INSTRUCTION)
+    config = types.GenerateContentConfig(
+        system_instruction=_system_instruction(reference_context)
+    )
     stream = await client.aio.models.generate_content_stream(
         model=settings.gemini_chat_model,
         contents=contents,
