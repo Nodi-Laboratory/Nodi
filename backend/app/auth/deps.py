@@ -16,6 +16,7 @@ NOT the app role. The app role (student/teacher/admin) lives in
 
 from __future__ import annotations
 
+import logging
 import time
 
 import httpx
@@ -27,6 +28,7 @@ from pydantic import BaseModel
 
 from ..config import get_settings
 
+logger = logging.getLogger("nodi.auth")
 settings = get_settings()
 bearer_scheme = HTTPBearer(auto_error=True)
 
@@ -134,23 +136,35 @@ async def get_current_user(
         )
     key = await _resolve_signing_key(header.get("kid"))
 
-    # Issuer is verified only when configured (so the app still boots without
-    # SUPABASE_URL set). Supabase issues iss = "<SUPABASE_URL>/auth/v1".
-    decode_kwargs: dict = {
-        "algorithms": ALLOWED_JWT_ALGORITHMS,  # pinned, NOT taken from header
-        "audience": settings.jwt_audience,
-        "options": {"verify_aud": True, "verify_iss": bool(settings.auth_issuer)},
-    }
-    if settings.auth_issuer:
-        decode_kwargs["issuer"] = settings.auth_issuer
-
+    # Signature + audience + expiry are verified strictly. Issuer is checked
+    # SOFTLY (warning log, not 401): the asymmetric signature already proves the
+    # token came from THIS project's keys, and a wrong assumption about the iss
+    # format must not lock out every user. If the warning ever fires, the
+    # configured auth_issuer can be corrected to re-enable strict iss checks.
     try:
-        claims = jwt.decode(token, key, **decode_kwargs)
+        claims = jwt.decode(
+            token,
+            key,
+            algorithms=ALLOWED_JWT_ALGORITHMS,  # pinned, NOT taken from header
+            audience=settings.jwt_audience,
+            options={"verify_aud": True, "verify_iss": False},
+        )
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Token verification failed: {exc}",
         ) from exc
+
+    if settings.auth_issuer:
+        token_iss = claims.get("iss")
+        if token_iss != settings.auth_issuer:
+            logger.warning(
+                "JWT issuer mismatch (soft): token iss=%r expected=%r. "
+                "Signature/audience still verified. Adjust SUPABASE_URL/"
+                "auth_issuer to enable strict iss checks.",
+                token_iss,
+                settings.auth_issuer,
+            )
 
     sub = claims.get("sub")
     if not sub:

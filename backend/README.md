@@ -24,7 +24,12 @@ uvicorn app.main:app --reload --port 8000
 - `GET /health` — liveness + which integrations are configured
 - `GET /auth/me` — caller's profile (requires `Authorization: Bearer <JWT>`)
 - `GET /auth/me/scopes` — personal + class scopes
-- `POST /chat/stream` — 501 placeholder (Stage 1)
+- `POST /sessions` — create a conversation session
+- `GET /sessions?space_kind=&space_ref=` — sessions in a space (recent first)
+- `GET /sessions/{id}` — session + all nodes (tree restore)
+- `POST /chat/stream` — Gemini SSE chat; persists (Q+A)=1 node, auto-labels
+
+All DB access uses the caller's JWT (RLS, owner-only writes) — not service_role.
 
 ## Migrations
 

@@ -26,8 +26,14 @@ class Settings(BaseSettings):
     # Optional in Stage 0 — server-side privileged ops. App must boot without it.
     supabase_service_role_key: str = ""
 
-    # --- AI ---
+    # --- AI (Gemini) ---
     google_gemini_api_key: str = ""
+    # Chat model (streaming). Label model is a lighter/cheaper flash variant.
+    # Runtime override (admin) lands in a later stage; static config for now.
+    gemini_chat_model: str = "gemini-2.5-flash"
+    gemini_label_model: str = "gemini-2.5-flash-lite"
+    # Hard cap on auto-generated node labels (design: <= 10 chars).
+    node_label_max_chars: int = 10
 
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).

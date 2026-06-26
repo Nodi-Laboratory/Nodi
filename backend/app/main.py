@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routers import chat, health, me
+from .routers import chat, health, me, sessions
 
 settings = get_settings()
 
@@ -27,7 +27,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="nodi backend",
     version="0.1.0",
-    description="AI conversation visualized as a node/tree. Stage 0 foundation.",
+    description="AI conversation visualized as a node/tree. Stage 1 chat core.",
     lifespan=lifespan,
 )
 
@@ -41,6 +41,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(me.router)
+app.include_router(sessions.router)
 app.include_router(chat.router)
 
 
