@@ -112,3 +112,59 @@ export interface ChatNavigatorEvent {
     navigator_question: string;
   }>;
 }
+
+// ── Stage 4a: 홈 + 총괄 AI(overseer) ─────────────────────────────────
+
+export interface HomeSpace {
+  space_kind: SpaceKind;
+  space_ref: string | null;
+  name: string | null;
+  role_in_class: string | null;
+}
+
+export interface HomeRecentSession {
+  id: string;
+  title: string | null;
+  emoji: string | null;
+  space_kind: SpaceKind;
+  space_ref: string | null;
+  updated_at: string;
+}
+
+export interface HomeConcept {
+  id: string;
+  name: string;
+  usage_count: number;
+}
+
+export interface HomeSummary {
+  spaces: HomeSpace[];
+  recent_sessions: HomeRecentSession[];
+  top_concepts: HomeConcept[];
+}
+
+export interface HomeSuggestion {
+  question: string;
+  seed_question: string;
+  space_kind: "personal";
+  space_ref: string | null;
+}
+
+export interface HomeSuggestions {
+  suggestions: HomeSuggestion[];
+}
+
+/** 총괄 AI done 액션. */
+export type OverseerAction =
+  | {
+      action: "create_session";
+      label: string;
+      space_kind: SpaceKind;
+      space_ref: string | null;
+      seed_question: string;
+    }
+  | { action: "open_session"; label: string; session_id: string };
+
+export interface OverseerDoneEvent {
+  actions: OverseerAction[];
+}
