@@ -45,11 +45,25 @@ Admin (all require app role `admin`; admin RLS / RPCs in migration 0008):
 - `GET /admin/usage` (per-user token totals — PARTIAL: skill-step tokens only)
 - `GET /admin/logs?user_id=&limit=&offset=` (ai_sessions + embedded ai_steps)
 
-All DB access uses the caller's JWT (RLS, owner-only writes) — not service_role.
+Files / RAG (Stage 3b-1; needs `SUPABASE_SERVICE_ROLE_KEY` for upload+worker):
+- `POST /files` (multipart: file, space_kind, space_ref?) — Storage + files row
+  + queued `embedding_split` job. 503 if no service-role key.
+- `GET /files?space_kind=&space_ref=` — list (status, chunk_done/chunk_total)
+- `GET /files/{id}` — file status + progress
+
+All request-time DB access uses the caller's JWT (RLS). The background embedding
+worker (`services/embedding_worker.py`, apscheduler) uses the SERVICE-ROLE client
+(`services/service_client.py`, RLS bypass) and is disabled when the key is unset.
 
 Memory linking (Stage 3a): a node's `connections uuid[]` is injected into chat
 context, LCA-trimmed (same session: shared ancestors excluded; other session:
 full chain), as a source-labelled reference block — see `services/memory.py`.
+
+Embedding pipeline (Stage 3b-1): upload -> `embedding_split` (extract PDF/txt ->
+chunk -> file_chunks(pending) -> fan out `embedding_batch` jobs) -> parallel
+batches embed with gemini-embedding-001 (768-dim, L2-normalized) -> file status
+`indexed`/`partial`. Visual RAG, search, file tagging, class materials, and OCR
+are Stage 3b-2.
 
 ## AI layer (`app/ai/`)
 

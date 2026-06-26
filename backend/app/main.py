@@ -15,6 +15,7 @@ from .config import get_settings
 from .routers import (
     admin,
     chat,
+    files,
     health,
     home,
     me,
@@ -23,15 +24,18 @@ from .routers import (
     sessions,
     tags,
 )
+from .services import embedding_worker
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Startup: (Stage 1+) apscheduler jobs (navigator, embedding workers) start here.
+    # Startup: embedding worker (no-op if SUPABASE_SERVICE_ROLE_KEY is unset).
+    embedding_worker.start(_app)
     yield
-    # Shutdown: scheduler teardown will go here.
+    # Shutdown: stop the scheduler.
+    embedding_worker.stop()
 
 
 app = FastAPI(
@@ -58,6 +62,7 @@ app.include_router(chat.router)
 app.include_router(home.router)
 app.include_router(overseer.router)
 app.include_router(admin.router)
+app.include_router(files.router)
 
 
 @app.get("/", tags=["health"])
