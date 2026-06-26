@@ -1,0 +1,11 @@
+# Claude 비공개 작업 공간 (절대 커밋하지 않음)
+.claude/
+
+# 환경 변수 / 비밀 키
+.env
+.env.*
+!.env.example
+
+# OS / 에디터
+Thumbs.db
+.DS_Store
