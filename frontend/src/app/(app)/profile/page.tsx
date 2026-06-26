@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
@@ -19,18 +19,16 @@ export default function ProfilePage() {
   const { data: profile, isLoading: profileLoading } = useProfile();
   const { data: myClasses = [] } = useMyClasses();
 
-  const [name, setName] = useState("");
+  // 이름 입력: react-query의 profile.display_name을 기본값으로 두고,
+  // 사용자가 편집을 시작하면 nameDraft가 우선한다(effect 동기화 없이 파생값).
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const name = nameDraft ?? profile?.display_name ?? "";
   const [savingName, setSavingName] = useState(false);
   const [nameMsg, setNameMsg] = useState<string | null>(null);
 
   const [code, setCode] = useState("");
   const [joining, setJoining] = useState(false);
   const [classMsg, setClassMsg] = useState<string | null>(null);
-
-  // 프로필 로드되면 입력 초기값 채움
-  useEffect(() => {
-    if (profile?.display_name != null) setName(profile.display_name);
-  }, [profile?.display_name]);
 
   const handleSaveName = async () => {
     const trimmed = name.trim();
@@ -123,7 +121,7 @@ export default function ProfilePage() {
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => setNameDraft(e.target.value)}
             placeholder="표시 이름"
             className="flex-1 rounded-lg border border-accent-border/50 bg-bg px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
           />

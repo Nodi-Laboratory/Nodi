@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     def rest_url(self) -> str:
         return f"{self.supabase_url.rstrip('/')}/rest/v1" if self.supabase_url else ""
 
+    @property
+    def auth_issuer(self) -> str:
+        """Expected `iss` claim of Supabase-issued user JWTs."""
+        return f"{self.supabase_url.rstrip('/')}/auth/v1" if self.supabase_url else ""
+
 
 @lru_cache
 def get_settings() -> Settings:

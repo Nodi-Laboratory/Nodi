@@ -30,6 +30,10 @@ from ..config import get_settings
 settings = get_settings()
 bearer_scheme = HTTPBearer(auto_error=True)
 
+# Algorithm allow-list. NEVER trust the token header's `alg` — pin it here so a
+# forged token cannot downgrade/swap the verification algorithm (alg-confusion).
+ALLOWED_JWT_ALGORITHMS = ["ES256"]
+
 # --- JWKS cache (refreshed on TTL expiry or unknown kid / key rotation) ---
 _JWKS_TTL_SECONDS = 3600
 _jwks_cache: dict = {"keys": None, "fetched_at": 0.0}
@@ -120,17 +124,28 @@ async def get_current_user(
             detail=f"Malformed token header: {exc}",
         ) from exc
 
-    alg = header.get("alg", "ES256")
+    # Reject any token whose header advertises an algorithm we do not allow,
+    # before resolving keys — defense in depth against alg-confusion attacks.
+    header_alg = header.get("alg")
+    if header_alg not in ALLOWED_JWT_ALGORITHMS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Unsupported token algorithm: {header_alg!r}.",
+        )
     key = await _resolve_signing_key(header.get("kid"))
 
+    # Issuer is verified only when configured (so the app still boots without
+    # SUPABASE_URL set). Supabase issues iss = "<SUPABASE_URL>/auth/v1".
+    decode_kwargs: dict = {
+        "algorithms": ALLOWED_JWT_ALGORITHMS,  # pinned, NOT taken from header
+        "audience": settings.jwt_audience,
+        "options": {"verify_aud": True, "verify_iss": bool(settings.auth_issuer)},
+    }
+    if settings.auth_issuer:
+        decode_kwargs["issuer"] = settings.auth_issuer
+
     try:
-        claims = jwt.decode(
-            token,
-            key,
-            algorithms=[alg],
-            audience=settings.jwt_audience,
-            options={"verify_aud": True},
-        )
+        claims = jwt.decode(token, key, **decode_kwargs)
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

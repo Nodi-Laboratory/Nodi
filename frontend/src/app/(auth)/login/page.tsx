@@ -1,23 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 /**
  * 로그인 페이지.
  * "Google로 로그인" → Supabase OAuth(PKCE) → /auth/callback 으로 복귀.
- * (구글 Provider 설정이 끝나면 실제 동작.)
+ * 콜백 실패 시 ?error=... 로 돌아오며, useSearchParams로 렌더 시 파생값으로 표시.
+ * (useSearchParams는 Suspense 경계가 필요하므로 LoginContent를 <Suspense>로 감쌈.)
  */
-export default function LoginPage() {
+function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [callbackError, setCallbackError] = useState<string | null>(null);
 
-  // 콜백 실패 시 ?error=... 로 돌아옴 (useSearchParams 대신 클라이언트에서 직접 파싱)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("error")) setCallbackError(params.get("error"));
-  }, []);
+  const searchParams = useSearchParams();
+  const callbackError = searchParams.get("error");
 
   const handleGoogleLogin = async () => {
     setError(null);
@@ -61,5 +59,13 @@ export default function LoginPage() {
         </p>
       )}
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginContent />
+    </Suspense>
   );
 }
