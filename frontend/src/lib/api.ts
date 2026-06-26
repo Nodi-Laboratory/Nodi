@@ -1,5 +1,9 @@
 import { createClient } from "@/lib/supabase/client";
 import type {
+  AdminLogsResponse,
+  AdminSetting,
+  AdminUsage,
+  AdminUser,
   ChatDoneEvent,
   ChatNavigatorEvent,
   ChatStartEvent,
@@ -8,10 +12,12 @@ import type {
   HomeSuggestions,
   HomeSummary,
   OverseerDoneEvent,
+  Profile,
   SessionDetail,
   SessionRow,
   SpaceKind,
   TagRow,
+  UserRole,
 } from "@/lib/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -357,4 +363,72 @@ export async function streamOverseer(
     (d) => handlers.onError?.(d),
     signal,
   );
+}
+
+// ── 관리자 (Stage 4c, 관리자만) ──────────────────────────────────────
+
+export async function listAdminUsers(): Promise<AdminUser[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/users`, { headers: await authHeaders() }),
+  );
+  return res.json();
+}
+
+export async function setUserRole(
+  userId: string,
+  role: UserRole,
+): Promise<Profile> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/users/${userId}/role`, {
+      method: "POST",
+      headers: await authHeaders(true),
+      body: JSON.stringify({ role }),
+    }),
+  );
+  return res.json();
+}
+
+export async function listAdminSettings(): Promise<AdminSetting[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/settings`, { headers: await authHeaders() }),
+  );
+  return res.json();
+}
+
+export async function putAdminSetting(
+  key: string,
+  value: unknown,
+): Promise<AdminSetting> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/settings/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      headers: await authHeaders(true),
+      body: JSON.stringify({ value }),
+    }),
+  );
+  return res.json();
+}
+
+export async function getAdminUsage(): Promise<AdminUsage> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/usage`, { headers: await authHeaders() }),
+  );
+  return res.json();
+}
+
+export async function getAdminLogs(opts: {
+  userId?: string | null;
+  limit?: number;
+  offset?: number;
+}): Promise<AdminLogsResponse> {
+  const params = new URLSearchParams();
+  if (opts.userId) params.set("user_id", opts.userId);
+  params.set("limit", String(opts.limit ?? 20));
+  params.set("offset", String(opts.offset ?? 0));
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/logs?${params.toString()}`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
 }
