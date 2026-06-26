@@ -108,16 +108,25 @@ class ReActRunner:
             logger.warning("ai_steps trace write failed (seq=%s)", self._seq)
 
     async def run_skill(
-        self, name: str, *, thought: str | None = None, **skill_input: Any
+        self,
+        name: str,
+        *,
+        thought: str | None = None,
+        ctx: Any = None,
+        **skill_input: Any,
     ) -> dict[str, Any]:
-        """Execute one registered skill, charging the budget and tracing it."""
+        """Execute one registered skill, charging the budget and tracing it.
+
+        `ctx` (SkillContext: client + identity) is passed to the skill but kept
+        OUT of the trace payload (no client/token in ai_steps).
+        """
         if self.budget.exceeded():
             raise RuntimeError("ReAct budget exceeded")
         skill = get_skill(name)
         if skill is None:
             raise RuntimeError(f"Unknown skill: {name}")
 
-        observation = await skill.run(**skill_input)
+        observation = await skill.run(ctx=ctx, **skill_input)
         tokens = (
             observation.get("tokens") if isinstance(observation, dict) else None
         )
