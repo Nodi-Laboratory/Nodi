@@ -49,5 +49,5 @@ async def get_session(
     """Session metadata + all of its nodes, for client-side tree reconstruction."""
     client = UserClient.from_user(user)
     session = await svc.get_session(client, session_id)
-    nodes = await svc.get_session_nodes(client, session_id)
+    nodes = await svc.get_session_nodes(client, session_id, with_tags=True)
     return {"session": session, "nodes": nodes}

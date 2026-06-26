@@ -107,6 +107,19 @@ class UserClient:
             self._raise(resp, f"update {table}")
         return resp.json()
 
+    async def delete(
+        self, table: str, filters: dict[str, str]
+    ) -> list[dict[str, Any]]:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.delete(
+                f"{self._base}/{table}",
+                params=filters,
+                headers=self._headers(prefer="return=representation"),
+            )
+        if resp.status_code >= 400:
+            self._raise(resp, f"delete {table}")
+        return resp.json()
+
     async def rpc(self, fn: str, args: dict[str, Any]) -> Any:
         """Call a Postgres function via PostgREST (/rpc/<fn>), RLS-scoped."""
         async with httpx.AsyncClient(timeout=15.0) as client:
