@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { spaceTargetFromId } from "@/lib/api";
 import { useSessionDetail } from "@/lib/queries";
+import { useWorkspaceChat } from "@/lib/useWorkspaceChat";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { SessionList } from "./SessionList";
 import { ChatPanel } from "./ChatPanel";
@@ -16,18 +17,35 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
   const target = spaceTargetFromId(spaceId);
 
   const reset = useWorkspaceStore((s) => s.reset);
+  const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   const activeSessionId = useWorkspaceStore((s) => s.activeSessionId);
   const activeNodeId = useWorkspaceStore((s) => s.activeNodeId);
   const setActiveNode = useWorkspaceStore((s) => s.setActiveNode);
 
-  // 공간 진입 시 선택 상태 초기화
+  // 공간 진입 시 선택 상태 초기화 + 활성 공간 기록(개념 페이지가 참조)
   useEffect(() => {
     reset();
-  }, [reset]);
+    setActiveSpace(spaceId);
+  }, [reset, setActiveSpace, spaceId]);
+
+  const chat = useWorkspaceChat(target);
 
   const { data: detail } = useSessionDetail(activeSessionId);
-  const nodes = detail?.nodes ?? [];
+  const nodes = useMemo(() => detail?.nodes ?? [], [detail?.nodes]);
   const rootNodeId = detail?.session?.root_node_id ?? null;
+
+  // 그래프 노드 클릭: 네비게이터 노드는 활성화(질문 생성+삭제), 일반 노드는 분기점 이동
+  const handleNodeClick = useCallback(
+    (id: string) => {
+      const node = nodes.find((n) => n.id === id);
+      if (node?.is_navigator) {
+        void chat.activateNavigator(node);
+      } else {
+        setActiveNode(id);
+      }
+    },
+    [nodes, chat, setActiveNode],
+  );
 
   const spaceLabel = spaceId === "personal" ? "개인 공간" : "학급 공간";
 
@@ -45,14 +63,14 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
       <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_380px]">
         <SessionList target={target} />
         <div className="flex min-h-0 flex-col border-x border-accent-border/30">
-          <ChatPanel target={target} />
+          <ChatPanel chat={chat} />
         </div>
         <div className="min-h-0 border-l border-accent-border/30">
           <SessionGraph
             nodes={nodes}
             rootNodeId={rootNodeId}
             activeNodeId={activeNodeId}
-            onNodeClick={setActiveNode}
+            onNodeClick={handleNodeClick}
           />
         </div>
       </div>

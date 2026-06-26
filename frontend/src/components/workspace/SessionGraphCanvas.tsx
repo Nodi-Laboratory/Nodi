@@ -284,6 +284,8 @@ export default function SessionGraphCanvas({
       .style("font-size", "11px")
       .style("font-family", "var(--font-sans), sans-serif")
       .style("pointer-events", "none");
+    // 툴팁(전체 질문/제안 질문)
+    enter.append("title").attr("class", "tip");
 
     const merged = enter.merge(sel);
 
@@ -309,11 +311,17 @@ export default function SessionGraphCanvas({
         .attr("opacity", isActive ? 0.9 : 0)
         .attr("stroke-dasharray", "2 3");
 
-      const label = node.label ?? node.question ?? "";
+      const label = node.label ?? node.navigator_question ?? node.question ?? "";
       g.select<SVGTextElement>("text.label")
         .text(label.length > 12 ? label.slice(0, 12) + "…" : label)
         .attr("fill", isNav ? C.labelMuted : isPath ? C.nodeLabel : C.labelMuted)
         .style("font-weight", isPath ? 600 : 400);
+
+      // 툴팁: 네비게이터는 제안 질문, 일반은 질문 원문
+      const tip = isNav
+        ? `💡 ${node.navigator_question ?? ""}`
+        : (node.question ?? "");
+      g.select<SVGTitleElement>("title.tip").text(tip);
     });
 
     merged.call(drag);
