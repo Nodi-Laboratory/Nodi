@@ -123,6 +123,10 @@ export function ChatPanel({ target }: { target: SpaceTarget }) {
           });
         },
         onError: (detail) => {
+          // 질문 유실 방지: 사용자가 입력했던 원문을 입력창에 복원해 바로 재전송 가능하게
+          setInput(q);
+          setDraftQ("");
+          setStreamAnswer("");
           setError(detail);
           setStreaming(false);
         },

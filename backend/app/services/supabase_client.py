@@ -9,6 +9,7 @@ Build one per request via `UserClient.from_user(current_user)`.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -16,6 +17,7 @@ from fastapi import HTTPException, status
 
 from ..config import get_settings
 
+logger = logging.getLogger("nodi.supabase")
 settings = get_settings()
 
 
@@ -45,16 +47,19 @@ class UserClient:
         return h
 
     @staticmethod
-    def _raise(resp: httpx.Response) -> None:
+    def _raise(resp: httpx.Response, op: str) -> None:
+        # Log the raw PostgREST response server-side only; never leak table
+        # names / SQL details to the client.
+        logger.error("Supabase %s failed (%s): %s", op, resp.status_code, resp.text)
         # 403/401 from PostgREST usually means RLS blocked the op.
-        code = (
-            status.HTTP_403_FORBIDDEN
-            if resp.status_code in (401, 403)
-            else status.HTTP_502_BAD_GATEWAY
-        )
+        if resp.status_code in (401, 403):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized for this operation.",
+            )
         raise HTTPException(
-            status_code=code,
-            detail=f"Supabase REST error ({resp.status_code}): {resp.text}",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Database request failed.",
         )
 
     async def select(
@@ -65,7 +70,7 @@ class UserClient:
                 f"{self._base}/{table}", params=params, headers=self._headers()
             )
         if resp.status_code >= 400:
-            self._raise(resp)
+            self._raise(resp, f"select {table}")
         return resp.json()
 
     async def insert(
@@ -78,12 +83,13 @@ class UserClient:
                 headers=self._headers(prefer="return=representation"),
             )
         if resp.status_code >= 400:
-            self._raise(resp)
+            self._raise(resp, f"insert {table}")
         data = resp.json()
         if not data:
+            logger.error("Insert into %s returned no row (RLS?).", table)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Insert into {table} returned no row (RLS?).",
+                detail="Database request failed.",
             )
         return data[0]
 
@@ -98,5 +104,15 @@ class UserClient:
                 headers=self._headers(prefer="return=representation"),
             )
         if resp.status_code >= 400:
-            self._raise(resp)
+            self._raise(resp, f"update {table}")
+        return resp.json()
+
+    async def rpc(self, fn: str, args: dict[str, Any]) -> Any:
+        """Call a Postgres function via PostgREST (/rpc/<fn>), RLS-scoped."""
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{self._base}/rpc/{fn}", json=args, headers=self._headers()
+            )
+        if resp.status_code >= 400:
+            self._raise(resp, f"rpc {fn}")
         return resp.json()

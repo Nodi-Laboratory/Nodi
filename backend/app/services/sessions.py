@@ -9,7 +9,6 @@ All writes go through the caller's RLS-scoped UserClient (owner-only).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -25,10 +24,6 @@ SESSION_SELECT = (
     "id,owner_id,space_kind,space_ref,title,emoji,root_node_id,"
     "current_head_id,created_at,updated_at"
 )
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 # ----------------------------------------------------------------------------
@@ -133,39 +128,37 @@ def assemble_history(
     return [(n.get("question") or "", n.get("answer") or "") for n in chain]
 
 
-async def create_node(
+async def append_node(
     client: UserClient,
     session_id: str,
     parent_id: str | None,
     question: str,
     answer: str,
+    label: str | None,
 ) -> dict[str, Any]:
-    row = {
-        "session_id": session_id,
-        "parent_id": parent_id,
-        "question": question,
-        "answer": answer,
-    }
-    return await client.insert("nodes", row)
+    """Atomically insert the (Q+A) node AND advance the session head/root.
 
-
-async def set_node_label(
-    client: UserClient, node_id: str, label: str
-) -> None:
-    await client.update("nodes", {"id": f"eq.{node_id}"}, {"label": label})
-
-
-async def advance_head(
-    client: UserClient,
-    session_id: str,
-    new_node_id: str,
-    set_root: bool,
-) -> None:
-    """Point current_head_id at the new node (and root if this is the first)."""
-    patch: dict[str, Any] = {
-        "current_head_id": new_node_id,
-        "updated_at": _now_iso(),
-    }
-    if set_root:
-        patch["root_node_id"] = new_node_id
-    await client.update("sessions", {"id": f"eq.{session_id}"}, patch)
+    Backed by the append_chat_node() Postgres RPC (migration 0004) so the node
+    can never be orphaned with a stale current_head_id. The RPC enforces
+    ownership (sessions.owner_id = auth.uid()) inside the transaction.
+    """
+    result = await client.rpc(
+        "append_chat_node",
+        {
+            "p_session_id": session_id,
+            "p_parent_id": parent_id,
+            "p_question": question,
+            "p_answer": answer,
+            "p_label": label,
+        },
+    )
+    # A row-returning function may come back as a single object or a
+    # one-element list, depending on how PostgREST resolves it.
+    if isinstance(result, list):
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to save node.",
+            )
+        return result[0]
+    return result

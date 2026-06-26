@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
 from ..services import sessions as svc
@@ -15,9 +15,9 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 class CreateSessionBody(BaseModel):
-    space_kind: str  # 'personal' | 'class'
+    space_kind: str = Field(pattern="^(personal|class)$")
     space_ref: str | None = None  # class id for class; defaults to owner for personal
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=200)
 
 
 @router.post("", status_code=201)

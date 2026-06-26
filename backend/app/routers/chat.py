@@ -22,7 +22,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
 from ..services import gemini
@@ -32,10 +32,12 @@ from ..services.supabase_client import UserClient
 logger = logging.getLogger("nodi.chat")
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+QUESTION_MAX_CHARS = 8000
+
 
 class ChatStreamBody(BaseModel):
     session_id: str
-    question: str
+    question: str = Field(min_length=1, max_length=QUESTION_MAX_CHARS)
     parent_node_id: str | None = None
 
 
@@ -53,10 +55,19 @@ async def chat_stream(
     # Validate access + resolve context BEFORE streaming so auth/404 errors are
     # plain HTTP responses (not mid-stream SSE errors).
     session = await svc.get_session(client, body.session_id)
+
+    # Only the session OWNER may write nodes. Reject up front (saves AI tokens):
+    # a class teacher can SELECT a class session but must not stream into it.
+    if session.get("owner_id") != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the session owner can chat in this session.",
+        )
+
     parent_id = body.parent_node_id or session.get("current_head_id")
     nodes = await svc.get_session_nodes(client, body.session_id)
     history = svc.assemble_history(nodes, parent_id)
-    set_root = parent_id is None and not session.get("root_node_id")
+    existing_root = session.get("root_node_id")
 
     async def event_stream():
         yield _sse(
@@ -68,39 +79,44 @@ async def chat_stream(
             async for delta in gemini.stream_answer(history, body.question):
                 answer_parts.append(delta)
                 yield _sse("token", {"delta": delta})
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - details go to logs, not the client
             logger.exception("Gemini streaming failed")
-            yield _sse("error", {"detail": f"AI streaming failed: {exc}"})
+            yield _sse("error", {"detail": "AI 응답 생성에 실패했습니다."})
             return
 
-        answer = "".join(answer_parts)
-        try:
-            node = await svc.create_node(
-                client, body.session_id, parent_id, body.question, answer
+        answer = "".join(answer_parts).strip()
+        if not answer:
+            # Empty answer (e.g. safety block / no tokens): do NOT persist a
+            # blank node or advance the head — leave the tree unchanged.
+            logger.warning(
+                "Empty answer for session=%s; skipping node save.",
+                body.session_id,
             )
-            await svc.advance_head(client, body.session_id, node["id"], set_root)
+            yield _sse("error", {"detail": "응답을 생성하지 못했습니다."})
+            return
 
+        try:
+            # Label first (best-effort, None on failure) so node insert + head
+            # advance + label are one atomic RPC transaction.
             label = await gemini.generate_label(body.question, answer)
-            if label:
-                await svc.set_node_label(client, node["id"], label)
-
+            node = await svc.append_node(
+                client, body.session_id, parent_id, body.question, answer, label
+            )
             yield _sse(
                 "done",
                 {
                     "node": {
                         "id": node["id"],
                         "parent_id": node.get("parent_id"),
-                        "label": label,
+                        "label": node.get("label"),
                     },
                     "current_head_id": node["id"],
-                    "root_node_id": node["id"]
-                    if set_root
-                    else session.get("root_node_id"),
+                    "root_node_id": existing_root or node["id"],
                 },
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - details go to logs, not the client
             logger.exception("Persisting node failed")
-            yield _sse("error", {"detail": f"Failed to save node: {exc}"})
+            yield _sse("error", {"detail": "답변 저장에 실패했습니다."})
 
     return StreamingResponse(
         event_stream(),
