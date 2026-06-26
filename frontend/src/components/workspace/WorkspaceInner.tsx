@@ -8,6 +8,7 @@ import { useWorkspaceChat } from "@/lib/useWorkspaceChat";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type { SessionDetail } from "@/lib/types";
 import { SessionList } from "./SessionList";
+import { FilesPanel } from "./FilesPanel";
 import { ChatPanel } from "./ChatPanel";
 import { SessionGraph } from "./SessionGraph";
 
@@ -140,7 +141,10 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_380px]">
-        <SessionList target={target} />
+        <div className="flex min-h-0 flex-col border-r border-accent-border/30">
+          <SessionList target={target} />
+          <FilesPanel target={target} />
+        </div>
         <div className="flex min-h-0 flex-col border-x border-accent-border/30">
           <ChatPanel chat={chat} />
         </div>

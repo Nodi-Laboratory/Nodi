@@ -169,6 +169,31 @@ export interface OverseerDoneEvent {
   actions: OverseerAction[];
 }
 
+// ── Stage 3b: 파일 / RAG ─────────────────────────────────────────────
+
+export type FileStatus =
+  | "uploaded"
+  | "splitting"
+  | "embedding"
+  | "indexed"
+  | "partial"
+  | "failed";
+
+export interface FileRow {
+  id: string;
+  kind?: string | null;
+  name?: string | null;
+  filename?: string | null;
+  storage_path?: string | null;
+  mime?: string | null;
+  size_bytes: number | null;
+  status: FileStatus;
+  chunk_total: number | null;
+  chunk_done: number | null;
+  error?: string | null;
+  created_at: string;
+}
+
 // ── Stage 4c: 관리자 ─────────────────────────────────────────────────
 
 export type UserRole = "student" | "teacher" | "admin";

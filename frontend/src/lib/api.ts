@@ -9,6 +9,7 @@ import type {
   ChatStartEvent,
   ConnectionResponse,
   CooccurrenceRow,
+  FileRow,
   HomeSuggestions,
   HomeSummary,
   OverseerDoneEvent,
@@ -36,6 +37,16 @@ async function authHeaders(json = false): Promise<Record<string, string>> {
   return headers;
 }
 
+/** HTTP 상태 코드를 보존하는 에러(503 등 분기용). */
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function ensureOk(res: Response): Promise<Response> {
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
@@ -45,7 +56,7 @@ async function ensureOk(res: Response): Promise<Response> {
     } catch {
       /* ignore */
     }
-    throw new Error(detail);
+    throw new ApiError(res.status, detail);
   }
   return res;
 }
@@ -136,6 +147,43 @@ export async function deleteNode(id: string): Promise<void> {
       headers: await authHeaders(),
     }),
   );
+}
+
+// ── 파일 / RAG (Stage 3b) ────────────────────────────────────────────
+
+/** 멀티파트 업로드. service_role 미설정 시 백엔드 503. (Content-Type 미지정 — FormData가 boundary 설정) */
+export async function uploadFile(
+  target: SpaceTarget,
+  file: File,
+): Promise<FileRow> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("space_kind", target.space_kind);
+  if (target.space_ref) form.append("space_ref", target.space_ref);
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/files`, {
+      method: "POST",
+      headers: await authHeaders(), // json=false → Content-Type 없음
+      body: form,
+    }),
+  );
+  return res.json();
+}
+
+export async function listFiles(target: SpaceTarget): Promise<FileRow[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/files?${spaceParams(target).toString()}`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+export async function getFile(id: string): Promise<FileRow> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/files/${id}`, { headers: await authHeaders() }),
+  );
+  return res.json();
 }
 
 // ── 노드 기억 연결 (Stage 3a) ────────────────────────────────────────
