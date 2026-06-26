@@ -1,8 +1,19 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { getSession, listSessions, type SpaceTarget } from "@/lib/api";
-import type { SessionDetail, SessionRow } from "@/lib/types";
+import {
+  getSession,
+  listCooccurrence,
+  listSessions,
+  listTags,
+  type SpaceTarget,
+} from "@/lib/api";
+import type {
+  CooccurrenceRow,
+  SessionDetail,
+  SessionRow,
+  TagRow,
+} from "@/lib/types";
 
 export function sessionsKey(target: SpaceTarget) {
   return ["sessions", target.space_kind, target.space_ref ?? null] as const;
@@ -10,6 +21,14 @@ export function sessionsKey(target: SpaceTarget) {
 
 export function sessionKey(sessionId: string | null) {
   return ["session", sessionId] as const;
+}
+
+export function tagsKey(target: SpaceTarget) {
+  return ["tags", target.space_kind, target.space_ref ?? null] as const;
+}
+
+export function cooccurrenceKey(target: SpaceTarget) {
+  return ["cooccurrence", target.space_kind, target.space_ref ?? null] as const;
 }
 
 /** 현재 공간의 세션 목록 (updated_at desc, 백엔드 정렬). */
@@ -26,5 +45,21 @@ export function useSessionDetail(sessionId: string | null) {
     queryKey: sessionKey(sessionId),
     queryFn: () => getSession(sessionId as string),
     enabled: !!sessionId,
+  });
+}
+
+/** 현재 공간의 개념 태그 (usage_count desc). */
+export function useTags(target: SpaceTarget) {
+  return useQuery<TagRow[]>({
+    queryKey: tagsKey(target),
+    queryFn: () => listTags(target),
+  });
+}
+
+/** 현재 공간의 태그 co-occurrence (count desc). */
+export function useCooccurrence(target: SpaceTarget) {
+  return useQuery<CooccurrenceRow[]>({
+    queryKey: cooccurrenceKey(target),
+    queryFn: () => listCooccurrence(target),
   });
 }

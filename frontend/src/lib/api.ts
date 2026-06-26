@@ -1,10 +1,13 @@
 import { createClient } from "@/lib/supabase/client";
 import type {
   ChatDoneEvent,
+  ChatNavigatorEvent,
   ChatStartEvent,
+  CooccurrenceRow,
   SessionDetail,
   SessionRow,
   SpaceKind,
+  TagRow,
 } from "@/lib/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -86,6 +89,45 @@ export async function getSession(id: string): Promise<SessionDetail> {
   return res.json();
 }
 
+// ── 개념 태그 (Stage 2) ──────────────────────────────────────────────
+
+function spaceParams(target: SpaceTarget): URLSearchParams {
+  const params = new URLSearchParams({ space_kind: target.space_kind });
+  if (target.space_ref) params.set("space_ref", target.space_ref);
+  return params;
+}
+
+export async function listTags(target: SpaceTarget): Promise<TagRow[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/tags?${spaceParams(target).toString()}`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+export async function listCooccurrence(
+  target: SpaceTarget,
+): Promise<CooccurrenceRow[]> {
+  const res = await ensureOk(
+    await fetch(
+      `${API_BASE}/tags/cooccurrence?${spaceParams(target).toString()}`,
+      { headers: await authHeaders() },
+    ),
+  );
+  return res.json();
+}
+
+/** 네비게이터(is_navigator) 노드 삭제. 204 반환. */
+export async function deleteNode(id: string): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/nodes/${id}`, {
+      method: "DELETE",
+      headers: await authHeaders(),
+    }),
+  );
+}
+
 // ── SSE 스트리밍 채팅 ────────────────────────────────────────────────
 // EventSource는 Authorization 헤더를 못 실으므로 fetch + ReadableStream 파싱.
 
@@ -99,6 +141,7 @@ export interface ChatStreamHandlers {
   onStart?: (data: ChatStartEvent) => void;
   onToken?: (delta: string) => void;
   onDone?: (data: ChatDoneEvent) => void;
+  onNavigator?: (data: ChatNavigatorEvent) => void;
   onError?: (detail: string) => void;
 }
 
@@ -129,6 +172,9 @@ function dispatchFrame(frame: string, handlers: ChatStreamHandlers) {
       break;
     case "done":
       handlers.onDone?.(data as unknown as ChatDoneEvent);
+      break;
+    case "navigator":
+      handlers.onNavigator?.(data as unknown as ChatNavigatorEvent);
       break;
     case "error":
       handlers.onError?.((data.detail as string) ?? "스트리밍 오류");

@@ -20,6 +20,10 @@ NODE_SELECT = (
     "id,session_id,parent_id,question,answer,label,is_navigator,"
     "navigator_question,position_x,position_y,created_at"
 )
+# Same, plus the node's concept tags embedded (PostgREST nested select). RLS
+# (node_tags select via can_access_session, tags select via owner) keeps it to
+# the caller's own tags.
+NODE_SELECT_WITH_TAGS = NODE_SELECT + ",node_tags(tags(id,name))"
 SESSION_SELECT = (
     "id,owner_id,space_kind,space_ref,title,emoji,root_node_id,"
     "current_head_id,created_at,updated_at"
@@ -94,17 +98,32 @@ async def get_session(client: UserClient, session_id: str) -> dict[str, Any]:
     return rows[0]
 
 
+def _flatten_node_tags(node: dict[str, Any]) -> dict[str, Any]:
+    """Turn the embedded node_tags(tags(...)) into a flat `tags` name array."""
+    embedded = node.pop("node_tags", None) or []
+    names: list[str] = []
+    for link in embedded:
+        tag = (link or {}).get("tags") if isinstance(link, dict) else None
+        if isinstance(tag, dict) and tag.get("name"):
+            names.append(tag["name"])
+    node["tags"] = names
+    return node
+
+
 async def get_session_nodes(
-    client: UserClient, session_id: str
+    client: UserClient, session_id: str, with_tags: bool = False
 ) -> list[dict[str, Any]]:
-    return await client.select(
+    rows = await client.select(
         "nodes",
         {
             "session_id": f"eq.{session_id}",
-            "select": NODE_SELECT,
+            "select": NODE_SELECT_WITH_TAGS if with_tags else NODE_SELECT,
             "order": "created_at.asc",
         },
     )
+    if with_tags:
+        return [_flatten_node_tags(r) for r in rows]
+    return rows
 
 
 # ----------------------------------------------------------------------------

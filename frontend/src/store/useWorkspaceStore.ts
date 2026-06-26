@@ -9,15 +9,20 @@ import { create } from "zustand";
 interface WorkspaceState {
   activeSessionId: string | null;
   activeNodeId: string | null;
+  /** 마지막으로 진입한 공간(spaceId). 개념 노드 페이지가 어느 공간을 보일지 결정. */
+  activeSpaceId: string;
   setActiveSession: (id: string | null) => void;
   setActiveNode: (id: string | null) => void;
+  setActiveSpace: (spaceId: string) => void;
   reset: () => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   activeSessionId: null,
   activeNodeId: null,
+  activeSpaceId: "personal",
   setActiveSession: (id) => set({ activeSessionId: id, activeNodeId: null }),
   setActiveNode: (id) => set({ activeNodeId: id }),
+  setActiveSpace: (spaceId) => set({ activeSpaceId: spaceId }),
   reset: () => set({ activeSessionId: null, activeNodeId: null }),
 }));

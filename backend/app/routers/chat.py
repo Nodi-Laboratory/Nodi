@@ -8,25 +8,38 @@ Flow (architecture.md §4):
      auto-label (<=10 chars), and report the node in the `done` event.
 
 SSE event schema:
-  event: start  data: {"session_id","parent_node_id"}
-  event: token  data: {"delta"}
-  event: done   data: {"node":{"id","parent_id","label"},
-                        "current_head_id","root_node_id"}
-  event: error  data: {"detail"}
+  event: start      data: {"session_id","parent_node_id"}
+  event: token      data: {"delta"}
+  event: done       data: {"node":{"id","parent_id","label","tags":[...]},
+                           "current_head_id","root_node_id"}
+  event: navigator  data: {"nodes":[{"id","parent_id","navigator_question"}]}
+  event: error      data: {"detail"}
+
+Tagging (Stage 2 Part A): after the node is persisted, concept tags are
+attached and returned INLINE in the `done` event (node.tags). Label and tag
+extraction run concurrently to limit added latency; tagging is best-effort
+(failure -> empty tags, never an error).
+
+Navigator (Stage 2 Part B): after `done`, a gate may fire and create waiting
+is_navigator nodes; when it does, a separate `navigator` event carries them.
+Generated INLINE (not a background job) under the caller's JWT — see
+services/navigator.py for the rationale. Best-effort: never blocks the turn.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
-from ..services import gemini
+from ..services import gemini, navigator
 from ..services import sessions as svc
+from ..services import tagging
 from ..services.supabase_client import UserClient
 
 logger = logging.getLogger("nodi.chat")
@@ -96,12 +109,25 @@ async def chat_stream(
             return
 
         try:
-            # Label first (best-effort, None on failure) so node insert + head
-            # advance + label are one atomic RPC transaction.
-            label = await gemini.generate_label(body.question, answer)
+            # Label + concept extraction run concurrently (both read Q+A only).
+            # Label (best-effort, None on failure) is needed for the atomic node
+            # insert; tag names are linked right after we have the node id.
+            label, tag_names = await asyncio.gather(
+                gemini.generate_label(body.question, answer),
+                tagging.extract_concepts(body.question, answer),
+            )
             node = await svc.append_node(
                 client, body.session_id, parent_id, body.question, answer, label
             )
+            # Best-effort: reuse-or-create + link tags. A tag failure must NOT
+            # turn into a "save failed" — the node is already persisted.
+            try:
+                tags = await tagging.apply_node_tags(
+                    client, node["id"], body.session_id, tag_names
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Tag application failed for node=%s", node["id"])
+                tags = []
             yield _sse(
                 "done",
                 {
@@ -109,11 +135,25 @@ async def chat_stream(
                         "id": node["id"],
                         "parent_id": node.get("parent_id"),
                         "label": node.get("label"),
+                        "tags": tags,
                     },
                     "current_head_id": node["id"],
                     "root_node_id": existing_root or node["id"],
                 },
             )
+
+            # Navigator gate (best-effort, INLINE — see services/navigator.py).
+            # Runs AFTER `done` so the answer is already shown; only fires when
+            # the branch matured. A failure here never affects the saved node.
+            try:
+                all_nodes = await svc.get_session_nodes(client, body.session_id)
+                nav_nodes = await navigator.maybe_generate(
+                    client, user.id, body.session_id, node["id"], all_nodes
+                )
+                if nav_nodes:
+                    yield _sse("navigator", {"nodes": nav_nodes})
+            except Exception:  # noqa: BLE001 - navigator is optional
+                logger.exception("Navigator generation failed")
         except Exception:  # noqa: BLE001 - details go to logs, not the client
             logger.exception("Persisting node failed")
             yield _sse("error", {"detail": "답변 저장에 실패했습니다."})

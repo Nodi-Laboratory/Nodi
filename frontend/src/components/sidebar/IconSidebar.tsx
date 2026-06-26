@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Settings, type LucideIcon } from "lucide-react";
+import { Home, Settings, TreeDeciduous, type LucideIcon } from "lucide-react";
 import { useMyClasses, useProfile } from "@/lib/hooks";
 
 /**
@@ -126,6 +126,16 @@ export function IconSidebar() {
           );
         })}
       </div>
+
+      <div className="my-1 h-px w-8 bg-white/10" />
+
+      {/* 개념 나무 페이지 */}
+      <NavIcon
+        href="/concepts"
+        label="개념 나무"
+        icon={TreeDeciduous}
+        active={isActive("/concepts")}
+      />
 
       {/* 프로필·설정 (하단 고정) */}
       <div className="mt-auto flex flex-col items-center gap-1">

@@ -32,8 +32,24 @@ class Settings(BaseSettings):
     # Runtime override (admin) lands in a later stage; static config for now.
     gemini_chat_model: str = "gemini-2.5-flash"
     gemini_label_model: str = "gemini-2.5-flash-lite"
+    # Concept tagging uses the same lightweight tier by default.
+    gemini_tag_model: str = "gemini-2.5-flash-lite"
     # Hard cap on auto-generated node labels (design: <= 10 chars).
     node_label_max_chars: int = 10
+    # Auto concept tags per node (design: 1..3).
+    max_tags_per_node: int = 3
+
+    # --- Navigator (architecture §7; admin-tunable later) ---
+    gemini_navigator_model: str = "gemini-2.5-flash"
+    navigator_question_count: int = 3  # questions per navigator fire
+    navigator_gate_k: int = 3  # min real nodes on the branch to consider firing
+    navigator_gate_c: int = 1  # min shared tags on the branch to fire
+    # Space firings along a branch: eligible at K, K+period, K+2*period, ...
+    navigator_period: int = 3
+
+    # --- ReAct budget (runaway guard) ---
+    react_max_steps: int = 5
+    react_max_tokens: int = 100_000
 
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).
