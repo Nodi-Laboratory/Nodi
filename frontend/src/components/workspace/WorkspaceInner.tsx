@@ -24,6 +24,9 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
   const activeSessionId = useWorkspaceStore((s) => s.activeSessionId);
   const activeNodeId = useWorkspaceStore((s) => s.activeNodeId);
   const setActiveNode = useWorkspaceStore((s) => s.setActiveNode);
+  const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
+  const pendingSession = useWorkspaceStore((s) => s.pendingSession);
+  const setPendingSession = useWorkspaceStore((s) => s.setPendingSession);
 
   // 공간 진입 시 선택 상태 초기화 + 활성 공간 기록(개념 페이지가 참조)
   useEffect(() => {
@@ -32,6 +35,33 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
   }, [reset, setActiveSpace, spaceId]);
 
   const chat = useWorkspaceChat(target);
+
+  // 홈에서 넘긴 보류 작업 소비: 세션 선택(+ 시드 질문 전송)
+  // 같은 커밋의 reset effect가 store.activeSessionId를 null로 만들 수 있으므로,
+  // stale 클로저(activeSessionId) 대신 store의 현재값(getState)을 비교해 선택 누락을 막는다.
+  useEffect(() => {
+    if (!pendingSession || pendingSession.spaceId !== spaceId) return;
+    const current = useWorkspaceStore.getState().activeSessionId;
+    if (current !== pendingSession.sessionId) {
+      setActiveSession(pendingSession.sessionId);
+      return;
+    }
+    if (pendingSession.seed) {
+      if (chat.streaming) return;
+      const seed = pendingSession.seed;
+      setPendingSession(null);
+      void chat.send(seed, null);
+    } else {
+      setPendingSession(null);
+    }
+  }, [
+    pendingSession,
+    spaceId,
+    activeSessionId,
+    chat,
+    setActiveSession,
+    setPendingSession,
+  ]);
 
   const { data: detail } = useSessionDetail(activeSessionId);
   const nodes = useMemo(() => detail?.nodes ?? [], [detail?.nodes]);

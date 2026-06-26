@@ -5,6 +5,9 @@ import type {
   ChatStartEvent,
   ConnectionResponse,
   CooccurrenceRow,
+  HomeSuggestions,
+  HomeSummary,
+  OverseerDoneEvent,
   SessionDetail,
   SessionRow,
   SpaceKind,
@@ -177,53 +180,41 @@ export interface ChatStreamHandlers {
   onError?: (detail: string) => void;
 }
 
-function dispatchFrame(frame: string, handlers: ChatStreamHandlers) {
+interface SSEEvent {
+  type: string;
+  data: Record<string, unknown>;
+}
+
+function parseFrame(frame: string): SSEEvent | null {
   let eventName = "message";
   const dataLines: string[] = [];
   for (const line of frame.split("\n")) {
     if (line.startsWith("event:")) eventName = line.slice(6).trim();
     else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
   }
-  if (dataLines.length === 0) return;
-
+  if (dataLines.length === 0) return null;
   let data: Record<string, unknown> = {};
   try {
     data = JSON.parse(dataLines.join("\n"));
   } catch {
-    /* non-JSON keepalive: ignore */
-    return;
+    return null; // non-JSON keepalive
   }
-
   const type = eventName !== "message" ? eventName : (data.type as string);
-  switch (type) {
-    case "start":
-      handlers.onStart?.(data as unknown as ChatStartEvent);
-      break;
-    case "token":
-      handlers.onToken?.((data.delta as string) ?? "");
-      break;
-    case "done":
-      handlers.onDone?.(data as unknown as ChatDoneEvent);
-      break;
-    case "navigator":
-      handlers.onNavigator?.(data as unknown as ChatNavigatorEvent);
-      break;
-    case "error":
-      handlers.onError?.((data.detail as string) ?? "스트리밍 오류");
-      break;
-    default:
-      break;
-  }
+  if (!type) return null;
+  return { type, data };
 }
 
-export async function streamChat(
-  body: ChatStreamBody,
-  handlers: ChatStreamHandlers,
+/** 공통 SSE 소비기: POST 후 ReadableStream을 프레임 단위로 onEvent에 전달. */
+async function consumeSSE(
+  path: string,
+  body: unknown,
+  onEvent: (ev: SSEEvent) => void,
+  onError: (detail: string) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/chat/stream`, {
+    res = await fetch(`${API_BASE}${path}`, {
       method: "POST",
       headers: await authHeaders(true),
       body: JSON.stringify(body),
@@ -231,7 +222,7 @@ export async function streamChat(
     });
   } catch (e) {
     if ((e as Error).name === "AbortError") return;
-    handlers.onError?.("서버에 연결할 수 없습니다.");
+    onError("서버에 연결할 수 없습니다.");
     return;
   }
 
@@ -242,7 +233,7 @@ export async function streamChat(
     } catch {
       /* ignore */
     }
-    handlers.onError?.(detail);
+    onError(detail);
     return;
   }
 
@@ -257,17 +248,113 @@ export async function streamChat(
       buffer += decoder.decode(value, { stream: true });
 
       let sep: number;
-      // SSE 프레임은 빈 줄(\n\n)로 구분
       while ((sep = buffer.indexOf("\n\n")) !== -1) {
         const frame = buffer.slice(0, sep).replace(/\r/g, "");
         buffer = buffer.slice(sep + 2);
-        if (frame.trim()) dispatchFrame(frame, handlers);
+        if (frame.trim()) {
+          const ev = parseFrame(frame);
+          if (ev) onEvent(ev);
+        }
       }
     }
-    if (buffer.trim()) dispatchFrame(buffer.replace(/\r/g, ""), handlers);
+    if (buffer.trim()) {
+      const ev = parseFrame(buffer.replace(/\r/g, ""));
+      if (ev) onEvent(ev);
+    }
   } catch (e) {
     if ((e as Error).name !== "AbortError") {
-      handlers.onError?.("스트리밍이 중단되었습니다.");
+      onError("스트리밍이 중단되었습니다.");
     }
   }
+}
+
+export async function streamChat(
+  body: ChatStreamBody,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  await consumeSSE(
+    "/chat/stream",
+    body,
+    (ev) => {
+      switch (ev.type) {
+        case "start":
+          handlers.onStart?.(ev.data as unknown as ChatStartEvent);
+          break;
+        case "token":
+          handlers.onToken?.((ev.data.delta as string) ?? "");
+          break;
+        case "done":
+          handlers.onDone?.(ev.data as unknown as ChatDoneEvent);
+          break;
+        case "navigator":
+          handlers.onNavigator?.(ev.data as unknown as ChatNavigatorEvent);
+          break;
+        case "error":
+          handlers.onError?.((ev.data.detail as string) ?? "스트리밍 오류");
+          break;
+      }
+    },
+    (d) => handlers.onError?.(d),
+    signal,
+  );
+}
+
+// ── 홈 + 총괄 AI (Stage 4a) ──────────────────────────────────────────
+
+export async function getHomeSummary(
+  recentLimit = 8,
+  conceptLimit = 8,
+): Promise<HomeSummary> {
+  const params = new URLSearchParams({
+    recent_limit: String(recentLimit),
+    concept_limit: String(conceptLimit),
+  });
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/home/summary?${params.toString()}`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+export async function getHomeSuggestions(count = 3): Promise<HomeSuggestions> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/home/suggestions?count=${count}`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+export interface OverseerStreamHandlers {
+  onToken?: (delta: string) => void;
+  onDone?: (data: OverseerDoneEvent) => void;
+  onError?: (detail: string) => void;
+}
+
+export async function streamOverseer(
+  message: string,
+  handlers: OverseerStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  await consumeSSE(
+    "/overseer/stream",
+    { message },
+    (ev) => {
+      switch (ev.type) {
+        case "token":
+          handlers.onToken?.((ev.data.delta as string) ?? "");
+          break;
+        case "done":
+          handlers.onDone?.(ev.data as unknown as OverseerDoneEvent);
+          break;
+        case "error":
+          handlers.onError?.((ev.data.detail as string) ?? "스트리밍 오류");
+          break;
+      }
+    },
+    (d) => handlers.onError?.(d),
+    signal,
+  );
 }

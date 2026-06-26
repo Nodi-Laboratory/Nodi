@@ -7,6 +7,7 @@ No tools / ReAct / RAG here — that is Stage 2+.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator
 
@@ -131,3 +132,92 @@ async def generate_label(question: str, answer: str) -> str | None:
     except Exception as exc:  # noqa: BLE001 - labeling must never break chat
         logger.warning("Label generation failed: %s", exc)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Overseer (home, linear context) — architecture §7
+# ---------------------------------------------------------------------------
+_OVERSEER_INSTRUCTION = (
+    "You are nodi's overseer — the assistant on the home screen. You do NOT "
+    "answer the topic in depth; instead you help the user NAVIGATE their "
+    "workspaces and decide where to take a question. Use the workspace snapshot "
+    "below (spaces, recent sessions, top concepts, topic matches) to give a "
+    "short, friendly reply in the user's language. If the user asks a "
+    "substantive/concept question, suggest starting a NEW conversation for it; "
+    "if it relates to an existing session, point them there. Keep it concise; "
+    "the concrete buttons are provided separately by the app."
+)
+
+
+async def stream_overseer(snapshot: str, message: str) -> AsyncIterator[str]:
+    """Stream the overseer's short navigational reply (token events)."""
+    client = get_client()
+    system = _OVERSEER_INSTRUCTION + "\n\n[워크스페이스 스냅샷]\n" + snapshot
+    contents = [
+        types.Content(role="user", parts=[types.Part.from_text(text=message)])
+    ]
+    stream = await client.aio.models.generate_content_stream(
+        model=settings.gemini_chat_model,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+            max_output_tokens=600,
+        ),
+    )
+    async for chunk in stream:
+        if chunk.text:
+            yield chunk.text
+
+
+def _parse_json_array(raw: str, n: int) -> list[str]:
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        text = text[text.find("[") :] if "[" in text else text
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[str] = []
+    for item in data:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip().strip('"').strip())
+        if len(out) >= n:
+            break
+    return out
+
+
+async def generate_home_suggestions(
+    concepts: list[str], recent_titles: list[str], count: int
+) -> list[str]:
+    """Propose `count` starter questions from the user's concepts/activity.
+
+    Best-effort: returns [] on failure (home still renders without suggestions).
+    """
+    prompt = (
+        f"Propose exactly {count} SHORT, engaging starter questions a learner "
+        "might want to explore next, in the user's language. Base them on the "
+        "user's frequent concepts and recent activity. Make them specific and "
+        "distinct. Return ONLY a JSON array of strings.\n\n"
+        f"Frequent concepts: {', '.join(concepts) if concepts else '(none)'}\n"
+        f"Recent sessions: {', '.join(recent_titles) if recent_titles else '(none)'}"
+    )
+    try:
+        client = get_client()
+        resp = await client.aio.models.generate_content(
+            model=settings.gemini_navigator_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                max_output_tokens=400,
+                temperature=0.8,
+            ),
+        )
+        return _parse_json_array(resp.text or "", count)
+    except Exception as exc:  # noqa: BLE001 - suggestions are optional
+        logger.warning("Home suggestion generation failed: %s", exc)
+        return []

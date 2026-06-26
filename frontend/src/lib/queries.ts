@@ -2,6 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import {
+  getHomeSummary,
+  getHomeSuggestions,
   getSession,
   listCooccurrence,
   listSessions,
@@ -10,6 +12,8 @@ import {
 } from "@/lib/api";
 import type {
   CooccurrenceRow,
+  HomeSuggestions,
+  HomeSummary,
   SessionDetail,
   SessionRow,
   TagRow,
@@ -61,5 +65,21 @@ export function useCooccurrence(target: SpaceTarget) {
   return useQuery<CooccurrenceRow[]>({
     queryKey: cooccurrenceKey(target),
     queryFn: () => listCooccurrence(target),
+  });
+}
+
+/** 홈 요약(공간/최근 세션/상위 개념). */
+export function useHomeSummary() {
+  return useQuery<HomeSummary>({
+    queryKey: ["home", "summary"],
+    queryFn: () => getHomeSummary(),
+  });
+}
+
+/** 홈 질문 추천(3개). */
+export function useHomeSuggestions() {
+  return useQuery<HomeSuggestions>({
+    queryKey: ["home", "suggestions"],
+    queryFn: () => getHomeSuggestions(),
   });
 }

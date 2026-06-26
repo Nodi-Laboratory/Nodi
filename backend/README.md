@@ -35,6 +35,9 @@ uvicorn app.main:app --reload --port 8000
 - `DELETE /nodes/{id}` — delete a waiting navigator node (cleanup after click)
 - `POST /nodes/{id}/connections` — memory-link another owned branch node in
 - `DELETE /nodes/{id}/connections/{src}` — remove a memory link
+- `GET /home/summary` — spaces + recent sessions + top personal concepts
+- `GET /home/suggestions` — 3 starter questions (click -> new personal session)
+- `POST /overseer/stream` — overseer (home) SSE; `done` carries action buttons
 
 All DB access uses the caller's JWT (RLS, owner-only writes) — not service_role.
 
@@ -45,9 +48,14 @@ full chain), as a source-labelled reference block — see `services/memory.py`.
 ## AI layer (`app/ai/`)
 
 - `skills/` — one capability per file, auto-discovered into a `SKILLS` registry;
-  `catalog()` renders name+description for prompt injection.
+  `catalog()` renders name+description for prompt injection. Skills receive a
+  `SkillContext` (ctx=) with the caller's RLS client + identity.
+  Read-skills: `read_my_spaces`, `read_recent_sessions`, `read_top_concepts`,
+  `find_sessions_by_topic`; plus `generate_navigator_questions`.
 - `react.py` — minimal budgeted ReAct runner with best-effort `ai_sessions` /
-  `ai_steps` tracing. Skeleton; Stage 4 expands to the overseer + multi-step loop.
+  `ai_steps` tracing. The overseer (`services/overseer.py`) runs the read-skills
+  to build a workspace snapshot, then streams a navigational reply + action
+  buttons.
 
 ## Migrations
 
