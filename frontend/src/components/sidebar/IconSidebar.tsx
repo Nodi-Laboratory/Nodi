@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Settings, TreeDeciduous, type LucideIcon } from "lucide-react";
+import {
+  Home,
+  Settings,
+  Shield,
+  TreeDeciduous,
+  type LucideIcon,
+} from "lucide-react";
 import { useMyClasses, useProfile } from "@/lib/hooks";
 
 /**
@@ -136,6 +142,16 @@ export function IconSidebar() {
         icon={TreeDeciduous}
         active={isActive("/concepts")}
       />
+
+      {/* 관리자 콘솔 (admin role 전용) */}
+      {profile?.role === "admin" ? (
+        <NavIcon
+          href="/admin"
+          label="관리자 콘솔"
+          icon={Shield}
+          active={isActive("/admin")}
+        />
+      ) : null}
 
       {/* 프로필·설정 (하단 고정) */}
       <div className="mt-auto flex flex-col items-center gap-1">

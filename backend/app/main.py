@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .routers import (
+    admin,
     chat,
     health,
     home,
@@ -56,6 +57,7 @@ app.include_router(nodes.router)
 app.include_router(chat.router)
 app.include_router(home.router)
 app.include_router(overseer.router)
+app.include_router(admin.router)
 
 
 @app.get("/", tags=["health"])

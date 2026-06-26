@@ -168,3 +168,61 @@ export type OverseerAction =
 export interface OverseerDoneEvent {
   actions: OverseerAction[];
 }
+
+// ── Stage 4c: 관리자 ─────────────────────────────────────────────────
+
+export type UserRole = "student" | "teacher" | "admin";
+
+export interface AdminUser {
+  id: string;
+  email: string | null;
+  role: UserRole | string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  created_at: string;
+}
+
+export interface AdminSetting {
+  key: string;
+  value: unknown;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export interface AdminUsageUser {
+  owner_id: string;
+  email: string | null;
+  total_tokens: number;
+  step_count: number;
+}
+
+export interface AdminUsage {
+  partial: boolean;
+  note: string;
+  by_user: AdminUsageUser[];
+}
+
+export interface AdminLogStep {
+  seq: number;
+  thought: string | null;
+  skill: string | null;
+  input: unknown;
+  observation: unknown;
+  tokens: number | null;
+  created_at: string;
+}
+
+export interface AdminLogSession {
+  id: string;
+  owner_id: string;
+  session_id: string | null;
+  kind: string | null;
+  created_at: string;
+  ai_steps: AdminLogStep[];
+}
+
+export interface AdminLogsResponse {
+  limit: number;
+  offset: number;
+  sessions: AdminLogSession[];
+}
