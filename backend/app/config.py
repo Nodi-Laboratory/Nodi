@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     react_max_steps: int = 5
     react_max_tokens: int = 100_000
 
+    # --- Memory linking (Stage 3a) ---
+    # Cap imported (other-branch) nodes injected as reference context per turn.
+    memory_max_imported_nodes: int = 12
+    # Truncate each imported answer in the reference block (char budget).
+    memory_answer_char_cap: int = 400
+
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).
     jwt_audience: str = "authenticated"

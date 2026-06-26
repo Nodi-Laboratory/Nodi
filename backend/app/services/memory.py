@@ -1,0 +1,170 @@
+"""Node memory linking — LCA-aware imported context (Stage 3a).
+
+A node's `connections uuid[]` lists OTHER-branch nodes the user pulled into the
+current branch (architecture §4/§5). When assembling chat context we:
+
+  - gather the connections declared by any node on the current branch
+    (head -> root ancestor chain);
+  - for each connected node C:
+      * SAME session  -> find the LCA of C and the current head, and import only
+        the nodes BELOW the LCA on C's side (LCA excluded), i.e. what happened on
+        the other branch that the AI does not already know from the shared
+        ancestor chain;
+      * DIFFERENT session -> no shared ancestor, so import C's full chain
+        (root -> C) from that session;
+  - exclude anything already on the current branch, cap the total, and render a
+    SOURCE-LABELLED reference block injected separately from the live branch.
+
+Everything is best-effort: failure -> no imported context, never breaks chat.
+All reads use the caller's RLS-scoped client (own data only).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from ..config import get_settings
+from .supabase_client import UserClient
+
+logger = logging.getLogger("nodi.memory")
+settings = get_settings()
+
+_IMPORT_SELECT = "id,session_id,parent_id,question,answer,label,is_navigator"
+
+
+def _same_session_segment(
+    by_id: dict[str, dict[str, Any]],
+    current_chain_ids: set[str],
+    source_id: str,
+) -> list[dict[str, Any]]:
+    """Nodes from `source` up to (excluding) the LCA, returned top->source.
+
+    The LCA is the first ancestor of `source` that lies on the current branch.
+    """
+    seg: list[dict[str, Any]] = []
+    cursor = by_id.get(source_id)
+    guard = 0
+    while cursor is not None and guard < 10000:
+        if cursor["id"] in current_chain_ids:
+            break  # reached the LCA (shared ancestor) — exclude it and stop
+        seg.append(cursor)
+        cursor = by_id.get(cursor.get("parent_id"))
+        guard += 1
+    seg.reverse()  # chronological: just-below-LCA ... source
+    return seg
+
+
+def _full_chain(
+    by_id: dict[str, dict[str, Any]], source_id: str
+) -> list[dict[str, Any]]:
+    """Full ancestor chain root -> source (for a different session)."""
+    seg: list[dict[str, Any]] = []
+    cursor = by_id.get(source_id)
+    guard = 0
+    while cursor is not None and guard < 10000:
+        seg.append(cursor)
+        cursor = by_id.get(cursor.get("parent_id"))
+        guard += 1
+    seg.reverse()
+    return seg
+
+
+async def collect_imported_segments(
+    client: UserClient,
+    current_session_id: str,
+    current_chain: list[dict[str, Any]],
+    current_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return [{label, nodes:[...]}] of LCA-trimmed imported context, or []."""
+    chain_ids = {n["id"] for n in current_chain}
+
+    # Connections declared anywhere on the current branch (dedup, ordered).
+    conn_ids: list[str] = []
+    for n in current_chain:
+        for c in n.get("connections") or []:
+            if c and c not in conn_ids and c not in chain_ids:
+                conn_ids.append(c)
+    if not conn_ids:
+        return []
+
+    # Fetch the connected (source) nodes themselves.
+    sources = await client.select(
+        "nodes",
+        {"id": f"in.({','.join(conn_ids)})", "select": _IMPORT_SELECT},
+    )
+    if not sources:
+        return []
+
+    # For sources in OTHER sessions, fetch each session's nodes once to walk.
+    other_session_ids = {
+        s["session_id"] for s in sources if s["session_id"] != current_session_id
+    }
+    other_by_session: dict[str, dict[str, dict[str, Any]]] = {}
+    for sid in other_session_ids:
+        rows = await client.select(
+            "nodes",
+            {"session_id": f"eq.{sid}", "select": _IMPORT_SELECT},
+        )
+        other_by_session[sid] = {r["id"]: r for r in rows}
+
+    segments: list[dict[str, Any]] = []
+    budget = settings.memory_max_imported_nodes
+    for src in sources:
+        if budget <= 0:
+            break
+        if src["session_id"] == current_session_id:
+            seg = _same_session_segment(current_by_id, chain_ids, src["id"])
+            label = "같은 세션의 다른 분기"
+        else:
+            seg = _full_chain(other_by_session.get(src["session_id"], {}), src["id"])
+            label = "다른 세션"
+        # Real nodes only; nothing already on the current branch.
+        seg = [
+            n
+            for n in seg
+            if not n.get("is_navigator") and n["id"] not in chain_ids
+        ]
+        if not seg:
+            continue
+        seg = seg[:budget]
+        budget -= len(seg)
+        segments.append({"label": label, "nodes": seg})
+
+    return segments
+
+
+def build_reference_text(segments: list[dict[str, Any]]) -> str:
+    """Render source-labelled reference blocks for prompt injection."""
+    cap = settings.memory_answer_char_cap
+    blocks: list[str] = []
+    for seg in segments:
+        lines = [f"[{seg['label']}에서 가져온 참고 내용]"]
+        for n in seg["nodes"]:
+            q = (n.get("question") or "").strip()
+            a = (n.get("answer") or "").strip()[:cap]
+            if q:
+                lines.append(f"Q: {q}")
+            if a:
+                lines.append(f"A: {a}")
+        if len(lines) > 1:
+            blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+async def build_reference_context(
+    client: UserClient,
+    current_session_id: str,
+    current_chain: list[dict[str, Any]],
+    current_by_id: dict[str, dict[str, Any]],
+) -> str | None:
+    """Best-effort: assemble the imported reference text, or None."""
+    try:
+        segments = await collect_imported_segments(
+            client, current_session_id, current_chain, current_by_id
+        )
+        text = build_reference_text(segments)
+        return text or None
+    except Exception:  # noqa: BLE001 - memory linking must never break chat
+        logger.exception("Imported context assembly failed")
+        return None

@@ -37,7 +37,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
-from ..services import gemini, navigator
+from ..services import gemini, memory, navigator
 from ..services import sessions as svc
 from ..services import tagging
 from ..services.supabase_client import UserClient
@@ -79,7 +79,17 @@ async def chat_stream(
 
     parent_id = body.parent_node_id or session.get("current_head_id")
     nodes = await svc.get_session_nodes(client, body.session_id)
-    history = svc.assemble_history(nodes, parent_id)
+    chain = svc.ancestor_chain_nodes(nodes, parent_id)
+    history = [
+        (n.get("question") or "", n.get("answer") or "")
+        for n in chain
+        if not n.get("is_navigator")
+    ]
+    # Imported other-branch context via node connections (LCA-trimmed, Stage 3a).
+    # Best-effort: never blocks the turn.
+    reference_context = await memory.build_reference_context(
+        client, body.session_id, chain, {n["id"]: n for n in nodes}
+    )
     existing_root = session.get("root_node_id")
 
     async def event_stream():
@@ -89,7 +99,9 @@ async def chat_stream(
         )
         answer_parts: list[str] = []
         try:
-            async for delta in gemini.stream_answer(history, body.question):
+            async for delta in gemini.stream_answer(
+                history, body.question, reference_context=reference_context
+            ):
                 answer_parts.append(delta)
                 yield _sse("token", {"delta": delta})
         except Exception:  # noqa: BLE001 - details go to logs, not the client

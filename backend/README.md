@@ -33,8 +33,14 @@ uvicorn app.main:app --reload --port 8000
 - `GET /tags?space_kind=&space_ref=` — own concept tags in a space (most-used)
 - `GET /tags/cooccurrence?space_kind=&space_ref=` — co-attached tag pairs
 - `DELETE /nodes/{id}` — delete a waiting navigator node (cleanup after click)
+- `POST /nodes/{id}/connections` — memory-link another owned branch node in
+- `DELETE /nodes/{id}/connections/{src}` — remove a memory link
 
 All DB access uses the caller's JWT (RLS, owner-only writes) — not service_role.
+
+Memory linking (Stage 3a): a node's `connections uuid[]` is injected into chat
+context, LCA-trimmed (same session: shared ancestors excluded; other session:
+full chain), as a source-labelled reference block — see `services/memory.py`.
 
 ## AI layer (`app/ai/`)
 

@@ -52,6 +52,14 @@ export interface NodeRow {
   created_at: string;
   /** Stage 2: 해당 턴의 태그 이름들. 새로 만든 노드는 done.node.tags로 즉시 채움. */
   tags?: string[] | null;
+  /** Stage 3a: 이 노드가 가져온 source 노드 id들(기억 연결). */
+  connections?: string[] | null;
+}
+
+/** Stage 3a: 연결 add/remove 응답(갱신된 connections 배열). */
+export interface ConnectionResponse {
+  node_id: string;
+  connections: string[];
 }
 
 export interface SessionDetail {

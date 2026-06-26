@@ -20,6 +20,8 @@ interface Props {
   rootNodeId: string | null;
   activeNodeId: string | null;
   onNodeClick: (id: string) => void;
+  onConnectSource: (sourceId: string) => void;
+  onRemoveConnection: (targetId: string, sourceId: string) => void;
 }
 
 export function SessionGraph(props: Props) {
