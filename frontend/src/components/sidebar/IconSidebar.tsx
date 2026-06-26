@@ -3,22 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, Settings, type LucideIcon } from "lucide-react";
+import { useMyClasses, useProfile } from "@/lib/hooks";
 
 /**
  * 좌측 64px 아이콘 사이드바 (dark brown).
- * Stage 0: 라우팅/활성 표시 골격만. 공간 전환은 더미 버튼(실제 공간 데이터는 이후 단계).
- *
- * 항목: [홈 진입] · [공간 전환: 개인/학급A/학급B] · [프로필·설정]
+ * 항목: [홈 진입] · [공간 전환: 개인 + 가입 학급] · [프로필·설정]
+ * 공간은 실제 데이터(개인 + class_members→classes). 미로그인/로딩 시에도 셸이 깨지지 않음.
  */
-
-type SpaceItem = { id: string; label: string; short: string };
-
-// Stage 0 더미 공간 목록 (실제로는 개인 + 가입 학급을 서버에서 로드)
-const DUMMY_SPACES: SpaceItem[] = [
-  { id: "personal", label: "개인 공간", short: "개인" },
-  { id: "classA", label: "학급 A", short: "A" },
-  { id: "classB", label: "학급 B", short: "B" },
-];
 
 function NavIcon({
   href,
@@ -51,8 +42,45 @@ function NavIcon({
   );
 }
 
+function SpaceBadge({
+  href,
+  label,
+  short,
+  active,
+}: {
+  href: string;
+  label: string;
+  short: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      title={`공간 전환: ${label}`}
+      aria-label={`공간 전환: ${label}`}
+      aria-current={active ? "page" : undefined}
+      className={`flex h-10 w-10 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
+        active
+          ? "border-accent-deep bg-accent text-accent-fg"
+          : "border-white/15 text-sidebar-fg hover:border-accent-deep hover:text-sidebar-fg-active"
+      }`}
+    >
+      {short}
+    </Link>
+  );
+}
+
+function initials(name: string | null | undefined, fallback: string) {
+  const trimmed = name?.trim();
+  if (!trimmed) return fallback;
+  return trimmed.slice(0, 1).toUpperCase();
+}
+
 export function IconSidebar() {
   const pathname = usePathname();
+  const { data: profile } = useProfile();
+  const { data: myClasses = [] } = useMyClasses();
+
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
 
@@ -72,47 +100,53 @@ export function IconSidebar() {
       </Link>
 
       {/* 홈 진입 */}
-      <NavIcon
-        href="/home"
-        label="홈"
-        icon={Home}
-        active={isActive("/home")}
-      />
+      <NavIcon href="/home" label="홈" icon={Home} active={isActive("/home")} />
 
       <div className="my-1 h-px w-8 bg-white/10" />
 
-      {/* 공간 전환 (개인/학급A/학급B) — Stage 0 더미 */}
-      <div className="flex flex-col items-center gap-2">
-        {DUMMY_SPACES.map((space) => {
-          const href = `/space/${space.id}`;
-          const active = isActive(href);
+      {/* 공간 전환: 개인 + 가입 학급 */}
+      <div className="flex flex-col items-center gap-2 overflow-y-auto">
+        <SpaceBadge
+          href="/space/personal"
+          label="개인 공간"
+          short="개인"
+          active={isActive("/space/personal")}
+        />
+        {myClasses.map((m) => {
+          const href = `/space/${m.class_id}`;
+          const label = m.classes?.name ?? "학급";
           return (
-            <Link
-              key={space.id}
+            <SpaceBadge
+              key={m.class_id}
               href={href}
-              title={`공간 전환: ${space.label}`}
-              aria-label={`공간 전환: ${space.label}`}
-              aria-current={active ? "page" : undefined}
-              className={`flex h-10 w-10 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
-                active
-                  ? "border-accent-deep bg-accent text-accent-fg"
-                  : "border-white/15 text-sidebar-fg hover:border-accent-deep hover:text-sidebar-fg-active"
-              }`}
-            >
-              {space.short}
-            </Link>
+              label={label}
+              short={initials(m.classes?.name, "반")}
+              active={isActive(href)}
+            />
           );
         })}
       </div>
 
       {/* 프로필·설정 (하단 고정) */}
-      <div className="mt-auto">
+      <div className="mt-auto flex flex-col items-center gap-1">
         <NavIcon
           href="/profile"
-          label="프로필·설정"
+          label={
+            profile?.display_name
+              ? `프로필·설정 (${profile.display_name})`
+              : "프로필·설정"
+          }
           icon={Settings}
           active={isActive("/profile")}
         />
+        {profile?.display_name ? (
+          <span
+            title={profile.display_name}
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold text-sidebar-fg-active"
+          >
+            {initials(profile.display_name, "나")}
+          </span>
+        ) : null}
       </div>
     </nav>
   );
