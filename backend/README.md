@@ -39,6 +39,12 @@ uvicorn app.main:app --reload --port 8000
 - `GET /home/suggestions` — 3 starter questions (click -> new personal session)
 - `POST /overseer/stream` — overseer (home) SSE; `done` carries action buttons
 
+Admin (all require app role `admin`; admin RLS / RPCs in migration 0008):
+- `GET /admin/users` · `POST /admin/users/{id}/role` (role change via RPC)
+- `GET /admin/settings` · `PUT /admin/settings/{key}` (runtime app_settings)
+- `GET /admin/usage` (per-user token totals — PARTIAL: skill-step tokens only)
+- `GET /admin/logs?user_id=&limit=&offset=` (ai_sessions + embedded ai_steps)
+
 All DB access uses the caller's JWT (RLS, owner-only writes) — not service_role.
 
 Memory linking (Stage 3a): a node's `connections uuid[]` is injected into chat

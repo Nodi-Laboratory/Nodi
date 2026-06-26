@@ -244,6 +244,22 @@ def require_role(*allowed_roles: str):
     return _guard
 
 
+async def require_admin(
+    profile: Profile = Depends(get_current_profile),
+) -> Profile:
+    """Guard for admin-only endpoints (app role 'admin'). 403 otherwise.
+
+    The app role lives in profiles (the JWT only carries the Postgres role), so
+    this reads the caller's own profile (visible via RLS).
+    """
+    if profile.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin only.",
+        )
+    return profile
+
+
 class UserScopes(BaseModel):
     user_id: str
     personal_ref: str  # == user_id

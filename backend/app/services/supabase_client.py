@@ -107,6 +107,30 @@ class UserClient:
             self._raise(resp, f"update {table}")
         return resp.json()
 
+    async def upsert(
+        self, table: str, row: dict[str, Any], on_conflict: str
+    ) -> dict[str, Any]:
+        """Insert-or-update on the given conflict target (RLS-scoped)."""
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{self._base}/{table}",
+                params={"on_conflict": on_conflict},
+                json=row,
+                headers=self._headers(
+                    prefer="resolution=merge-duplicates,return=representation"
+                ),
+            )
+        if resp.status_code >= 400:
+            self._raise(resp, f"upsert {table}")
+        data = resp.json()
+        if not data:
+            logger.error("Upsert into %s returned no row (RLS?).", table)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Database request failed.",
+            )
+        return data[0] if isinstance(data, list) else data
+
     async def delete(
         self, table: str, filters: dict[str, str]
     ) -> list[dict[str, Any]]:
