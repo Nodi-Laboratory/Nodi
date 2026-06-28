@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Send, GitFork, Paperclip, Layers, X } from "lucide-react";
-import { useSessionDetail } from "@/lib/queries";
+import { useFileSuggestions, useSessionDetail } from "@/lib/queries";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { ancestorChain, buildById, pathIdSet } from "@/lib/tree";
 import type { WorkspaceChat } from "@/lib/useWorkspaceChat";
@@ -21,6 +21,7 @@ export function ChatPanel({
   referenceNodeIds,
   onToggleTrackMode,
   onClearTracks,
+  onLinkFile,
 }: {
   chat: WorkspaceChat;
   fileLinks: FileLink[];
@@ -28,6 +29,7 @@ export function ChatPanel({
   referenceNodeIds: string[];
   onToggleTrackMode: () => void;
   onClearTracks: () => void;
+  onLinkFile: (fileId: string, nodeId: string) => void;
 }) {
   const activeSessionId = useWorkspaceStore((s) => s.activeSessionId);
   const activeNodeId = useWorkspaceStore((s) => s.activeNodeId);
@@ -70,6 +72,15 @@ export function ChatPanel({
       .filter((l) => branchPath.has(l.target_node_id))
       .map((l) => l.file_id),
   ).size;
+
+  // 미연결 분기 파일 제안(3b-3): 연결 파일이 없을 때만 조회
+  const { data: suggestions } = useFileSuggestions(
+    activeSessionId,
+    activeNodeId,
+    linkedFileCount === 0,
+  );
+  const showSuggestions =
+    linkedFileCount === 0 && !!suggestions && suggestions.length > 0;
 
   // 새 메시지/스트리밍 시 하단으로 스크롤
   useEffect(() => {
@@ -146,6 +157,26 @@ export function ChatPanel({
           <div className="mx-auto mb-2 flex max-w-2xl items-center gap-1.5 text-xs text-[#2a7d7a]">
             <Paperclip size={13} />연결된 자료 {linkedFileCount}개 — 이 분기의
             답변에 참고됩니다.
+          </div>
+        )}
+        {showSuggestions && activeNodeId && (
+          <div className="mx-auto mb-2 max-w-2xl rounded-lg border border-[#2a7d7a]/40 bg-[#2a7d7a]/5 px-3 py-2">
+            <div className="flex items-center gap-1.5 text-xs text-[#2a7d7a]">
+              <Paperclip size={13} />이 자료가 관련 있어 보여요 — 연결할까요?
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {suggestions!.slice(0, 3).map((s) => (
+                <button
+                  key={s.file_id}
+                  type="button"
+                  onClick={() => onLinkFile(s.file_id, activeNodeId)}
+                  title={s.sample ?? undefined}
+                  className="max-w-[16rem] truncate rounded-md border border-[#2a7d7a]/50 bg-bg px-2 py-1 text-[11px] text-fg transition-colors hover:bg-[#2a7d7a]/10"
+                >
+                  📎 {s.sample?.trim() || s.kind || "이 자료 연결"}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {branching && (

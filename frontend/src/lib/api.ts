@@ -11,6 +11,7 @@ import type {
   CooccurrenceRow,
   FileLink,
   FileRow,
+  FileSuggestion,
   HomeSuggestions,
   HomeSummary,
   OverseerDoneEvent,
@@ -293,6 +294,51 @@ export async function getFile(id: string): Promise<FileRow> {
     await fetch(`${API_BASE}/files/${id}`, { headers: await authHeaders() }),
   );
   return res.json();
+}
+
+/** 파일 태그 목록(3b-3). indexed 파일이면 이름 배열. */
+export async function getFileTags(id: string): Promise<string[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/files/${id}/tags`, { headers: await authHeaders() }),
+  );
+  const body = await res.json();
+  return (body?.tags as string[]) ?? [];
+}
+
+/** 파일 삭제(3b-3). 204. service_role 미설정 시 503. */
+export async function deleteFile(id: string): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/files/${id}`, {
+      method: "DELETE",
+      headers: await authHeaders(),
+    }),
+  );
+}
+
+/** 파일 재처리(3b-3). failed/partial/멈춘 파일. */
+export async function retryFile(id: string): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/files/${id}/retry`, {
+      method: "POST",
+      headers: await authHeaders(),
+    }),
+  );
+}
+
+/** 현재 분기에 연결 파일이 없을 때 제안(3b-3). */
+export async function getFileSuggestions(
+  sessionId: string,
+  nodeId: string,
+): Promise<FileSuggestion[]> {
+  const params = new URLSearchParams({ node_id: nodeId });
+  const res = await ensureOk(
+    await fetch(
+      `${API_BASE}/sessions/${sessionId}/file-suggestions?${params.toString()}`,
+      { headers: await authHeaders() },
+    ),
+  );
+  const body = await res.json();
+  return (body?.suggestions as FileSuggestion[]) ?? [];
 }
 
 /** 파일을 분기(노드)에 연결 = "이 자료 보고 답해줘"(시각적 RAG, 멱등). */

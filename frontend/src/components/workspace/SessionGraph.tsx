@@ -24,6 +24,7 @@ interface Props {
   onRemoveConnection: (targetId: string, sourceId: string) => void;
   fileLinks: FileLink[];
   fileNodes: FileRow[];
+  fileTags: Record<string, string[]>;
   fileLinkMode: boolean;
   onLinkTarget: (nodeId: string) => void;
   onRemoveFileLink: (fileId: string, nodeId: string) => void;

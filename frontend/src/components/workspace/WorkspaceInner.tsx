@@ -17,6 +17,7 @@ import {
   filesKey,
   sessionKey,
   useFiles,
+  useFileTagsMap,
   useSessionDetail,
   useSessionFileLinks,
 } from "@/lib/queries";
@@ -156,6 +157,13 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     [spaceFiles, activeSessionId],
   );
 
+  // 그래프 파일 노드 툴팁용 태그 맵(indexed 파일만)
+  const indexedFileIds = useMemo(
+    () => fileNodes.filter((f) => f.status === "indexed").map((f) => f.id),
+    [fileNodes],
+  );
+  const fileTags = useFileTagsMap(indexedFileIds);
+
   const { data: fileLinks = [] } = useSessionFileLinks(activeSessionId);
   const [linkFileId, setLinkFileId] = useState<string | null>(null);
 
@@ -194,6 +202,25 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     },
     [refreshFileLinks],
   );
+
+  // 채팅 제안에서 파일을 현재 노드에 연결(3b-3)
+  const handleLinkFile = useCallback(
+    async (fileId: string, nodeId: string) => {
+      try {
+        await addFileLink(fileId, nodeId);
+        refreshFileLinks();
+      } catch {
+        /* 무시 */
+      }
+    },
+    [refreshFileLinks],
+  );
+
+  // 자료 패널 삭제/재시도 후: 파일 목록 + 링크 갱신(그래프 반영)
+  const handleFilesChanged = useCallback(() => {
+    refreshFiles();
+    refreshFileLinks();
+  }, [refreshFiles, refreshFileLinks]);
 
   const handleFilePosition = useCallback(
     (fileId: string, x: number, y: number) => {
@@ -282,6 +309,7 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             linkFileId={linkFileId}
             onStartLink={setLinkFileId}
             onCancelLink={() => setLinkFileId(null)}
+            onRefresh={handleFilesChanged}
           />
         </div>
         <div className="flex min-h-0 flex-col border-x border-accent-border/30">
@@ -292,6 +320,7 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             referenceNodeIds={referenceNodeIds}
             onToggleTrackMode={toggleTrackMode}
             onClearTracks={clearTracks}
+            onLinkFile={handleLinkFile}
           />
         </div>
         <div className="min-h-0 border-l border-accent-border/30">
@@ -304,6 +333,7 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             onRemoveConnection={handleRemoveConnection}
             fileLinks={fileLinks}
             fileNodes={fileNodes}
+            fileTags={fileTags}
             fileLinkMode={!!linkFileId}
             onLinkTarget={handleLinkTarget}
             onRemoveFileLink={handleRemoveFileLink}
