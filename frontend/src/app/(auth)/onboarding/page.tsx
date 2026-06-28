@@ -1,25 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import { useMyClasses } from "@/lib/hooks";
+import { completeOnboarding } from "@/lib/api";
+import { useMyClasses, useProfile } from "@/lib/hooks";
 
 /**
- * 온보딩(학급코드).
+ * 온보딩(학급코드) — 최초 가입 1회만(D18).
  * "연결할 학급이 있습니까?" → 학급코드 입력 → join_class_by_code RPC.
- * 복수 학급 연결 가능. 잘못된 코드(P0002 / invalid_join_code)는 친절한 에러.
- * "학급 없이 시작" → /home (학급 없이도 진행 가능).
+ * 시작 시 complete-onboarding 호출(이후 로그인엔 안 뜸).
  */
 export default function OnboardingPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: myClasses = [] } = useMyClasses();
+  const { data: profile } = useProfile();
 
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 이미 온보딩 완료한 사용자가 직접 들어오면 홈으로
+  useEffect(() => {
+    if (profile?.onboarded) router.replace("/home");
+  }, [profile?.onboarded, router]);
 
   const handleJoin = async () => {
     const trimmed = code.trim();
@@ -103,13 +110,25 @@ export default function OnboardingPage() {
       <div className="mt-6 flex flex-col gap-2">
         <button
           type="button"
-          onClick={() => {
+          disabled={starting}
+          onClick={async () => {
+            setStarting(true);
+            try {
+              await completeOnboarding();
+            } catch {
+              /* 실패해도 진입은 진행(다음 로그인에 재시도 가능) */
+            }
+            await queryClient.invalidateQueries({ queryKey: ["profile"] });
             router.push("/home");
             router.refresh();
           }}
-          className="w-full rounded-lg border border-accent-border bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white"
+          className="w-full rounded-lg border border-accent-border bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white disabled:opacity-60"
         >
-          {myClasses.length > 0 ? "완료하고 시작" : "학급 없이 시작"}
+          {starting
+            ? "시작하는 중…"
+            : myClasses.length > 0
+              ? "완료하고 시작"
+              : "학급 없이 시작"}
         </button>
       </div>
     </div>

@@ -35,14 +35,26 @@ class LinkBody(BaseModel):
     target_node_id: str
 
 
+class FilePositionBody(BaseModel):
+    position_x: float | None = None
+    position_y: float | None = None
+
+
 @router.post("", status_code=201)
 async def upload(
     file: UploadFile = File(...),
     space_kind: str = Form("personal"),
     space_ref: str | None = Form(None),
+    session_id: str | None = Form(None),
+    position_x: float | None = Form(None),
+    position_y: float | None = Form(None),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Upload a file -> Storage + files row + queued embedding_split job."""
+    """Upload a file -> Storage + files row + queued embedding_split job.
+
+    Optional `session_id` + `position_x/y` place the file as a node in a session
+    graph (D13).
+    """
     service = get_service_client()
     if service is None:
         raise HTTPException(
@@ -65,6 +77,9 @@ async def upload(
         filename=file.filename or "upload",
         mime=file.content_type,
         data=data,
+        session_id=session_id,
+        position_x=position_x,
+        position_y=position_y,
     )
 
 
@@ -92,6 +107,19 @@ async def get_file(
     """File row incl. status + progress (chunk_done / chunk_total)."""
     client = UserClient.from_user(user)
     return await svc.get_file(client, file_id)
+
+
+@router.patch("/{file_id}/position")
+async def set_file_position(
+    file_id: str,
+    body: FilePositionBody,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Persist a file-node's coordinates after drag (D13). Owner only."""
+    client = UserClient.from_user(user)
+    return await svc.set_file_position(
+        client, file_id, body.position_x, body.position_y
+    )
 
 
 # --- Visual RAG links (Stage 3b-2) ---------------------------------------

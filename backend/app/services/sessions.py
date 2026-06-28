@@ -87,6 +87,52 @@ async def list_sessions(
     )
 
 
+async def update_session_title(
+    client: UserClient, session_id: str, title: str
+) -> dict[str, Any]:
+    """Rename a session (RLS sessions_update_owner -> owner only)."""
+    rows = await client.update(
+        "sessions",
+        {"id": f"eq.{session_id}"},
+        {"title": title},
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or not yours.",
+        )
+    return rows[0]
+
+
+async def delete_session(client: UserClient, session_id: str) -> None:
+    """Delete a session (nodes cascade; files.session_id -> null, see 0011)."""
+    await client.delete("sessions", {"id": f"eq.{session_id}"})
+
+
+async def set_node_positions(
+    client: UserClient,
+    session_id: str,
+    positions: list[dict[str, Any]],
+) -> int:
+    """Persist node coordinates (D20). RLS nodes_update_owner gates ownership.
+
+    Each item: {node_id, x, y}. Scoped to the given session for safety.
+    Returns the number of nodes updated.
+    """
+    updated = 0
+    for p in positions:
+        node_id = p.get("node_id")
+        if not node_id:
+            continue
+        rows = await client.update(
+            "nodes",
+            {"id": f"eq.{node_id}", "session_id": f"eq.{session_id}"},
+            {"position_x": p.get("x"), "position_y": p.get("y")},
+        )
+        updated += len(rows)
+    return updated
+
+
 async def get_session(client: UserClient, session_id: str) -> dict[str, Any]:
     rows = await client.select(
         "sessions",

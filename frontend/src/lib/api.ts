@@ -102,6 +102,41 @@ export async function createSession(
   return res.json();
 }
 
+/** 세션 이름 변경(D17). */
+export async function patchSession(
+  id: string,
+  title: string,
+): Promise<SessionRow> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/sessions/${id}`, {
+      method: "PATCH",
+      headers: await authHeaders(true),
+      body: JSON.stringify({ title }),
+    }),
+  );
+  return res.json();
+}
+
+/** 세션 삭제(D17). 204. */
+export async function deleteSession(id: string): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/sessions/${id}`, {
+      method: "DELETE",
+      headers: await authHeaders(),
+    }),
+  );
+}
+
+/** 온보딩 1회 완료 표시(D18). */
+export async function completeOnboarding(): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/auth/complete-onboarding`, {
+      method: "POST",
+      headers: await authHeaders(),
+    }),
+  );
+}
+
 export async function getSession(id: string): Promise<SessionDetail> {
   const res = await ensureOk(
     await fetch(`${API_BASE}/sessions/${id}`, {
@@ -156,16 +191,39 @@ export async function deleteNode(id: string): Promise<void> {
 export async function uploadFile(
   target: SpaceTarget,
   file: File,
+  opts?: { sessionId?: string | null; positionX?: number; positionY?: number },
 ): Promise<FileRow> {
   const form = new FormData();
   form.append("file", file);
   form.append("space_kind", target.space_kind);
   if (target.space_ref) form.append("space_ref", target.space_ref);
+  if (opts?.sessionId) form.append("session_id", opts.sessionId);
+  if (opts?.positionX != null) form.append("position_x", String(Math.round(opts.positionX)));
+  if (opts?.positionY != null) form.append("position_y", String(Math.round(opts.positionY)));
   const res = await ensureOk(
     await fetch(`${API_BASE}/files`, {
       method: "POST",
       headers: await authHeaders(), // json=false → Content-Type 없음
       body: form,
+    }),
+  );
+  return res.json();
+}
+
+/** 파일 노드 좌표 영속(D20). */
+export async function patchFilePosition(
+  fileId: string,
+  x: number,
+  y: number,
+): Promise<FileRow> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/files/${fileId}/position`, {
+      method: "PATCH",
+      headers: await authHeaders(true),
+      body: JSON.stringify({
+        position_x: Math.round(x),
+        position_y: Math.round(y),
+      }),
     }),
   );
   return res.json();
@@ -263,6 +321,29 @@ export interface ChatStreamBody {
   session_id: string;
   question: string;
   parent_node_id?: string | null;
+  /** Wave A(D15): 브랜치 참조 — 이 턴만 참조할 노드들(일회성, 비영속). */
+  reference_node_ids?: string[];
+}
+
+/** 노드 좌표 일괄 영속(D20). 드래그 종료/재정렬 시 저장. */
+export async function putNodePositions(
+  sessionId: string,
+  positions: { node_id: string; x: number; y: number }[],
+): Promise<void> {
+  if (positions.length === 0) return;
+  await ensureOk(
+    await fetch(`${API_BASE}/sessions/${sessionId}/node-positions`, {
+      method: "PUT",
+      headers: await authHeaders(true),
+      body: JSON.stringify({
+        positions: positions.map((p) => ({
+          node_id: p.node_id,
+          x: Math.round(p.x),
+          y: Math.round(p.y),
+        })),
+      }),
+    }),
+  );
 }
 
 export interface ChatStreamHandlers {

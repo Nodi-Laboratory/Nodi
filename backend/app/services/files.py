@@ -21,7 +21,8 @@ settings = get_settings()
 
 FILE_SELECT = (
     "id,owner_id,space_kind,space_ref,uploader_id,kind,storage_path,mime,"
-    "size_bytes,status,chunk_total,chunk_done,error,created_at,updated_at"
+    "size_bytes,status,chunk_total,chunk_done,error,session_id,position_x,"
+    "position_y,created_at,updated_at"
 )
 
 
@@ -54,6 +55,9 @@ async def upload_file(
     filename: str,
     mime: str | None,
     data: bytes,
+    session_id: str | None = None,
+    position_x: float | None = None,
+    position_y: float | None = None,
 ) -> dict[str, Any]:
     if space_kind not in ("personal", "class"):
         raise HTTPException(
@@ -101,6 +105,9 @@ async def upload_file(
             "mime": mime,
             "size_bytes": len(data),
             "status": "uploaded",
+            "session_id": session_id,
+            "position_x": position_x,
+            "position_y": position_y,
         },
     )
     file_row = rows[0]
@@ -246,8 +253,26 @@ async def list_session_file_links(
             "target_node_id": f"in.({','.join(node_ids)})",
             "select": (
                 "id,file_id,target_node_id,created_at,"
-                "files(id,storage_path,mime,status,chunk_total,chunk_done)"
+                "files(id,storage_path,mime,status,chunk_total,chunk_done,"
+                "session_id,position_x,position_y)"
             ),
             "order": "created_at.desc",
         },
     )
+
+
+async def set_file_position(
+    client: UserClient, file_id: str, position_x: float | None, position_y: float | None
+) -> dict[str, Any]:
+    """Persist a file-node's coordinates (D13). Owner only (RLS files_update_own)."""
+    rows = await client.update(
+        "files",
+        {"id": f"eq.{file_id}"},
+        {"position_x": position_x, "position_y": position_y},
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found or not yours.",
+        )
+    return rows[0]

@@ -21,6 +21,20 @@ class CreateSessionBody(BaseModel):
     title: str | None = Field(default=None, max_length=200)
 
 
+class RenameSessionBody(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+class NodePosition(BaseModel):
+    node_id: str
+    x: float | None = None
+    y: float | None = None
+
+
+class NodePositionsBody(BaseModel):
+    positions: list[NodePosition] = Field(default_factory=list, max_length=2000)
+
+
 @router.post("", status_code=201)
 async def create_session(
     body: CreateSessionBody,
@@ -52,6 +66,41 @@ async def get_session(
     session = await svc.get_session(client, session_id)
     nodes = await svc.get_session_nodes(client, session_id, with_tags=True)
     return {"session": session, "nodes": nodes}
+
+
+@router.patch("/{session_id}")
+async def rename_session(
+    session_id: str,
+    body: RenameSessionBody,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Rename a session (owner only)."""
+    client = UserClient.from_user(user)
+    return await svc.update_session_title(client, session_id, body.title)
+
+
+@router.delete("/{session_id}", status_code=204)
+async def delete_session(
+    session_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Delete a session and its nodes (files are kept; session_id -> null)."""
+    client = UserClient.from_user(user)
+    await svc.delete_session(client, session_id)
+
+
+@router.put("/{session_id}/node-positions")
+async def set_node_positions(
+    session_id: str,
+    body: NodePositionsBody,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Batch-persist node coordinates after drag/relayout (D20)."""
+    client = UserClient.from_user(user)
+    n = await svc.set_node_positions(
+        client, session_id, [p.model_dump() for p in body.positions]
+    )
+    return {"updated": n}
 
 
 @router.get("/{session_id}/file-links")

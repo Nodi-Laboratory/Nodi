@@ -22,17 +22,22 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 - `GET /health` — liveness + which integrations are configured
-- `GET /auth/me` — caller's profile (requires `Authorization: Bearer <JWT>`)
+- `GET /auth/me` — caller's profile incl. `onboarded` (Bearer JWT)
 - `GET /auth/me/scopes` — personal + class scopes
+- `POST /auth/complete-onboarding` — mark onboarding done (D18, via RPC)
 - `POST /sessions` — create a conversation session
 - `GET /sessions?space_kind=&space_ref=` — sessions in a space (recent first)
 - `GET /sessions/{id}` — session + all nodes (tree restore)
+- `PATCH /sessions/{id}` {title} — rename · `DELETE /sessions/{id}` — delete (D17)
+- `PUT /sessions/{id}/node-positions` {positions:[{node_id,x,y}]} — persist coords (D20)
 - `POST /chat/stream` — Gemini SSE chat; persists (Q+A)=1 node, auto-labels,
-  auto-tags (inline in `done`), and may emit a `navigator` event with waiting
-  navigator nodes when the branch matures
+  auto-tags (inline in `done`), and may emit a `navigator` event. Optional
+  `reference_node_ids` injects a one-time "[브랜치 참조]" comparison block (D15,
+  not persisted)
 - `GET /tags?space_kind=&space_ref=` — own concept tags in a space (most-used)
 - `GET /tags/cooccurrence?space_kind=&space_ref=` — co-attached tag pairs
 - `DELETE /nodes/{id}` — delete a waiting navigator node (cleanup after click)
+- `PATCH /nodes/{id}/position` {position_x,position_y} — persist node coords (D20)
 - `POST /nodes/{id}/connections` — memory-link another owned branch node in
 - `DELETE /nodes/{id}/connections/{src}` — remove a memory link
 - `GET /home/summary` — spaces + recent sessions + top personal concepts
@@ -46,10 +51,12 @@ Admin (all require app role `admin`; admin RLS / RPCs in migration 0008):
 - `GET /admin/logs?user_id=&limit=&offset=` (ai_sessions + embedded ai_steps)
 
 Files / RAG (Stage 3b-1; needs `SUPABASE_SERVICE_ROLE_KEY` for upload+worker):
-- `POST /files` (multipart: file, space_kind, space_ref?) — Storage + files row
-  + queued `embedding_split` job. 503 if no service-role key.
+- `POST /files` (multipart: file, space_kind, space_ref?, session_id?,
+  position_x?, position_y?) — Storage + files row + queued `embedding_split`
+  job. 503 if no service-role key.
 - `GET /files?space_kind=&space_ref=` — list (status, chunk_done/chunk_total)
 - `GET /files/{id}` — file status + progress
+- `PATCH /files/{id}/position` {position_x,position_y} — file-node coords (D13)
 - `POST /files/{id}/links` {target_node_id} — link a file to a branch (visual RAG)
 - `DELETE /files/{id}/links/{node_id}` — unlink
 - `GET /sessions/{id}/file-links` — files linked in a session (graph file-nodes)

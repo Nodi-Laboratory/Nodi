@@ -6,6 +6,8 @@ export interface Profile {
   role: string | null;
   display_name: string | null;
   avatar_url: string | null;
+  /** D18: 온보딩 1회 완료 플래그. */
+  onboarded?: boolean | null;
 }
 
 export interface ClassRow {
@@ -192,6 +194,10 @@ export interface FileRow {
   chunk_done: number | null;
   error?: string | null;
   created_at: string;
+  /** Wave A(D13/D20): 그래프 표시용 세션 연관 + 좌표 영속. */
+  session_id?: string | null;
+  position_x?: number | null;
+  position_y?: number | null;
 }
 
 /** 시각적 RAG: 파일↔노드 링크 (GET /sessions/{id}/file-links). */
@@ -207,6 +213,9 @@ export interface FileLink {
     status: FileStatus;
     chunk_total: number | null;
     chunk_done: number | null;
+    session_id?: string | null;
+    position_x?: number | null;
+    position_y?: number | null;
   } | null;
 }
 

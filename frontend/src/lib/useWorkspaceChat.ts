@@ -25,6 +25,7 @@ export interface WorkspaceChat {
   send: (
     question: string,
     parentNodeId: string | null,
+    opts?: { referenceNodeIds?: string[] },
   ) => Promise<{ ok: boolean }>;
   activateNavigator: (node: NodeRow) => Promise<void>;
 }
@@ -83,6 +84,7 @@ export function useWorkspaceChat(target: SpaceTarget): WorkspaceChat {
     async (
       question: string,
       parentNodeId: string | null,
+      opts?: { referenceNodeIds?: string[] },
     ): Promise<{ ok: boolean }> => {
       const q = question.trim();
       if (!q || !activeSessionId || streaming) return { ok: false };
@@ -99,8 +101,17 @@ export function useWorkspaceChat(target: SpaceTarget): WorkspaceChat {
       let acc = "";
       let okFlag = false;
 
+      const refIds = opts?.referenceNodeIds?.length
+        ? opts.referenceNodeIds
+        : undefined;
+
       await streamChat(
-        { session_id: sessionId, question: q, parent_node_id: parent ?? undefined },
+        {
+          session_id: sessionId,
+          question: q,
+          parent_node_id: parent ?? undefined,
+          reference_node_ids: refIds,
+        },
         {
           onToken: (delta) => {
             acc += delta;

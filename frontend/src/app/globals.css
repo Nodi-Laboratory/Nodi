@@ -88,6 +88,15 @@ body {
   outline-offset: 2px;
 }
 
+/* 스크롤바 숨김(스크롤 동작은 유지) — 채팅/총괄AI 입력창 등 (D12) */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
 /* 대화 답변 마크다운 최소 스타일 */
 .markdown-body > :first-child {
   margin-top: 0;
