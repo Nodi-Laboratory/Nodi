@@ -1,7 +1,9 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import {
+  getFileSuggestions,
+  getFileTags,
   getHomeSummary,
   getHomeSuggestions,
   getSession,
@@ -20,6 +22,7 @@ import type {
   CooccurrenceRow,
   FileLink,
   FileRow,
+  FileSuggestion,
   HomeSuggestions,
   HomeSummary,
   SessionDetail,
@@ -137,6 +140,53 @@ export function useSessionFileLinks(sessionId: string | null) {
     queryKey: fileLinksKey(sessionId),
     queryFn: () => listSessionFileLinks(sessionId as string),
     enabled: !!sessionId,
+  });
+}
+
+export function fileTagsKey(fileId: string) {
+  return ["file-tags", fileId] as const;
+}
+
+/** 파일 태그(3b-3). indexed 파일만 조회. */
+export function useFileTags(fileId: string, enabled: boolean) {
+  return useQuery<string[]>({
+    queryKey: fileTagsKey(fileId),
+    queryFn: () => getFileTags(fileId),
+    enabled,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** 여러 파일의 태그를 한 번에(그래프 파일 노드 툴팁용). fileId → 태그배열 맵. */
+export function useFileTagsMap(fileIds: string[]): Record<string, string[]> {
+  return useQueries({
+    queries: fileIds.map((id) => ({
+      queryKey: fileTagsKey(id),
+      queryFn: () => getFileTags(id),
+      staleTime: 5 * 60 * 1000,
+    })),
+    combine: (results) => {
+      const map: Record<string, string[]> = {};
+      fileIds.forEach((id, i) => {
+        const data = results[i]?.data;
+        if (data && data.length > 0) map[id] = data;
+      });
+      return map;
+    },
+  });
+}
+
+/** 현재 분기 미연결 시 파일 제안(3b-3). */
+export function useFileSuggestions(
+  sessionId: string | null,
+  nodeId: string | null,
+  enabled: boolean,
+) {
+  return useQuery<FileSuggestion[]>({
+    queryKey: ["file-suggestions", sessionId, nodeId],
+    queryFn: () => getFileSuggestions(sessionId as string, nodeId as string),
+    enabled: enabled && !!sessionId && !!nodeId,
+    staleTime: 60 * 1000,
   });
 }
 

@@ -9,16 +9,26 @@ import {
   CheckCircle2,
   Link2,
   X,
+  Trash2,
+  RotateCcw,
 } from "lucide-react";
-import { ApiError, uploadFile, type SpaceTarget } from "@/lib/api";
-import { filesKey, useFiles } from "@/lib/queries";
+import {
+  ApiError,
+  deleteFile,
+  retryFile,
+  uploadFile,
+  type SpaceTarget,
+} from "@/lib/api";
+import { filesKey, useFileTags, useFiles } from "@/lib/queries";
 import type { FileLink, FileRow, FileStatus } from "@/lib/types";
 
 /**
  * 워크스페이스 좌측 "자료" 패널.
- * 업로드 + 목록 + 임베딩 진행률(3b-1) + 파일→분기 연결 시작/표시(3b-2, 시각적 RAG).
- * service_role 미설정 시 업로드 503 안내.
+ * 업로드(PDF·txt·이미지 OCR) + 목록 + 진행률 + 태그 + 삭제/재시도 + 분기 연결(시각적 RAG).
  */
+const UPLOAD_ACCEPT =
+  ".pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,application/pdf,text/plain,image/*";
+
 function formatBytes(n: number | null): string {
   if (n == null) return "";
   if (n < 1024) return `${n} B`;
@@ -53,12 +63,14 @@ export function FilesPanel({
   linkFileId,
   onStartLink,
   onCancelLink,
+  onRefresh,
 }: {
   target: SpaceTarget;
   fileLinks: FileLink[];
   linkFileId: string | null;
   onStartLink: (fileId: string) => void;
   onCancelLink: () => void;
+  onRefresh?: () => void;
 }) {
   const queryClient = useQueryClient();
   const { data: files, isLoading } = useFiles(target);
@@ -66,7 +78,10 @@ export function FilesPanel({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handlePick = () => inputRef.current?.click();
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: filesKey(target) });
+    onRefresh?.();
+  };
 
   const handleFiles = async (fileList: FileList | null) => {
     const file = fileList?.[0];
@@ -75,16 +90,41 @@ export function FilesPanel({
     setUploading(true);
     try {
       await uploadFile(target, file);
-      await queryClient.invalidateQueries({ queryKey: filesKey(target) });
+      refresh();
     } catch (e) {
-      if (e instanceof ApiError && e.status === 503) {
-        setError("파일 임베딩이 아직 활성화되지 않았습니다(관리자 설정 필요).");
-      } else {
-        setError(`업로드 실패: ${(e as Error).message}`);
-      }
+      reportError(e, "업로드");
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  const reportError = (e: unknown, what: string) => {
+    if (e instanceof ApiError && e.status === 503) {
+      setError("파일 임베딩이 아직 활성화되지 않았습니다(관리자 설정 필요).");
+    } else {
+      setError(`${what} 실패: ${(e as Error).message}`);
+    }
+  };
+
+  const handleDelete = async (fileId: string) => {
+    if (!window.confirm("이 자료를 삭제할까요?")) return;
+    setError(null);
+    try {
+      await deleteFile(fileId);
+      refresh();
+    } catch (e) {
+      reportError(e, "삭제");
+    }
+  };
+
+  const handleRetry = async (fileId: string) => {
+    setError(null);
+    try {
+      await retryFile(fileId);
+      refresh();
+    } catch (e) {
+      reportError(e, "재시도");
     }
   };
 
@@ -96,9 +136,9 @@ export function FilesPanel({
         </span>
         <button
           type="button"
-          onClick={handlePick}
+          onClick={() => inputRef.current?.click()}
           disabled={uploading}
-          title="파일 업로드 (PDF·txt 등)"
+          title="파일 업로드 (PDF·txt·이미지)"
           className="flex items-center gap-1 rounded-lg border border-accent-border bg-accent px-2 py-1 text-xs font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white disabled:opacity-60"
         >
           <Upload size={13} />
@@ -107,7 +147,7 @@ export function FilesPanel({
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.txt,.md,application/pdf,text/plain"
+          accept={UPLOAD_ACCEPT}
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />
@@ -137,6 +177,8 @@ export function FilesPanel({
                 linking={linkFileId === f.id}
                 onStartLink={() => onStartLink(f.id)}
                 onCancelLink={onCancelLink}
+                onDelete={() => handleDelete(f.id)}
+                onRetry={() => handleRetry(f.id)}
               />
             ))}
           </ul>
@@ -152,18 +194,27 @@ function FileItem({
   linking,
   onStartLink,
   onCancelLink,
+  onDelete,
+  onRetry,
 }: {
   file: FileRow;
   linkCount: number;
   linking: boolean;
   onStartLink: () => void;
   onCancelLink: () => void;
+  onDelete: () => void;
+  onRetry: () => void;
 }) {
   const meta = STATUS_META[file.status];
   const total = file.chunk_total ?? 0;
   const done = file.chunk_done ?? 0;
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
   const canLink = file.status === "indexed";
+  const canRetry = file.status === "failed" || file.status === "partial";
+
+  const { data: tags } = useFileTags(file.id, file.status === "indexed");
+  const shownTags = (tags ?? []).slice(0, 4);
+  const moreTags = (tags?.length ?? 0) - shownTags.length;
 
   return (
     <li
@@ -185,6 +236,14 @@ function FileItem({
         >
           {meta.label}
         </span>
+        <button
+          type="button"
+          onClick={onDelete}
+          title="삭제"
+          className="shrink-0 rounded p-0.5 text-fg-muted transition-colors hover:text-danger"
+        >
+          <Trash2 size={13} />
+        </button>
       </div>
 
       <div className="mt-1 flex items-center gap-2 pl-6 text-[11px] text-fg-muted">
@@ -210,8 +269,25 @@ function FileItem({
         <p className="mt-1 ml-6 text-[11px] text-danger">{file.error}</p>
       )}
 
-      {/* 분기에 연결 (시각적 RAG) */}
-      <div className="mt-1.5 ml-6 flex items-center gap-2">
+      {/* 태그 칩 */}
+      {shownTags.length > 0 && (
+        <div className="mt-1 ml-6 flex flex-wrap gap-1">
+          {shownTags.map((t) => (
+            <span
+              key={t}
+              className="rounded-full border border-accent-border/50 bg-accent/20 px-1.5 py-0.5 text-[10px] text-accent-fg"
+            >
+              #{t}
+            </span>
+          ))}
+          {moreTags > 0 && (
+            <span className="text-[10px] text-fg-muted">+{moreTags}</span>
+          )}
+        </div>
+      )}
+
+      {/* 액션: 연결 / 재시도 */}
+      <div className="mt-1.5 ml-6 flex flex-wrap items-center gap-2">
         {linking ? (
           <button
             type="button"
@@ -229,12 +305,23 @@ function FileItem({
             title={
               canLink
                 ? "분기에 연결: 그래프에서 노드를 클릭"
-                : "임베딩 완료(완료 상태) 후 연결할 수 있어요"
+                : "임베딩 완료 후 연결할 수 있어요"
             }
             className="flex items-center gap-1 rounded-md border border-accent-border/50 px-2 py-0.5 text-[11px] font-medium text-fg-muted transition-colors hover:text-fg disabled:opacity-50"
           >
             <Link2 size={11} />
             분기에 연결
+          </button>
+        )}
+        {canRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            title="재처리"
+            className="flex items-center gap-1 rounded-md border border-warning/50 px-2 py-0.5 text-[11px] font-medium text-warning transition-colors hover:bg-warning/10"
+          >
+            <RotateCcw size={11} />
+            재시도
           </button>
         )}
         {linkCount > 0 && (

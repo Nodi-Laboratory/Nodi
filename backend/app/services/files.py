@@ -152,6 +152,51 @@ async def upload_file(
     return file_row
 
 
+async def get_file_tags(client: UserClient, file_id: str) -> list[str]:
+    """Tag names of a file the caller can access (own or class material)."""
+    result = await client.rpc("get_file_tags", {"p_file_id": file_id})
+    if isinstance(result, list):
+        return [str(x) for x in result]
+    return []
+
+
+async def _assert_file_owner(
+    client: UserClient, owner_id: str, file_id: str
+) -> dict[str, Any]:
+    """Return the file row, requiring the caller to be its OWNER (not just a
+    class member who can read class_material)."""
+    file_row = await get_file(client, file_id)  # 404 unless accessible (RLS)
+    if file_row.get("owner_id") != owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the file owner can do this.",
+        )
+    return file_row
+
+
+async def delete_file(
+    service: ServiceClient, client: UserClient, owner_id: str, file_id: str
+) -> None:
+    """Delete a file (owner only): Storage object + files row (cascades chunks/
+    links/tags)."""
+    file_row = await _assert_file_owner(client, owner_id, file_id)
+    storage_path = file_row.get("storage_path")
+    if storage_path:
+        await service.storage_delete(settings.storage_bucket, storage_path)
+    await service.delete("files", {"id": f"eq.{file_id}"})
+
+
+async def retry_file(
+    service: ServiceClient, client: UserClient, owner_id: str, file_id: str
+) -> str:
+    """Re-process a file (owner only). Delegates to the worker's idempotent
+    requeue. Returns the action taken."""
+    from . import embedding_worker  # local import avoids a worker import cycle
+
+    await _assert_file_owner(client, owner_id, file_id)
+    return await embedding_worker.requeue_file(service, file_id)
+
+
 async def list_files(
     client: UserClient, space_kind: str, space_ref: str
 ) -> list[dict[str, Any]]:

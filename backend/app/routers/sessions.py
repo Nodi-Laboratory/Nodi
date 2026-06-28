@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
 from ..services import files as files_svc
+from ..services import rag
 from ..services import sessions as svc
 from ..services.supabase_client import UserClient
 
@@ -112,3 +113,22 @@ async def get_session_file_links(
     client = UserClient.from_user(user)
     await svc.get_session(client, session_id)  # 404/RLS gate
     return await files_svc.list_session_file_links(client, session_id)
+
+
+@router.get("/{session_id}/file-suggestions")
+async def get_file_suggestions(
+    session_id: str,
+    node_id: str | None = Query(None),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """When the current branch has no linked files, propose space files to link
+    (embedding match). Empty if files are already linked or none indexed."""
+    client = UserClient.from_user(user)
+    session = await svc.get_session(client, session_id)
+    head = node_id or session.get("current_head_id")
+    nodes = await svc.get_session_nodes(client, session_id)
+    chain = svc.ancestor_chain_nodes(nodes, head)
+    suggestions = await rag.suggest_files(
+        client, chain, session.get("space_kind"), session.get("space_ref")
+    )
+    return {"suggestions": suggestions}

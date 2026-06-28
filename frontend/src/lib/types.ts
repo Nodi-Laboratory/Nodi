@@ -238,6 +238,14 @@ export interface FileLink {
   } | null;
 }
 
+/** Stage 3b-3: 미연결 분기 파일 제안. */
+export interface FileSuggestion {
+  file_id: string;
+  distance: number;
+  sample: string | null;
+  kind: string | null;
+}
+
 // ── Stage 4c: 관리자 ─────────────────────────────────────────────────
 
 export type UserRole = "student" | "teacher" | "admin";

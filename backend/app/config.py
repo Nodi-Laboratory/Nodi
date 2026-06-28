@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     # Chars of file text sampled for tag extraction.
     file_tag_sample_chars: int = 6000
 
+    # --- RAG polish (Stage 3b-3) ---
+    # Multimodal model for image OCR (text extraction from images / scans).
+    ocr_model: str = "gemini-2.5-flash"
+    # File-suggestion ("연결할까요?") tuning.
+    file_suggestion_top_n: int = 3  # files proposed
+    file_suggestion_search_k: int = 20  # chunks scanned before grouping by file
+    file_suggestion_query_chars: int = 1500  # branch text used as the query
+
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).
     jwt_audience: str = "authenticated"

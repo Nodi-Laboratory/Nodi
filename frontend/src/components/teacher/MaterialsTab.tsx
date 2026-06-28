@@ -94,7 +94,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.txt,.md,application/pdf,text/plain"
+          accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,application/pdf,text/plain,image/*"
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />

@@ -52,6 +52,8 @@ interface Props {
   /** 시각적 RAG(3b-2 유지): 자료 패널에서 시작한 파일→분기 연결 모드. */
   fileLinks: FileLink[];
   fileNodes: FileRow[];
+  /** 파일 노드 태그(툴팁용). fileId → 태그 이름들. */
+  fileTags: Record<string, string[]>;
   fileLinkMode: boolean;
   onLinkTarget: (nodeId: string) => void;
   onRemoveFileLink: (fileId: string, nodeId: string) => void;
@@ -80,6 +82,7 @@ export default function SessionGraphCanvas(props: Props) {
     activeNodeId,
     fileLinks,
     fileNodes,
+    fileTags,
     fileLinkMode,
     trackMode,
     selectedTrackIds,
@@ -698,7 +701,9 @@ export default function SessionGraphCanvas(props: Props) {
           ? f.storage_path.split("/").pop() || f.storage_path
           : f.id.slice(0, 6));
       s2.select("text.fname").text(nm.length > 10 ? nm.slice(0, 10) + "…" : nm);
-      s2.select("title").text(`📎 ${nm}${busy ? " (임베딩 중)" : ""}`);
+      const tg = fileTags[f.id];
+      const tagLine = tg && tg.length > 0 ? `\n태그: ${tg.slice(0, 8).map((t) => "#" + t).join(" ")}` : "";
+      s2.select("title").text(`📎 ${nm}${busy ? " (임베딩 중)" : ""}${tagLine}`);
     });
     fmerged.call(fileDrag);
 
@@ -711,6 +716,7 @@ export default function SessionGraphCanvas(props: Props) {
     dim.height,
     fileLinks,
     fileNodes,
+    fileTags,
     trackMode,
     selectedTrackIds,
     reorderNonce,
