@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { FileLink, NodeRow } from "@/lib/types";
+import type { FileLink, FileRow, NodeRow } from "@/lib/types";
 
 /**
  * D3 세션 그래프는 클라이언트 전용(SSR 비활성). window/SVG 측정 의존.
@@ -20,12 +20,22 @@ interface Props {
   rootNodeId: string | null;
   activeNodeId: string | null;
   onNodeClick: (id: string) => void;
-  onConnectSource: (sourceId: string) => void;
+  onConnectNodes: (sourceId: string, targetId: string) => void;
   onRemoveConnection: (targetId: string, sourceId: string) => void;
   fileLinks: FileLink[];
+  fileNodes: FileRow[];
   fileLinkMode: boolean;
   onLinkTarget: (nodeId: string) => void;
   onRemoveFileLink: (fileId: string, nodeId: string) => void;
+  onFilePosition: (fileId: string, x: number, y: number) => void;
+  onDropUpload: (files: File[], x: number, y: number) => void;
+  onPersistPositions: (
+    positions: { node_id: string; x: number; y: number }[],
+  ) => void;
+  trackMode: boolean;
+  selectedTrackIds: string[];
+  onToggleTrack: (nodeId: string) => void;
+  onEnterTrack: (nodeId: string) => void;
 }
 
 export function SessionGraph(props: Props) {
