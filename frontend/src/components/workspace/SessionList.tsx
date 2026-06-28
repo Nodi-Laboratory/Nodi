@@ -14,10 +14,11 @@ import {
 import {
   createSession,
   deleteSession,
+  getSession,
   patchSession,
   type SpaceTarget,
 } from "@/lib/api";
-import { sessionsKey, useSessions } from "@/lib/queries";
+import { sessionKey, sessionsKey, useSessions } from "@/lib/queries";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type { SessionRow } from "@/lib/types";
 
@@ -44,6 +45,15 @@ export function SessionList({ target }: { target: SpaceTarget }) {
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: sessionsKey(target) });
+
+  // hover 시 세션 상세 선반입(D24) — 클릭 시 이미 캐시
+  const prefetch = (id: string) => {
+    void queryClient.prefetchQuery({
+      queryKey: sessionKey(id),
+      queryFn: () => getSession(id),
+      staleTime: 30 * 1000,
+    });
+  };
 
   const handleNew = async () => {
     setCreating(true);
@@ -172,6 +182,7 @@ export function SessionList({ target }: { target: SpaceTarget }) {
                       <button
                         type="button"
                         onClick={() => handleSelect(s.id)}
+                        onMouseEnter={() => prefetch(s.id)}
                         className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm"
                       >
                         <MessageSquare size={14} className="shrink-0 opacity-70" />

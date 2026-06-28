@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { School, Users, FolderOpen } from "lucide-react";
 import { useTeacherClasses } from "@/lib/queries";
+import { AccountMenu } from "@/components/auth/AccountMenu";
 import { StudentsTab } from "./StudentsTab";
 import { MaterialsTab } from "./MaterialsTab";
 
@@ -54,6 +55,10 @@ export function TeacherPanel() {
             코드 {current.join_code}
           </span>
         )}
+
+        <div className="ml-auto">
+          <AccountMenu />
+        </div>
       </header>
 
       {classId ? (

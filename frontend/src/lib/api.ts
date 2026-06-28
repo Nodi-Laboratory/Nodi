@@ -682,11 +682,15 @@ export async function getAdminUsage(): Promise<AdminUsage> {
 
 export async function getAdminLogs(opts: {
   userId?: string | null;
+  since?: string | null;
+  until?: string | null;
   limit?: number;
   offset?: number;
 }): Promise<AdminLogsResponse> {
   const params = new URLSearchParams();
   if (opts.userId) params.set("user_id", opts.userId);
+  if (opts.since) params.set("since", opts.since);
+  if (opts.until) params.set("until", opts.until);
   params.set("limit", String(opts.limit ?? 20));
   params.set("offset", String(opts.offset ?? 0));
   const res = await ensureOk(

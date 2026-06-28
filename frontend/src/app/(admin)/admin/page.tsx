@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { Shield, Users, Sliders, BarChart3, ScrollText } from "lucide-react";
 import { useProfile } from "@/lib/hooks";
 import { RoleGuard } from "@/components/auth/RoleGuard";
+import { AccountMenu } from "@/components/auth/AccountMenu";
 import { UsersTab } from "@/components/admin/UsersTab";
 import { SettingsTab } from "@/components/admin/SettingsTab";
 import { UsageTab } from "@/components/admin/UsageTab";
@@ -40,13 +40,9 @@ function AdminConsole() {
       <header className="flex items-center gap-2 border-b border-white/10 bg-[#221e17] px-6 py-3">
         <Shield size={18} className="text-[#e0a32e]" />
         <h1 className="text-base font-bold">운영 콘솔</h1>
-        <span className="ml-3 text-xs text-[#9a948a]">{profile?.email}</span>
-        <Link
-          href="/home"
-          className="ml-auto text-xs text-[#9a948a] hover:text-[#e7e3d8]"
-        >
-          일반 화면으로 →
-        </Link>
+        <div className="ml-auto">
+          <AccountMenu dark />
+        </div>
       </header>
 
       <nav className="flex gap-1 border-b border-white/10 bg-[#1f1b15] px-4">

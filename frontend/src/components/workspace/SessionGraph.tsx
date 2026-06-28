@@ -28,6 +28,8 @@ interface Props {
   fileLinkMode: boolean;
   onLinkTarget: (nodeId: string) => void;
   onRemoveFileLink: (fileId: string, nodeId: string) => void;
+  onConnectFileToNode: (fileId: string, nodeId: string) => void;
+  onDeleteFile: (fileId: string) => void;
   onFilePosition: (fileId: string, x: number, y: number) => void;
   onDropUpload: (files: File[], x: number, y: number) => void;
   onPersistPositions: (
@@ -40,12 +42,13 @@ interface Props {
 }
 
 export function SessionGraph(props: Props) {
-  if (props.nodes.length === 0) {
+  // 대화 노드도 자료 노드도 없을 때만 빈 안내. (자료만 있어도 캔버스 렌더 — D22)
+  if (props.nodes.length === 0 && props.fileNodes.length === 0) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-bg-elevated p-4 text-center text-sm text-fg-muted">
         아직 노드가 없습니다.
         <br />
-        질문을 보내면 세션 그래프가 자라납니다.
+        질문을 보내거나 자료를 올리면 그래프가 자라납니다.
       </div>
     );
   }

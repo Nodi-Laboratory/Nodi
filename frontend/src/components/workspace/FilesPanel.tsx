@@ -12,13 +12,7 @@ import {
   Trash2,
   RotateCcw,
 } from "lucide-react";
-import {
-  ApiError,
-  deleteFile,
-  retryFile,
-  uploadFile,
-  type SpaceTarget,
-} from "@/lib/api";
+import { ApiError, deleteFile, retryFile, type SpaceTarget } from "@/lib/api";
 import { filesKey, useFileTags, useFiles } from "@/lib/queries";
 import type { FileLink, FileRow, FileStatus } from "@/lib/types";
 
@@ -64,6 +58,7 @@ export function FilesPanel({
   onStartLink,
   onCancelLink,
   onRefresh,
+  onUpload,
 }: {
   target: SpaceTarget;
   fileLinks: FileLink[];
@@ -71,6 +66,8 @@ export function FilesPanel({
   onStartLink: (fileId: string) => void;
   onCancelLink: () => void;
   onRefresh?: () => void;
+  /** D22: 업로드는 현재 세션 id를 붙여 처리(WorkspaceInner). */
+  onUpload: (file: File) => Promise<void>;
 }) {
   const queryClient = useQueryClient();
   const { data: files, isLoading } = useFiles(target);
@@ -89,7 +86,7 @@ export function FilesPanel({
     setError(null);
     setUploading(true);
     try {
-      await uploadFile(target, file);
+      await onUpload(file);
       refresh();
     } catch (e) {
       reportError(e, "업로드");
