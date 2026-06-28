@@ -100,11 +100,12 @@ export function ChatPanel({
   const dismissed = activeSessionId
     ? isSuggestionDismissed(activeSessionId)
     : false;
-  // 분기 실노드 질문 텍스트 총량(클라 1차 게이트, 네트워크 절약).
-  const branchSubstanceChars = thread
-    .filter((n) => !n.is_navigator)
-    .reduce((sum, n) => sum + (n.question?.trim().length ?? 0), 0);
-  const branchHasSubstance = branchSubstanceChars >= 20;
+  // D48: 클라 1차 게이트 완화 — "질문 길이 합 ≥20"이 짧은 실질 질문("미분이 뭐야?")을
+  // 막던 false-negative 제거. 분기에 question.trim() 2자+ 비네비 실노드가 1개라도 있으면
+  // 서버에 도달시키고, 잡담 차단은 백엔드 거리게이트+stoplist(D48)가 담당.
+  const branchHasSubstance = thread.some(
+    (n) => !n.is_navigator && (n.question?.trim().length ?? 0) >= 2,
+  );
   const suggestionEnabled =
     linkedFileCount === 0 &&
     fileSuggestionEnabled &&
@@ -562,13 +563,16 @@ function BranchContextPopup({
   onClose: () => void;
 }) {
   const sameSession = source.session_id === currentSessionId;
-  const { data: fetched, isLoading } = useQuery({
+  const { data: fetched, isLoading, isError } = useQuery({
     queryKey: sessionKey(source.session_id),
     queryFn: () => getSession(source.session_id),
     enabled: !sameSession,
+    retry: false, // D49: 실패 시 재시도 지연 없이 즉시 에러 상태로(무한 로딩처럼 보이지 않게)
   });
   const sourceNodes = sameSession ? sessionNodes : fetched?.nodes ?? null;
   const loading = !sameSession && isLoading;
+  // D49: 다른 세션 조회가 에러로 끝나면 무한 "불러오는 중…" 대신 명시적 에러 상태.
+  const errored = !sameSession && isError;
   const chain = useMemo(() => {
     if (!sourceNodes) return null;
     const byId = buildById(sourceNodes);
@@ -603,9 +607,13 @@ function BranchContextPopup({
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-          {loading || chain == null ? (
+          {loading ? (
             <p className="text-sm text-fg-muted">불러오는 중…</p>
-          ) : chain.length === 0 ? (
+          ) : errored ? (
+            <p className="text-sm text-fg-muted">
+              브랜치 내용을 불러오지 못했습니다.
+            </p>
+          ) : chain == null || chain.length === 0 ? (
             <p className="text-sm text-fg-muted">
               브랜치 내용을 불러올 수 없습니다.
             </p>

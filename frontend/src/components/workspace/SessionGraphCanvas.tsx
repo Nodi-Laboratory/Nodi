@@ -112,6 +112,8 @@ export default function SessionGraphCanvas(props: Props) {
   const collapsedNavParents = useWorkspacePrefs((s) => s.collapsedNavParents);
   const expandedNavParents = useWorkspacePrefs((s) => s.expandedNavParents);
   const toggleNavParent = useWorkspacePrefs((s) => s.toggleNavParent);
+  // D51: 네비게이터 자동생성 off면 기존 is_navigator 노드도 캔버스에서 숨김(비파괴, 재가역).
+  const navigatorEnabled = useWorkspacePrefs((s) => s.navigatorEnabled);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -302,8 +304,13 @@ export default function SessionGraphCanvas(props: Props) {
     };
     const hiddenNavIds = new Set<string>();
     for (const n of nodes) {
-      if (n.is_navigator && n.parent_id && effCollapsed(n.parent_id))
+      if (!n.is_navigator) continue;
+      // D51: off면 모든 네비게이터 노드를 숨김. on이면 기존 collapse 휴리스틱 적용.
+      if (!navigatorEnabled) {
         hiddenNavIds.add(n.id);
+        continue;
+      }
+      if (n.parent_id && effCollapsed(n.parent_id)) hiddenNavIds.add(n.id);
     }
     const displayNodes = hiddenNavIds.size
       ? nodes.filter((n) => !hiddenNavIds.has(n.id))
@@ -1047,9 +1054,12 @@ export default function SessionGraphCanvas(props: Props) {
       count: number;
     }
     const navBtns: NavBtn[] = [];
-    for (const [pid, count] of navChildCount) {
-      if (count > 0 && effCollapsed(pid) && nodeById.has(pid)) {
-        navBtns.push({ parentId: pid, count });
+    // D51: off면 회색 재펼침 버튼도 생략(숨긴 노드를 펼칠 진입점 자체를 두지 않음).
+    if (navigatorEnabled) {
+      for (const [pid, count] of navChildCount) {
+        if (count > 0 && effCollapsed(pid) && nodeById.has(pid)) {
+          navBtns.push({ parentId: pid, count });
+        }
       }
     }
     const nbSel = navToggleLayer!
@@ -1106,6 +1116,7 @@ export default function SessionGraphCanvas(props: Props) {
     collapsedNavParents,
     expandedNavParents,
     toggleNavParent,
+    navigatorEnabled,
   ]);
 
   // ── 마우스 추적 연결선(D14 기억연결 / D22 자료연결) ──
