@@ -14,6 +14,7 @@ caller's RLS-scoped client (own files only).
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -242,6 +243,79 @@ def _branch_query_text(chain: list[dict[str, Any]]) -> str:
     return text[: settings.file_suggestion_query_chars]
 
 
+# --- D48: conservative greeting / small-talk stoplist -----------------------
+# Intentionally a SMALL KO/EN core subset. Over-listing would re-introduce the
+# false-negatives the distance gate (cutoff 0.50 + margin 0.05) already prevents
+# — so when in doubt we treat a token as substantive and ALLOW the suggestion.
+_GREETING_STOPWORDS: frozenset[str] = frozenset(
+    {
+        # 한국어 인사·감탄·메타발화
+        "안녕", "안녕하세요", "안녕하십니까", "하이", "헬로", "반가워",
+        "반가워요", "반갑습니다", "고마워", "고마워요", "고맙습니다", "감사",
+        "감사해", "감사해요", "감사합니다", "잘가", "잘자", "바이", "테스트",
+        "오케이", "오키", "넵", "응", "음", "누구", "누구야", "누구세요",
+        "뭐해", "뭐하니", "심심해",
+        # 영어
+        "hello", "hi", "hey", "yo", "thanks", "thank", "thx", "ok", "okay",
+        "test", "testing", "bye",
+    }
+)
+# Common Korean particle/ending tails — stripped ONLY to re-test against the
+# stoplist (e.g. "테스트야" / "누구세요" → "테스트" / "누구"). Conservative.
+_KO_PARTICLE_SUFFIXES: tuple[str, ...] = (
+    "입니다", "이에요", "예요", "에요", "이야", "야", "요",
+)
+# Laughter / filler jamo ("ㅋㅋ", "ㅎㅎ", "ㅠㅠ").
+_LAUGH_CHARS: frozenset[str] = frozenset("ㅋㅎㅠㅜ")
+
+
+def _normalize_token(tok: str) -> str:
+    """Lowercase + strip surrounding punctuation/space for stoplist matching."""
+    return tok.strip().strip(".,!?~…\"'`()[]{}<>:;-").lower()
+
+
+def _is_greeting_token(tok: str) -> bool:
+    """True when a single token is pure greeting/interjection/punctuation."""
+    t = _normalize_token(tok)
+    if not t:  # punctuation-only token → no substance
+        return True
+    if t in _GREETING_STOPWORDS:
+        return True
+    if all(ch in _LAUGH_CHARS for ch in t):  # ㅋㅋ / ㅎㅎ / ㅠㅠ
+        return True
+    for suf in _KO_PARTICLE_SUFFIXES:  # strip a tail, re-test against stoplist
+        if t.endswith(suf) and t[: -len(suf)] in _GREETING_STOPWORDS:
+            return True
+    return False
+
+
+def _greeting_only(chain: list[dict[str, Any]]) -> bool:
+    """True when the branch's user QUESTIONS are greetings/small-talk only (D48).
+
+    Tokenizes ONLY the question text of non-navigator real nodes (answers are
+    ignored), drops the conservative greeting stoplist, and returns True when NO
+    substantive token remains. Belt-and-suspenders for greetings whose long
+    answer would otherwise slip past the length floor. Ambiguous cases — any
+    unknown token, or no question text at all — return False so the suggestion
+    is allowed and the distance/margin gate decides (avoids over-blocking).
+    """
+    saw_token = False
+    for n in chain:
+        if n.get("is_navigator"):
+            continue
+        q = (n.get("question") or "").strip()
+        if not q:
+            continue
+        for raw in re.split(r"\s+", q):
+            if not raw.strip():
+                continue
+            saw_token = True
+            if not _is_greeting_token(raw):
+                return False
+    # No question tokens at all → not enough signal to call it a greeting.
+    return saw_token
+
+
 async def suggest_files(
     client: UserClient,
     chain: list[dict[str, Any]],
@@ -272,9 +346,16 @@ async def suggest_files(
             return []
         by_id = {f["id"]: f for f in files}
         query = _branch_query_text(chain)
-        # D37 content gate: a too-short branch (greetings / small talk) must not
-        # trigger a suggestion regardless of any incidental chunk match.
+        # D48 content gate (relaxed). Two cheap, conservative pre-filters only;
+        # PRECISION is owned by the distance cutoff (0.50) + margin (0.05) below.
+        #  1) hard floor: skip empty / whitespace-only branch queries (min 10).
+        #  2) greeting stoplist: skip when the branch's QUESTIONS are pure
+        #     greetings/small-talk (covers greetings whose long answer would
+        #     slip past the floor). Short-but-real questions ("미분이 뭐야?") now
+        #     reach search and are judged by relevance, not length.
         if len(query.strip()) < settings.file_suggestion_min_query_chars:
+            return []
+        if _greeting_only(chain):
             return []
         chunks = await search(
             client, list(by_id), query, k=settings.file_suggestion_search_k
