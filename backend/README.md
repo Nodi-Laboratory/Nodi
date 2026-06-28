@@ -52,14 +52,24 @@ Admin (all require app role `admin`; admin RLS / RPCs in migration 0008):
 
 Files / RAG (Stage 3b-1; needs `SUPABASE_SERVICE_ROLE_KEY` for upload+worker):
 - `POST /files` (multipart: file, space_kind, space_ref?, session_id?,
-  position_x?, position_y?) — Storage + files row + queued `embedding_split`
-  job. 503 if no service-role key.
+  position_x?, position_y?, kind?) — Storage + files row + queued
+  `embedding_split` job. 503 if no service-role key. `kind='class_material'`
+  (teacher only, space_kind='class') shares the file with all class members.
 - `GET /files?space_kind=&space_ref=` — list (status, chunk_done/chunk_total)
 - `GET /files/{id}` — file status + progress
 - `PATCH /files/{id}/position` {position_x,position_y} — file-node coords (D13)
 - `POST /files/{id}/links` {target_node_id} — link a file to a branch (visual RAG)
 - `DELETE /files/{id}/links/{node_id}` — unlink
 - `GET /sessions/{id}/file-links` — files linked in a session (graph file-nodes)
+
+Teacher (Stage 4b; app role `teacher`; RPCs/RLS in migration 0012):
+- `GET /teacher/classes` — classes I teach + student counts
+- `GET /teacher/classes/{id}/students` — students of a class I teach
+- `GET /teacher/classes/{id}/students/{user_id}/sessions` — a student's
+  class-scope sessions (open nodes via `GET /sessions/{id}`)
+- `GET /teacher/classes/{id}/materials` — class materials + embedding status
+- Materials are uploaded via `POST /files` (kind=class_material). Teachers have
+  no chat workspace — there is no teacher chat endpoint.
 
 All request-time DB access uses the caller's JWT (RLS). The background embedding
 worker (`services/embedding_worker.py`, apscheduler) uses the SERVICE-ROLE client

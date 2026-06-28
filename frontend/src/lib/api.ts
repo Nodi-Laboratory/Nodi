@@ -19,6 +19,8 @@ import type {
   SessionRow,
   SpaceKind,
   TagRow,
+  TeacherClass,
+  TeacherStudent,
   UserRole,
 } from "@/lib/types";
 
@@ -191,12 +193,18 @@ export async function deleteNode(id: string): Promise<void> {
 export async function uploadFile(
   target: SpaceTarget,
   file: File,
-  opts?: { sessionId?: string | null; positionX?: number; positionY?: number },
+  opts?: {
+    sessionId?: string | null;
+    positionX?: number;
+    positionY?: number;
+    kind?: string;
+  },
 ): Promise<FileRow> {
   const form = new FormData();
   form.append("file", file);
   form.append("space_kind", target.space_kind);
   if (target.space_ref) form.append("space_ref", target.space_ref);
+  if (opts?.kind) form.append("kind", opts.kind);
   if (opts?.sessionId) form.append("session_id", opts.sessionId);
   if (opts?.positionX != null) form.append("position_x", String(Math.round(opts.positionX)));
   if (opts?.positionY != null) form.append("position_y", String(Math.round(opts.positionY)));
@@ -232,6 +240,48 @@ export async function patchFilePosition(
 export async function listFiles(target: SpaceTarget): Promise<FileRow[]> {
   const res = await ensureOk(
     await fetch(`${API_BASE}/files?${spaceParams(target).toString()}`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+// ── 교사 컨트롤 패널 (Stage 4b, teacher role만) ──────────────────────
+
+export async function listTeacherClasses(): Promise<TeacherClass[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/teacher/classes`, { headers: await authHeaders() }),
+  );
+  return res.json();
+}
+
+export async function listClassStudents(
+  classId: string,
+): Promise<TeacherStudent[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/teacher/classes/${classId}/students`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+export async function listStudentClassSessions(
+  classId: string,
+  userId: string,
+): Promise<SessionRow[]> {
+  const res = await ensureOk(
+    await fetch(
+      `${API_BASE}/teacher/classes/${classId}/students/${userId}/sessions`,
+      { headers: await authHeaders() },
+    ),
+  );
+  return res.json();
+}
+
+export async function listClassMaterials(classId: string): Promise<FileRow[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/teacher/classes/${classId}/materials`, {
       headers: await authHeaders(),
     }),
   );

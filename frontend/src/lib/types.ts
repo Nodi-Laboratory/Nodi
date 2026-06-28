@@ -23,6 +23,25 @@ export interface MyClass {
   classes: ClassRow | null;
 }
 
+// ── Stage 4b: 교사 컨트롤 패널 ────────────────────────────────────────
+
+export interface TeacherClass {
+  id: string;
+  name: string | null;
+  join_code: string | null;
+  created_at: string;
+  student_count: number;
+}
+
+export interface TeacherStudent {
+  user_id: string;
+  email: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  role_in_class: string | null;
+  joined_at: string;
+}
+
 // ── Stage 1: 트리 대화 (백엔드 FastAPI 계약) ──────────────────────────
 
 export type SpaceKind = "personal" | "class";

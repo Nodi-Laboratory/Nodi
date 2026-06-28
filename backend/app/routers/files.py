@@ -48,12 +48,14 @@ async def upload(
     session_id: str | None = Form(None),
     position_x: float | None = Form(None),
     position_y: float | None = Form(None),
+    kind: str = Form("user_upload"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Upload a file -> Storage + files row + queued embedding_split job.
 
     Optional `session_id` + `position_x/y` place the file as a node in a session
-    graph (D13).
+    graph (D13). `kind='class_material'` (teacher only, space_kind='class') makes
+    the file readable + RAG-searchable by all class members (Stage 4b).
     """
     service = get_service_client()
     if service is None:
@@ -80,6 +82,7 @@ async def upload(
         session_id=session_id,
         position_x=position_x,
         position_y=position_y,
+        kind=kind,
     )
 
 
