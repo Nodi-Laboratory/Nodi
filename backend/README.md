@@ -48,7 +48,11 @@ Admin (all require app role `admin`; admin RLS / RPCs in migration 0008):
 - `GET /admin/users` · `POST /admin/users/{id}/role` (role change via RPC)
 - `GET /admin/settings` · `PUT /admin/settings/{key}` (runtime app_settings)
 - `GET /admin/usage` (per-user token totals — PARTIAL: skill-step tokens only)
-- `GET /admin/logs?user_id=&limit=&offset=` (ai_sessions + embedded ai_steps)
+- `GET /admin/logs?user_id=&since=&until=&limit=&offset=` — chat turn logs
+  (`ai_logs`, D25: system prompt, Q/A, used contexts, skills, errors, tokens).
+  Frontend live-appends new turns via Supabase Realtime on `ai_logs`.
+- `GET /admin/traces?user_id=&limit=&offset=` — ReAct step traces
+  (`ai_sessions` + `ai_steps`) for navigator/overseer
 
 Files / RAG (Stage 3b-1; needs `SUPABASE_SERVICE_ROLE_KEY` for upload+worker):
 - `POST /files` (multipart: file, space_kind, space_ref?, session_id?,

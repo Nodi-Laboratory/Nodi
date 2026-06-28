@@ -5,6 +5,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   addConnection,
   addFileLink,
+  createSession,
+  deleteFile,
   patchFilePosition,
   putNodePositions,
   removeConnection,
@@ -16,6 +18,7 @@ import {
   fileLinksKey,
   filesKey,
   sessionKey,
+  sessionsKey,
   useFiles,
   useFileTagsMap,
   useSessionDetail,
@@ -229,13 +232,39 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     [],
   );
 
+  // 활성 세션 보장(빈 워크스페이스면 먼저 생성, D22)
+  const ensureSession = useCallback(async (): Promise<string> => {
+    const current = useWorkspaceStore.getState().activeSessionId;
+    if (current) return current;
+    const session = await createSession(target);
+    await queryClient.invalidateQueries({ queryKey: sessionsKey(target) });
+    setActiveSession(session.id);
+    return session.id;
+  }, [target, queryClient, setActiveSession]);
+
+  // 자료 패널 업로드: 현재 세션 + 노드로 표시(좌표 미지정 → 그래프가 head 근처 배치)
+  const handlePanelUpload = useCallback(
+    async (file: File) => {
+      const sid = await ensureSession();
+      await uploadFile(target, file, { sessionId: sid });
+      refreshFiles();
+    },
+    [ensureSession, target, refreshFiles],
+  );
+
+  // OS 드래그&드롭 업로드: 세션 보장 + 드롭 좌표
   const handleDropUpload = useCallback(
     async (files: File[], x: number, y: number) => {
-      if (!activeSessionId) return;
+      let sid: string;
+      try {
+        sid = await ensureSession();
+      } catch {
+        return;
+      }
       for (const file of files) {
         try {
           await uploadFile(target, file, {
-            sessionId: activeSessionId,
+            sessionId: sid,
             positionX: x,
             positionY: y,
           });
@@ -245,7 +274,22 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
       }
       refreshFiles();
     },
-    [target, activeSessionId, refreshFiles],
+    [ensureSession, target, refreshFiles],
+  );
+
+  // 파일 노드 삭제(D22)
+  const handleDeleteFile = useCallback(
+    async (fileId: string) => {
+      if (!window.confirm("이 자료를 삭제할까요?")) return;
+      try {
+        await deleteFile(fileId);
+        refreshFiles();
+        refreshFileLinks();
+      } catch {
+        /* 무시 */
+      }
+    },
+    [refreshFiles, refreshFileLinks],
   );
 
   // ── 브랜치 참조(D15) ──
@@ -310,6 +354,7 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             onStartLink={setLinkFileId}
             onCancelLink={() => setLinkFileId(null)}
             onRefresh={handleFilesChanged}
+            onUpload={handlePanelUpload}
           />
         </div>
         <div className="flex min-h-0 flex-col border-x border-accent-border/30">
@@ -337,6 +382,8 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             fileLinkMode={!!linkFileId}
             onLinkTarget={handleLinkTarget}
             onRemoveFileLink={handleRemoveFileLink}
+            onConnectFileToNode={handleLinkFile}
+            onDeleteFile={handleDeleteFile}
             onFilePosition={handleFilePosition}
             onDropUpload={handleDropUpload}
             onPersistPositions={handlePersistPositions}

@@ -2,7 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
-import { LocateFixed, LayoutGrid, GitFork, Layers, Upload } from "lucide-react";
+import {
+  LocateFixed,
+  LayoutGrid,
+  GitFork,
+  Layers,
+  Upload,
+  Link2,
+  Trash2,
+} from "lucide-react";
 import type { FileLink, FileRow, NodeRow } from "@/lib/types";
 import { buildNested, pathIdSet, buildById, type TreeNode } from "@/lib/tree";
 
@@ -57,6 +65,10 @@ interface Props {
   fileLinkMode: boolean;
   onLinkTarget: (nodeId: string) => void;
   onRemoveFileLink: (fileId: string, nodeId: string) => void;
+  /** D22: 파일 노드 우클릭→추적선→분기 노드 클릭으로 RAG 연결. */
+  onConnectFileToNode: (fileId: string, nodeId: string) => void;
+  /** D22: 파일 노드 삭제. */
+  onDeleteFile: (fileId: string) => void;
   /** 파일 노드 좌표 영속(D13/D20). */
   onFilePosition: (fileId: string, x: number, y: number) => void;
   /** OS 파일 드롭 업로드(D16). 좌표는 그래프 좌표. */
@@ -113,14 +125,27 @@ export default function SessionGraphCanvas(props: Props) {
 
   const [dim, setDim] = useState({ width: 0, height: 0 });
   const [reorderNonce, setReorderNonce] = useState(0);
+  // 기억 연결(대화 노드 source)
   const [connectingSourceId, setConnectingSourceId] = useState<string | null>(null);
   const connectingRef = useRef<string | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
+  // 자료 연결(파일 노드 source → 분기 노드 target, RAG)
+  const [connectingFileId, setConnectingFileId] = useState<string | null>(null);
+  const connectingFileRef = useRef<string | null>(null);
+  // 컨텍스트 메뉴: 대화 노드('node') | 파일 노드('file')
+  const [menu, setMenu] = useState<{
+    kind: "node" | "file";
+    id: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [dropActive, setDropActive] = useState(false);
 
   useEffect(() => {
     connectingRef.current = connectingSourceId;
   }, [connectingSourceId]);
+  useEffect(() => {
+    connectingFileRef.current = connectingFileId;
+  }, [connectingFileId]);
 
   // ── 컨테이너 크기 ──
   useEffect(() => {
@@ -158,6 +183,7 @@ export default function SessionGraphCanvas(props: Props) {
       .style("cursor", "grab");
     bg.on("click", () => {
       if (connectingRef.current) setConnectingSourceId(null);
+      if (connectingFileRef.current) setConnectingFileId(null);
       setMenu(null);
     });
 
@@ -243,10 +269,87 @@ export default function SessionGraphCanvas(props: Props) {
 
     const nested = buildNested(nodes, rootNodeId);
     if (!nested) {
+      // 대화 노드가 아직 없어도 떠다니는 자료 노드는 표시(D22)
       linkLayer.selectAll("*").remove();
       connLayer.selectAll("*").remove();
-      fileLayer.selectAll("*").remove();
       nodeLayer.selectAll("*").remove();
+
+      fileNodes.forEach((f, i) => {
+        if (filePosRef.current.has(f.id)) return;
+        if (f.position_x != null && f.position_y != null) {
+          filePosRef.current.set(f.id, { x: f.position_x, y: f.position_y });
+        } else {
+          filePosRef.current.set(f.id, {
+            x: (i % 3) * 46,
+            y: 60 + Math.floor(i / 3) * 46,
+          });
+        }
+      });
+
+      const fdrag = d3
+        .drag<SVGGElement, FileRow>()
+        .on("start", function (event) {
+          event.sourceEvent.stopPropagation();
+          d3.select(this).raise();
+        })
+        .on("drag", function (event, f) {
+          const p = filePosRef.current.get(f.id);
+          if (!p) return;
+          const np = { x: p.x + event.dx, y: p.y + event.dy };
+          filePosRef.current.set(f.id, np);
+          d3.select(this).attr("transform", `translate(${np.x},${np.y})`);
+        })
+        .on("end", function (_e, f) {
+          const p = filePosRef.current.get(f.id);
+          if (p) pr.current.onFilePosition(f.id, p.x, p.y);
+        });
+
+      const fs = fileLayer
+        .selectAll<SVGGElement, FileRow>("g.filenode")
+        .data(fileNodes, (d) => d.id);
+      fs.exit().remove();
+      const fe = fs
+        .enter()
+        .append("g")
+        .attr("class", "filenode")
+        .style("cursor", "grab");
+      fe.append("rect").attr("class", "fbox").attr("x", -10).attr("y", -12).attr("width", 20).attr("height", 24).attr("rx", 3);
+      fe.append("line").attr("class", "fl").attr("x1", -5).attr("y1", -5).attr("x2", 5).attr("y2", -5);
+      fe.append("line").attr("class", "fl").attr("x1", -5).attr("y1", 0).attr("x2", 5).attr("y2", 0);
+      fe.append("line").attr("class", "fl").attr("x1", -5).attr("y1", 5).attr("x2", 2).attr("y2", 5);
+      fe.append("text").attr("class", "fname").attr("dy", "2.4em").attr("text-anchor", "middle").style("font-size", "9px").style("font-family", "var(--font-sans), sans-serif").style("pointer-events", "none").attr("fill", C.file);
+      fe.append("title");
+      const fm = fe.merge(fs);
+      fm.each(function (f) {
+        const p = filePosRef.current.get(f.id);
+        const s2 = d3.select(this);
+        if (p) s2.attr("transform", `translate(${p.x},${p.y})`);
+        const busy = f.status !== "indexed";
+        const fail = f.status === "failed" || f.status === "partial";
+        const stroke = fail ? C.fileFail : busy ? C.fileBusy : C.file;
+        s2.select("rect.fbox").attr("fill", C.fileFill).attr("stroke", stroke).attr("stroke-width", 1.5);
+        s2.selectAll("line.fl").attr("stroke", stroke).attr("stroke-width", 1);
+        const nm =
+          f.name ||
+          f.filename ||
+          (f.storage_path ? f.storage_path.split("/").pop() || f.storage_path : f.id.slice(0, 6));
+        s2.select("text.fname").text(nm.length > 10 ? nm.slice(0, 10) + "…" : nm);
+        const tg = fileTags[f.id];
+        const tagLine = tg && tg.length > 0 ? `\n태그: ${tg.slice(0, 8).map((t) => "#" + t).join(" ")}` : "";
+        s2.select("title").text(`📎 ${nm}${busy ? " (임베딩 중)" : ""}${tagLine}`);
+      });
+      fm.call(fdrag);
+      fm.on("contextmenu", function (event, f) {
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = wrapperRef.current?.getBoundingClientRect();
+        setMenu({
+          kind: "file",
+          id: f.id,
+          x: (event as MouseEvent).clientX - (rect?.left ?? 0),
+          y: (event as MouseEvent).clientY - (rect?.top ?? 0),
+        });
+      });
       return;
     }
 
@@ -445,7 +548,12 @@ export default function SessionGraphCanvas(props: Props) {
     // ── 드래그(대화 노드, 서브트리 동반 + y 제약 + 좌표 영속) ──
     const drag = d3
       .drag<SVGGElement, HNode>()
-      .filter((event) => (event as MouseEvent).button === 0 && !connectingRef.current)
+      .filter(
+        (event) =>
+          (event as MouseEvent).button === 0 &&
+          !connectingRef.current &&
+          !connectingFileRef.current,
+      )
       .on("start", function (event, d) {
         event.sourceEvent.stopPropagation();
         const s = d as unknown as { _moved: boolean; _dist: number };
@@ -599,6 +707,13 @@ export default function SessionGraphCanvas(props: Props) {
       if ((d as unknown as { _moved?: boolean })._moved) return;
       const node = d.data.data;
       const P = pr.current;
+      // 자료 연결(파일 노드 source) 모드: 클릭한 분기 노드를 RAG 연결 타깃으로
+      if (connectingFileRef.current) {
+        const fid = connectingFileRef.current;
+        if (!node.is_navigator) P.onConnectFileToNode(fid, node.id);
+        setConnectingFileId(null);
+        return;
+      }
       if (connectingRef.current) {
         const src = connectingRef.current;
         if (!node.is_navigator && isValidConnectTarget(src, node.id, byId)) {
@@ -627,9 +742,10 @@ export default function SessionGraphCanvas(props: Props) {
       event.stopPropagation();
       const rect = wrapperRef.current?.getBoundingClientRect();
       setMenu({
+        kind: "node",
+        id: d.data.data.id,
         x: (event as MouseEvent).clientX - (rect?.left ?? 0),
         y: (event as MouseEvent).clientY - (rect?.top ?? 0),
-        nodeId: d.data.data.id,
       });
     });
 
@@ -706,6 +822,17 @@ export default function SessionGraphCanvas(props: Props) {
       s2.select("title").text(`📎 ${nm}${busy ? " (임베딩 중)" : ""}${tagLine}`);
     });
     fmerged.call(fileDrag);
+    fmerged.on("contextmenu", function (event, f) {
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      setMenu({
+        kind: "file",
+        id: f.id,
+        x: (event as MouseEvent).clientX - (rect?.left ?? 0),
+        y: (event as MouseEvent).clientY - (rect?.top ?? 0),
+      });
+    });
 
     redrawFileLines();
   }, [
@@ -722,21 +849,26 @@ export default function SessionGraphCanvas(props: Props) {
     reorderNonce,
   ]);
 
-  // ── 마우스 추적 연결선(D14) ──
+  // ── 마우스 추적 연결선(D14 기억연결 / D22 자료연결) ──
   useEffect(() => {
     const layer = tempGRef.current;
     if (!layer) return;
-    if (!connectingSourceId) {
+    // 기억연결(주황, 대화 노드 출발) 또는 자료연결(청록, 파일 노드 출발)
+    const src = connectingSourceId
+      ? posRef.current.get(connectingSourceId)
+      : connectingFileId
+        ? filePosRef.current.get(connectingFileId)
+        : null;
+    if (!src) {
       layer.selectAll("*").remove();
       return;
     }
-    const src = posRef.current.get(connectingSourceId);
-    if (!src) return;
+    const color = connectingFileId ? C.file : C.conn;
     layer.selectAll("*").remove();
     const path = layer
       .append("path")
       .attr("fill", "none")
-      .attr("stroke", C.conn)
+      .attr("stroke", color)
       .attr("stroke-width", 2)
       .attr("stroke-dasharray", "5 4")
       .attr("pointer-events", "none");
@@ -750,13 +882,14 @@ export default function SessionGraphCanvas(props: Props) {
       window.removeEventListener("mousemove", onMove);
       layer.selectAll("*").remove();
     };
-  }, [connectingSourceId]);
+  }, [connectingSourceId, connectingFileId]);
 
   // Esc로 모드 취소
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setConnectingSourceId(null);
+        setConnectingFileId(null);
         setMenu(null);
       }
     };
@@ -789,7 +922,10 @@ export default function SessionGraphCanvas(props: Props) {
     pr.current.onDropUpload(files, p.x, p.y);
   };
 
-  const menuNode = menu ? nodes.find((n) => n.id === menu.nodeId) : null;
+  const menuNode =
+    menu?.kind === "node" ? nodes.find((n) => n.id === menu.id) : null;
+  const menuFile =
+    menu?.kind === "file" ? fileNodes.find((f) => f.id === menu.id) : null;
 
   return (
     <div
@@ -818,7 +954,15 @@ export default function SessionGraphCanvas(props: Props) {
           브랜치 참조: 비교할 leaf 노드를 클릭해 선택하세요.
         </div>
       )}
-      {fileLinkMode && !connectingSourceId && !trackMode && (
+      {connectingFileId && (
+        <div
+          className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border px-3 py-1.5 text-xs shadow"
+          style={{ borderColor: C.file, color: C.file, background: "var(--bg)" }}
+        >
+          📎 자료 연결(RAG): 이 자료를 참고할 분기 노드를 클릭하세요. (배경·Esc=취소)
+        </div>
+      )}
+      {fileLinkMode && !connectingSourceId && !connectingFileId && !trackMode && (
         <div
           className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border px-3 py-1.5 text-xs shadow"
           style={{ borderColor: C.file, color: C.file, background: "var(--bg)" }}
@@ -846,6 +990,7 @@ export default function SessionGraphCanvas(props: Props) {
         </button>
       </div>
 
+      {/* 대화 노드 컨텍스트 메뉴 */}
       {menu && menuNode && !menuNode.is_navigator && (
         <div
           className="absolute z-30 w-48 overflow-hidden rounded-lg border border-accent-border/50 bg-bg-elevated py-1 text-sm shadow-lg"
@@ -855,7 +1000,7 @@ export default function SessionGraphCanvas(props: Props) {
           <button
             type="button"
             onClick={() => {
-              pr.current.onNodeClick(menu.nodeId);
+              pr.current.onNodeClick(menu.id);
               setMenu(null);
             }}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-accent/30"
@@ -865,7 +1010,8 @@ export default function SessionGraphCanvas(props: Props) {
           <button
             type="button"
             onClick={() => {
-              setConnectingSourceId(menu.nodeId);
+              setConnectingFileId(null);
+              setConnectingSourceId(menu.id);
               setMenu(null);
             }}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-accent/30"
@@ -875,12 +1021,44 @@ export default function SessionGraphCanvas(props: Props) {
           <button
             type="button"
             onClick={() => {
-              pr.current.onEnterTrack(menu.nodeId);
+              pr.current.onEnterTrack(menu.id);
               setMenu(null);
             }}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-accent/30"
           >
             <Layers size={13} /> 브랜치 참조에 추가
+          </button>
+        </div>
+      )}
+
+      {/* 파일 노드 컨텍스트 메뉴 (D22) */}
+      {menu && menuFile && (
+        <div
+          className="absolute z-30 w-44 overflow-hidden rounded-lg border border-accent-border/50 bg-bg-elevated py-1 text-sm shadow-lg"
+          style={{ left: Math.min(menu.x, (dim.width || 9999) - 190), top: menu.y }}
+          onMouseLeave={() => setMenu(null)}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setConnectingSourceId(null);
+              setConnectingFileId(menu.id);
+              setMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-accent/30"
+          >
+            <Link2 size={13} style={{ color: C.file }} /> 자료 연결
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const id = menu.id;
+              setMenu(null);
+              pr.current.onDeleteFile(id);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-danger hover:bg-danger/10"
+          >
+            <Trash2 size={13} /> 자료 삭제
           </button>
         </div>
       )}

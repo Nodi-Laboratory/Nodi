@@ -1,18 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Radio } from "lucide-react";
 import { getAdminLogs, listAdminUsers } from "@/lib/api";
-import type { AdminLogsResponse, AdminLogSession, AdminUser } from "@/lib/types";
+import { createClient } from "@/lib/supabase/client";
+import type { AdminLog, AdminLogsResponse, AdminUser } from "@/lib/types";
 
 const LIMIT = 20;
 
-/** 로그 탭: ai_sessions 목록 + ai_steps 트레이스(턴/스텝). 사용자 필터 + 페이지네이션. */
+/**
+ * 로그 탭(D25): 채팅 턴 단위 ai_logs.
+ * 과거 조회(사용자/날짜 필터·페이지네이션) + Supabase Realtime 구독으로 신규 턴 라이브 추가.
+ */
 export function LogsTab() {
   const [userId, setUserId] = useState<string>("");
+  const [since, setSince] = useState<string>("");
+  const [until, setUntil] = useState<string>("");
   const [offset, setOffset] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [liveLogs, setLiveLogs] = useState<AdminLog[]>([]);
+  const [live, setLive] = useState(false);
 
   const { data: users } = useQuery<AdminUser[]>({
     queryKey: ["admin", "users"],
@@ -20,12 +28,46 @@ export function LogsTab() {
   });
 
   const { data, isLoading, isError } = useQuery<AdminLogsResponse>({
-    queryKey: ["admin", "logs", userId || null, offset],
+    queryKey: ["admin", "logs", userId || null, since || null, until || null, offset],
     queryFn: () =>
-      getAdminLogs({ userId: userId || null, limit: LIMIT, offset }),
+      getAdminLogs({
+        userId: userId || null,
+        since: since || null,
+        until: until || null,
+        limit: LIMIT,
+        offset,
+      }),
   });
 
-  const sessions = data?.sessions ?? [];
+  // ── Realtime 구독: ai_logs INSERT → 목록 맨 위에 라이브 추가 ──
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel("admin-ai_logs")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "ai_logs" },
+        (payload) => {
+          setLiveLogs((prev) => [payload.new as AdminLog, ...prev].slice(0, 100));
+        },
+      )
+      .subscribe((status) => setLive(status === "SUBSCRIBED"));
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const logs = data?.logs ?? [];
+  // 라이브 추가분은 첫 페이지에서만, 현재 필터에 맞는 것만, 중복 제거
+  const liveExtra =
+    offset === 0
+      ? liveLogs.filter(
+          (l) =>
+            (!userId || l.owner_id === userId) &&
+            !logs.some((x) => x.id === l.id),
+        )
+      : [];
+  const display = [...liveExtra, ...logs];
 
   const toggle = (id: string) =>
     setExpanded((prev) => {
@@ -35,17 +77,29 @@ export function LogsTab() {
       return next;
     });
 
+  const resetPage = () => setOffset(0);
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-sm font-semibold text-[#e7e3d8]">
-          에이전트 트레이스 로그
-        </h2>
+        <h2 className="text-sm font-semibold text-[#e7e3d8]">채팅 턴 로그</h2>
+        <span
+          className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+            live
+              ? "bg-[#e0796a]/20 text-[#e0796a]"
+              : "bg-white/5 text-[#9a948a]"
+          }`}
+          title={live ? "실시간 구독 중" : "구독 대기"}
+        >
+          <Radio size={11} />
+          {live ? "LIVE" : "연결 중…"}
+        </span>
+
         <select
           value={userId}
           onChange={(e) => {
             setUserId(e.target.value);
-            setOffset(0);
+            resetPage();
           }}
           className="rounded border border-white/15 bg-[#1b1813] px-2 py-1 text-sm text-[#e7e3d8]"
         >
@@ -56,25 +110,49 @@ export function LogsTab() {
             </option>
           ))}
         </select>
+
+        <label className="flex items-center gap-1 text-xs text-[#9a948a]">
+          시작
+          <input
+            type="date"
+            value={since}
+            onChange={(e) => {
+              setSince(e.target.value);
+              resetPage();
+            }}
+            className="rounded border border-white/15 bg-[#1b1813] px-1.5 py-1 text-[#e7e3d8]"
+          />
+        </label>
+        <label className="flex items-center gap-1 text-xs text-[#9a948a]">
+          끝
+          <input
+            type="date"
+            value={until}
+            onChange={(e) => {
+              setUntil(e.target.value);
+              resetPage();
+            }}
+            className="rounded border border-white/15 bg-[#1b1813] px-1.5 py-1 text-[#e7e3d8]"
+          />
+        </label>
       </div>
 
       {isLoading ? (
         <p className="text-sm text-[#9a948a]">로그 불러오는 중…</p>
       ) : isError ? (
         <p className="text-sm text-[#e0796a]">로그를 불러오지 못했습니다.</p>
-      ) : sessions.length === 0 ? (
+      ) : display.length === 0 ? (
         <p className="text-sm text-[#9a948a]">로그가 없습니다.</p>
       ) : (
         <div className="flex flex-col gap-2">
-          {sessions.map((s) => (
-            <LogSessionRow
-              key={s.id}
-              session={s}
-              open={expanded.has(s.id)}
-              onToggle={() => toggle(s.id)}
-              userEmail={
-                users?.find((u) => u.id === s.owner_id)?.email ?? s.owner_id
-              }
+          {display.map((l) => (
+            <LogRow
+              key={l.id}
+              log={l}
+              isLive={liveExtra.some((x) => x.id === l.id)}
+              open={expanded.has(l.id)}
+              onToggle={() => toggle(l.id)}
+              userEmail={users?.find((u) => u.id === l.owner_id)?.email ?? l.owner_id}
             />
           ))}
         </div>
@@ -90,12 +168,12 @@ export function LogsTab() {
           이전
         </button>
         <span className="text-xs text-[#9a948a]">
-          {offset + 1}–{offset + sessions.length}
+          {logs.length === 0 ? 0 : offset + 1}–{offset + logs.length}
         </span>
         <button
           type="button"
           onClick={() => setOffset((o) => o + LIMIT)}
-          disabled={sessions.length < LIMIT}
+          disabled={logs.length < LIMIT}
           className="rounded border border-white/15 px-3 py-1 text-sm text-[#e7e3d8] disabled:opacity-40"
         >
           다음
@@ -105,23 +183,30 @@ export function LogsTab() {
   );
 }
 
-function preview(v: unknown, max = 200): string {
+function jsonPreview(v: unknown, max = 400): string {
   if (v == null) return "";
-  const s = typeof v === "string" ? v : JSON.stringify(v);
+  const s = typeof v === "string" ? v : JSON.stringify(v, null, 2);
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
-function LogSessionRow({
-  session,
+function LogRow({
+  log,
+  isLive,
   open,
   onToggle,
   userEmail,
 }: {
-  session: AdminLogSession;
+  log: AdminLog;
+  isLive: boolean;
   open: boolean;
   onToggle: () => void;
   userEmail: string;
 }) {
+  const contexts = log.contexts ?? {};
+  const ctxEntries = Object.entries(contexts);
+  const skillCalls = log.skill_calls ?? [];
+  const errors = log.errors ?? [];
+
   return (
     <div className="rounded-lg border border-white/10 bg-[#25211a]">
       <button
@@ -134,62 +219,93 @@ function LogSessionRow({
         ) : (
           <ChevronRight size={15} className="text-[#9a948a]" />
         )}
+        {isLive && (
+          <span className="rounded bg-[#e0796a]/20 px-1.5 py-0.5 text-[10px] font-medium text-[#e0796a]">
+            NEW
+          </span>
+        )}
         <span className="rounded bg-[#e0a32e]/20 px-1.5 py-0.5 text-xs font-medium text-[#fcf58b]">
-          {session.kind || "trace"}
+          {log.kind || "chat"}
         </span>
-        <span className="text-sm text-[#cfc9bd]">{userEmail}</span>
-        <span className="ml-auto text-xs text-[#9a948a]">
-          {new Date(session.created_at).toLocaleString("ko-KR")} ·{" "}
-          {session.ai_steps.length}스텝
+        <span className="min-w-0 flex-1 truncate text-sm text-[#cfc9bd]">
+          {log.question || "(질문 없음)"}
+        </span>
+        <span className="shrink-0 text-xs text-[#9a948a]">{userEmail}</span>
+        <span className="shrink-0 text-xs text-[#9a948a]">
+          {log.token_estimate != null ? `${log.token_estimate} tok` : ""}
+        </span>
+        <span className="shrink-0 text-xs text-[#9a948a]">
+          {new Date(log.created_at).toLocaleString("ko-KR")}
         </span>
       </button>
 
       {open && (
-        <div className="border-t border-white/10 p-3">
-          {session.ai_steps.length === 0 ? (
-            <p className="text-xs text-[#9a948a]">스텝 없음.</p>
-          ) : (
-            <ol className="flex flex-col gap-2">
-              {session.ai_steps.map((step) => (
-                <li
-                  key={step.seq}
-                  className="rounded border border-white/10 bg-[#1b1813] p-2 text-xs"
+        <div className="flex flex-col gap-3 border-t border-white/10 p-3 text-xs">
+          {ctxEntries.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {ctxEntries.map(([k, v]) => (
+                <span
+                  key={k}
+                  className={`rounded-full px-2 py-0.5 ${
+                    v
+                      ? "bg-[#9bbf6a]/20 text-[#9bbf6a]"
+                      : "bg-white/5 text-[#9a948a]"
+                  }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-[#9a948a]">#{step.seq}</span>
-                    {step.skill && (
-                      <span className="rounded bg-white/10 px-1.5 py-0.5 font-medium text-[#e7e3d8]">
-                        {step.skill}
-                      </span>
-                    )}
-                    {step.tokens != null && (
-                      <span className="ml-auto text-[#9a948a]">
-                        {step.tokens} tok
-                      </span>
-                    )}
-                  </div>
-                  {step.thought && (
-                    <p className="mt-1 text-[#cfc9bd]">
-                      <span className="text-[#9a948a]">thought: </span>
-                      {step.thought}
-                    </p>
-                  )}
-                  {step.input != null && preview(step.input) && (
-                    <p className="mt-1 break-all font-mono text-[#9a948a]">
-                      input: {preview(step.input)}
-                    </p>
-                  )}
-                  {step.observation != null && preview(step.observation) && (
-                    <p className="mt-1 break-all font-mono text-[#9a948a]">
-                      obs: {preview(step.observation)}
-                    </p>
-                  )}
-                </li>
+                  {k}: {String(v)}
+                </span>
               ))}
-            </ol>
+            </div>
+          )}
+
+          <Section label="질문">{log.question}</Section>
+          <Section label="답변">{log.answer}</Section>
+          <Section label="system_prompt" mono>
+            {log.system_prompt}
+          </Section>
+
+          {skillCalls.length > 0 && (
+            <Section label={`skill_calls (${skillCalls.length})`} mono>
+              {jsonPreview(skillCalls, 800)}
+            </Section>
+          )}
+
+          {errors.length > 0 && (
+            <div>
+              <div className="mb-1 font-medium text-[#e0796a]">
+                errors ({errors.length})
+              </div>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-[#1b1813] p-2 font-mono text-[#e0796a]">
+                {jsonPreview(errors, 800)}
+              </pre>
+            </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function Section({
+  label,
+  children,
+  mono,
+}: {
+  label: string;
+  children: React.ReactNode;
+  mono?: boolean;
+}) {
+  if (!children) return null;
+  return (
+    <div>
+      <div className="mb-1 font-medium text-[#9a948a]">{label}</div>
+      <pre
+        className={`max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[#1b1813] p-2 text-[#cfc9bd] ${
+          mono ? "font-mono" : ""
+        }`}
+      >
+        {children}
+      </pre>
     </div>
   );
 }

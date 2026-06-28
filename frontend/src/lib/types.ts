@@ -279,27 +279,25 @@ export interface AdminUsage {
   by_user: AdminUsageUser[];
 }
 
-export interface AdminLogStep {
-  seq: number;
-  thought: string | null;
-  skill: string | null;
-  input: unknown;
-  observation: unknown;
-  tokens: number | null;
-  created_at: string;
-}
-
-export interface AdminLogSession {
+/** D25: 채팅 턴 단위 로그(ai_logs 1행 = 1턴). */
+export interface AdminLog {
   id: string;
   owner_id: string;
   session_id: string | null;
+  node_id: string | null;
   kind: string | null;
+  system_prompt: string | null;
+  question: string | null;
+  answer: string | null;
+  contexts: Record<string, unknown> | null;
+  skill_calls: unknown[] | null;
+  errors: unknown[] | null;
+  token_estimate: number | null;
   created_at: string;
-  ai_steps: AdminLogStep[];
 }
 
 export interface AdminLogsResponse {
   limit: number;
   offset: number;
-  sessions: AdminLogSession[];
+  logs: AdminLog[];
 }
