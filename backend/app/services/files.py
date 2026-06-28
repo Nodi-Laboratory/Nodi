@@ -46,6 +46,16 @@ async def _assert_class_member(
         )
 
 
+async def _assert_class_teacher(user_client: UserClient, class_id: str) -> None:
+    """Verify the caller is a teacher of the class (is_class_teacher RPC)."""
+    is_teacher = await user_client.rpc("is_class_teacher", {"p_class_id": class_id})
+    if not is_teacher:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a teacher of this class.",
+        )
+
+
 async def upload_file(
     service: ServiceClient,
     user_client: UserClient,
@@ -58,11 +68,22 @@ async def upload_file(
     session_id: str | None = None,
     position_x: float | None = None,
     position_y: float | None = None,
+    kind: str = "user_upload",
 ) -> dict[str, Any]:
     if space_kind not in ("personal", "class"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="space_kind must be 'personal' or 'class'.",
+        )
+    if kind not in ("user_upload", "class_material"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="kind must be 'user_upload' or 'class_material'.",
+        )
+    if kind == "class_material" and space_kind != "class":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="class_material requires space_kind='class'.",
         )
     ref = space_ref or (owner_id if space_kind == "personal" else None)
     if space_kind == "class" and not ref:
@@ -70,9 +91,13 @@ async def upload_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class files require space_ref (class id).",
         )
-    # Defense: only upload into a class the caller actually belongs to.
+    # Defense: class_material requires teacher of that class; other class
+    # uploads only require membership.
     if space_kind == "class":
-        await _assert_class_member(user_client, owner_id, ref)
+        if kind == "class_material":
+            await _assert_class_teacher(user_client, ref)
+        else:
+            await _assert_class_member(user_client, owner_id, ref)
     if not data:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -100,7 +125,7 @@ async def upload_file(
             "space_kind": space_kind,
             "space_ref": ref,
             "uploader_id": owner_id,
-            "kind": "user_upload",
+            "kind": kind,
             "storage_path": storage_path,
             "mime": mime,
             "size_bytes": len(data),

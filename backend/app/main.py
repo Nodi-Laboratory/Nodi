@@ -23,6 +23,7 @@ from .routers import (
     overseer,
     sessions,
     tags,
+    teacher,
 )
 from .services import embedding_worker
 
@@ -63,6 +64,7 @@ app.include_router(home.router)
 app.include_router(overseer.router)
 app.include_router(admin.router)
 app.include_router(files.router)
+app.include_router(teacher.router)
 
 
 @app.get("/", tags=["health"])
