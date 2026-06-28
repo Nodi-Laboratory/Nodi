@@ -2,15 +2,22 @@
 
 import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Upload, FileText, AlertTriangle, CheckCircle2 } from "lucide-react";
+import {
+  Upload,
+  FileText,
+  AlertTriangle,
+  CheckCircle2,
+  Link2,
+  X,
+} from "lucide-react";
 import { ApiError, uploadFile, type SpaceTarget } from "@/lib/api";
 import { filesKey, useFiles } from "@/lib/queries";
-import type { FileRow, FileStatus } from "@/lib/types";
+import type { FileLink, FileRow, FileStatus } from "@/lib/types";
 
 /**
- * 워크스페이스 좌측 "자료" 패널 (Stage 3b-1).
- * 현재 공간의 파일 업로드 + 목록 + 임베딩 진행률. service_role 미설정 시 업로드 503 안내.
- * (파일 노드 드래그·시각적 RAG·검색은 3b-2.)
+ * 워크스페이스 좌측 "자료" 패널.
+ * 업로드 + 목록 + 임베딩 진행률(3b-1) + 파일→분기 연결 시작/표시(3b-2, 시각적 RAG).
+ * service_role 미설정 시 업로드 503 안내.
  */
 function formatBytes(n: number | null): string {
   if (n == null) return "";
@@ -40,7 +47,19 @@ const STATUS_META: Record<
   failed: { label: "실패", cls: "bg-danger/20 text-danger", progress: false },
 };
 
-export function FilesPanel({ target }: { target: SpaceTarget }) {
+export function FilesPanel({
+  target,
+  fileLinks,
+  linkFileId,
+  onStartLink,
+  onCancelLink,
+}: {
+  target: SpaceTarget;
+  fileLinks: FileLink[];
+  linkFileId: string | null;
+  onStartLink: (fileId: string) => void;
+  onCancelLink: () => void;
+}) {
   const queryClient = useQueryClient();
   const { data: files, isLoading } = useFiles(target);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -111,7 +130,14 @@ export function FilesPanel({ target }: { target: SpaceTarget }) {
         ) : (
           <ul className="flex flex-col gap-1.5">
             {files.map((f) => (
-              <FileItem key={f.id} file={f} />
+              <FileItem
+                key={f.id}
+                file={f}
+                linkCount={fileLinks.filter((l) => l.file_id === f.id).length}
+                linking={linkFileId === f.id}
+                onStartLink={() => onStartLink(f.id)}
+                onCancelLink={onCancelLink}
+              />
             ))}
           </ul>
         )}
@@ -120,14 +146,31 @@ export function FilesPanel({ target }: { target: SpaceTarget }) {
   );
 }
 
-function FileItem({ file }: { file: FileRow }) {
+function FileItem({
+  file,
+  linkCount,
+  linking,
+  onStartLink,
+  onCancelLink,
+}: {
+  file: FileRow;
+  linkCount: number;
+  linking: boolean;
+  onStartLink: () => void;
+  onCancelLink: () => void;
+}) {
   const meta = STATUS_META[file.status];
   const total = file.chunk_total ?? 0;
   const done = file.chunk_done ?? 0;
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  const canLink = file.status === "indexed";
 
   return (
-    <li className="rounded-lg border border-accent-border/30 bg-bg-elevated px-2.5 py-2">
+    <li
+      className={`rounded-lg border bg-bg-elevated px-2.5 py-2 ${
+        linking ? "border-[#2a7d7a]" : "border-accent-border/30"
+      }`}
+    >
       <div className="flex items-center gap-2">
         {file.status === "indexed" ? (
           <CheckCircle2 size={14} className="shrink-0 text-positive" />
@@ -166,6 +209,38 @@ function FileItem({ file }: { file: FileRow }) {
       {(file.status === "failed" || file.status === "partial") && file.error && (
         <p className="mt-1 ml-6 text-[11px] text-danger">{file.error}</p>
       )}
+
+      {/* 분기에 연결 (시각적 RAG) */}
+      <div className="mt-1.5 ml-6 flex items-center gap-2">
+        {linking ? (
+          <button
+            type="button"
+            onClick={onCancelLink}
+            className="flex items-center gap-1 rounded-md border border-[#2a7d7a] bg-[#2a7d7a]/10 px-2 py-0.5 text-[11px] font-medium text-[#2a7d7a]"
+          >
+            <X size={11} />
+            그래프에서 노드 선택 중… (취소)
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onStartLink}
+            disabled={!canLink}
+            title={
+              canLink
+                ? "분기에 연결: 그래프에서 노드를 클릭"
+                : "임베딩 완료(완료 상태) 후 연결할 수 있어요"
+            }
+            className="flex items-center gap-1 rounded-md border border-accent-border/50 px-2 py-0.5 text-[11px] font-medium text-fg-muted transition-colors hover:text-fg disabled:opacity-50"
+          >
+            <Link2 size={11} />
+            분기에 연결
+          </button>
+        )}
+        {linkCount > 0 && (
+          <span className="text-[11px] text-[#2a7d7a]">📎 {linkCount}곳</span>
+        )}
+      </div>
     </li>
   );
 }

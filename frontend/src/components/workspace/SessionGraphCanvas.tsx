@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
 import { LocateFixed, Link2, X } from "lucide-react";
-import type { NodeRow } from "@/lib/types";
+import type { FileLink, NodeRow } from "@/lib/types";
 import { buildNested, pathIdSet, buildById, type TreeNode } from "@/lib/tree";
 
 /**
@@ -23,6 +23,10 @@ const C = {
   navFill: "#fffdf7", // --bg-elevated
   labelMuted: "#7a7a6e",
   conn: "#c2702a", // --warning (기억 연결선 — 트리 링크와 구별)
+  file: "#2a7d7a", // teal (시각적 RAG 파일 연결 — 다른 선들과 구별)
+  fileFill: "#e3f1ef",
+  fileBusy: "#e0a32e",
+  fileFail: "#b54a3a",
 } as const;
 
 const R = 11; // 노드 반지름
@@ -37,6 +41,14 @@ interface Props {
   onConnectSource: (sourceId: string) => void;
   /** 기억 연결 해제. */
   onRemoveConnection: (targetId: string, sourceId: string) => void;
+  /** 시각적 RAG: 세션의 파일↔노드 링크 목록. */
+  fileLinks: FileLink[];
+  /** 파일을 분기에 연결하는 모드(자료 패널에서 시작). */
+  fileLinkMode: boolean;
+  /** 파일 연결 모드에서 노드 클릭 시(target 노드 선택). */
+  onLinkTarget: (nodeId: string) => void;
+  /** 파일 연결 해제. */
+  onRemoveFileLink: (fileId: string, nodeId: string) => void;
 }
 
 type HNode = d3.HierarchyPointNode<TreeNode>;
@@ -44,6 +56,14 @@ interface ConnPair {
   source: string;
   target: string;
   key: string;
+}
+interface FileMarker {
+  key: string;
+  fileId: string;
+  nodeId: string;
+  idx: number;
+  status: string;
+  name: string;
 }
 
 export default function SessionGraphCanvas({
@@ -53,6 +73,10 @@ export default function SessionGraphCanvas({
   onNodeClick,
   onConnectSource,
   onRemoveConnection,
+  fileLinks,
+  fileLinkMode,
+  onLinkTarget,
+  onRemoveFileLink,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -60,6 +84,7 @@ export default function SessionGraphCanvas({
   const linkGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const connGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const nodeGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const fileGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const transformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity.translate(0, 60).scale(0.9));
   const posRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -69,8 +94,11 @@ export default function SessionGraphCanvas({
   const onNodeClickRef = useRef(onNodeClick);
   const onConnectSourceRef = useRef(onConnectSource);
   const onRemoveConnectionRef = useRef(onRemoveConnection);
+  const onLinkTargetRef = useRef(onLinkTarget);
+  const onRemoveFileLinkRef = useRef(onRemoveFileLink);
   const activeNodeIdRef = useRef(activeNodeId);
   const connectModeRef = useRef(false);
+  const fileLinkModeRef = useRef(fileLinkMode);
 
   const [dim, setDim] = useState({ width: 0, height: 0 });
   const [connectMode, setConnectMode] = useState(false);
@@ -82,8 +110,19 @@ export default function SessionGraphCanvas({
     onNodeClickRef.current = onNodeClick;
     onConnectSourceRef.current = onConnectSource;
     onRemoveConnectionRef.current = onRemoveConnection;
+    onLinkTargetRef.current = onLinkTarget;
+    onRemoveFileLinkRef.current = onRemoveFileLink;
     activeNodeIdRef.current = activeNodeId;
-  }, [onNodeClick, onConnectSource, onRemoveConnection, activeNodeId]);
+    fileLinkModeRef.current = fileLinkMode;
+  }, [
+    onNodeClick,
+    onConnectSource,
+    onRemoveConnection,
+    onLinkTarget,
+    onRemoveFileLink,
+    activeNodeId,
+    fileLinkMode,
+  ]);
 
   useEffect(() => {
     connectModeRef.current = effectiveConnectMode;
@@ -142,10 +181,11 @@ export default function SessionGraphCanvas({
 
     const g = svg.append("g");
     contentGRef.current = g;
-    // z 순서: 트리 링크(하) → 기억 연결선(중) → 노드(상)
+    // z 순서: 트리 링크(하) → 기억 연결선 → 노드 → 파일 링크 마커(상, 클릭 가능)
     linkGRef.current = g.append("g").attr("class", "links");
     connGRef.current = g.append("g").attr("class", "connections");
     nodeGRef.current = g.append("g").attr("class", "nodes");
+    fileGRef.current = g.append("g").attr("class", "filelinks");
 
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
@@ -181,7 +221,14 @@ export default function SessionGraphCanvas({
 
   // 데이터 렌더링
   useEffect(() => {
-    if (!contentGRef.current || !linkGRef.current || !nodeGRef.current || !connGRef.current) return;
+    if (
+      !contentGRef.current ||
+      !linkGRef.current ||
+      !nodeGRef.current ||
+      !connGRef.current ||
+      !fileGRef.current
+    )
+      return;
     if (dim.width === 0) return;
 
     // 세션(루트) 변경 시 위치 캐시 초기화
@@ -194,11 +241,13 @@ export default function SessionGraphCanvas({
     const linkLayer = linkGRef.current;
     const connLayer = connGRef.current;
     const nodeLayer = nodeGRef.current;
+    const fileLayer = fileGRef.current;
 
     if (!nested) {
       linkLayer.selectAll("*").remove();
       connLayer.selectAll("*").remove();
       nodeLayer.selectAll("*").remove();
+      fileLayer.selectAll("*").remove();
       return;
     }
 
@@ -268,6 +317,30 @@ export default function SessionGraphCanvas({
           const sel = d3.select(this);
           sel.select<SVGPathElement>("path.conn-visible").attr("d", path);
           sel.select<SVGPathElement>("path.conn-hit").attr("d", path);
+        });
+
+    // ── 파일 링크 마커 좌표(노드 우상단에 적층) + 재그리기 ──
+    const fileMarkerXY = (nodeId: string, idx: number) => {
+      const p = posRef.current.get(nodeId);
+      if (!p) return null;
+      return { nx: p.x, ny: p.y, mx: p.x + 30, my: p.y - 24 - idx * 22 };
+    };
+    const redrawFileLinks = () =>
+      fileLayer
+        .selectAll<SVGGElement, FileMarker>("g.filelink")
+        .each(function (fm) {
+          const xy = fileMarkerXY(fm.nodeId, fm.idx);
+          if (!xy) return;
+          const sel = d3.select(this);
+          sel
+            .select<SVGLineElement>("line.file-line")
+            .attr("x1", xy.nx)
+            .attr("y1", xy.ny)
+            .attr("x2", xy.mx)
+            .attr("y2", xy.my);
+          sel
+            .select<SVGGElement>("g.file-marker")
+            .attr("transform", `translate(${xy.mx},${xy.my})`);
         });
 
     // 같은 세션 그래프에 source/target 둘 다 있는 연결만 선으로
@@ -374,6 +447,7 @@ export default function SessionGraphCanvas({
           });
         redrawLinks();
         redrawConnections();
+        redrawFileLinks();
       });
 
     // ── 노드 ──
@@ -481,6 +555,12 @@ export default function SessionGraphCanvas({
       event.stopPropagation();
       if ((d as unknown as { _moved?: boolean })._moved) return;
       const node = d.data.data;
+      // 파일 연결 모드(자료 패널에서 시작): 클릭 노드를 link target으로
+      if (fileLinkModeRef.current) {
+        if (node.is_navigator) return;
+        onLinkTargetRef.current(node.id);
+        return;
+      }
       // 기억 연결 모드: 다른 분기의 source 노드를 현재 노드로 연결
       if (connectModeRef.current) {
         if (node.is_navigator) return;
@@ -491,7 +571,97 @@ export default function SessionGraphCanvas({
       }
       onNodeClickRef.current(node.id);
     });
-  }, [nodes, activeNodeId, rootNodeId, dim.width, dim.height]);
+
+    // ── 파일 링크 마커(시각적 RAG) ──
+    const fileMarkers: FileMarker[] = [];
+    const perNode = new Map<string, number>();
+    for (const fl of fileLinks) {
+      if (!nodeById.has(fl.target_node_id)) continue;
+      const idx = perNode.get(fl.target_node_id) ?? 0;
+      perNode.set(fl.target_node_id, idx + 1);
+      const f = fl.files;
+      const name = f?.storage_path
+        ? f.storage_path.split("/").pop() ?? f.storage_path
+        : fl.file_id.slice(0, 8);
+      fileMarkers.push({
+        key: `${fl.file_id}->${fl.target_node_id}`,
+        fileId: fl.file_id,
+        nodeId: fl.target_node_id,
+        idx,
+        status: f?.status ?? "",
+        name,
+      });
+    }
+
+    const fileSel = fileLayer
+      .selectAll<SVGGElement, FileMarker>("g.filelink")
+      .data(fileMarkers, (d) => d.key);
+
+    fileSel.exit().remove();
+
+    const fileEnter = fileSel
+      .enter()
+      .append("g")
+      .attr("class", "filelink")
+      .style("cursor", "pointer");
+    fileEnter
+      .append("line")
+      .attr("class", "file-line")
+      .attr("stroke", C.file)
+      .attr("stroke-width", 1.5)
+      .attr("stroke-dasharray", "4 3")
+      .attr("pointer-events", "none");
+    const mk = fileEnter.append("g").attr("class", "file-marker");
+    mk.append("rect")
+      .attr("class", "file-box")
+      .attr("x", -7)
+      .attr("y", -8.5)
+      .attr("width", 14)
+      .attr("height", 17)
+      .attr("rx", 2);
+    mk.append("line").attr("class", "ft").attr("x1", -4).attr("y1", -2).attr("x2", 4).attr("y2", -2);
+    mk.append("line").attr("class", "ft").attr("x1", -4).attr("y1", 1).attr("x2", 4).attr("y2", 1);
+    mk.append("line").attr("class", "ft").attr("x1", -4).attr("y1", 4).attr("x2", 2).attr("y2", 4);
+    fileEnter.append("title");
+
+    const fileMerged = fileEnter.merge(fileSel);
+    fileMerged.each(function (fm) {
+      const sel = d3.select(this);
+      const xy = fileMarkerXY(fm.nodeId, fm.idx);
+      if (xy) {
+        sel
+          .select<SVGLineElement>("line.file-line")
+          .attr("x1", xy.nx)
+          .attr("y1", xy.ny)
+          .attr("x2", xy.mx)
+          .attr("y2", xy.my);
+        sel
+          .select<SVGGElement>("g.file-marker")
+          .attr("transform", `translate(${xy.mx},${xy.my})`);
+      }
+      const busy = !!fm.status && fm.status !== "indexed";
+      const fail = fm.status === "failed" || fm.status === "partial";
+      const stroke = fail ? C.fileFail : busy ? C.fileBusy : C.file;
+      sel
+        .select<SVGRectElement>("rect.file-box")
+        .attr("fill", C.fileFill)
+        .attr("stroke", stroke)
+        .attr("stroke-width", 1.5);
+      sel
+        .selectAll<SVGLineElement, unknown>("line.ft")
+        .attr("stroke", stroke)
+        .attr("stroke-width", 1);
+      sel
+        .select("title")
+        .text(
+          `📎 ${fm.name}${busy ? " (임베딩 중)" : ""} — 클릭하면 연결 해제`,
+        );
+    });
+    fileMerged.on("click", function (event, fm) {
+      event.stopPropagation();
+      onRemoveFileLinkRef.current(fm.fileId, fm.nodeId);
+    });
+  }, [nodes, activeNodeId, rootNodeId, dim.width, dim.height, fileLinks]);
 
   return (
     <div
@@ -505,7 +675,7 @@ export default function SessionGraphCanvas({
       <button
         type="button"
         onClick={() => setConnectMode((v) => !v)}
-        disabled={!activeNodeId}
+        disabled={!activeNodeId || fileLinkMode}
         title={
           activeNodeId
             ? "기억 연결: 다른 분기의 노드를 현재 노드로 연결"
@@ -521,8 +691,8 @@ export default function SessionGraphCanvas({
         기억 연결
       </button>
 
-      {/* 모드 안내 배너 */}
-      {effectiveConnectMode && (
+      {/* 기억 연결 모드 안내 배너 */}
+      {effectiveConnectMode && !fileLinkMode && (
         <div className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-warning/60 bg-bg px-3 py-1.5 text-xs text-warning shadow">
           다른 분기의 노드를 클릭해 현재 노드로 기억을 연결하세요.
           <button
@@ -532,6 +702,16 @@ export default function SessionGraphCanvas({
           >
             <X size={12} />취소
           </button>
+        </div>
+      )}
+
+      {/* 파일 연결 모드 안내 배너 (자료 패널에서 시작) */}
+      {fileLinkMode && (
+        <div
+          className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border px-3 py-1.5 text-xs shadow"
+          style={{ borderColor: C.file, color: C.file, background: "var(--bg)" }}
+        >
+          📎 자료를 연결할 분기 노드를 클릭하세요.
         </div>
       )}
 

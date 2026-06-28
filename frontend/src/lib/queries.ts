@@ -7,12 +7,14 @@ import {
   getSession,
   listCooccurrence,
   listFiles,
+  listSessionFileLinks,
   listSessions,
   listTags,
   type SpaceTarget,
 } from "@/lib/api";
 import type {
   CooccurrenceRow,
+  FileLink,
   FileRow,
   HomeSuggestions,
   HomeSummary,
@@ -37,6 +39,10 @@ export function tagsKey(target: SpaceTarget) {
 
 export function filesKey(target: SpaceTarget) {
   return ["files", target.space_kind, target.space_ref ?? null] as const;
+}
+
+export function fileLinksKey(sessionId: string | null) {
+  return ["file-links", sessionId] as const;
 }
 
 export function cooccurrenceKey(target: SpaceTarget) {
@@ -70,6 +76,15 @@ export function useFiles(target: SpaceTarget) {
       const active = data?.some((f) => FILE_IN_PROGRESS.has(f.status));
       return active ? 2500 : false;
     },
+  });
+}
+
+/** 세션의 파일↔노드 링크(시각적 RAG). */
+export function useSessionFileLinks(sessionId: string | null) {
+  return useQuery<FileLink[]>({
+    queryKey: fileLinksKey(sessionId),
+    queryFn: () => listSessionFileLinks(sessionId as string),
+    enabled: !!sessionId,
   });
 }
 

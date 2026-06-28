@@ -2,19 +2,26 @@
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { Send, GitFork } from "lucide-react";
+import { Send, GitFork, Paperclip } from "lucide-react";
 import { useSessionDetail } from "@/lib/queries";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
-import { ancestorChain, buildById } from "@/lib/tree";
+import { ancestorChain, buildById, pathIdSet } from "@/lib/tree";
 import type { WorkspaceChat } from "@/lib/useWorkspaceChat";
-import type { NodeRow } from "@/lib/types";
+import type { FileLink, NodeRow } from "@/lib/types";
 
 /**
  * 대화 패널(중): 포커스 노드 기준 조상체인 스레드 표시 + 입력.
  * 실제 SSE 전송/스트리밍 상태는 공유 컨트롤러(chat)에서 관리한다
  * (그래프의 네비게이터 활성화와 동일 인스턴스를 공유).
+ * 현재 분기가 자료에 연결돼 있으면 RAG 배너로 가시화(시각적 RAG).
  */
-export function ChatPanel({ chat }: { chat: WorkspaceChat }) {
+export function ChatPanel({
+  chat,
+  fileLinks,
+}: {
+  chat: WorkspaceChat;
+  fileLinks: FileLink[];
+}) {
   const activeSessionId = useWorkspaceStore((s) => s.activeSessionId);
   const activeNodeId = useWorkspaceStore((s) => s.activeNodeId);
   const setActiveNode = useWorkspaceStore((s) => s.setActiveNode);
@@ -39,6 +46,14 @@ export function ChatPanel({ chat }: { chat: WorkspaceChat }) {
   const branching = nodes.some(
     (n) => n.parent_id === activeNodeId && !n.is_navigator,
   );
+
+  // 현재 분기(루트→포커스 노드 경로)에 연결된 자료 개수 (자손 분기에도 적용되므로 조상 포함)
+  const branchPath = pathIdSet(activeNodeId, byId);
+  const linkedFileCount = new Set(
+    fileLinks
+      .filter((l) => branchPath.has(l.target_node_id))
+      .map((l) => l.file_id),
+  ).size;
 
   // 새 메시지/스트리밍 시 하단으로 스크롤
   useEffect(() => {
@@ -103,6 +118,12 @@ export function ChatPanel({ chat }: { chat: WorkspaceChat }) {
 
       {/* 입력 */}
       <div className="border-t border-accent-border/30 px-6 py-4">
+        {linkedFileCount > 0 && (
+          <div className="mx-auto mb-2 flex max-w-2xl items-center gap-1.5 text-xs text-[#2a7d7a]">
+            <Paperclip size={13} />연결된 자료 {linkedFileCount}개 — 이 분기의
+            답변에 참고됩니다.
+          </div>
+        )}
         {branching && (
           <div className="mx-auto mb-2 flex max-w-2xl items-center gap-1.5 text-xs text-warning">
             <GitFork size={13} />이 노드에서 새 분기를 만듭니다.

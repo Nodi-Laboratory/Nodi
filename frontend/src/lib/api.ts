@@ -9,6 +9,7 @@ import type {
   ChatStartEvent,
   ConnectionResponse,
   CooccurrenceRow,
+  FileLink,
   FileRow,
   HomeSuggestions,
   HomeSummary,
@@ -182,6 +183,44 @@ export async function listFiles(target: SpaceTarget): Promise<FileRow[]> {
 export async function getFile(id: string): Promise<FileRow> {
   const res = await ensureOk(
     await fetch(`${API_BASE}/files/${id}`, { headers: await authHeaders() }),
+  );
+  return res.json();
+}
+
+/** 파일을 분기(노드)에 연결 = "이 자료 보고 답해줘"(시각적 RAG, 멱등). */
+export async function addFileLink(
+  fileId: string,
+  targetNodeId: string,
+): Promise<unknown> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/files/${fileId}/links`, {
+      method: "POST",
+      headers: await authHeaders(true),
+      body: JSON.stringify({ target_node_id: targetNodeId }),
+    }),
+  );
+  return res.json().catch(() => null);
+}
+
+export async function removeFileLink(
+  fileId: string,
+  nodeId: string,
+): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/files/${fileId}/links/${nodeId}`, {
+      method: "DELETE",
+      headers: await authHeaders(),
+    }),
+  );
+}
+
+export async function listSessionFileLinks(
+  sessionId: string,
+): Promise<FileLink[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/sessions/${sessionId}/file-links`, {
+      headers: await authHeaders(),
+    }),
   );
   return res.json();
 }

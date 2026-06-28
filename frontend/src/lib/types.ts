@@ -194,6 +194,22 @@ export interface FileRow {
   created_at: string;
 }
 
+/** 시각적 RAG: 파일↔노드 링크 (GET /sessions/{id}/file-links). */
+export interface FileLink {
+  id: string;
+  file_id: string;
+  target_node_id: string;
+  created_at: string;
+  files: {
+    id: string;
+    storage_path: string | null;
+    mime: string | null;
+    status: FileStatus;
+    chunk_total: number | null;
+    chunk_done: number | null;
+  } | null;
+}
+
 // ── Stage 4c: 관리자 ─────────────────────────────────────────────────
 
 export type UserRole = "student" | "teacher" | "admin";
