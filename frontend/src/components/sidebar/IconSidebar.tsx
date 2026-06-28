@@ -6,10 +6,12 @@ import {
   Home,
   Settings,
   Shield,
+  School,
   TreeDeciduous,
   type LucideIcon,
 } from "lucide-react";
 import { useMyClasses, useProfile } from "@/lib/hooks";
+import { roleHome } from "@/lib/roleHome";
 
 /**
  * 좌측 64px 아이콘 사이드바 (dark brown).
@@ -87,6 +89,9 @@ export function IconSidebar() {
   const { data: profile } = useProfile();
   const { data: myClasses = [] } = useMyClasses();
 
+  const role = profile?.role ?? null;
+  const isStudent = !role || role === "student";
+
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
 
@@ -97,54 +102,66 @@ export function IconSidebar() {
     >
       {/* 브랜드 마크 */}
       <Link
-        href="/home"
-        title="nodi 홈"
-        aria-label="nodi 홈"
+        href={roleHome(role)}
+        title="nodi"
+        aria-label="nodi"
         className="mb-1 flex h-9 w-9 items-center justify-center rounded-full bg-accent font-bold text-accent-fg"
       >
         n
       </Link>
 
-      {/* 홈 진입 */}
-      <NavIcon href="/home" label="홈" icon={Home} active={isActive("/home")} />
+      {/* 학생 전용: 홈 · 공간 · 개념 */}
+      {isStudent && (
+        <>
+          <NavIcon href="/home" label="홈" icon={Home} active={isActive("/home")} />
 
-      <div className="my-1 h-px w-8 bg-white/10" />
+          <div className="my-1 h-px w-8 bg-white/10" />
 
-      {/* 공간 전환: 개인 + 가입 학급 */}
-      <div className="flex flex-col items-center gap-2 overflow-y-auto">
-        <SpaceBadge
-          href="/space/personal"
-          label="개인 공간"
-          short="개인"
-          active={isActive("/space/personal")}
-        />
-        {myClasses.map((m) => {
-          const href = `/space/${m.class_id}`;
-          const label = m.classes?.name ?? "학급";
-          return (
+          <div className="flex flex-col items-center gap-2 overflow-y-auto">
             <SpaceBadge
-              key={m.class_id}
-              href={href}
-              label={label}
-              short={initials(m.classes?.name, "반")}
-              active={isActive(href)}
+              href="/space/personal"
+              label="개인 공간"
+              short="개인"
+              active={isActive("/space/personal")}
             />
-          );
-        })}
-      </div>
+            {myClasses.map((m) => {
+              const href = `/space/${m.class_id}`;
+              const label = m.classes?.name ?? "학급";
+              return (
+                <SpaceBadge
+                  key={m.class_id}
+                  href={href}
+                  label={label}
+                  short={initials(m.classes?.name, "반")}
+                  active={isActive(href)}
+                />
+              );
+            })}
+          </div>
 
-      <div className="my-1 h-px w-8 bg-white/10" />
+          <div className="my-1 h-px w-8 bg-white/10" />
 
-      {/* 개념 나무 페이지 */}
-      <NavIcon
-        href="/concepts"
-        label="개념 나무"
-        icon={TreeDeciduous}
-        active={isActive("/concepts")}
-      />
+          <NavIcon
+            href="/concepts"
+            label="개념 나무"
+            icon={TreeDeciduous}
+            active={isActive("/concepts")}
+          />
+        </>
+      )}
 
-      {/* 관리자 콘솔 (admin role 전용) */}
-      {profile?.role === "admin" ? (
+      {/* 교사 콘솔 */}
+      {role === "teacher" ? (
+        <NavIcon
+          href="/teacher"
+          label="교사 콘솔"
+          icon={School}
+          active={isActive("/teacher")}
+        />
+      ) : null}
+
+      {/* 관리자 콘솔 */}
+      {role === "admin" ? (
         <NavIcon
           href="/admin"
           label="관리자 콘솔"

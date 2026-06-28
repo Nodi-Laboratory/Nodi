@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Shield, Users, Sliders, BarChart3, ScrollText } from "lucide-react";
 import { useProfile } from "@/lib/hooks";
+import { RoleGuard } from "@/components/auth/RoleGuard";
 import { UsersTab } from "@/components/admin/UsersTab";
 import { SettingsTab } from "@/components/admin/SettingsTab";
 import { UsageTab } from "@/components/admin/UsageTab";
@@ -23,38 +24,23 @@ const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
 ];
 
 export default function AdminPage() {
-  const { data: profile, isLoading } = useProfile();
+  return (
+    <RoleGuard allowed={["admin"]}>
+      <AdminConsole />
+    </RoleGuard>
+  );
+}
+
+function AdminConsole() {
+  const { data: profile } = useProfile();
   const [tab, setTab] = useState<Tab>("users");
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#1b1813] text-sm text-[#9a948a]">
-        불러오는 중…
-      </div>
-    );
-  }
-
-  if (profile?.role !== "admin") {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-[#1b1813] p-8 text-center">
-        <Shield size={36} className="text-[#e0796a]" />
-        <p className="text-sm text-[#e7e3d8]">관리자 권한이 필요합니다.</p>
-        <Link
-          href="/home"
-          className="rounded-lg bg-[#e0a32e] px-4 py-2 text-sm font-medium text-[#2a2a24] hover:brightness-110"
-        >
-          홈으로
-        </Link>
-      </div>
-    );
-  }
 
   return (
     <div className="flex min-h-screen flex-col bg-[#1b1813] text-[#e7e3d8]">
       <header className="flex items-center gap-2 border-b border-white/10 bg-[#221e17] px-6 py-3">
         <Shield size={18} className="text-[#e0a32e]" />
         <h1 className="text-base font-bold">운영 콘솔</h1>
-        <span className="ml-3 text-xs text-[#9a948a]">{profile.email}</span>
+        <span className="ml-3 text-xs text-[#9a948a]">{profile?.email}</span>
         <Link
           href="/home"
           className="ml-auto text-xs text-[#9a948a] hover:text-[#e7e3d8]"
@@ -86,7 +72,7 @@ export default function AdminPage() {
       </nav>
 
       <main className="min-h-0 flex-1 overflow-auto p-6">
-        {tab === "users" && <UsersTab currentUserId={profile.id} />}
+        {tab === "users" && <UsersTab currentUserId={profile?.id ?? ""} />}
         {tab === "settings" && <SettingsTab />}
         {tab === "usage" && <UsageTab />}
         {tab === "logs" && <LogsTab />}
