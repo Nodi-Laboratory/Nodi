@@ -112,6 +112,49 @@ async def get_file(
     return await svc.get_file(client, file_id)
 
 
+@router.get("/{file_id}/tags")
+async def get_file_tags(
+    file_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Tag names of a file the caller can access (own or class material)."""
+    client = UserClient.from_user(user)
+    return {"file_id": file_id, "tags": await svc.get_file_tags(client, file_id)}
+
+
+@router.delete("/{file_id}", status_code=204)
+async def delete_file(
+    file_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Delete a file (owner only): Storage object + row (cascades chunks/links/tags)."""
+    service = get_service_client()
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File operations are disabled (service-role key not configured).",
+        )
+    client = UserClient.from_user(user)
+    await svc.delete_file(service, client, user.id, file_id)
+
+
+@router.post("/{file_id}/retry")
+async def retry_file(
+    file_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Re-process a failed/partial/stuck file (owner only). Idempotent."""
+    service = get_service_client()
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File operations are disabled (service-role key not configured).",
+        )
+    client = UserClient.from_user(user)
+    action = await svc.retry_file(service, client, user.id, file_id)
+    return {"file_id": file_id, "action": action}
+
+
 @router.patch("/{file_id}/position")
 async def set_file_position(
     file_id: str,

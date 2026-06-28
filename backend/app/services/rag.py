@@ -97,3 +97,84 @@ async def build_rag_context(
     except Exception:  # noqa: BLE001 - RAG must never break chat
         logger.exception("RAG retrieval failed")
         return None
+
+
+def _branch_query_text(chain: list[dict[str, Any]]) -> str:
+    """Use the tail of the branch (recent Q&A) as the suggestion query."""
+    parts: list[str] = []
+    for n in reversed(chain):
+        if n.get("is_navigator"):
+            continue
+        q = (n.get("question") or "").strip()
+        a = (n.get("answer") or "").strip()
+        if q or a:
+            parts.append(f"{q}\n{a}")
+        if len("\n".join(parts)) >= settings.file_suggestion_query_chars:
+            break
+    text = "\n".join(reversed(parts))
+    return text[: settings.file_suggestion_query_chars]
+
+
+async def suggest_files(
+    client: UserClient,
+    chain: list[dict[str, Any]],
+    space_kind: str,
+    space_ref: str,
+) -> list[dict[str, Any]]:
+    """Propose files to link when the current branch has NONE linked yet.
+
+    Returns top-N files (grouped by best chunk distance) with a sample chunk.
+    Empty if the branch already has linked files or the space has no indexed
+    files. Best-effort.
+    """
+    try:
+        # Already has linked files on this branch -> no suggestion.
+        if await linked_file_ids(client, chain):
+            return []
+        # Indexed files available in this space (own + class_material via RLS).
+        files = await client.select(
+            "files",
+            {
+                "space_kind": f"eq.{space_kind}",
+                "space_ref": f"eq.{space_ref}",
+                "status": "eq.indexed",
+                "select": "id,storage_path,mime,kind",
+            },
+        )
+        if not files:
+            return []
+        by_id = {f["id"]: f for f in files}
+        query = _branch_query_text(chain)
+        if not query.strip():
+            return []
+        chunks = await search(
+            client, list(by_id), query, k=settings.file_suggestion_search_k
+        )
+        # Group chunks by file, keep best (smallest) distance + a sample.
+        best: dict[str, dict[str, Any]] = {}
+        for c in chunks:
+            fid = c.get("file_id")
+            if fid not in by_id:
+                continue
+            dist = c.get("distance")
+            cur = best.get(fid)
+            if cur is None or (dist is not None and dist < cur["distance"]):
+                best[fid] = {
+                    "file_id": fid,
+                    "distance": dist if dist is not None else 1.0,
+                    # filename from storage_path "{owner}/{file_id}/{name}".
+                    "name": (by_id[fid].get("storage_path") or "").split("/")[-1],
+                    "sample": (c.get("chunk_text") or "")[:300],
+                    "kind": by_id[fid].get("kind"),
+                }
+        # Only suggest genuinely-related files (cosine distance cutoff), so we
+        # don't claim "관련 있어 보여요" for unrelated material.
+        max_distance = getattr(settings, "file_suggestion_max_distance", 0.75)
+        ranked = sorted(
+            (b for b in best.values() if b["distance"] <= max_distance),
+            key=lambda x: x["distance"],
+        )
+        return ranked[: settings.file_suggestion_top_n]
+    except Exception:  # noqa: BLE001 - suggestions are optional
+        logger.exception("File suggestion failed")
+        return []

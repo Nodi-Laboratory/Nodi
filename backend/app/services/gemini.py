@@ -128,6 +128,33 @@ async def stream_answer(
             yield chunk.text
 
 
+_OCR_PROMPT = (
+    "Extract ALL readable text from this image, preserving reading order and "
+    "line/paragraph breaks. Output ONLY the extracted text (no commentary). "
+    "If there is no readable text, output nothing."
+)
+
+
+async def ocr_image_bytes(data: bytes, mime: str) -> str:
+    """OCR an image with the multimodal model. Returns '' on failure/empty."""
+    try:
+        client = get_client()
+        resp = await client.aio.models.generate_content(
+            model=settings.ocr_model,
+            contents=[
+                types.Part.from_bytes(data=data, mime_type=mime),
+                types.Part.from_text(text=_OCR_PROMPT),
+            ],
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        return (resp.text or "").strip()
+    except Exception as exc:  # noqa: BLE001 - OCR failure surfaces as empty text
+        logger.warning("Image OCR failed: %s", exc)
+        return ""
+
+
 async def generate_label(question: str, answer: str) -> str | None:
     """Short topic label for a node. Best-effort: returns None on failure."""
     client = get_client()

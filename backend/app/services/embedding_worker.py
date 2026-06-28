@@ -28,7 +28,7 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ..config import get_settings
-from . import embedding, tagging
+from . import embedding, gemini, tagging
 from .service_client import ServiceClient, get_service_client
 
 logger = logging.getLogger("nodi.embedding_worker")
@@ -43,12 +43,19 @@ def _now_iso() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Text extraction (PDF + plain text; OCR/images are Stage 3b-2)
+# Text extraction: PDF (pypdf), plain text, and image OCR (Gemini vision).
+# Scanned-PDF page-render OCR is a follow-up (Stage 3b-3 covers image/* only).
 # ---------------------------------------------------------------------------
-def _extract_text(data: bytes, mime: str | None, storage_path: str) -> str:
+async def _extract_text(data: bytes, mime: str | None, storage_path: str) -> str:
     name = (storage_path or "").lower()
-    is_pdf = name.endswith(".pdf") or (mime or "").endswith("pdf")
-    if is_pdf:
+    mime = mime or ""
+
+    if mime.startswith("image/") or name.endswith(
+        (".png", ".jpg", ".jpeg", ".webp", ".gif")
+    ):
+        return await gemini.ocr_image_bytes(data, mime or "image/png")
+
+    if name.endswith(".pdf") or mime.endswith("pdf"):
         try:
             from pypdf import PdfReader
 
@@ -57,6 +64,7 @@ def _extract_text(data: bytes, mime: str | None, storage_path: str) -> str:
         except Exception:  # noqa: BLE001
             logger.exception("PDF text extraction failed for %s", storage_path)
             return ""
+
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError:
@@ -201,7 +209,7 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     await svc.update("files", {"id": f"eq.{file_id}"}, {"status": "splitting"})
 
     data = await svc.storage_download(settings.storage_bucket, f["storage_path"])
-    text = _extract_text(data, f.get("mime"), f["storage_path"])
+    text = await _extract_text(data, f.get("mime"), f["storage_path"])
     chunks = embedding.chunk_text(text)
 
     if not chunks:
@@ -387,6 +395,73 @@ async def _tag_file(svc: ServiceClient, file_id: str) -> None:
             logger.info("Tagged file=%s with %d concepts", file_id, len(names))
     except Exception:  # noqa: BLE001 - tagging must not break indexing
         logger.exception("File tagging failed for %s", file_id)
+
+
+async def requeue_file(svc: ServiceClient, file_id: str) -> str:
+    """Re-process a failed/partial/stuck file (idempotent). service_role.
+
+    - no chunks  -> reset and enqueue a fresh embedding_split job;
+    - has chunks -> reset failed chunks to pending and fan out fresh
+      embedding_batch jobs over the file's seq range (the batch handler skips
+      already-embedded chunks). Returns the action taken.
+    """
+    rows = await svc.select(
+        "files",
+        {"id": f"eq.{file_id}", "select": "id,owner_id,space_ref", "limit": "1"},
+    )
+    if not rows:
+        return "missing"
+    f = rows[0]
+
+    total = await svc.count("file_chunks", {"file_id": f"eq.{file_id}"})
+    if total == 0:
+        await svc.update(
+            "files", {"id": f"eq.{file_id}"},
+            {"status": "uploaded", "error": None, "chunk_done": 0, "chunk_total": 0},
+        )
+        await svc.insert(
+            "jobs",
+            {
+                "owner_id": f.get("owner_id"),
+                "kind": "embedding_split",
+                "target_id": file_id,
+                "status": "queued",
+                "space_ref": f.get("space_ref"),
+            },
+            returning=False,
+        )
+        return "split_requeued"
+
+    # Reset failed chunks back to pending.
+    await svc.update(
+        "file_chunks",
+        {"file_id": f"eq.{file_id}", "status": "eq.failed"},
+        {"status": "pending"},
+    )
+    pending = await svc.count(
+        "file_chunks", {"file_id": f"eq.{file_id}", "status": "eq.pending"}
+    )
+    if pending == 0:
+        await _finalize_file(svc, file_id)
+        return "already_complete"
+
+    await svc.update(
+        "files", {"id": f"eq.{file_id}"}, {"status": "embedding", "error": None}
+    )
+    bsize = max(1, settings.embedding_batch_size)
+    child_jobs = [
+        {
+            "owner_id": f.get("owner_id"),
+            "kind": "embedding_batch",
+            "target_id": file_id,
+            "batch_range": {"from_seq": start, "to_seq": min(start + bsize, total)},
+            "status": "queued",
+            "space_ref": f.get("space_ref"),
+        }
+        for start in range(0, total, bsize)
+    ]
+    await svc.insert("jobs", child_jobs, returning=False)
+    return "batches_requeued"
 
 
 # ---------------------------------------------------------------------------

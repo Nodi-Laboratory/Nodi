@@ -152,6 +152,16 @@ class ServiceClient:
             self._raise(r, f"storage download {bucket}/{path}")
         return r.content
 
+    async def storage_delete(self, bucket: str, path: str) -> None:
+        headers = {"apikey": self._key, "Authorization": f"Bearer {self._key}"}
+        async with httpx.AsyncClient(timeout=60.0) as c:
+            r = await c.request(
+                "DELETE", f"{self._storage}/object/{bucket}/{path}", headers=headers
+            )
+        # 404 is fine (already gone); only raise on other errors.
+        if r.status_code >= 400 and r.status_code != 404:
+            self._raise(r, f"storage delete {bucket}/{path}")
+
 
 _client: ServiceClient | None = None
 _checked = False

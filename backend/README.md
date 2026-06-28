@@ -55,12 +55,17 @@ Files / RAG (Stage 3b-1; needs `SUPABASE_SERVICE_ROLE_KEY` for upload+worker):
   position_x?, position_y?, kind?) — Storage + files row + queued
   `embedding_split` job. 503 if no service-role key. `kind='class_material'`
   (teacher only, space_kind='class') shares the file with all class members.
+  Images (image/*) are OCR'd via the multimodal model in the worker (Stage 3b-3).
 - `GET /files?space_kind=&space_ref=` — list (status, chunk_done/chunk_total)
-- `GET /files/{id}` — file status + progress
+- `GET /files/{id}` — file status + progress · `GET /files/{id}/tags` — tag names
+- `DELETE /files/{id}` — delete (owner; Storage + row cascade)
+- `POST /files/{id}/retry` — re-process a failed/partial/stuck file (owner)
 - `PATCH /files/{id}/position` {position_x,position_y} — file-node coords (D13)
 - `POST /files/{id}/links` {target_node_id} — link a file to a branch (visual RAG)
 - `DELETE /files/{id}/links/{node_id}` — unlink
 - `GET /sessions/{id}/file-links` — files linked in a session (graph file-nodes)
+- `GET /sessions/{id}/file-suggestions?node_id=` — when the branch has no linked
+  files, propose space files to link (embedding match); empty otherwise
 
 Teacher (Stage 4b; app role `teacher`; RPCs/RLS in migration 0012):
 - `GET /teacher/classes` — classes I teach + student counts
