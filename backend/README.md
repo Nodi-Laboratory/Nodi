@@ -50,6 +50,9 @@ Files / RAG (Stage 3b-1; needs `SUPABASE_SERVICE_ROLE_KEY` for upload+worker):
   + queued `embedding_split` job. 503 if no service-role key.
 - `GET /files?space_kind=&space_ref=` — list (status, chunk_done/chunk_total)
 - `GET /files/{id}` — file status + progress
+- `POST /files/{id}/links` {target_node_id} — link a file to a branch (visual RAG)
+- `DELETE /files/{id}/links/{node_id}` — unlink
+- `GET /sessions/{id}/file-links` — files linked in a session (graph file-nodes)
 
 All request-time DB access uses the caller's JWT (RLS). The background embedding
 worker (`services/embedding_worker.py`, apscheduler) uses the SERVICE-ROLE client
@@ -62,8 +65,15 @@ full chain), as a source-labelled reference block — see `services/memory.py`.
 Embedding pipeline (Stage 3b-1): upload -> `embedding_split` (extract PDF/txt ->
 chunk -> file_chunks(pending) -> fan out `embedding_batch` jobs) -> parallel
 batches embed with gemini-embedding-001 (768-dim, L2-normalized) -> file status
-`indexed`/`partial`. Visual RAG, search, file tagging, class materials, and OCR
-are Stage 3b-2.
+`indexed`/`partial`.
+
+Visual RAG + file tagging (Stage 3b-2, `services/rag.py`): a file linked to a
+node applies to that node's descendant branch. At chat time, files linked on the
+current head's ancestor chain are cosine-searched (RETRIEVAL_QUERY embedding ->
+`search_file_chunks` RPC, owner-scoped) and the top-K chunks are injected as a
+"[연결된 자료에서 참고]" block. On `indexed`, the worker extracts up to 50 concept
+tags and links them via `upsert_file_tags`. OCR, class-material cross-visibility,
+and the full no-link search-suggestion flow are Stage 3b-3.
 
 ## AI layer (`app/ai/`)
 

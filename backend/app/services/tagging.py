@@ -87,6 +87,40 @@ async def extract_concepts(question: str, answer: str) -> list[str]:
         return []
 
 
+_FILE_TAG_PROMPT = (
+    "Extract up to {max_tags} key CONCEPTS from the document excerpt below as "
+    "short noun phrases (1-3 words each), in the document's language. Files are "
+    "tagged densely (many concepts). Rules: specific, meaningful concepts only "
+    "(avoid generic words like 'document', 'introduction', 'information'); no "
+    "duplicates; no surrounding punctuation. Return ONLY a JSON array of "
+    "strings.\n\nDocument excerpt:\n{text}"
+)
+
+
+async def extract_file_concepts(text: str) -> list[str]:
+    """Extract up to file_tag_max concept strings from file text (best-effort)."""
+    max_tags = settings.file_tag_max
+    excerpt = (text or "").strip()[: settings.file_tag_sample_chars]
+    if not excerpt:
+        return []
+    prompt = _FILE_TAG_PROMPT.format(max_tags=max_tags, text=excerpt)
+    try:
+        client = get_client()
+        resp = await client.aio.models.generate_content(
+            model=settings.gemini_tag_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                max_output_tokens=1000,
+                temperature=0.3,
+            ),
+        )
+        return _parse_tags(resp.text or "", max_tags)
+    except Exception as exc:  # noqa: BLE001 - tagging must never break indexing
+        logger.warning("File concept extraction failed: %s", exc)
+        return []
+
+
 async def apply_node_tags(
     client: UserClient, node_id: str, session_id: str, names: list[str]
 ) -> list[str]:

@@ -19,13 +19,20 @@ from fastapi import (
     UploadFile,
     status,
 )
+from pydantic import BaseModel
 
 from ..auth.deps import CurrentUser, get_current_user
+from ..config import get_settings
 from ..services import files as svc
 from ..services.service_client import get_service_client
 from ..services.supabase_client import UserClient
 
 router = APIRouter(prefix="/files", tags=["files"])
+settings = get_settings()
+
+
+class LinkBody(BaseModel):
+    target_node_id: str
 
 
 @router.post("", status_code=201)
@@ -42,9 +49,16 @@ async def upload(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="File uploads are disabled (service-role key not configured).",
         )
+    # Early reject on declared size (avoid buffering an oversized body).
+    if file.size is not None and file.size > settings.file_max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds {settings.file_max_bytes} bytes.",
+        )
     data = await file.read()
     return await svc.upload_file(
         service,
+        UserClient.from_user(user),
         owner_id=user.id,
         space_kind=space_kind,
         space_ref=space_ref,
@@ -78,3 +92,29 @@ async def get_file(
     """File row incl. status + progress (chunk_done / chunk_total)."""
     client = UserClient.from_user(user)
     return await svc.get_file(client, file_id)
+
+
+# --- Visual RAG links (Stage 3b-2) ---------------------------------------
+@router.post("/{file_id}/links", status_code=201)
+async def add_link(
+    file_id: str,
+    body: LinkBody,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Link this file to a node ("use this file when answering from this branch").
+
+    Applies to the node and its descendant branch. Caller must own both the file
+    and the node's session. Idempotent.
+    """
+    client = UserClient.from_user(user)
+    return await svc.add_link(client, user.id, file_id, body.target_node_id)
+
+
+@router.delete("/{file_id}/links/{node_id}", status_code=204)
+async def remove_link(
+    file_id: str,
+    node_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> None:
+    client = UserClient.from_user(user)
+    await svc.remove_link(client, file_id, node_id)

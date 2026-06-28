@@ -22,12 +22,13 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ..config import get_settings
-from . import embedding
+from . import embedding, tagging
 from .service_client import ServiceClient, get_service_client
 
 logger = logging.getLogger("nodi.embedding_worker")
@@ -35,6 +36,10 @@ settings = get_settings()
 
 _scheduler: AsyncIOScheduler | None = None
 _poll_lock = asyncio.Lock()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -80,17 +85,86 @@ async def _claim_jobs(svc: ServiceClient, limit: int) -> list[dict[str, Any]]:
         rows = await svc.update(
             "jobs",
             {"id": f"eq.{job['id']}", "status": "eq.queued"},
-            {"status": "running", "attempts": (job.get("attempts") or 0) + 1},
+            {
+                "status": "running",
+                "attempts": (job.get("attempts") or 0) + 1,
+                "updated_at": _now_iso(),
+            },
         )
         if rows:  # we won the claim
             claimed.append(rows[0])
     return claimed
 
 
+async def _recover_stale_jobs(svc: ServiceClient) -> int:
+    """Reclaim jobs stuck in 'running' from a crashed worker.
+
+    A running job whose updated_at is older than `embedding_stale_seconds` is
+    orphaned. If attempts remain, requeue it; otherwise mark it failed and set
+    the file to a terminal status (split -> failed; batch -> partial via
+    finalize). updated_at is stamped at claim, so a live in-flight job (the poll
+    awaits its jobs before returning) is never seen as stale.
+    """
+    cutoff = (
+        datetime.now(timezone.utc)
+        - timedelta(seconds=settings.embedding_stale_seconds)
+    ).isoformat()
+    stale = await svc.select(
+        "jobs",
+        {
+            "status": "eq.running",
+            "updated_at": f"lt.{cutoff}",
+            "select": "id,kind,target_id,attempts,batch_range",
+            "limit": "50",
+        },
+    )
+    for job in stale:
+        if (job.get("attempts") or 0) < settings.embedding_max_attempts:
+            await svc.update(
+                "jobs",
+                {"id": f"eq.{job['id']}", "status": "eq.running"},
+                {"status": "queued", "updated_at": _now_iso()},
+            )
+            logger.warning("Requeued stale job %s (%s)", job["id"], job["kind"])
+        else:
+            await _fail_job(svc, job["id"], "max attempts exceeded (stale)")
+            await _fail_file_for_job(svc, job)
+            logger.error("Failed stale job %s after max attempts", job["id"])
+    return len(stale)
+
+
 async def _fail_job(svc: ServiceClient, job_id: str, error: str) -> None:
     await svc.update(
-        "jobs", {"id": f"eq.{job_id}"}, {"status": "failed", "error": error[:1000]}
+        "jobs",
+        {"id": f"eq.{job_id}"},
+        {"status": "failed", "error": error[:1000], "updated_at": _now_iso()},
     )
+
+
+async def _fail_file_for_job(svc: ServiceClient, job: dict[str, Any]) -> None:
+    """Drive the file to a terminal status when a job permanently fails."""
+    file_id = job.get("target_id")
+    if not file_id:
+        return
+    if job.get("kind") == "embedding_split":
+        await svc.update(
+            "files",
+            {"id": f"eq.{file_id}"},
+            {"status": "failed", "error": "split failed"},
+        )
+    else:  # embedding_batch: fail this batch's still-pending chunks, then finalize
+        rng = job.get("batch_range") or {}
+        if "from_seq" in rng and "to_seq" in rng:
+            await svc.update(
+                "file_chunks",
+                {
+                    "file_id": f"eq.{file_id}",
+                    "and": f"(seq.gte.{int(rng['from_seq'])},seq.lt.{int(rng['to_seq'])})",
+                    "status": "eq.pending",
+                },
+                {"status": "failed"},
+            )
+        await _finalize_file(svc, file_id)
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +181,23 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         await _fail_job(svc, job["id"], "file row missing")
         return
     f = files[0]
+
+    # Idempotency (crash recovery): if batch jobs already exist for this file the
+    # split already fanned out — just mark this (re-queued) split done. Otherwise
+    # clear any partial chunks from a crashed prior split and start fresh (no
+    # chunk is embedded before batch jobs exist, so deleting is safe).
+    existing_batches = await svc.count(
+        "jobs", {"target_id": f"eq.{file_id}", "kind": "eq.embedding_batch"}
+    )
+    if existing_batches > 0:
+        await svc.update(
+            "jobs", {"id": f"eq.{job['id']}"},
+            {"status": "done", "updated_at": _now_iso()},
+        )
+        logger.info("split file=%s already fanned out; marking done", file_id)
+        return
+    await svc.delete("file_chunks", {"file_id": f"eq.{file_id}"})
+
     await svc.update("files", {"id": f"eq.{file_id}"}, {"status": "splitting"})
 
     data = await svc.storage_download(settings.storage_bucket, f["storage_path"])
@@ -119,7 +210,10 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
             {"id": f"eq.{file_id}"},
             {"status": "failed", "error": "no extractable text"},
         )
-        await svc.update("jobs", {"id": f"eq.{job['id']}"}, {"status": "done"})
+        await svc.update(
+            "jobs", {"id": f"eq.{job['id']}"},
+            {"status": "done", "updated_at": _now_iso()},
+        )
         return
 
     # Insert chunk rows (pending) in manageable batches.
@@ -151,7 +245,10 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         for start in range(0, len(chunks), bsize)
     ]
     await svc.insert("jobs", child_jobs, returning=False)
-    await svc.update("jobs", {"id": f"eq.{job['id']}"}, {"status": "done"})
+    await svc.update(
+        "jobs", {"id": f"eq.{job['id']}"},
+        {"status": "done", "updated_at": _now_iso()},
+    )
     logger.info("split file=%s -> %d chunks, %d batches", file_id, len(chunks),
                 len(child_jobs))
 
@@ -192,6 +289,22 @@ async def _handle_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
             await _fail_job(svc, job["id"], f"embed error: {exc}")
             return
 
+        # Embedding count MUST match the chunk count; a short/over response would
+        # otherwise silently leave chunks pending (file stuck). Fail the whole
+        # batch on mismatch so the stale/retry path can reprocess it.
+        if len(vectors) != len(chunks):
+            logger.error(
+                "Embedding count mismatch file=%s: %d vectors for %d chunks",
+                file_id, len(vectors), len(chunks),
+            )
+            for c in chunks:
+                await svc.update(
+                    "file_chunks", {"id": f"eq.{c['id']}"}, {"status": "failed"}
+                )
+            await _finalize_file(svc, file_id)
+            await _fail_job(svc, job["id"], "embedding count mismatch")
+            return
+
         sem = asyncio.Semaphore(8)
 
         async def _store(chunk: dict[str, Any], vec: list[float]) -> None:
@@ -203,15 +316,23 @@ async def _handle_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
                 )
 
         await asyncio.gather(
-            *(_store(c, v) for c, v in zip(chunks, vectors, strict=False))
+            *(_store(c, v) for c, v in zip(chunks, vectors, strict=True))
         )
 
     await _finalize_file(svc, file_id)
-    await svc.update("jobs", {"id": f"eq.{job['id']}"}, {"status": "done"})
+    await svc.update(
+        "jobs", {"id": f"eq.{job['id']}"},
+        {"status": "done", "updated_at": _now_iso()},
+    )
 
 
 async def _finalize_file(svc: ServiceClient, file_id: str) -> None:
-    """Recompute progress; mark indexed/partial when no pending chunks remain."""
+    """Recompute progress; mark indexed/partial when no pending chunks remain.
+
+    When the file first transitions to 'indexed', kick off file tagging once
+    (best-effort). A conditional update (status != 'indexed') ensures only the
+    batch that performs the transition triggers tagging.
+    """
     embedded = await svc.count(
         "file_chunks", {"file_id": f"eq.{file_id}", "status": "eq.embedded"}
     )
@@ -221,10 +342,51 @@ async def _finalize_file(svc: ServiceClient, file_id: str) -> None:
     pending = await svc.count(
         "file_chunks", {"file_id": f"eq.{file_id}", "status": "eq.pending"}
     )
-    patch: dict[str, Any] = {"chunk_done": embedded}
-    if pending == 0:
-        patch["status"] = "partial" if failed > 0 else "indexed"
-    await svc.update("files", {"id": f"eq.{file_id}"}, patch)
+
+    if pending != 0:
+        await svc.update("files", {"id": f"eq.{file_id}"}, {"chunk_done": embedded})
+        return
+    if failed > 0:
+        await svc.update(
+            "files", {"id": f"eq.{file_id}"},
+            {"chunk_done": embedded, "status": "partial"},
+        )
+        return
+    # All chunks embedded -> indexed. Conditional so tagging fires exactly once.
+    rows = await svc.update(
+        "files",
+        {"id": f"eq.{file_id}", "status": "neq.indexed"},
+        {"chunk_done": embedded, "status": "indexed"},
+    )
+    if rows:
+        await _tag_file(svc, file_id)
+
+
+async def _tag_file(svc: ServiceClient, file_id: str) -> None:
+    """Extract up to file_tag_max concepts from the file and link them (50 cap).
+
+    Best-effort: tagging failure never reverts the 'indexed' status.
+    """
+    try:
+        chunks = await svc.select(
+            "file_chunks",
+            {
+                "file_id": f"eq.{file_id}",
+                "status": "eq.embedded",
+                "select": "chunk_text",
+                "order": "seq.asc",
+                "limit": "40",
+            },
+        )
+        text = "\n\n".join(c.get("chunk_text") or "" for c in chunks)
+        names = await tagging.extract_file_concepts(text)
+        if names:
+            await svc.rpc(
+                "upsert_file_tags", {"p_file_id": file_id, "p_names": names}
+            )
+            logger.info("Tagged file=%s with %d concepts", file_id, len(names))
+    except Exception:  # noqa: BLE001 - tagging must not break indexing
+        logger.exception("File tagging failed for %s", file_id)
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +416,11 @@ async def poll_once() -> int:
     if _poll_lock.locked():
         return 0
     async with _poll_lock:
+        # Recover orphaned 'running' jobs from a crashed worker before claiming.
+        try:
+            await _recover_stale_jobs(svc)
+        except Exception:  # noqa: BLE001 - recovery must not break the poll
+            logger.exception("Stale job recovery failed")
         claimed = await _claim_jobs(svc, settings.embedding_worker_concurrency)
         if not claimed:
             return 0

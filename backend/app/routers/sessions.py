@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
+from ..services import files as files_svc
 from ..services import sessions as svc
 from ..services.supabase_client import UserClient
 
@@ -51,3 +52,14 @@ async def get_session(
     session = await svc.get_session(client, session_id)
     nodes = await svc.get_session_nodes(client, session_id, with_tags=True)
     return {"session": session, "nodes": nodes}
+
+
+@router.get("/{session_id}/file-links")
+async def get_session_file_links(
+    session_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    """Files linked to any node in this session (for graph file-nodes + edges)."""
+    client = UserClient.from_user(user)
+    await svc.get_session(client, session_id)  # 404/RLS gate
+    return await files_svc.list_session_file_links(client, session_id)

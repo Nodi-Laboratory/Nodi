@@ -25,8 +25,29 @@ FILE_SELECT = (
 )
 
 
+async def _assert_class_member(
+    user_client: UserClient, owner_id: str, class_id: str
+) -> None:
+    """Verify the caller belongs to the class (RLS lets them read own row)."""
+    rows = await user_client.select(
+        "class_members",
+        {
+            "class_id": f"eq.{class_id}",
+            "user_id": f"eq.{owner_id}",
+            "select": "class_id",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this class.",
+        )
+
+
 async def upload_file(
     service: ServiceClient,
+    user_client: UserClient,
     owner_id: str,
     space_kind: str,
     space_ref: str | None,
@@ -45,6 +66,9 @@ async def upload_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class files require space_ref (class id).",
         )
+    # Defense: only upload into a class the caller actually belongs to.
+    if space_kind == "class":
+        await _assert_class_member(user_client, owner_id, ref)
     if not data:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -121,3 +145,109 @@ async def get_file(client: UserClient, file_id: str) -> dict[str, Any]:
             detail="File not found.",
         )
     return rows[0]
+
+
+# ---------------------------------------------------------------------------
+# Visual RAG links (Stage 3b-2)
+# ---------------------------------------------------------------------------
+LINK_SELECT = "id,file_id,target_node_id,owner_id,created_at"
+
+
+async def _owned_node_session(
+    client: UserClient, owner_id: str, node_id: str
+) -> dict[str, Any]:
+    """Return the node's session row, ensuring the caller owns that session."""
+    rows = await client.select(
+        "nodes",
+        {"id": f"eq.{node_id}", "select": "id,session_id", "limit": "1"},
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Node not found."
+        )
+    session_id = rows[0]["session_id"]
+    srows = await client.select(
+        "sessions",
+        {
+            "id": f"eq.{session_id}",
+            "select": "id,owner_id,space_kind,space_ref",
+            "limit": "1",
+        },
+    )
+    if not srows or srows[0].get("owner_id") != owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not own this node's session.",
+        )
+    return srows[0]
+
+
+async def add_link(
+    client: UserClient, owner_id: str, file_id: str, target_node_id: str
+) -> dict[str, Any]:
+    # Both the file and the node's session must be the caller's.
+    file_row = await get_file(client, file_id)  # 404 unless owner (RLS)
+    session = await _owned_node_session(client, owner_id, target_node_id)
+    # Space isolation: a file may only be linked within its own space.
+    if (file_row.get("space_kind") != session.get("space_kind")) or (
+        file_row.get("space_ref") != session.get("space_ref")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="File and node must belong to the same space.",
+        )
+    # Idempotent: return the existing link if already present.
+    existing = await client.select(
+        "file_node_links",
+        {
+            "file_id": f"eq.{file_id}",
+            "target_node_id": f"eq.{target_node_id}",
+            "select": LINK_SELECT,
+            "limit": "1",
+        },
+    )
+    if existing:
+        return existing[0]
+    return await client.insert(
+        "file_node_links",
+        {
+            "file_id": file_id,
+            "target_node_id": target_node_id,
+            "owner_id": owner_id,
+        },
+    )
+
+
+async def remove_link(
+    client: UserClient, file_id: str, target_node_id: str
+) -> None:
+    await client.delete(
+        "file_node_links",
+        {
+            "file_id": f"eq.{file_id}",
+            "target_node_id": f"eq.{target_node_id}",
+        },
+    )
+
+
+async def list_session_file_links(
+    client: UserClient, session_id: str
+) -> list[dict[str, Any]]:
+    """Links for any node in the session, with the linked file embedded."""
+    node_rows = await client.select(
+        "nodes", {"session_id": f"eq.{session_id}", "select": "id"}
+    )
+    node_ids = [n["id"] for n in node_rows]
+    if not node_ids:
+        return []
+    return await client.select(
+        "file_node_links",
+        {
+            "target_node_id": f"in.({','.join(node_ids)})",
+            "select": (
+                "id,file_id,target_node_id,created_at,"
+                "files(id,storage_path,mime,status,chunk_total,chunk_done)"
+            ),
+            "order": "created_at.desc",
+        },
+    )

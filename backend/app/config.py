@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     embedding_worker_concurrency: int = 3  # parallel jobs claimed per poll
     embedding_worker_poll_seconds: int = 5
     embedding_max_attempts: int = 3
+    # A 'running' job older than this (no progress) is considered orphaned by a
+    # crashed worker and recovered (requeued while attempts remain, else failed).
+    embedding_stale_seconds: int = 120
     # Text chunking.
     chunk_size_chars: int = 1200
     chunk_overlap_chars: int = 150
@@ -77,6 +80,12 @@ class Settings(BaseSettings):
     storage_bucket: str = "files"
     # Upper bound on a single uploaded file (bytes) — guard before processing.
     file_max_bytes: int = 25 * 1024 * 1024
+
+    # --- File RAG search + tagging (Stage 3b-2) ---
+    rag_top_k: int = 5  # chunks retrieved per query from linked files
+    file_tag_max: int = 50  # concept tags per file (denser than node 1..3)
+    # Chars of file text sampled for tag extraction.
+    file_tag_sample_chars: int = 6000
 
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).

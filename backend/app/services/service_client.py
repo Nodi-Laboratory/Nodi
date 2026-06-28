@@ -102,6 +102,18 @@ class ServiceClient:
                 return int(total)
         return len(r.json())
 
+    async def delete(self, table: str, filters: dict[str, str]) -> list[dict]:
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.request(
+                "DELETE",
+                f"{self._rest}/{table}",
+                params=filters,
+                headers=self._rest_headers(prefer="return=representation"),
+            )
+        if r.status_code >= 400:
+            self._raise(r, f"delete {table}")
+        return r.json()
+
     async def rpc(self, fn: str, args: dict[str, Any]) -> Any:
         async with httpx.AsyncClient(timeout=30.0) as c:
             r = await c.post(
