@@ -1,7 +1,9 @@
 import { createClient } from "@/lib/supabase/client";
 import type {
+  AdminLogDetail,
   AdminLogsResponse,
   AdminSetting,
+  AdminTracesResponse,
   AdminUsage,
   AdminUser,
   ChatDoneEvent,
@@ -9,6 +11,7 @@ import type {
   ChatStartEvent,
   ConnectionResponse,
   CooccurrenceRow,
+  CreatedClass,
   FileLink,
   FileRow,
   FileSuggestion,
@@ -252,6 +255,18 @@ export async function listFiles(target: SpaceTarget): Promise<FileRow[]> {
 export async function listTeacherClasses(): Promise<TeacherClass[]> {
   const res = await ensureOk(
     await fetch(`${API_BASE}/teacher/classes`, { headers: await authHeaders() }),
+  );
+  return res.json();
+}
+
+/** D33: 교사가 학급 생성. 성공 시 새 학급 row(id·name·join_code 등). */
+export async function createClass(name: string): Promise<CreatedClass> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/teacher/classes`, {
+      method: "POST",
+      headers: await authHeaders(true),
+      body: JSON.stringify({ name }),
+    }),
   );
   return res.json();
 }
@@ -695,6 +710,36 @@ export async function getAdminLogs(opts: {
   params.set("offset", String(opts.offset ?? 0));
   const res = await ensureOk(
     await fetch(`${API_BASE}/admin/logs?${params.toString()}`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+/** D34: 턴 상세 — ai_logs 1행(구조화 contexts) + 같은 세션 ReAct 트레이스. */
+export async function getAdminLogDetail(logId: string): Promise<AdminLogDetail> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/logs/${encodeURIComponent(logId)}`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+/** D34: ReAct 트레이스 목록(user/session 필터). 턴 상세는 보통 getAdminLogDetail로 충분. */
+export async function getAdminTraces(opts: {
+  userId?: string | null;
+  sessionId?: string | null;
+  limit?: number;
+  offset?: number;
+}): Promise<AdminTracesResponse> {
+  const params = new URLSearchParams();
+  if (opts.userId) params.set("user_id", opts.userId);
+  if (opts.sessionId) params.set("session_id", opts.sessionId);
+  params.set("limit", String(opts.limit ?? 20));
+  params.set("offset", String(opts.offset ?? 0));
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/traces?${params.toString()}`, {
       headers: await authHeaders(),
     }),
   );

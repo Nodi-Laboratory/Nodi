@@ -94,6 +94,15 @@ class Settings(BaseSettings):
     file_suggestion_top_n: int = 3  # files proposed
     file_suggestion_search_k: int = 20  # chunks scanned before grouping by file
     file_suggestion_query_chars: int = 1500  # branch text used as the query
+    # D28: cosine-distance cutoff for "이 자료 연결할까요?" — 0.50 (was 0.75, which
+    # let near-everything through given the 768-d L2-normalized embedding's
+    # unrelated-pair distance ≈ 0.55..0.75). Admin-tunable via app_settings
+    # (`file_suggestion_max_distance`); this is the fallback default.
+    file_suggestion_max_distance: float = 0.50
+    # Margin gate: only surface a suggestion when the BEST candidate is at least
+    # this much INSIDE the cutoff (best_distance <= cutoff - margin), i.e. only
+    # confident matches — borderline ones are not proposed.
+    file_suggestion_margin: float = 0.05
 
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).

@@ -48,6 +48,29 @@ class TurnLog:
         }
         self._history_chars = history_chars
 
+    def set_contexts_structured(
+        self,
+        *,
+        blocks: list[dict[str, Any]],
+        history_turns: int = 0,
+        history_chars: int = 0,
+    ) -> None:
+        """D35: store the STRUCTURED prompt composition.
+
+        ``blocks`` come from ``gemini.compose_system_structured`` — each carries
+        ``{kind, order, source?, raw_text?, node_ids?, sources?, prompt_span}``,
+        the span being a char range into the saved ``system_prompt``. The admin
+        turn-detail view (D34) highlights the prompt by these spans and lists the
+        RAG ``sources`` (file·#seq·page·distance·snippet). Only blocks actually
+        injected are present. The frontend distinguishes new (``blocks``) from
+        legacy (boolean) logs by the presence of ``contexts.blocks``.
+        """
+        self.contexts = {
+            "history": {"turns": history_turns, "chars": history_chars},
+            "blocks": blocks,
+        }
+        self._history_chars = history_chars
+
     def add_skill(self, name: str, **detail: Any) -> None:
         self.skill_calls.append({"skill": name, **detail})
 

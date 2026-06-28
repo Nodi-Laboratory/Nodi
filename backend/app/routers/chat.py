@@ -90,29 +90,37 @@ async def chat_stream(
         if not n.get("is_navigator")
     ]
     # Imported other-branch context via node connections (LCA-trimmed, Stage 3a).
-    # Best-effort: never blocks the turn.
-    reference_context = await memory.build_reference_context(
+    # Best-effort: never blocks the turn. Also returns the imported node ids (D35).
+    reference_context, reference_node_ids = await memory.build_reference_context(
         client, body.session_id, chain, {n["id"]: n for n in nodes}
     )
-    # Visual RAG: chunks from files linked to this branch (Stage 3b-2).
-    rag_context = await rag.build_rag_context(client, chain, body.question)
+    # Visual RAG: chunks from files linked to this branch (Stage 3b-2). Structured
+    # result carries the injection block AND per-chunk source metadata (D32).
+    rag_result = await rag.build_rag_context(client, chain, body.question)
+    rag_context = rag_result["block"] if rag_result else None
+    rag_sources = rag_result["sources"] if rag_result else []
     # One-time branch comparison references (D15) — this turn only, not persisted.
-    comparison_context = await memory.build_comparison_context(
+    comparison_context, comparison_node_ids = await memory.build_comparison_context(
         client, body.reference_node_ids or []
     )
     existing_root = session.get("root_node_id")
 
-    # Turn log (D25) — accumulated during the turn, saved once at the end.
-    system_prompt = gemini.compose_system_instruction(
-        reference_context, rag_context, comparison_context
+    # Turn log (D25) + structured prompt composition (D35). compose_system_structured
+    # is the SINGLE source of truth for both the system prompt string AND each
+    # block's char span, so the saved prompt and the admin highlight never drift.
+    system_prompt, context_blocks = gemini.compose_system_structured(
+        reference_context,
+        rag_context,
+        comparison_context,
+        rag_sources=rag_sources,
+        reference_node_ids=reference_node_ids,
+        comparison_node_ids=comparison_node_ids,
     )
     tlog = TurnLog(user.id, body.session_id, body.question)
     tlog.set_system(system_prompt)
-    tlog.set_contexts(
-        current_branch=bool(history),
-        memory_link=bool(reference_context),
-        rag=bool(rag_context),
-        comparison=bool(comparison_context),
+    tlog.set_contexts_structured(
+        blocks=context_blocks,
+        history_turns=len(history),
         history_chars=sum(len(q) + len(a) for q, a in history),
     )
 
@@ -163,6 +171,20 @@ async def chat_stream(
                     client, body.session_id, parent_id, body.question, answer, label
                 )
                 tlog.set_final(node["id"], answer)
+                # D32: persist the answer's RAG provenance on the node so the
+                # source chips can be shown when the answer is re-opened.
+                # Best-effort — a provenance write must not fail the saved turn.
+                if rag_sources:
+                    try:
+                        await client.update(
+                            "nodes",
+                            {"id": f"eq.{node['id']}"},
+                            {"rag_sources": rag_sources},
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "rag_sources persist failed node=%s", node["id"]
+                        )
                 # Best-effort: reuse-or-create + link tags. A tag failure must
                 # NOT turn into a "save failed" — the node is already persisted.
                 try:

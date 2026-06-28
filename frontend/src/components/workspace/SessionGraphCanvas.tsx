@@ -534,13 +534,20 @@ export default function SessionGraphCanvas(props: Props) {
       .attr("stroke", "transparent")
       .attr("stroke-width", 12);
     const flMerged = flEnter.merge(flSel);
-    flMerged.select<SVGPathElement>("path.fl-vis").attr("d", (l) =>
-      fileLinkD(l.file_id, l.target_node_id),
-    );
+    // D31: provisional(_pending) 링크는 흐리고(0.45) 살짝 더 점선으로 즉시 렌더,
+    // 확정(서버 응답)되면 선명(1.0)·해제 클릭 가능으로 전환.
+    flMerged
+      .select<SVGPathElement>("path.fl-vis")
+      .attr("d", (l) => fileLinkD(l.file_id, l.target_node_id))
+      .attr("stroke-opacity", (l) => (l._pending ? 0.45 : 1))
+      .attr("stroke-dasharray", (l) => (l._pending ? "3 4" : "4 3"));
     flMerged
       .select<SVGPathElement>("path.fl-hit")
       .attr("d", (l) => fileLinkD(l.file_id, l.target_node_id))
+      .attr("pointer-events", (l) => (l._pending ? "none" : null))
+      .style("cursor", (l) => (l._pending ? "default" : "pointer"))
       .on("click", function (event, l) {
+        if (l._pending) return; // 확정 전에는 해제 불가
         event.stopPropagation();
         pr.current.onRemoveFileLink(l.file_id, l.target_node_id);
       });

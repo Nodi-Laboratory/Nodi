@@ -26,7 +26,7 @@ import {
 } from "@/lib/queries";
 import { useWorkspaceChat } from "@/lib/useWorkspaceChat";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
-import type { SessionDetail } from "@/lib/types";
+import type { FileLink, SessionDetail } from "@/lib/types";
 import { SessionList } from "./SessionList";
 import { FilesPanel } from "./FilesPanel";
 import { ChatPanel } from "./ChatPanel";
@@ -169,6 +169,8 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
 
   const { data: fileLinks = [] } = useSessionFileLinks(activeSessionId);
   const [linkFileId, setLinkFileId] = useState<string | null>(null);
+  // D31: 자료 연결 실패 시 짧게 뜨는 토스트(롤백 안내).
+  const [linkToast, setLinkToast] = useState<string | null>(null);
 
   const refreshFiles = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: filesKey(target) });
@@ -179,19 +181,89 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     });
   }, [queryClient, activeSessionId]);
 
+  // ── D31: 자료 연결선 낙관적 렌더 ──────────────────────────────────
+  // 확정 즉시 provisional FileLink를 캐시에 삽입 → 캔버스가 흐린 선을 바로 그림.
+  // 성공 시 invalidate로 실데이터(선명한 선)로 교체, 실패 시 provisional 제거(롤백).
+  const insertProvisionalLink = useCallback(
+    (fileId: string, nodeId: string): boolean => {
+      const key = fileLinksKey(activeSessionId);
+      const current = queryClient.getQueryData<FileLink[]>(key) ?? [];
+      // 중복 가드: 같은 file→node 링크(실데이터·pending)가 이미 있으면 재삽입 안 함.
+      if (
+        current.some(
+          (l) => l.file_id === fileId && l.target_node_id === nodeId,
+        )
+      ) {
+        return false;
+      }
+      const f = spaceFiles.find((sf) => sf.id === fileId);
+      const provisional: FileLink = {
+        id: `pending:${fileId}->${nodeId}`,
+        file_id: fileId,
+        target_node_id: nodeId,
+        created_at: new Date().toISOString(),
+        files: f
+          ? {
+              id: f.id,
+              storage_path: f.storage_path ?? null,
+              mime: f.mime ?? null,
+              status: f.status,
+              chunk_total: f.chunk_total ?? null,
+              chunk_done: f.chunk_done ?? null,
+              session_id: f.session_id ?? null,
+              position_x: f.position_x ?? null,
+              position_y: f.position_y ?? null,
+            }
+          : null,
+        _pending: true,
+      };
+      queryClient.setQueryData<FileLink[]>(key, [provisional, ...current]);
+      return true;
+    },
+    [queryClient, activeSessionId, spaceFiles],
+  );
+
+  const rollbackProvisionalLink = useCallback(
+    (fileId: string, nodeId: string) => {
+      const key = fileLinksKey(activeSessionId);
+      queryClient.setQueryData<FileLink[]>(key, (old) =>
+        (old ?? []).filter(
+          (l) =>
+            !(
+              l._pending &&
+              l.file_id === fileId &&
+              l.target_node_id === nodeId
+            ),
+        ),
+      );
+    },
+    [queryClient, activeSessionId],
+  );
+
+  // 자료 연결 공통: 낙관적 삽입 → 서버 확정 → (성공)실데이터 교체 / (실패)롤백.
+  const linkFileOptimistic = useCallback(
+    async (fileId: string, nodeId: string) => {
+      const inserted = insertProvisionalLink(fileId, nodeId);
+      try {
+        await addFileLink(fileId, nodeId);
+        refreshFileLinks();
+      } catch {
+        if (inserted) rollbackProvisionalLink(fileId, nodeId);
+        setLinkToast("자료 연결에 실패했습니다.");
+      }
+    },
+    [insertProvisionalLink, rollbackProvisionalLink, refreshFileLinks],
+  );
+
+  // 자료 패널 버튼 경로(파일 선택 → 분기 노드 클릭).
   const handleLinkTarget = useCallback(
     async (nodeId: string) => {
       if (!linkFileId) return;
       const fileId = linkFileId;
       setLinkFileId(null);
-      try {
-        await addFileLink(fileId, nodeId);
-        refreshFileLinks();
-      } catch {
-        /* 무시 */
-      }
+      await linkFileOptimistic(fileId, nodeId);
     },
-    [linkFileId, refreshFileLinks],
+    [linkFileId, linkFileOptimistic],
   );
 
   const handleRemoveFileLink = useCallback(
@@ -206,18 +278,20 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     [refreshFileLinks],
   );
 
-  // 채팅 제안에서 파일을 현재 노드에 연결(3b-3)
+  // 채팅 제안 / 파일 노드 우클릭 추적선에서 현재 노드에 연결(낙관적).
   const handleLinkFile = useCallback(
-    async (fileId: string, nodeId: string) => {
-      try {
-        await addFileLink(fileId, nodeId);
-        refreshFileLinks();
-      } catch {
-        /* 무시 */
-      }
+    (fileId: string, nodeId: string) => {
+      void linkFileOptimistic(fileId, nodeId);
     },
-    [refreshFileLinks],
+    [linkFileOptimistic],
   );
+
+  // 링크 실패 토스트 자동 소멸
+  useEffect(() => {
+    if (!linkToast) return;
+    const t = setTimeout(() => setLinkToast(null), 2600);
+    return () => clearTimeout(t);
+  }, [linkToast]);
 
   // 자료 패널 삭제/재시도 후: 파일 목록 + 링크 갱신(그래프 반영)
   const handleFilesChanged = useCallback(() => {
@@ -334,7 +408,15 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
   const spaceLabel = spaceId === "personal" ? "개인 공간" : "학급 공간";
 
   return (
-    <div className="flex h-full w-full flex-col">
+    <div className="relative flex h-full w-full flex-col">
+      {linkToast && (
+        <div
+          role="status"
+          className="pointer-events-none absolute bottom-4 left-1/2 z-40 -translate-x-1/2 rounded-lg border border-danger/50 bg-bg px-3 py-1.5 text-xs text-danger shadow-lg"
+        >
+          {linkToast}
+        </div>
+      )}
       <header className="border-b border-accent-border/30 bg-bg-elevated px-5 py-3">
         <h1 className="text-sm font-semibold text-fg">
           공간 워크스페이스

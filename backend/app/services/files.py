@@ -178,12 +178,18 @@ async def delete_file(
     service: ServiceClient, client: UserClient, owner_id: str, file_id: str
 ) -> None:
     """Delete a file (owner only): Storage object + files row (cascades chunks/
-    links/tags)."""
+    links/file_tags), then prune any concept tags that became ORPHANS (D29).
+
+    The row delete + orphan-tag cleanup run atomically inside the
+    `delete_file_cascade` RPC (SECURITY DEFINER, owner-checked) under the
+    caller's JWT; shared tags (still used elsewhere) are preserved. Storage
+    object removal stays here on the service client.
+    """
     file_row = await _assert_file_owner(client, owner_id, file_id)
     storage_path = file_row.get("storage_path")
     if storage_path:
         await service.storage_delete(settings.storage_bucket, storage_path)
-    await service.delete("files", {"id": f"eq.{file_id}"})
+    await client.rpc("delete_file_cascade", {"p_file_id": file_id})
 
 
 async def retry_file(
