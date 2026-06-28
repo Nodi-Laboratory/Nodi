@@ -112,6 +112,7 @@ class Profile(BaseModel):
     role: str = "student"  # app role: student | teacher | admin
     display_name: str | None = None
     avatar_url: str | None = None
+    onboarded: bool = False  # D18 — one-time onboarding completed
 
 
 async def get_current_user(
@@ -216,7 +217,7 @@ async def get_current_profile(
         "/profiles",
         {
             "id": f"eq.{user.id}",
-            "select": "id,email,role,display_name,avatar_url",
+            "select": "id,email,role,display_name,avatar_url,onboarded",
             "limit": "1",
         },
         user.token,

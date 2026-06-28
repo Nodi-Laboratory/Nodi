@@ -52,6 +52,9 @@ class ChatStreamBody(BaseModel):
     session_id: str
     question: str = Field(min_length=1, max_length=QUESTION_MAX_CHARS)
     parent_node_id: str | None = None
+    # D15: one-time branch comparison — other nodes to reference for THIS turn
+    # only (not persisted, does not touch node.connections).
+    reference_node_ids: list[str] | None = Field(default=None, max_length=20)
 
 
 def _sse(event: str, data: dict) -> str:
@@ -92,6 +95,10 @@ async def chat_stream(
     )
     # Visual RAG: chunks from files linked to this branch (Stage 3b-2).
     rag_context = await rag.build_rag_context(client, chain, body.question)
+    # One-time branch comparison references (D15) — this turn only, not persisted.
+    comparison_context = await memory.build_comparison_context(
+        client, body.reference_node_ids or []
+    )
     existing_root = session.get("root_node_id")
 
     async def event_stream():
@@ -106,6 +113,7 @@ async def chat_stream(
                 body.question,
                 reference_context=reference_context,
                 rag_context=rag_context,
+                comparison_context=comparison_context,
             ):
                 answer_parts.append(delta)
                 yield _sse("token", {"delta": delta})

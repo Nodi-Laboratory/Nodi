@@ -168,3 +168,54 @@ async def build_reference_context(
     except Exception:  # noqa: BLE001 - memory linking must never break chat
         logger.exception("Imported context assembly failed")
         return None
+
+
+async def build_comparison_context(
+    client: UserClient, reference_node_ids: list[str]
+) -> str | None:
+    """ONE-TIME branch comparison (D15): pull the thread (root -> node) of each
+    referenced node into this turn only.
+
+    Unlike Stage 3a memory linking, this is NOT persisted and never touches
+    node.connections. Rendered under a distinct "[브랜치 참조 — 비교]" label so
+    the model keeps it separate from the live branch / imported / RAG blocks.
+    Only nodes the caller can access are used (RLS). Best-effort -> None.
+    """
+    ids = [i for i in (reference_node_ids or []) if i]
+    if not ids:
+        return None
+    try:
+        refs = await client.select(
+            "nodes",
+            {"id": f"in.({','.join(ids)})", "select": _IMPORT_SELECT},
+        )
+        if not refs:
+            return None
+        # Fetch each referenced node's session once to walk its chain.
+        session_ids = {r["session_id"] for r in refs}
+        by_session: dict[str, dict[str, dict[str, Any]]] = {}
+        for sid in session_ids:
+            rows = await client.select(
+                "nodes", {"session_id": f"eq.{sid}", "select": _IMPORT_SELECT}
+            )
+            by_session[sid] = {r["id"]: r for r in rows}
+
+        budget = settings.memory_max_imported_nodes
+        segments: list[dict[str, Any]] = []
+        for ref in refs:
+            if budget <= 0:
+                break
+            chain = _full_chain(by_session.get(ref["session_id"], {}), ref["id"])
+            chain = [n for n in chain if not n.get("is_navigator")]
+            if not chain:
+                continue
+            chain = chain[:budget]
+            budget -= len(chain)
+            label = ref.get("label") or "참조 분기"
+            segments.append({"label": f"브랜치 참조 — {label}", "nodes": chain})
+
+        text = build_reference_text(segments)
+        return text or None
+    except Exception:  # noqa: BLE001 - comparison must never break chat
+        logger.exception("Comparison context assembly failed")
+        return None

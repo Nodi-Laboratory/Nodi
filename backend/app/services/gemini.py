@@ -64,13 +64,16 @@ def _build_contents(
 
 
 def _system_instruction(
-    reference_context: str | None, rag_context: str | None = None
+    reference_context: str | None,
+    rag_context: str | None = None,
+    comparison_context: str | None = None,
 ) -> str:
     """Base instruction plus SOURCE-LABELLED reference blocks (kept out of the
     live ancestor-chain turns so the model treats them as separate reference):
 
     - `reference_context`: imported other-branch content (Stage 3a memory link).
     - `rag_context`: chunks from files linked to the branch (Stage 3b-2 RAG).
+    - `comparison_context`: one-time referenced branches for comparison (D15).
     """
     parts = [_SYSTEM_INSTRUCTION]
     if reference_context:
@@ -85,6 +88,12 @@ def _system_instruction(
             "관련된 근거로 우선 활용하고, 자료에 없는 내용은 일반 지식으로 보완하되 "
             "출처를 구분하세요.\n\n" + rag_context
         )
+    if comparison_context:
+        parts.append(
+            "아래는 사용자가 이번 질문에서만 비교 목적으로 참조한 다른 분기들의 "
+            "내용입니다. 현재 분기와 비교/대조해 답하되, 출처를 구분하세요.\n\n"
+            + comparison_context
+        )
     return "\n\n".join(parts)
 
 
@@ -93,17 +102,21 @@ async def stream_answer(
     question: str,
     reference_context: str | None = None,
     rag_context: str | None = None,
+    comparison_context: str | None = None,
 ) -> AsyncIterator[str]:
     """Yield answer text deltas for the SSE `token` events.
 
     `reference_context` = imported other-branch content (Stage 3a).
     `rag_context` = chunks from files linked to the branch (Stage 3b-2).
-    Both are injected separately from the live ancestor chain.
+    `comparison_context` = one-time referenced branches for comparison (D15).
+    All are injected separately from the live ancestor chain.
     """
     client = get_client()
     contents = _build_contents(history, question)
     config = types.GenerateContentConfig(
-        system_instruction=_system_instruction(reference_context, rag_context)
+        system_instruction=_system_instruction(
+            reference_context, rag_context, comparison_context
+        )
     )
     stream = await client.aio.models.generate_content_stream(
         model=settings.gemini_chat_model,

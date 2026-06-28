@@ -25,6 +25,11 @@ class ConnectionBody(BaseModel):
     source_node_id: str
 
 
+class PositionBody(BaseModel):
+    position_x: float | None = None
+    position_y: float | None = None
+
+
 def _connections(result: object) -> list[str]:
     """Normalize the RPC's uuid[] return into a list of strings."""
     if isinstance(result, list):
@@ -55,6 +60,27 @@ async def delete_node(
         )
     # RLS (nodes_delete_owner) still enforces ownership at the DB layer.
     await client.delete("nodes", {"id": f"eq.{node_id}"})
+
+
+@router.patch("/{node_id}/position")
+async def set_node_position(
+    node_id: str,
+    body: PositionBody,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Persist a single node's coordinates (D20). Owner only (RLS)."""
+    client = UserClient.from_user(user)
+    rows = await client.update(
+        "nodes",
+        {"id": f"eq.{node_id}"},
+        {"position_x": body.position_x, "position_y": body.position_y},
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Node not found or not yours.",
+        )
+    return {"id": node_id, "position_x": body.position_x, "position_y": body.position_y}
 
 
 @router.post("/{node_id}/connections")
