@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { FileLink, FileRow, NodeRow } from "@/lib/types";
+import type { ProvisionalReplace } from "@/lib/useWorkspaceChat";
 
 /**
  * D3 세션 그래프는 클라이언트 전용(SSR 비활성). window/SVG 측정 의존.
@@ -39,6 +40,7 @@ interface Props {
   selectedTrackIds: string[];
   onToggleTrack: (nodeId: string) => void;
   onEnterTrack: (nodeId: string) => void;
+  lastReplace: ProvisionalReplace | null;
 }
 
 export function SessionGraph(props: Props) {

@@ -25,12 +25,16 @@ import {
   useSessionFileLinks,
 } from "@/lib/queries";
 import { useWorkspaceChat } from "@/lib/useWorkspaceChat";
+import { useResizablePanels } from "@/lib/useResizablePanels";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
-import type { FileLink, SessionDetail } from "@/lib/types";
+import type { FileLink, NodeRow, SessionDetail } from "@/lib/types";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { SessionList } from "./SessionList";
 import { FilesPanel } from "./FilesPanel";
 import { ChatPanel } from "./ChatPanel";
 import { SessionGraph } from "./SessionGraph";
+import { NavigatorPopup } from "./NavigatorPopup";
+import { WorkspaceSettings } from "./WorkspaceSettings";
 
 /**
  * 공간 워크스페이스 3분할 오케스트레이터.
@@ -86,18 +90,31 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
   const nodes = useMemo(() => detail?.nodes ?? [], [detail?.nodes]);
   const rootNodeId = detail?.session?.root_node_id ?? null;
 
-  // 그래프 노드 클릭: 네비게이터=활성화, 일반=분기점 이동
+  // D40: 네비게이터 클릭 시 뜨는 팝업 대상 노드(즉시 전송 금지).
+  const [navigatorPopupNode, setNavigatorPopupNode] = useState<NodeRow | null>(
+    null,
+  );
+
+  // 그래프 노드 클릭: 네비게이터=팝업 오픈(D40), 일반=분기점 이동
   const handleNodeClick = useCallback(
     (id: string) => {
       const node = nodes.find((n) => n.id === id);
       if (node?.is_navigator) {
-        void chat.activateNavigator(node);
+        setNavigatorPopupNode(node);
       } else {
         setActiveNode(id);
       }
     },
-    [nodes, chat, setActiveNode],
+    [nodes, setActiveNode],
   );
+
+  // 팝업 [질문하기]: provisional 단일경로 전송 + 선택 네비게이터 삭제 + 나머지 collapse.
+  const handleAskNavigator = useCallback(async () => {
+    const node = navigatorPopupNode;
+    if (!node) return;
+    setNavigatorPopupNode(null);
+    await chat.askNavigator(node);
+  }, [navigatorPopupNode, chat]);
 
   // ── 기억 연결(D14): source=우클릭 노드, target=클릭 노드 ──
   const patchConnections = useCallback(
@@ -407,6 +424,17 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
 
   const spaceLabel = spaceId === "personal" ? "개인 공간" : "학급 공간";
 
+  // ── D45: 사이드바 리사이즈/접기/러버밴드 ──
+  const panels = useResizablePanels({
+    storageKey: `nodi-panels:${spaceId}`,
+    leftDefault: 260,
+    rightDefault: 380,
+    leftMin: 200,
+    leftMax: 420,
+    rightMin: 280,
+    rightMax: 560,
+  });
+
   return (
     <div className="relative flex h-full w-full flex-col">
       {linkToast && (
@@ -417,29 +445,76 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
           {linkToast}
         </div>
       )}
-      <header className="border-b border-accent-border/30 bg-bg-elevated px-5 py-3">
-        <h1 className="text-sm font-semibold text-fg">
+      <header className="flex items-center justify-between border-b border-accent-border/30 bg-bg-elevated px-5 py-3">
+        <h1 className="flex items-center text-sm font-semibold text-fg">
           공간 워크스페이스
           <span className="ml-2 rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-accent-fg">
             {spaceLabel}
           </span>
         </h1>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={panels.toggleLeft}
+            title={panels.leftCollapsed ? "왼쪽 패널 펼치기" : "왼쪽 패널 접기"}
+            className="flex items-center justify-center rounded-lg border border-accent-border/50 p-1.5 text-fg-muted transition-colors hover:text-fg"
+          >
+            {panels.leftCollapsed ? (
+              <ChevronRight size={16} />
+            ) : (
+              <ChevronLeft size={16} />
+            )}
+          </button>
+          <WorkspaceSettings />
+          <button
+            type="button"
+            onClick={panels.toggleRight}
+            title={panels.rightCollapsed ? "오른쪽 패널 펼치기" : "오른쪽 패널 접기"}
+            className="flex items-center justify-center rounded-lg border border-accent-border/50 p-1.5 text-fg-muted transition-colors hover:text-fg"
+          >
+            {panels.rightCollapsed ? (
+              <ChevronLeft size={16} />
+            ) : (
+              <ChevronRight size={16} />
+            )}
+          </button>
+        </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_380px]">
-        <div className="flex min-h-0 flex-col border-r border-accent-border/30">
-          <SessionList target={target} />
-          <FilesPanel
-            target={target}
-            fileLinks={fileLinks}
-            linkFileId={linkFileId}
-            onStartLink={setLinkFileId}
-            onCancelLink={() => setLinkFileId(null)}
-            onRefresh={handleFilesChanged}
-            onUpload={handlePanelUpload}
-          />
-        </div>
-        <div className="flex min-h-0 flex-col border-x border-accent-border/30">
+      <div className="flex min-h-0 flex-1">
+        {/* 좌: 대화기록 · 자료 */}
+        {panels.leftCollapsed ? (
+          <button
+            type="button"
+            onClick={panels.toggleLeft}
+            title="왼쪽 패널 펼치기"
+            className="flex w-7 shrink-0 items-center justify-center border-r border-accent-border/30 bg-bg-elevated text-fg-muted hover:text-fg"
+          >
+            <ChevronRight size={16} />
+          </button>
+        ) : (
+          <>
+            <div
+              className="flex min-h-0 shrink-0 flex-col border-r border-accent-border/30"
+              style={{ width: panels.leftW }}
+            >
+              <SessionList target={target} />
+              <FilesPanel
+                target={target}
+                fileLinks={fileLinks}
+                linkFileId={linkFileId}
+                onStartLink={setLinkFileId}
+                onCancelLink={() => setLinkFileId(null)}
+                onRefresh={handleFilesChanged}
+                onUpload={handlePanelUpload}
+              />
+            </div>
+            <ResizeHandle onPointerDown={panels.startLeftDrag} />
+          </>
+        )}
+
+        {/* 중: 대화 패널 */}
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col border-x border-accent-border/30">
           <ChatPanel
             chat={chat}
             fileLinks={fileLinks}
@@ -450,32 +525,77 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             onLinkFile={handleLinkFile}
           />
         </div>
-        <div className="min-h-0 border-l border-accent-border/30">
-          <SessionGraph
-            nodes={nodes}
-            rootNodeId={rootNodeId}
-            activeNodeId={activeNodeId}
-            onNodeClick={handleNodeClick}
-            onConnectNodes={handleConnectNodes}
-            onRemoveConnection={handleRemoveConnection}
-            fileLinks={fileLinks}
-            fileNodes={fileNodes}
-            fileTags={fileTags}
-            fileLinkMode={!!linkFileId}
-            onLinkTarget={handleLinkTarget}
-            onRemoveFileLink={handleRemoveFileLink}
-            onConnectFileToNode={handleLinkFile}
-            onDeleteFile={handleDeleteFile}
-            onFilePosition={handleFilePosition}
-            onDropUpload={handleDropUpload}
-            onPersistPositions={handlePersistPositions}
-            trackMode={trackMode}
-            selectedTrackIds={selectedTrackIds}
-            onToggleTrack={toggleTrack}
-            onEnterTrack={enterTrack}
-          />
-        </div>
+
+        {/* 우: 그래프 */}
+        {panels.rightCollapsed ? (
+          <button
+            type="button"
+            onClick={panels.toggleRight}
+            title="오른쪽 패널 펼치기"
+            className="flex w-7 shrink-0 items-center justify-center border-l border-accent-border/30 bg-bg-elevated text-fg-muted hover:text-fg"
+          >
+            <ChevronLeft size={16} />
+          </button>
+        ) : (
+          <>
+            <ResizeHandle onPointerDown={panels.startRightDrag} />
+            <div
+              className="relative min-h-0 shrink-0 border-l border-accent-border/30"
+              style={{ width: panels.rightW }}
+            >
+              <SessionGraph
+                nodes={nodes}
+                rootNodeId={rootNodeId}
+                activeNodeId={activeNodeId}
+                onNodeClick={handleNodeClick}
+                onConnectNodes={handleConnectNodes}
+                onRemoveConnection={handleRemoveConnection}
+                fileLinks={fileLinks}
+                fileNodes={fileNodes}
+                fileTags={fileTags}
+                fileLinkMode={!!linkFileId}
+                onLinkTarget={handleLinkTarget}
+                onRemoveFileLink={handleRemoveFileLink}
+                onConnectFileToNode={handleLinkFile}
+                onDeleteFile={handleDeleteFile}
+                onFilePosition={handleFilePosition}
+                onDropUpload={handleDropUpload}
+                onPersistPositions={handlePersistPositions}
+                trackMode={trackMode}
+                selectedTrackIds={selectedTrackIds}
+                onToggleTrack={toggleTrack}
+                onEnterTrack={enterTrack}
+                lastReplace={chat.lastReplace}
+              />
+              {navigatorPopupNode && (
+                <NavigatorPopup
+                  node={navigatorPopupNode}
+                  busy={chat.streaming}
+                  onAsk={handleAskNavigator}
+                  onClose={() => setNavigatorPopupNode(null)}
+                />
+              )}
+            </div>
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+/** D45: 패널 경계 드래그 핸들(4~6px). */
+function ResizeHandle({
+  onPointerDown,
+}: {
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      className="group relative w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-accent-deep/30"
+      title="드래그하여 크기 조절"
+    >
+      <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-accent-border/30 group-hover:bg-accent-deep/50" />
     </div>
   );
 }

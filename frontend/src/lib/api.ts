@@ -9,6 +9,7 @@ import type {
   ChatDoneEvent,
   ChatNavigatorEvent,
   ChatStartEvent,
+  ChunkContext,
   ConnectionResponse,
   CooccurrenceRow,
   CreatedClass,
@@ -383,6 +384,24 @@ export async function removeFileLink(
   );
 }
 
+/**
+ * D41: RAG 출처 청크의 전문 + 인접 청크(prev/next) + 위치를 조회.
+ * 접근 불가/없음이면 404 → ApiError(404).
+ */
+export async function getChunkContext(
+  chunkId: string,
+  neighbors = 1,
+): Promise<ChunkContext> {
+  const params = new URLSearchParams({ neighbors: String(neighbors) });
+  const res = await ensureOk(
+    await fetch(
+      `${API_BASE}/files/chunks/${encodeURIComponent(chunkId)}/context?${params.toString()}`,
+      { headers: await authHeaders() },
+    ),
+  );
+  return res.json();
+}
+
 export async function listSessionFileLinks(
   sessionId: string,
 ): Promise<FileLink[]> {
@@ -428,12 +447,21 @@ export async function removeConnection(
 // ── SSE 스트리밍 채팅 ────────────────────────────────────────────────
 // EventSource는 Authorization 헤더를 못 실으므로 fetch + ReadableStream 파싱.
 
+export interface ChatNavigatorOverride {
+  enabled?: boolean;
+  count?: number;
+  gate_k?: number;
+  period?: number;
+}
+
 export interface ChatStreamBody {
   session_id: string;
   question: string;
   parent_node_id?: string | null;
   /** Wave A(D15): 브랜치 참조 — 이 턴만 참조할 노드들(일회성, 비영속). */
   reference_node_ids?: string[];
+  /** D47: 네비게이터 자동생성 per-request override(서버가 안전범위로 clamp). */
+  navigator?: ChatNavigatorOverride | null;
 }
 
 /** 노드 좌표 일괄 영속(D20). 드래그 종료/재정렬 시 저장. */

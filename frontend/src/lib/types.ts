@@ -77,6 +77,29 @@ export interface NodeRow {
   connections?: string[] | null;
   /** D32: 이 답변이 RAG로 참고한 자료 출처들(없으면 빈 배열/누락). */
   rag_sources?: RagSource[] | null;
+  /**
+   * D36: 클라이언트 전용 임시(provisional) 노드 플래그(백엔드 미존재).
+   * 전송 즉시 부모 아래에 반투명·점선으로 띄우고, done 시 실노드로 교체.
+   */
+  _provisional?: boolean;
+  /** D40: 네비게이터 노드의 근거(클릭 팝업 "이 질문으로 얻을 수 있는 내용"). 구노드엔 없음. */
+  navigator_meta?: NavigatorMeta | null;
+  /** D46: 이 답변이 이번 턴에 참조한 브랜치 출처들(구노드엔 없음). */
+  reference_sources?: ReferenceSource[] | null;
+}
+
+/** D40: 네비게이터 근거 메타. */
+export interface NavigatorMeta {
+  rationale?: string | null;
+}
+
+/** D46: 답변 노드의 참조 출처(비교참조 브랜치). */
+export interface ReferenceSource {
+  kind: "comparison" | string;
+  label: string;
+  node_ids: string[];
+  leaf_id: string;
+  session_id: string;
 }
 
 /** D32: RAG 답변의 출처 청크 메타. */
@@ -88,6 +111,19 @@ export interface RagSource {
   page?: number | null;
   distance: number | null;
   snippet: string | null;
+  /** D41: 청크 식별자(있을 때만 ⋯ 상세 패널 제공). 구노드엔 없음. */
+  chunk_id?: string | null;
+}
+
+/** D41: GET /files/chunks/{chunk_id}/context 응답(청크 전문 + 인접 청크). */
+export interface ChunkContext {
+  file_id: string;
+  name: string | null;
+  seq: number | null;
+  page: number | null;
+  chunk_text: string;
+  prev_text: string | null;
+  next_text: string | null;
 }
 
 /** Stage 3a: 연결 add/remove 응답(갱신된 connections 배열). */
@@ -144,6 +180,8 @@ export interface ChatNavigatorEvent {
     id: string;
     parent_id: string | null;
     navigator_question: string;
+    /** D40: 생성 시점에 함께 저장된 근거(클릭 팝업용). */
+    navigator_meta?: NavigatorMeta | null;
   }>;
 }
 
