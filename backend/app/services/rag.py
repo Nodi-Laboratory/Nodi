@@ -169,6 +169,10 @@ def build_sources(
         sources.append(
             {
                 "file_id": fid,
+                # D41: keep the chunk id so the "⋯" panel can fetch the full
+                # text + neighbours on demand (get_chunk_context). Older nodes
+                # saved before this may lack it → frontend treats it as optional.
+                "chunk_id": c.get("chunk_id"),
                 "name": names.get(fid, ""),
                 "seq": c.get("seq"),
                 "page": (meta or {}).get("page"),
@@ -268,7 +272,9 @@ async def suggest_files(
             return []
         by_id = {f["id"]: f for f in files}
         query = _branch_query_text(chain)
-        if not query.strip():
+        # D37 content gate: a too-short branch (greetings / small talk) must not
+        # trigger a suggestion regardless of any incidental chunk match.
+        if len(query.strip()) < settings.file_suggestion_min_query_chars:
             return []
         chunks = await search(
             client, list(by_id), query, k=settings.file_suggestion_search_k

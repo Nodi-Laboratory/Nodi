@@ -2,7 +2,11 @@
 
 Given a branch summary (the ancestor-chain Q&A) and the branch's shared concept
 tags, propose a few related follow-up questions that deepen or branch the
-current topic. Read-only (no DB writes). Returns {"questions": [...]}.
+current topic, EACH with a short rationale ("what this question reveals", D40).
+Read-only (no DB writes). One model call produces both question + rationale —
+no extra call when the user opens the navigator popup.
+
+Returns {"questions": [{"question": str, "rationale": str}, ...]}.
 """
 
 from __future__ import annotations
@@ -25,7 +29,10 @@ _PROMPT = (
     "language as the conversation) that a curious learner would naturally ask "
     "next — to deepen, contrast, or extend the topic. Make them specific and "
     "distinct from each other; do not repeat questions already asked.\n"
-    'Return ONLY a JSON array of {n} strings.\n\n'
+    "For EACH question add a very short rationale (<= 40 characters, same "
+    "language) describing what the learner would LEARN by asking it.\n"
+    'Return ONLY a JSON array of {n} objects, each '
+    '{{"question": "...", "rationale": "..."}}.\n\n'
     "Key concepts: {tags}\n\n"
     "Conversation branch (oldest first):\n{branch}"
 )
@@ -42,7 +49,12 @@ def _format_branch(branch: list[tuple[str, str]]) -> str:
     return "\n".join(lines) if lines else "(empty)"
 
 
-def _parse(raw: str, n: int) -> list[str]:
+def _parse(raw: str, n: int) -> list[dict[str, str]]:
+    """Parse the model output into [{question, rationale}].
+
+    Robust to: code fences, an array of objects (preferred), or an array of bare
+    strings (degenerate fallback → rationale left empty so the popup still works).
+    """
     text = (raw or "").strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -53,10 +65,17 @@ def _parse(raw: str, n: int) -> list[str]:
         return []
     if not isinstance(data, list):
         return []
-    out: list[str] = []
+    out: list[dict[str, str]] = []
     for item in data:
-        if isinstance(item, str) and item.strip():
-            out.append(item.strip().strip('"').strip())
+        if isinstance(item, dict):
+            q = str(item.get("question") or "").strip().strip('"').strip()
+            r = str(item.get("rationale") or "").strip()
+        elif isinstance(item, str):
+            q, r = item.strip().strip('"').strip(), ""
+        else:
+            continue
+        if q:
+            out.append({"question": q, "rationale": r[:40]})
         if len(out) >= n:
             break
     return out
@@ -84,7 +103,7 @@ async def run(
             # Disable "thinking" (on by default for 2.5-flash) so the token
             # budget produces the answer, not internal reasoning.
             thinking_config=types.ThinkingConfig(thinking_budget=0),
-            max_output_tokens=600,
+            max_output_tokens=1000,
             temperature=0.7,
         ),
     )

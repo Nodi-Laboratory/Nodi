@@ -49,6 +49,19 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 QUESTION_MAX_CHARS = 8000
 
 
+class NavigatorOverride(BaseModel):
+    """D47 per-request navigator preference (clamped server-side, navigator.py).
+
+    All optional; missing fields fall back to the admin/config default. `enabled`
+    False disables navigator generation for this turn entirely.
+    """
+
+    enabled: bool | None = None
+    count: int | None = None
+    gate_k: int | None = None
+    period: int | None = None
+
+
 class ChatStreamBody(BaseModel):
     session_id: str
     question: str = Field(min_length=1, max_length=QUESTION_MAX_CHARS)
@@ -56,6 +69,8 @@ class ChatStreamBody(BaseModel):
     # D15: one-time branch comparison — other nodes to reference for THIS turn
     # only (not persisted, does not touch node.connections).
     reference_node_ids: list[str] | None = Field(default=None, max_length=20)
+    # D47: per-request navigator override (user workspace settings).
+    navigator: NavigatorOverride | None = None
 
 
 def _sse(event: str, data: dict) -> str:
@@ -99,9 +114,15 @@ async def chat_stream(
     rag_result = await rag.build_rag_context(client, chain, body.question)
     rag_context = rag_result["block"] if rag_result else None
     rag_sources = rag_result["sources"] if rag_result else []
-    # One-time branch comparison references (D15) — this turn only, not persisted.
-    comparison_context, comparison_node_ids = await memory.build_comparison_context(
-        client, body.reference_node_ids or []
+    # One-time branch comparison references (D15) — injected this turn; the
+    # source branches are persisted on the answer node for the UI (D46).
+    # current_chain/by_id let same-session references be LCA-trimmed.
+    (
+        comparison_context,
+        comparison_node_ids,
+        comparison_sources,
+    ) = await memory.build_comparison_context(
+        client, body.reference_node_ids or [], chain, {n["id"]: n for n in nodes}
     )
     existing_root = session.get("root_node_id")
 
@@ -185,6 +206,20 @@ async def chat_stream(
                         logger.warning(
                             "rag_sources persist failed node=%s", node["id"]
                         )
+                # D46: persist which branches this answer referenced so the UI
+                # can show source chips + branch buttons when the node reopens.
+                # Best-effort — a provenance write must not fail the saved turn.
+                if comparison_sources:
+                    try:
+                        await client.update(
+                            "nodes",
+                            {"id": f"eq.{node['id']}"},
+                            {"reference_sources": comparison_sources},
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "reference_sources persist failed node=%s", node["id"]
+                        )
                 # Best-effort: reuse-or-create + link tags. A tag failure must
                 # NOT turn into a "save failed" — the node is already persisted.
                 try:
@@ -216,7 +251,16 @@ async def chat_stream(
                 try:
                     all_nodes = await svc.get_session_nodes(client, body.session_id)
                     nav_nodes = await navigator.maybe_generate(
-                        client, user.id, body.session_id, node["id"], all_nodes
+                        client,
+                        user.id,
+                        body.session_id,
+                        node["id"],
+                        all_nodes,
+                        override=(
+                            body.navigator.model_dump()
+                            if body.navigator is not None
+                            else None
+                        ),
                     )
                     if nav_nodes:
                         tlog.add_skill("navigator", count=len(nav_nodes))

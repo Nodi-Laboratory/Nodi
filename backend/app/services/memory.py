@@ -186,52 +186,95 @@ async def build_reference_context(
 
 
 async def build_comparison_context(
-    client: UserClient, reference_node_ids: list[str]
-) -> tuple[str | None, list[str]]:
-    """ONE-TIME branch comparison (D15): pull the thread (root -> node) of each
-    referenced node into this turn only.
+    client: UserClient,
+    reference_node_ids: list[str],
+    current_chain: list[dict[str, Any]] | None = None,
+    current_by_id: dict[str, dict[str, Any]] | None = None,
+) -> tuple[str | None, list[str], list[dict[str, Any]]]:
+    """ONE-TIME branch comparison (D15/D46): pull each referenced branch into
+    this turn only.
 
-    Unlike Stage 3a memory linking, this is NOT persisted and never touches
-    node.connections. Rendered under a distinct "[브랜치 참조 — 비교]" label so
-    the model keeps it separate from the live branch / imported / RAG blocks.
-    Only nodes the caller can access are used (RLS). Best-effort -> ``(None, [])``.
-    Returns ``(text_or_None, node_ids)`` (node_ids feeds the D35 comparison block).
+    Unlike Stage 3a memory linking, this is NOT persisted into node.connections.
+    Rendered under a distinct "[브랜치 참조 — 비교]" label so the model keeps it
+    separate from the live branch / imported / RAG blocks. Only nodes the caller
+    can access are used (RLS).
+
+    LCA trim (D46): a reference in the CURRENT session reuses ``current_by_id``
+    and is trimmed to the segment BELOW the lowest common ancestor (drop the
+    shared ancestor chain the model already has from the live branch); a
+    reference in ANOTHER session has no shared ancestor, so its full root->node
+    chain is imported.
+
+    Returns ``(text_or_None, node_ids, sources)`` where ``sources`` is the D46
+    ``reference_sources`` list — ``[{kind:'comparison', label, node_ids, leaf_id,
+    session_id}]`` — for best-effort persistence on the answer node. Every early
+    return is a 3-tuple (a bare ``return None`` here used to TypeError the chat
+    handler's tuple-unpack → 500). Best-effort -> ``(None, [], [])``.
     """
+    current_chain = current_chain or []
+    current_by_id = current_by_id or {}
+    chain_ids = {n["id"] for n in current_chain}
+
     ids = [i for i in (reference_node_ids or []) if i]
     if not ids:
-        return None, []
+        return None, [], []
     try:
         refs = await client.select(
             "nodes",
             {"id": f"in.({','.join(ids)})", "select": _IMPORT_SELECT},
         )
         if not refs:
-            return None
-        # Fetch each referenced node's session once to walk its chain.
-        session_ids = {r["session_id"] for r in refs}
-        by_session: dict[str, dict[str, dict[str, Any]]] = {}
-        for sid in session_ids:
+            return None, [], []
+        # Fetch OTHER-session nodes once each to walk their chains. Same-session
+        # references reuse current_by_id (already in hand → no extra query).
+        other_session_ids = {
+            r["session_id"] for r in refs if r["id"] not in current_by_id
+        }
+        other_by_session: dict[str, dict[str, dict[str, Any]]] = {}
+        for sid in other_session_ids:
             rows = await client.select(
                 "nodes", {"session_id": f"eq.{sid}", "select": _IMPORT_SELECT}
             )
-            by_session[sid] = {r["id"]: r for r in rows}
+            other_by_session[sid] = {r["id"]: r for r in rows}
 
         budget = settings.memory_max_imported_nodes
         segments: list[dict[str, Any]] = []
+        sources: list[dict[str, Any]] = []
         for ref in refs:
             if budget <= 0:
                 break
-            chain = _full_chain(by_session.get(ref["session_id"], {}), ref["id"])
-            chain = [n for n in chain if not n.get("is_navigator")]
-            if not chain:
+            if ref["id"] in current_by_id:
+                # Same session: LCA trim (exclude the shared ancestor chain).
+                seg = _same_session_segment(current_by_id, chain_ids, ref["id"])
+            else:
+                # Different session: no shared ancestor → full root->node chain.
+                seg = _full_chain(
+                    other_by_session.get(ref["session_id"], {}), ref["id"]
+                )
+            # Real nodes only; nothing already on the current branch.
+            seg = [
+                n
+                for n in seg
+                if not n.get("is_navigator") and n["id"] not in chain_ids
+            ]
+            if not seg:
                 continue
-            chain = chain[:budget]
-            budget -= len(chain)
+            seg = seg[:budget]
+            budget -= len(seg)
             label = ref.get("label") or "참조 분기"
-            segments.append({"label": f"브랜치 참조 — {label}", "nodes": chain})
+            segments.append({"label": f"브랜치 참조 — {label}", "nodes": seg})
+            sources.append(
+                {
+                    "kind": "comparison",
+                    "label": label,
+                    "node_ids": [n["id"] for n in seg],
+                    "leaf_id": ref["id"],
+                    "session_id": ref["session_id"],
+                }
+            )
 
         text = build_reference_text(segments)
-        return (text or None), _segment_node_ids(segments)
+        return (text or None), _segment_node_ids(segments), sources
     except Exception:  # noqa: BLE001 - comparison must never break chat
         logger.exception("Comparison context assembly failed")
-        return None, []
+        return None, [], []

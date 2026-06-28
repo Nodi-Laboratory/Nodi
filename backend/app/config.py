@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     file_suggestion_top_n: int = 3  # files proposed
     file_suggestion_search_k: int = 20  # chunks scanned before grouping by file
     file_suggestion_query_chars: int = 1500  # branch text used as the query
+    # D37 content gate: skip suggestions when the branch query text is shorter
+    # than this (greetings / small talk never trigger "이 자료 연결할까요?").
+    file_suggestion_min_query_chars: int = 40
     # D28: cosine-distance cutoff for "이 자료 연결할까요?" — 0.50 (was 0.75, which
     # let near-everything through given the 768-d L2-normalized embedding's
     # unrelated-pair distance ≈ 0.55..0.75). Admin-tunable via app_settings
