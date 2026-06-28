@@ -75,6 +75,19 @@ export interface NodeRow {
   tags?: string[] | null;
   /** Stage 3a: 이 노드가 가져온 source 노드 id들(기억 연결). */
   connections?: string[] | null;
+  /** D32: 이 답변이 RAG로 참고한 자료 출처들(없으면 빈 배열/누락). */
+  rag_sources?: RagSource[] | null;
+}
+
+/** D32: RAG 답변의 출처 청크 메타. */
+export interface RagSource {
+  file_id: string;
+  name: string | null;
+  seq: number | null;
+  /** 페이지 메타가 있으면(없을 수 있음). */
+  page?: number | null;
+  distance: number | null;
+  snippet: string | null;
 }
 
 /** Stage 3a: 연결 add/remove 응답(갱신된 connections 배열). */
@@ -225,6 +238,8 @@ export interface FileLink {
   file_id: string;
   target_node_id: string;
   created_at: string;
+  /** D31: 낙관적 삽입 중인 임시 링크(서버 확정 전). 캔버스에서 흐리게 렌더. */
+  _pending?: boolean;
   files: {
     id: string;
     storage_path: string | null;
@@ -279,6 +294,39 @@ export interface AdminUsage {
   by_user: AdminUsageUser[];
 }
 
+// ── D34/D35: 턴 상세 + 구조화 contexts ───────────────────────────────
+
+/** D35: 시스템 프롬프트에 들어간 컨텍스트 블록. */
+export type LogBlockKind =
+  | "system_base"
+  | "memory_link"
+  | "rag"
+  | "comparison"
+  | string;
+
+export interface LogContextBlock {
+  kind: LogBlockKind;
+  order: number;
+  source?: string | null;
+  raw_text?: string | null;
+  node_ids?: string[] | null;
+  /** rag 블록의 출처(D32와 동일 형). */
+  sources?: RagSource[] | null;
+  /** system_prompt 문자열 내 [start, end) char 오프셋. */
+  prompt_span?: [number, number] | null;
+}
+
+/**
+ * D35: ai_logs.contexts 구조화형.
+ * 신버전 = { history, blocks[] }. 구버전(boolean 플래그)은 blocks 누락 → 폴백 렌더.
+ */
+export interface LogContexts {
+  history?: { turns: number; chars: number } | null;
+  blocks?: LogContextBlock[] | null;
+  /** 구버전 boolean 플래그(current_branch/memory_link/rag/comparison 등) 폴백용. */
+  [key: string]: unknown;
+}
+
 /** D25: 채팅 턴 단위 로그(ai_logs 1행 = 1턴). */
 export interface AdminLog {
   id: string;
@@ -289,7 +337,7 @@ export interface AdminLog {
   system_prompt: string | null;
   question: string | null;
   answer: string | null;
-  contexts: Record<string, unknown> | null;
+  contexts: LogContexts | null;
   skill_calls: unknown[] | null;
   errors: unknown[] | null;
   token_estimate: number | null;
@@ -300,4 +348,47 @@ export interface AdminLogsResponse {
   limit: number;
   offset: number;
   logs: AdminLog[];
+}
+
+/** D34: ReAct 트레이스 스텝(ai_steps). */
+export interface AdminTraceStep {
+  seq: number;
+  thought: string | null;
+  skill: string | null;
+  input: unknown;
+  observation: unknown;
+  tokens: number | null;
+  created_at: string;
+}
+
+/** D34: ReAct 트레이스(ai_sessions + 임베드된 ai_steps). */
+export interface AdminTrace {
+  id: string;
+  owner_id: string;
+  session_id: string | null;
+  kind: string | null;
+  created_at: string;
+  ai_steps: AdminTraceStep[] | null;
+}
+
+/** D34: GET /admin/logs/{id} 응답(턴 본체 + 같은 세션 트레이스 묶음). */
+export interface AdminLogDetail {
+  log: AdminLog;
+  traces: AdminTrace[];
+}
+
+/** D34: GET /admin/traces 응답. */
+export interface AdminTracesResponse {
+  limit: number;
+  offset: number;
+  sessions: AdminTrace[];
+}
+
+/** D33: POST /teacher/classes 생성 응답(student_count 없음). */
+export interface CreatedClass {
+  id: string;
+  name: string | null;
+  join_code: string | null;
+  teacher_id?: string | null;
+  created_at: string;
 }

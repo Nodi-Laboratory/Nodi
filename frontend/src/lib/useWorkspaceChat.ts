@@ -172,6 +172,13 @@ export function useWorkspaceChat(target: SpaceTarget): WorkspaceChat {
         controller.signal,
       );
 
+      // 스트림이 완전히 끝난 뒤(navigator 이벤트·노드 영속까지 완료) 1회 재동기화.
+      // D32: 서버가 노드에 기록한 rag_sources(출처)를 받아 출처 칩이 보이게 한다.
+      // 이 시점엔 네비게이터 노드도 이미 영속·반영돼 덮어쓰기 안전(background refetch).
+      if (okFlag) {
+        void queryClient.invalidateQueries({ queryKey: sessionKey(sessionId) });
+      }
+
       return { ok: okFlag };
     },
     [activeSessionId, streaming, queryClient, target, setActiveNode, appendNavigators],

@@ -7,7 +7,7 @@ import { useFileSuggestions, useSessionDetail } from "@/lib/queries";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { ancestorChain, buildById, pathIdSet } from "@/lib/tree";
 import type { WorkspaceChat } from "@/lib/useWorkspaceChat";
-import type { FileLink, NodeRow } from "@/lib/types";
+import type { FileLink, NodeRow, RagSource } from "@/lib/types";
 
 /**
  * 대화 패널(중): 포커스 노드 기준 조상체인 스레드 표시 + 입력.
@@ -281,6 +281,48 @@ function TagChips({ tags }: { tags: string[] }) {
   );
 }
 
+/** D32: RAG 답변의 출처 칩 + 클릭 시 snippet 펼침. 청록(C.file) 톤. */
+function RagSourceChips({ sources }: { sources: RagSource[] }) {
+  const [open, setOpen] = useState<number | null>(null);
+  if (sources.length === 0) return null;
+  const active = open != null ? sources[open] : null;
+  return (
+    <div className="flex flex-col gap-1 pl-1">
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="text-[10px] font-medium text-[#2a7d7a]">출처</span>
+        {sources.map((s, i) => {
+          const label = `${s.name ?? "자료"}${
+            s.seq != null ? ` #${s.seq}` : ""
+          }${s.page != null ? ` · p.${s.page}` : ""}`;
+          return (
+            <button
+              key={`${s.file_id}-${s.seq ?? "x"}-${i}`}
+              type="button"
+              title={s.snippet ?? undefined}
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpen(open === i ? null : i);
+              }}
+              className={`max-w-[15rem] truncate rounded-md border px-1.5 py-0.5 text-[10px] transition-colors ${
+                open === i
+                  ? "border-[#2a7d7a] bg-[#2a7d7a]/15 text-[#2a7d7a]"
+                  : "border-[#2a7d7a]/50 bg-[#2a7d7a]/5 text-[#2a7d7a] hover:bg-[#2a7d7a]/10"
+              }`}
+            >
+              📄 {label}
+            </button>
+          );
+        })}
+      </div>
+      {active?.snippet && (
+        <div className="whitespace-pre-wrap rounded-md border border-[#2a7d7a]/30 bg-[#2a7d7a]/5 px-2 py-1 text-[11px] leading-relaxed text-fg-muted">
+          {active.snippet}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ExchangeBubble({
   node,
   active,
@@ -311,6 +353,9 @@ function ExchangeBubble({
         )}
       </AnswerBubble>
       {node.tags && node.tags.length > 0 ? <TagChips tags={node.tags} /> : null}
+      {node.rag_sources && node.rag_sources.length > 0 ? (
+        <RagSourceChips sources={node.rag_sources} />
+      ) : null}
     </div>
   );
 }

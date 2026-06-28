@@ -2,23 +2,43 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Radio } from "lucide-react";
-import { getAdminLogs, listAdminUsers } from "@/lib/api";
+import {
+  ChevronRight,
+  Radio,
+  X,
+  Copy,
+  Check,
+  AlertTriangle,
+  Layers,
+  FileText,
+  GitBranch,
+} from "lucide-react";
+import { getAdminLogDetail, getAdminLogs, listAdminUsers } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
-import type { AdminLog, AdminLogsResponse, AdminUser } from "@/lib/types";
+import type {
+  AdminLog,
+  AdminLogDetail,
+  AdminLogsResponse,
+  AdminTrace,
+  AdminUser,
+  LogContextBlock,
+  LogContexts,
+  RagSource,
+} from "@/lib/types";
 
 const LIMIT = 20;
 
 /**
- * 로그 탭(D25): 채팅 턴 단위 ai_logs.
- * 과거 조회(사용자/날짜 필터·페이지네이션) + Supabase Realtime 구독으로 신규 턴 라이브 추가.
+ * 로그 탭(D25→D34): 채팅 턴 단위 ai_logs 실시간 모니터 + 턴 상세 슬라이드오버.
+ * 과거 조회(사용자/날짜 필터·페이지네이션) + Supabase Realtime로 신규 턴 라이브 추가.
+ * 행 클릭 → 우측 상세 드로어(시스템 프롬프트 하이라이트·컨텍스트 블록·트레이스).
  */
 export function LogsTab() {
   const [userId, setUserId] = useState<string>("");
   const [since, setSince] = useState<string>("");
   const [until, setUntil] = useState<string>("");
   const [offset, setOffset] = useState(0);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [liveLogs, setLiveLogs] = useState<AdminLog[]>([]);
   const [live, setLive] = useState(false);
 
@@ -69,15 +89,9 @@ export function LogsTab() {
       : [];
   const display = [...liveExtra, ...logs];
 
-  const toggle = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
   const resetPage = () => setOffset(0);
+  const emailFor = (ownerId: string) =>
+    users?.find((u) => u.id === ownerId)?.email ?? ownerId;
 
   return (
     <div className="flex flex-col gap-3">
@@ -150,9 +164,9 @@ export function LogsTab() {
               key={l.id}
               log={l}
               isLive={liveExtra.some((x) => x.id === l.id)}
-              open={expanded.has(l.id)}
-              onToggle={() => toggle(l.id)}
-              userEmail={users?.find((u) => u.id === l.owner_id)?.email ?? l.owner_id}
+              selected={selectedId === l.id}
+              onSelect={() => setSelectedId(l.id)}
+              userEmail={emailFor(l.owner_id)}
             />
           ))}
         </div>
@@ -179,133 +193,587 @@ export function LogsTab() {
           다음
         </button>
       </div>
-    </div>
-  );
-}
 
-function jsonPreview(v: unknown, max = 400): string {
-  if (v == null) return "";
-  const s = typeof v === "string" ? v : JSON.stringify(v, null, 2);
-  return s.length > max ? s.slice(0, max) + "…" : s;
-}
-
-function LogRow({
-  log,
-  isLive,
-  open,
-  onToggle,
-  userEmail,
-}: {
-  log: AdminLog;
-  isLive: boolean;
-  open: boolean;
-  onToggle: () => void;
-  userEmail: string;
-}) {
-  const contexts = log.contexts ?? {};
-  const ctxEntries = Object.entries(contexts);
-  const skillCalls = log.skill_calls ?? [];
-  const errors = log.errors ?? [];
-
-  return (
-    <div className="rounded-lg border border-white/10 bg-[#25211a]">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
-      >
-        {open ? (
-          <ChevronDown size={15} className="text-[#9a948a]" />
-        ) : (
-          <ChevronRight size={15} className="text-[#9a948a]" />
-        )}
-        {isLive && (
-          <span className="rounded bg-[#e0796a]/20 px-1.5 py-0.5 text-[10px] font-medium text-[#e0796a]">
-            NEW
-          </span>
-        )}
-        <span className="rounded bg-[#e0a32e]/20 px-1.5 py-0.5 text-xs font-medium text-[#fcf58b]">
-          {log.kind || "chat"}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-sm text-[#cfc9bd]">
-          {log.question || "(질문 없음)"}
-        </span>
-        <span className="shrink-0 text-xs text-[#9a948a]">{userEmail}</span>
-        <span className="shrink-0 text-xs text-[#9a948a]">
-          {log.token_estimate != null ? `${log.token_estimate} tok` : ""}
-        </span>
-        <span className="shrink-0 text-xs text-[#9a948a]">
-          {new Date(log.created_at).toLocaleString("ko-KR")}
-        </span>
-      </button>
-
-      {open && (
-        <div className="flex flex-col gap-3 border-t border-white/10 p-3 text-xs">
-          {ctxEntries.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {ctxEntries.map(([k, v]) => (
-                <span
-                  key={k}
-                  className={`rounded-full px-2 py-0.5 ${
-                    v
-                      ? "bg-[#9bbf6a]/20 text-[#9bbf6a]"
-                      : "bg-white/5 text-[#9a948a]"
-                  }`}
-                >
-                  {k}: {String(v)}
-                </span>
-              ))}
-            </div>
-          )}
-
-          <Section label="질문">{log.question}</Section>
-          <Section label="답변">{log.answer}</Section>
-          <Section label="system_prompt" mono>
-            {log.system_prompt}
-          </Section>
-
-          {skillCalls.length > 0 && (
-            <Section label={`skill_calls (${skillCalls.length})`} mono>
-              {jsonPreview(skillCalls, 800)}
-            </Section>
-          )}
-
-          {errors.length > 0 && (
-            <div>
-              <div className="mb-1 font-medium text-[#e0796a]">
-                errors ({errors.length})
-              </div>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-[#1b1813] p-2 font-mono text-[#e0796a]">
-                {jsonPreview(errors, 800)}
-              </pre>
-            </div>
-          )}
-        </div>
+      {selectedId && (
+        <TurnDetailDrawer
+          logId={selectedId}
+          emailFor={emailFor}
+          onClose={() => setSelectedId(null)}
+        />
       )}
     </div>
   );
 }
 
-function Section({
+function LogRow({
+  log,
+  isLive,
+  selected,
+  onSelect,
+  userEmail,
+}: {
+  log: AdminLog;
+  isLive: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  userEmail: string;
+}) {
+  const hasError = (log.errors?.length ?? 0) > 0;
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
+        selected
+          ? "border-[#e0a32e]/60 bg-[#2c2820]"
+          : "border-white/10 bg-[#25211a] hover:border-white/20"
+      }`}
+    >
+      {isLive && (
+        <span className="rounded bg-[#e0796a]/20 px-1.5 py-0.5 text-[10px] font-medium text-[#e0796a]">
+          NEW
+        </span>
+      )}
+      <span className="rounded bg-[#e0a32e]/20 px-1.5 py-0.5 text-xs font-medium text-[#fcf58b]">
+        {log.kind || "chat"}
+      </span>
+      {hasError && (
+        <AlertTriangle size={13} className="shrink-0 text-[#e0796a]" />
+      )}
+      <span className="min-w-0 flex-1 truncate text-sm text-[#cfc9bd]">
+        {log.question || "(질문 없음)"}
+      </span>
+      <span className="shrink-0 text-xs text-[#9a948a]">{userEmail}</span>
+      <span className="shrink-0 text-xs text-[#9a948a]">
+        {log.token_estimate != null ? `${log.token_estimate} tok` : ""}
+      </span>
+      <span className="shrink-0 text-xs text-[#9a948a]">
+        {new Date(log.created_at).toLocaleString("ko-KR")}
+      </span>
+      <ChevronRight size={15} className="shrink-0 text-[#9a948a]" />
+    </button>
+  );
+}
+
+// ── 블록 종류별 색/라벨 (본문 하이라이트와 카드 헤더가 일치) ──────────
+const BLOCK_STYLE: Record<
+  string,
+  { label: string; color: string; bg: string }
+> = {
+  system_base: { label: "기본 지시", color: "#b6b0a4", bg: "rgba(182,176,164,0.18)" },
+  memory_link: { label: "기억 연결", color: "#d98a3d", bg: "rgba(194,112,42,0.28)" },
+  rag: { label: "자료 (RAG)", color: "#3fb0aa", bg: "rgba(42,125,122,0.30)" },
+  comparison: { label: "비교 참조", color: "#bd86c4", bg: "rgba(154,94,163,0.30)" },
+};
+function blockStyle(kind: string) {
+  return (
+    BLOCK_STYLE[kind] ?? {
+      label: kind,
+      color: "#8fa0bf",
+      bg: "rgba(126,138,160,0.25)",
+    }
+  );
+}
+
+// ── D34 턴 상세 드로어 ────────────────────────────────────────────────
+function TurnDetailDrawer({
+  logId,
+  emailFor,
+  onClose,
+}: {
+  logId: string;
+  emailFor: (ownerId: string) => string;
+  onClose: () => void;
+}) {
+  const { data, isLoading, isError } = useQuery<AdminLogDetail>({
+    queryKey: ["admin", "log-detail", logId],
+    queryFn: () => getAdminLogDetail(logId),
+  });
+
+  // ESC 닫기
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const log = data?.log;
+  const contexts: LogContexts = log?.contexts ?? {};
+  const blocks: LogContextBlock[] = Array.isArray(contexts.blocks)
+    ? (contexts.blocks as LogContextBlock[])
+    : [];
+  const hasStructured = blocks.length > 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end"
+      role="dialog"
+      aria-modal="true"
+      aria-label="턴 상세"
+    >
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <aside className="relative ml-auto flex h-full w-full max-w-2xl flex-col overflow-hidden border-l border-white/10 bg-[#1b1813] shadow-2xl">
+        <header className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-[#221e17] px-4 py-3">
+          <span className="rounded bg-[#e0a32e]/20 px-1.5 py-0.5 text-xs font-medium text-[#fcf58b]">
+            {log?.kind || "chat"}
+          </span>
+          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-[#e7e3d8]">
+            턴 상세
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            className="rounded p-1 text-[#9a948a] transition-colors hover:text-[#e7e3d8]"
+          >
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          {isLoading ? (
+            <p className="text-sm text-[#9a948a]">상세 불러오는 중…</p>
+          ) : isError || !log ? (
+            <p className="text-sm text-[#e0796a]">상세를 불러오지 못했습니다.</p>
+          ) : (
+            <div className="flex flex-col gap-5">
+              {/* 1) 개요 */}
+              <Overview log={log} email={emailFor(log.owner_id)} />
+
+              {/* 2) 시스템 프롬프트 + 하이라이트 */}
+              <SystemPromptView
+                prompt={log.system_prompt ?? ""}
+                blocks={blocks}
+                structured={hasStructured}
+                contexts={contexts}
+              />
+
+              {/* 3) 컨텍스트 블록 카드 (구조화일 때만) */}
+              {hasStructured && <ContextBlocks blocks={blocks} />}
+
+              {/* 4) 파이프라인 / ReAct 타임라인 */}
+              <Timeline
+                skillCalls={log.skill_calls ?? []}
+                traces={data?.traces ?? []}
+              />
+
+              {/* 5) 오류 */}
+              {(log.errors?.length ?? 0) > 0 && (
+                <Errors errors={log.errors ?? []} />
+              )}
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function Overview({ log, email }: { log: AdminLog; email: string }) {
+  const hasError = (log.errors?.length ?? 0) > 0;
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#9a948a]">
+        <span>{new Date(log.created_at).toLocaleString("ko-KR")}</span>
+        <span>· {email}</span>
+        {log.session_id && (
+          <span className="font-mono">· session {log.session_id.slice(0, 8)}</span>
+        )}
+        {log.token_estimate != null && <span>· {log.token_estimate} tok</span>}
+        <span
+          className={`rounded-full px-2 py-0.5 ${
+            hasError
+              ? "bg-[#e0796a]/20 text-[#e0796a]"
+              : "bg-[#9bbf6a]/20 text-[#9bbf6a]"
+          }`}
+        >
+          {hasError ? "오류 있음" : "정상"}
+        </span>
+      </div>
+      <Field label="질문">{log.question}</Field>
+      <Field label="답변">{log.answer}</Field>
+    </section>
+  );
+}
+
+function SystemPromptView({
+  prompt,
+  blocks,
+  structured,
+  contexts,
+}: {
+  prompt: string;
+  blocks: LogContextBlock[];
+  structured: boolean;
+  contexts: LogContexts;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* 무시 */
+    }
+  };
+
+  const kinds = Array.from(
+    new Set(
+      blocks
+        .filter((b) => Array.isArray(b.prompt_span))
+        .map((b) => b.kind),
+    ),
+  );
+
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-[#9a948a]">
+          시스템 프롬프트
+        </h3>
+        {prompt && (
+          <button
+            type="button"
+            onClick={copy}
+            className="flex items-center gap-1 rounded border border-white/15 px-1.5 py-0.5 text-[10px] text-[#9a948a] transition-colors hover:text-[#e7e3d8]"
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+            {copied ? "복사됨" : "복사"}
+          </button>
+        )}
+      </div>
+
+      {/* 범례 / 구버전 폴백 */}
+      {structured ? (
+        kinds.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {kinds.map((k) => {
+              const st = blockStyle(k);
+              return (
+                <span
+                  key={k}
+                  className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                  style={{ backgroundColor: st.bg, color: st.color }}
+                >
+                  {st.label}
+                </span>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        <LegacyContexts contexts={contexts} />
+      )}
+
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-[#15120d] p-3 font-mono text-[11px] leading-relaxed text-[#cfc9bd]">
+        {structured ? highlightPrompt(prompt, blocks) : prompt}
+      </pre>
+    </section>
+  );
+}
+
+/** prompt_span 구간을 kind별 색으로 하이라이트(겹침은 안전하게 순차 클램프). */
+function highlightPrompt(prompt: string, blocks: LogContextBlock[]) {
+  const spans = blocks
+    .filter(
+      (b): b is LogContextBlock & { prompt_span: [number, number] } =>
+        Array.isArray(b.prompt_span) && b.prompt_span.length === 2,
+    )
+    .map((b) => ({ start: b.prompt_span[0], end: b.prompt_span[1], kind: b.kind }))
+    .filter((s) => s.end > s.start)
+    .sort((a, b) => a.start - b.start);
+
+  const out: React.ReactNode[] = [];
+  let cursor = 0;
+  spans.forEach((s, i) => {
+    const start = Math.max(s.start, cursor);
+    const end = Math.min(s.end, prompt.length);
+    if (start >= end) return; // 겹침/범위밖 → 건너뜀
+    if (start > cursor) {
+      out.push(<span key={`plain-${i}`}>{prompt.slice(cursor, start)}</span>);
+    }
+    const st = blockStyle(s.kind);
+    out.push(
+      <mark
+        key={`mark-${i}`}
+        title={st.label}
+        className="rounded px-0.5"
+        style={{ backgroundColor: st.bg, color: st.color }}
+      >
+        {prompt.slice(start, end)}
+      </mark>,
+    );
+    cursor = end;
+  });
+  if (cursor < prompt.length) {
+    out.push(<span key="plain-tail">{prompt.slice(cursor)}</span>);
+  }
+  return out;
+}
+
+function ContextBlocks({ blocks }: { blocks: LogContextBlock[] }) {
+  const ordered = [...blocks].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-[#9a948a]">
+        컨텍스트 블록 ({ordered.length})
+      </h3>
+      <div className="flex flex-col gap-2">
+        {ordered.map((b, i) => (
+          <BlockCard key={`${b.kind}-${b.order}-${i}`} block={b} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function BlockCard({ block }: { block: LogContextBlock }) {
+  const [open, setOpen] = useState(false);
+  const st = blockStyle(block.kind);
+  const Icon =
+    block.kind === "rag"
+      ? FileText
+      : block.kind === "memory_link"
+        ? GitBranch
+        : Layers;
+  const ragSources = (block.sources ?? []) as RagSource[];
+  return (
+    <div
+      className="overflow-hidden rounded-lg border bg-[#221e17]"
+      style={{ borderColor: st.color + "55" }}
+    >
+      <div
+        className="flex items-center gap-2 px-3 py-2"
+        style={{ backgroundColor: st.bg }}
+      >
+        <Icon size={14} style={{ color: st.color }} />
+        <span className="text-xs font-semibold" style={{ color: st.color }}>
+          {st.label}
+        </span>
+        {block.source && (
+          <span className="truncate text-[11px] text-[#9a948a]">
+            {block.source}
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-[#9a948a]">
+          #{block.order}
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-2 px-3 py-2 text-xs">
+        {/* RAG 출처 표 */}
+        {ragSources.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-[11px]">
+              <thead>
+                <tr className="text-[#9a948a]">
+                  <th className="py-1 pr-2 font-medium">파일</th>
+                  <th className="py-1 pr-2 font-medium">#seq</th>
+                  <th className="py-1 pr-2 font-medium">page</th>
+                  <th className="py-1 pr-2 font-medium">dist</th>
+                  <th className="py-1 font-medium">snippet</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ragSources.map((s, i) => (
+                  <tr key={`${s.file_id}-${s.seq ?? "x"}-${i}`} className="align-top">
+                    <td className="py-1 pr-2 text-[#cfc9bd]">{s.name ?? "—"}</td>
+                    <td className="py-1 pr-2 text-[#9a948a]">{s.seq ?? "—"}</td>
+                    <td className="py-1 pr-2 text-[#9a948a]">{s.page ?? "—"}</td>
+                    <td className="py-1 pr-2 text-[#9a948a]">
+                      {s.distance != null ? s.distance.toFixed(3) : "—"}
+                    </td>
+                    <td className="py-1 text-[#9a948a]">
+                      <span className="line-clamp-2">{s.snippet ?? ""}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* 기억연결 / 비교참조 node_ids */}
+        {block.node_ids && block.node_ids.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[10px] text-[#9a948a]">노드</span>
+            {block.node_ids.map((id) => (
+              <span
+                key={id}
+                className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-[#cfc9bd]"
+              >
+                {id.slice(0, 8)}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* 원문(접기/펼치기) */}
+        {block.raw_text && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="text-[11px] text-[#9a948a] underline-offset-2 hover:underline"
+            >
+              {open ? "원문 접기" : "원문 펼치기"}
+            </button>
+            {open && (
+              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-[#15120d] p-2 font-mono text-[11px] text-[#cfc9bd]">
+                {block.raw_text}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Timeline({
+  skillCalls,
+  traces,
+}: {
+  skillCalls: unknown[];
+  traces: AdminTrace[];
+}) {
+  if (skillCalls.length === 0 && traces.length === 0) return null;
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-[#9a948a]">
+        파이프라인 / ReAct
+      </h3>
+
+      {skillCalls.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {skillCalls.map((c, i) => (
+            <span
+              key={i}
+              className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-[#cfc9bd]"
+            >
+              {summarizeSkill(c)}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {traces.map((t) => (
+        <div
+          key={t.id}
+          className="rounded-lg border border-white/10 bg-[#221e17] p-2"
+        >
+          <div className="mb-1 flex items-center gap-2 text-[11px] text-[#9a948a]">
+            <span className="rounded bg-[#9a5ea3]/20 px-1.5 py-0.5 font-medium text-[#bd86c4]">
+              {t.kind || "trace"}
+            </span>
+            <span>{new Date(t.created_at).toLocaleTimeString("ko-KR")}</span>
+            <span className="ml-auto">{(t.ai_steps?.length ?? 0)} steps</span>
+          </div>
+          <ol className="flex flex-col gap-1">
+            {(t.ai_steps ?? []).map((s) => (
+              <li
+                key={s.seq}
+                className="rounded bg-[#15120d] px-2 py-1 text-[11px] text-[#cfc9bd]"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[#9a948a]">#{s.seq}</span>
+                  {s.skill && (
+                    <span className="font-medium text-[#fcf58b]">{s.skill}</span>
+                  )}
+                  {s.tokens != null && (
+                    <span className="ml-auto text-[#9a948a]">{s.tokens} tok</span>
+                  )}
+                </div>
+                {s.thought && (
+                  <p className="mt-0.5 line-clamp-2 text-[#9a948a]">{s.thought}</p>
+                )}
+                {s.observation != null && (
+                  <p className="mt-0.5 line-clamp-2 text-[#9a948a]">
+                    → {preview(s.observation, 160)}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function Errors({ errors }: { errors: unknown[] }) {
+  return (
+    <section className="flex flex-col gap-1">
+      <h3 className="flex items-center gap-1 text-xs font-semibold text-[#e0796a]">
+        <AlertTriangle size={13} /> 오류 ({errors.length})
+      </h3>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-[#15120d] p-2 font-mono text-[11px] text-[#e0796a]">
+        {preview(errors, 1200)}
+      </pre>
+    </section>
+  );
+}
+
+/** 구버전(boolean) contexts 폴백: 사용된 컨텍스트 플래그 칩만. */
+function LegacyContexts({ contexts }: { contexts: LogContexts }) {
+  const entries = Object.entries(contexts).filter(([k]) => k !== "blocks" && k !== "history");
+  if (entries.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-[10px] text-[#9a948a]">구버전 로그 — 플래그만 표시</p>
+      <div className="flex flex-wrap gap-1.5">
+        {entries.map(([k, v]) => (
+          <span
+            key={k}
+            className={`rounded-full px-2 py-0.5 text-[10px] ${
+              v
+                ? "bg-[#9bbf6a]/20 text-[#9bbf6a]"
+                : "bg-white/5 text-[#9a948a]"
+            }`}
+          >
+            {k}: {String(v)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Field({
   label,
   children,
-  mono,
 }: {
   label: string;
   children: React.ReactNode;
-  mono?: boolean;
 }) {
   if (!children) return null;
   return (
     <div>
-      <div className="mb-1 font-medium text-[#9a948a]">{label}</div>
-      <pre
-        className={`max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[#1b1813] p-2 text-[#cfc9bd] ${
-          mono ? "font-mono" : ""
-        }`}
-      >
+      <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[#9a948a]">
+        {label}
+      </div>
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-[#221e17] p-2 text-xs text-[#cfc9bd]">
         {children}
       </pre>
     </div>
   );
+}
+
+function summarizeSkill(c: unknown): string {
+  if (c && typeof c === "object") {
+    const o = c as Record<string, unknown>;
+    const name = (o.skill ?? o.name ?? o.kind) as string | undefined;
+    const count = o.count as number | undefined;
+    if (name) return count != null ? `${name} (${count})` : name;
+  }
+  return preview(c, 40);
+}
+
+function preview(v: unknown, max = 400): string {
+  if (v == null) return "";
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  return s.length > max ? s.slice(0, max) + "…" : s;
 }
