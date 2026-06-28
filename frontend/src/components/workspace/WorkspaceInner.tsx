@@ -414,6 +414,18 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     });
   }, []);
 
+  // D50: 같은 공간 내 세션 전환 시 stale 참조 선택 정리(세션 A의 leaf id가 세션 B 질문에
+  // reference_node_ids로 실려 엉뚱한 비교참조가 끼는 것 방지). 상태 소유자가 여기이므로
+  // 일괄 정리하며, ChatPanel head-reset effect와 중복 정리하지 않는다. 공간 전환은
+  // 상위 key 리마운트로 자연 초기화되므로 세션 전환만 커버한다.
+  // React 권장 "prop 변경 시 state 조정" 패턴(prev를 state로 두고 렌더 중 비교)으로
+  // cascading effect 회피.
+  const [prevSessionId, setPrevSessionId] = useState(activeSessionId);
+  if (prevSessionId !== activeSessionId) {
+    setPrevSessionId(activeSessionId);
+    clearTracks();
+  }
+
   // 전송에 실을 참조 노드들(head 포함, 중복 제거)
   const referenceNodeIds = useMemo(() => {
     if (!trackMode) return [];
