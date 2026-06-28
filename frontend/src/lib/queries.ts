@@ -5,11 +5,15 @@ import {
   getHomeSummary,
   getHomeSuggestions,
   getSession,
+  listClassMaterials,
+  listClassStudents,
   listCooccurrence,
   listFiles,
   listSessionFileLinks,
   listSessions,
+  listStudentClassSessions,
   listTags,
+  listTeacherClasses,
   type SpaceTarget,
 } from "@/lib/api";
 import type {
@@ -21,12 +25,60 @@ import type {
   SessionDetail,
   SessionRow,
   TagRow,
+  TeacherClass,
+  TeacherStudent,
 } from "@/lib/types";
 
 const FILE_IN_PROGRESS = new Set(["uploaded", "splitting", "embedding"]);
 
 export function sessionsKey(target: SpaceTarget) {
   return ["sessions", target.space_kind, target.space_ref ?? null] as const;
+}
+
+// ── 교사 컨트롤 패널 (Stage 4b) ──────────────────────────────────────
+
+export function classMaterialsKey(classId: string | null) {
+  return ["teacher", "materials", classId] as const;
+}
+
+export function useTeacherClasses() {
+  return useQuery<TeacherClass[]>({
+    queryKey: ["teacher", "classes"],
+    queryFn: listTeacherClasses,
+  });
+}
+
+export function useClassStudents(classId: string | null) {
+  return useQuery<TeacherStudent[]>({
+    queryKey: ["teacher", "students", classId],
+    queryFn: () => listClassStudents(classId as string),
+    enabled: !!classId,
+  });
+}
+
+export function useStudentClassSessions(
+  classId: string | null,
+  userId: string | null,
+) {
+  return useQuery<SessionRow[]>({
+    queryKey: ["teacher", "student-sessions", classId, userId],
+    queryFn: () => listStudentClassSessions(classId as string, userId as string),
+    enabled: !!classId && !!userId,
+  });
+}
+
+/** 학급 자료 목록. 임베딩 진행 중이면 2.5초 폴링. */
+export function useClassMaterials(classId: string | null) {
+  return useQuery<FileRow[]>({
+    queryKey: classMaterialsKey(classId),
+    queryFn: () => listClassMaterials(classId as string),
+    enabled: !!classId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const active = data?.some((f) => FILE_IN_PROGRESS.has(f.status));
+      return active ? 2500 : false;
+    },
+  });
 }
 
 export function sessionKey(sessionId: string | null) {
