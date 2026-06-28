@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import unicodedata
 
 from google.genai import types
 
@@ -35,8 +37,25 @@ _TAG_PROMPT = (
 )
 
 
+_PUNCT_EDGES_RE = re.compile(r"^[\s\W_]+|[\s\W_]+$", re.UNICODE)
+_WS_RE = re.compile(r"\s+")
+
+
+def _norm_key(name: str) -> str:
+    """Mirror the DB `nodi_norm_tag` rule for in-response dedup (D30):
+    NFKC -> casefold -> collapse whitespace -> strip surrounding punctuation."""
+    s = unicodedata.normalize("NFKC", name).casefold()
+    s = _WS_RE.sub(" ", s)
+    s = _PUNCT_EDGES_RE.sub("", s).strip()
+    return s
+
+
 def _parse_tags(raw: str, max_tags: int) -> list[str]:
-    """Parse the model's JSON array into a clean, deduped, capped list."""
+    """Parse the model's JSON array into a clean, deduped, capped list.
+
+    Dedup uses the same normalization as the DB (`nodi_norm_tag`), so表기 variants
+    ("Python" / "python" / "파이썬 ") collapse to one within a single response —
+    complementing the DB-side norm_name reuse in upsert_*_tags (D30)."""
     text = (raw or "").strip()
     # Tolerate code fences if the model adds them.
     if text.startswith("```"):
@@ -56,8 +75,8 @@ def _parse_tags(raw: str, max_tags: int) -> list[str]:
         name = item.strip().strip('"').strip()
         if not name or len(name) > 40:
             continue
-        key = name.lower()
-        if key in seen:
+        key = _norm_key(name)
+        if not key or key in seen:
             continue
         seen.add(key)
         out.append(name)
