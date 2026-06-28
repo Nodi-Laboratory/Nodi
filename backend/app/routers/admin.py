@@ -126,18 +126,53 @@ async def token_usage(
 
 
 # ---------------------------------------------------------------------------
-# Logs (turn/step trace browser)
+# Logs — chat turn browser (ai_logs, D25) + ReAct step traces (ai_sessions)
 # ---------------------------------------------------------------------------
 @router.get("/logs")
 async def list_logs(
+    user_id: str | None = Query(None),
+    since: str | None = Query(None, description="ISO timestamp (created_at >=)"),
+    until: str | None = Query(None, description="ISO timestamp (created_at <)"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """Chat turn logs (`ai_logs`): system prompt, Q/A, used contexts, skill
+    calls, errors, token estimate. user/date filters + pagination, newest first.
+    The frontend live-appends new turns via Supabase Realtime and pages history
+    through this endpoint."""
+    client = UserClient.from_user(user)
+    params: dict[str, str] = {
+        "select": (
+            "id,owner_id,session_id,node_id,kind,system_prompt,question,answer,"
+            "contexts,skill_calls,errors,token_estimate,created_at"
+        ),
+        "order": "created_at.desc",
+        "limit": str(limit),
+        "offset": str(offset),
+    }
+    if user_id:
+        params["owner_id"] = f"eq.{user_id}"
+    if since:
+        params["created_at"] = f"gte.{since}"
+    if until:
+        # combine with `since` when both present
+        params["and"] = f"(created_at.lt.{until})"
+    logs = await client.select("ai_logs", params)
+    return {"limit": limit, "offset": offset, "logs": logs}
+
+
+@router.get("/traces")
+async def list_traces(
     user_id: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user: CurrentUser = Depends(get_current_user),
     _: Profile = Depends(require_admin),
 ) -> dict[str, Any]:
-    """ai_sessions with their ai_steps embedded (Plant-Counselor-style trace
-    browser). Optional user filter + pagination, newest first."""
+    """ReAct step traces (`ai_sessions` + embedded `ai_steps`) for
+    navigator/overseer runs. Shown alongside a turn's detail."""
     client = UserClient.from_user(user)
     params: dict[str, str] = {
         "select": (

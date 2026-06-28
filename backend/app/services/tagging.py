@@ -23,12 +23,14 @@ logger = logging.getLogger("nodi.tagging")
 settings = get_settings()
 
 _TAG_PROMPT = (
+    "LANGUAGE RULE (most important): write EVERY tag in the SAME language as the "
+    "Q&A below. Do NOT translate to any other language.\n"
     "Extract the {max_tags} most important CONCEPTS discussed in this Q&A as "
-    "short noun phrases (1-3 words each), in the same language as the text. "
-    "Rules: between 1 and {max_tags} tags; prefer specific, meaningful concepts "
-    "over generic words (avoid words like 'question', 'answer', 'explanation', "
-    "'information'); no duplicates; no surrounding punctuation. "
-    'Return ONLY a JSON array of strings, e.g. ["광합성","엽록체"].\n\n'
+    "short noun phrases (1-3 words each). Rules: between 1 and {max_tags} tags; "
+    "prefer specific, meaningful concepts over generic words (avoid words like "
+    "'question', 'answer', 'explanation', 'information'); no duplicates; no "
+    "surrounding punctuation. Return ONLY a JSON array of strings (the strings "
+    "MUST be in the input's language).\n\n"
     "Q: {question}\nA: {answer}"
 )
 
@@ -88,12 +90,14 @@ async def extract_concepts(question: str, answer: str) -> list[str]:
 
 
 _FILE_TAG_PROMPT = (
-    "Extract up to {max_tags} key CONCEPTS from the document excerpt below as "
-    "short noun phrases (1-3 words each), in the document's language. Files are "
-    "tagged densely (many concepts). Rules: specific, meaningful concepts only "
-    "(avoid generic words like 'document', 'introduction', 'information'); no "
-    "duplicates; no surrounding punctuation. Return ONLY a JSON array of "
-    "strings.\n\nDocument excerpt:\n{text}"
+    "LANGUAGE RULE (most important): write EVERY tag in the SAME language as the "
+    "document excerpt below. Do NOT translate to any other language.\n"
+    "Extract up to {max_tags} key CONCEPTS from the document excerpt as short "
+    "noun phrases (1-3 words each). Files are tagged densely (many concepts). "
+    "Rules: specific, meaningful concepts only (avoid generic words like "
+    "'document', 'introduction', 'information'); no duplicates; no surrounding "
+    "punctuation. Return ONLY a JSON array of strings.\n\n"
+    "Document excerpt:\n{text}"
 )
 
 

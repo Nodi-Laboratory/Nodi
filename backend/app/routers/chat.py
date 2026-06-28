@@ -41,6 +41,7 @@ from ..services import gemini, memory, navigator, rag
 from ..services import sessions as svc
 from ..services import tagging
 from ..services.supabase_client import UserClient
+from ..services.turn_log import TurnLog
 
 logger = logging.getLogger("nodi.chat")
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -101,6 +102,20 @@ async def chat_stream(
     )
     existing_root = session.get("root_node_id")
 
+    # Turn log (D25) — accumulated during the turn, saved once at the end.
+    system_prompt = gemini.compose_system_instruction(
+        reference_context, rag_context, comparison_context
+    )
+    tlog = TurnLog(user.id, body.session_id, body.question)
+    tlog.set_system(system_prompt)
+    tlog.set_contexts(
+        current_branch=bool(history),
+        memory_link=bool(reference_context),
+        rag=bool(rag_context),
+        comparison=bool(comparison_context),
+        history_chars=sum(len(q) + len(a) for q, a in history),
+    )
+
     async def event_stream():
         yield _sse(
             "start",
@@ -108,80 +123,92 @@ async def chat_stream(
         )
         answer_parts: list[str] = []
         try:
-            async for delta in gemini.stream_answer(
-                history,
-                body.question,
-                reference_context=reference_context,
-                rag_context=rag_context,
-                comparison_context=comparison_context,
-            ):
-                answer_parts.append(delta)
-                yield _sse("token", {"delta": delta})
-        except Exception:  # noqa: BLE001 - details go to logs, not the client
-            logger.exception("Gemini streaming failed")
-            yield _sse("error", {"detail": "AI 응답 생성에 실패했습니다."})
-            return
-
-        answer = "".join(answer_parts).strip()
-        if not answer:
-            # Empty answer (e.g. safety block / no tokens): do NOT persist a
-            # blank node or advance the head — leave the tree unchanged.
-            logger.warning(
-                "Empty answer for session=%s; skipping node save.",
-                body.session_id,
-            )
-            yield _sse("error", {"detail": "응답을 생성하지 못했습니다."})
-            return
-
-        try:
-            # Label + concept extraction run concurrently (both read Q+A only).
-            # Label (best-effort, None on failure) is needed for the atomic node
-            # insert; tag names are linked right after we have the node id.
-            label, tag_names = await asyncio.gather(
-                gemini.generate_label(body.question, answer),
-                tagging.extract_concepts(body.question, answer),
-            )
-            node = await svc.append_node(
-                client, body.session_id, parent_id, body.question, answer, label
-            )
-            # Best-effort: reuse-or-create + link tags. A tag failure must NOT
-            # turn into a "save failed" — the node is already persisted.
             try:
-                tags = await tagging.apply_node_tags(
-                    client, node["id"], body.session_id, tag_names
+                async for delta in gemini.stream_answer(
+                    history,
+                    body.question,
+                    reference_context=reference_context,
+                    rag_context=rag_context,
+                    comparison_context=comparison_context,
+                ):
+                    answer_parts.append(delta)
+                    yield _sse("token", {"delta": delta})
+            except Exception:  # noqa: BLE001 - details go to logs, not the client
+                logger.exception("Gemini streaming failed")
+                tlog.add_error("ai_streaming_failed")
+                yield _sse("error", {"detail": "AI 응답 생성에 실패했습니다."})
+                return
+
+            answer = "".join(answer_parts).strip()
+            if not answer:
+                # Empty answer (e.g. safety block / no tokens): do NOT persist a
+                # blank node or advance the head — leave the tree unchanged.
+                logger.warning(
+                    "Empty answer for session=%s; skipping node save.",
+                    body.session_id,
                 )
-            except Exception:  # noqa: BLE001
-                logger.exception("Tag application failed for node=%s", node["id"])
-                tags = []
-            yield _sse(
-                "done",
-                {
-                    "node": {
-                        "id": node["id"],
-                        "parent_id": node.get("parent_id"),
-                        "label": node.get("label"),
-                        "tags": tags,
+                tlog.add_error("empty_answer")
+                yield _sse("error", {"detail": "응답을 생성하지 못했습니다."})
+                return
+
+            try:
+                # Label + concept extraction run concurrently (both read Q+A).
+                # Label (best-effort) is needed for the atomic node insert; tag
+                # names are linked right after we have the node id.
+                label, tag_names = await asyncio.gather(
+                    gemini.generate_label(body.question, answer),
+                    tagging.extract_concepts(body.question, answer),
+                )
+                node = await svc.append_node(
+                    client, body.session_id, parent_id, body.question, answer, label
+                )
+                tlog.set_final(node["id"], answer)
+                # Best-effort: reuse-or-create + link tags. A tag failure must
+                # NOT turn into a "save failed" — the node is already persisted.
+                try:
+                    tags = await tagging.apply_node_tags(
+                        client, node["id"], body.session_id, tag_names
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("Tag application failed node=%s", node["id"])
+                    tlog.add_error("tag_apply_failed")
+                    tags = []
+                tlog.add_skill("tagging", count=len(tags))
+                yield _sse(
+                    "done",
+                    {
+                        "node": {
+                            "id": node["id"],
+                            "parent_id": node.get("parent_id"),
+                            "label": node.get("label"),
+                            "tags": tags,
+                        },
+                        "current_head_id": node["id"],
+                        "root_node_id": existing_root or node["id"],
                     },
-                    "current_head_id": node["id"],
-                    "root_node_id": existing_root or node["id"],
-                },
-            )
-
-            # Navigator gate (best-effort, INLINE — see services/navigator.py).
-            # Runs AFTER `done` so the answer is already shown; only fires when
-            # the branch matured. A failure here never affects the saved node.
-            try:
-                all_nodes = await svc.get_session_nodes(client, body.session_id)
-                nav_nodes = await navigator.maybe_generate(
-                    client, user.id, body.session_id, node["id"], all_nodes
                 )
-                if nav_nodes:
-                    yield _sse("navigator", {"nodes": nav_nodes})
-            except Exception:  # noqa: BLE001 - navigator is optional
-                logger.exception("Navigator generation failed")
-        except Exception:  # noqa: BLE001 - details go to logs, not the client
-            logger.exception("Persisting node failed")
-            yield _sse("error", {"detail": "답변 저장에 실패했습니다."})
+
+                # Navigator gate (best-effort, INLINE — see navigator.py). Runs
+                # AFTER `done` so the answer is already shown; only fires when the
+                # branch matured. A failure never affects the saved node.
+                try:
+                    all_nodes = await svc.get_session_nodes(client, body.session_id)
+                    nav_nodes = await navigator.maybe_generate(
+                        client, user.id, body.session_id, node["id"], all_nodes
+                    )
+                    if nav_nodes:
+                        tlog.add_skill("navigator", count=len(nav_nodes))
+                        yield _sse("navigator", {"nodes": nav_nodes})
+                except Exception:  # noqa: BLE001 - navigator is optional
+                    logger.exception("Navigator generation failed")
+                    tlog.add_error("navigator_failed")
+            except Exception:  # noqa: BLE001 - details to logs, not the client
+                logger.exception("Persisting node failed")
+                tlog.add_error("save_failed")
+                yield _sse("error", {"detail": "답변 저장에 실패했습니다."})
+        finally:
+            # Persist the turn log exactly once (best-effort).
+            await tlog.save(client)
 
     return StreamingResponse(
         event_stream(),

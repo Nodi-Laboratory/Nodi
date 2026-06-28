@@ -97,6 +97,16 @@ def _system_instruction(
     return "\n\n".join(parts)
 
 
+# Public alias so callers (e.g. turn logging) can capture the exact system
+# prompt that stream_answer will use.
+def compose_system_instruction(
+    reference_context: str | None,
+    rag_context: str | None = None,
+    comparison_context: str | None = None,
+) -> str:
+    return _system_instruction(reference_context, rag_context, comparison_context)
+
+
 async def stream_answer(
     history: list[tuple[str, str]],
     question: str,
@@ -160,9 +170,11 @@ async def generate_label(question: str, answer: str) -> str | None:
     client = get_client()
     max_chars = settings.node_label_max_chars
     prompt = (
+        "LANGUAGE RULE (most important): write the label in the SAME language as "
+        "the QUESTION below. Do NOT translate to any other language.\n"
         "Summarize the topic of this Q&A as a very short label of at most "
-        f"{max_chars} characters, in the same language as the question. "
-        "Output ONLY the label, no quotes, no punctuation at the end.\n\n"
+        f"{max_chars} characters. Output ONLY the label, no quotes, no "
+        "punctuation at the end.\n\n"
         f"Q: {question}\nA: {answer}"
     )
     try:
@@ -170,7 +182,7 @@ async def generate_label(question: str, answer: str) -> str | None:
             model=settings.gemini_label_model,
             contents=prompt,
             config=types.GenerateContentConfig(
-                max_output_tokens=20, temperature=0.2
+                max_output_tokens=20, temperature=0.0
             ),
         )
         text = (resp.text or "").strip().strip('"').strip()
