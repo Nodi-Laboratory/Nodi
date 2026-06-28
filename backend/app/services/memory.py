@@ -152,38 +152,54 @@ def build_reference_text(segments: list[dict[str, Any]]) -> str:
     return "\n\n".join(blocks)
 
 
+def _segment_node_ids(segments: list[dict[str, Any]]) -> list[str]:
+    """Flatten the imported node ids (for D35 structured logging / provenance)."""
+    ids: list[str] = []
+    for seg in segments:
+        for n in seg.get("nodes", []):
+            nid = n.get("id")
+            if nid:
+                ids.append(nid)
+    return ids
+
+
 async def build_reference_context(
     client: UserClient,
     current_session_id: str,
     current_chain: list[dict[str, Any]],
     current_by_id: dict[str, dict[str, Any]],
-) -> str | None:
-    """Best-effort: assemble the imported reference text, or None."""
+) -> tuple[str | None, list[str]]:
+    """Best-effort: assemble the imported reference text + its source node ids.
+
+    Returns ``(text_or_None, node_ids)`` — node_ids feeds the D35 structured
+    ``memory_link`` block. On any failure -> ``(None, [])``.
+    """
     try:
         segments = await collect_imported_segments(
             client, current_session_id, current_chain, current_by_id
         )
         text = build_reference_text(segments)
-        return text or None
+        return (text or None), _segment_node_ids(segments)
     except Exception:  # noqa: BLE001 - memory linking must never break chat
         logger.exception("Imported context assembly failed")
-        return None
+        return None, []
 
 
 async def build_comparison_context(
     client: UserClient, reference_node_ids: list[str]
-) -> str | None:
+) -> tuple[str | None, list[str]]:
     """ONE-TIME branch comparison (D15): pull the thread (root -> node) of each
     referenced node into this turn only.
 
     Unlike Stage 3a memory linking, this is NOT persisted and never touches
     node.connections. Rendered under a distinct "[브랜치 참조 — 비교]" label so
     the model keeps it separate from the live branch / imported / RAG blocks.
-    Only nodes the caller can access are used (RLS). Best-effort -> None.
+    Only nodes the caller can access are used (RLS). Best-effort -> ``(None, [])``.
+    Returns ``(text_or_None, node_ids)`` (node_ids feeds the D35 comparison block).
     """
     ids = [i for i in (reference_node_ids or []) if i]
     if not ids:
-        return None
+        return None, []
     try:
         refs = await client.select(
             "nodes",
@@ -215,7 +231,7 @@ async def build_comparison_context(
             segments.append({"label": f"브랜치 참조 — {label}", "nodes": chain})
 
         text = build_reference_text(segments)
-        return text or None
+        return (text or None), _segment_node_ids(segments)
     except Exception:  # noqa: BLE001 - comparison must never break chat
         logger.exception("Comparison context assembly failed")
-        return None
+        return None, []

@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_role
 from ..services import files as files_svc
@@ -49,6 +50,30 @@ async def list_classes(
     client = UserClient.from_user(user)
     result = await client.rpc("teacher_classes", {})
     return result if isinstance(result, list) else []
+
+
+class CreateClassBody(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+@router.post("/classes", status_code=status.HTTP_201_CREATED)
+async def create_class(
+    body: CreateClassBody,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_teacher),
+) -> dict[str, Any]:
+    """Create a class owned by the calling teacher (D33).
+
+    Delegates to the `create_class` SECURITY DEFINER RPC: it re-checks the
+    teacher app-role, inserts the class (teacher_id = caller, unique join_code),
+    and enrolls the caller as a class teacher. Returns the new class row
+    (id, name, join_code, teacher_id, created_at). Students join later with the
+    join_code via the existing onboarding/profile flow."""
+    client = UserClient.from_user(user)
+    result = await client.rpc("create_class", {"p_name": body.name})
+    if isinstance(result, list):
+        return result[0] if result else {}
+    return result
 
 
 @router.get("/classes/{class_id}/students")

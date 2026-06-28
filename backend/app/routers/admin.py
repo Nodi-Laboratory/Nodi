@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
@@ -163,22 +163,66 @@ async def list_logs(
     return {"limit": limit, "offset": offset, "logs": logs}
 
 
+_LOG_SELECT = (
+    "id,owner_id,session_id,node_id,kind,system_prompt,question,answer,"
+    "contexts,skill_calls,errors,token_estimate,created_at"
+)
+_TRACE_SELECT = (
+    "id,owner_id,session_id,kind,created_at,"
+    "ai_steps(seq,thought,skill,input,observation,tokens,created_at)"
+)
+
+
+@router.get("/logs/{log_id}")
+async def get_log_detail(
+    log_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """D34 turn detail: one `ai_logs` turn (structured contexts incl. RAG
+    sources + prompt spans) bundled with the ReAct traces (`ai_sessions` +
+    `ai_steps`) of the SAME session, so the admin sees how a turn was built and
+    which navigator/overseer steps ran. Admin-only (require_admin + admin RLS)."""
+    client = UserClient.from_user(user)
+    rows = await client.select(
+        "ai_logs",
+        {"id": f"eq.{log_id}", "select": _LOG_SELECT, "limit": "1"},
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Log not found."
+        )
+    log = rows[0]
+    traces: list[dict[str, Any]] = []
+    session_id = log.get("session_id")
+    if session_id:
+        traces = await client.select(
+            "ai_sessions",
+            {
+                "session_id": f"eq.{session_id}",
+                "select": _TRACE_SELECT,
+                "order": "created_at.desc",
+                "ai_steps.order": "seq.asc",
+            },
+        )
+    return {"log": log, "traces": traces}
+
+
 @router.get("/traces")
 async def list_traces(
     user_id: str | None = Query(None),
+    session_id: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user: CurrentUser = Depends(get_current_user),
     _: Profile = Depends(require_admin),
 ) -> dict[str, Any]:
     """ReAct step traces (`ai_sessions` + embedded `ai_steps`) for
-    navigator/overseer runs. Shown alongside a turn's detail."""
+    navigator/overseer runs. Filter by user and/or session (the latter powers
+    the D34 turn-detail timeline)."""
     client = UserClient.from_user(user)
     params: dict[str, str] = {
-        "select": (
-            "id,owner_id,session_id,kind,created_at,"
-            "ai_steps(seq,thought,skill,input,observation,tokens,created_at)"
-        ),
+        "select": _TRACE_SELECT,
         "order": "created_at.desc",
         "ai_steps.order": "seq.asc",
         "limit": str(limit),
@@ -186,5 +230,7 @@ async def list_traces(
     }
     if user_id:
         params["owner_id"] = f"eq.{user_id}"
+    if session_id:
+        params["session_id"] = f"eq.{session_id}"
     sessions = await client.select("ai_sessions", params)
     return {"limit": limit, "offset": offset, "sessions": sessions}

@@ -14,6 +14,7 @@ caller's RLS-scoped client (own files only).
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from ..config import get_settings
@@ -26,6 +27,51 @@ settings = get_settings()
 
 def _vector_literal(vec: list[float]) -> str:
     return "[" + ",".join(f"{v:.7f}" for v in vec) + "]"
+
+
+def _file_basename(storage_path: str | None) -> str:
+    """Filename from a "{owner}/{file_id}/{name}" storage path."""
+    return (storage_path or "").split("/")[-1]
+
+
+# --- D28: runtime cutoff override (app_settings), best-effort + short cache ----
+_CUTOFF_CACHE: dict[str, Any] = {"value": None, "fetched_at": 0.0}
+_CUTOFF_TTL_SECONDS = 30.0
+
+
+async def _suggestion_cutoff(client: UserClient) -> float:
+    """Cosine-distance cutoff for file suggestions.
+
+    Reads `file_suggestion_max_distance` from app_settings at request time
+    (admin-tunable, D28), falling back to the static config default. Best-effort
+    and cached briefly. NOTE: app_settings is admin-RLS; for non-admin callers
+    the read yields nothing and the config default applies (by design).
+    """
+    default = float(settings.file_suggestion_max_distance)
+    now = time.monotonic()
+    if (
+        _CUTOFF_CACHE["value"] is not None
+        and now - _CUTOFF_CACHE["fetched_at"] < _CUTOFF_TTL_SECONDS
+    ):
+        return _CUTOFF_CACHE["value"]
+    value = default
+    try:
+        rows = await client.select(
+            "app_settings",
+            {
+                "key": "eq.file_suggestion_max_distance",
+                "select": "value",
+                "limit": "1",
+            },
+        )
+        if rows:
+            raw = rows[0].get("value")
+            value = float(raw)
+    except Exception:  # noqa: BLE001 - tuning is optional, fall back to config
+        value = default
+    _CUTOFF_CACHE["value"] = value
+    _CUTOFF_CACHE["fetched_at"] = now
+    return value
 
 
 async def linked_file_ids(
@@ -71,29 +117,106 @@ async def search(
     return result if isinstance(result, list) else []
 
 
-def build_block(chunks: list[dict[str, Any]]) -> str:
-    """Render retrieved chunks as a labelled reference block."""
+SNIPPET_CHARS = 300
+
+
+def _source_label(name: str, seq: Any, page: Any) -> str:
+    """Inline provenance label for a chunk, e.g. "note.pdf · #12" (+ page)."""
+    parts: list[str] = []
+    if name:
+        parts.append(name)
+    if seq is not None:
+        parts.append(f"#{seq}")
+    if page is not None:
+        parts.append(f"p.{page}")
+    return " · ".join(parts)
+
+
+def build_block(chunks: list[dict[str, Any]], names: dict[str, str]) -> str:
+    """Render retrieved chunks as a SOURCE-LABELLED reference block (D32).
+
+    Each line carries its provenance inline so the model — and the saved system
+    prompt — show which file·chunk a passage came from.
+    """
     if not chunks:
         return ""
     lines = ["[연결된 자료에서 참고]"]
     for c in chunks:
         text = (c.get("chunk_text") or "").strip()
-        if text:
-            lines.append(f"- {text}")
+        if not text:
+            continue
+        meta = c.get("meta") if isinstance(c.get("meta"), dict) else {}
+        label = _source_label(
+            names.get(c.get("file_id"), ""),
+            c.get("seq"),
+            (meta or {}).get("page"),
+        )
+        prefix = f"[{label}] " if label else ""
+        lines.append(f"- {prefix}{text}")
     return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def build_sources(
+    chunks: list[dict[str, Any]], names: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Per-chunk provenance metadata (D32/D35): file·#seq·page·distance·snippet."""
+    sources: list[dict[str, Any]] = []
+    for c in chunks:
+        fid = c.get("file_id")
+        if not fid:
+            continue
+        meta = c.get("meta") if isinstance(c.get("meta"), dict) else {}
+        sources.append(
+            {
+                "file_id": fid,
+                "name": names.get(fid, ""),
+                "seq": c.get("seq"),
+                "page": (meta or {}).get("page"),
+                "distance": c.get("distance"),
+                "snippet": (c.get("chunk_text") or "")[:SNIPPET_CHARS],
+            }
+        )
+    return sources
+
+
+async def _file_names(
+    client: UserClient, file_ids: list[str]
+) -> dict[str, str]:
+    """Map file_id -> filename (storage_path basename) in one query."""
+    if not file_ids:
+        return {}
+    rows = await client.select(
+        "files",
+        {
+            "id": f"in.({','.join(file_ids)})",
+            "select": "id,storage_path",
+        },
+    )
+    return {r["id"]: _file_basename(r.get("storage_path")) for r in rows}
 
 
 async def build_rag_context(
     client: UserClient, chain: list[dict[str, Any]], query: str
-) -> str | None:
-    """Best-effort: assemble the linked-file reference block, or None."""
+) -> dict[str, Any] | None:
+    """Best-effort: assemble the linked-file reference block + source metadata.
+
+    Returns ``{"block": str, "sources": [ {file_id, name, seq, page, distance,
+    snippet} ]}`` or ``None`` when there is nothing to inject. Callers use
+    ``block`` for the system prompt and ``sources`` for node/log provenance (D32).
+    """
     try:
         file_ids = await linked_file_ids(client, chain)
         if not file_ids:
             return None
         chunks = await search(client, file_ids, query)
-        block = build_block(chunks)
-        return block or None
+        if not chunks:
+            return None
+        hit_ids = list({c.get("file_id") for c in chunks if c.get("file_id")})
+        names = await _file_names(client, hit_ids)
+        block = build_block(chunks, names)
+        if not block:
+            return None
+        return {"block": block, "sources": build_sources(chunks, names)}
     except Exception:  # noqa: BLE001 - RAG must never break chat
         logger.exception("RAG retrieval failed")
         return None
@@ -167,13 +290,18 @@ async def suggest_files(
                     "sample": (c.get("chunk_text") or "")[:300],
                     "kind": by_id[fid].get("kind"),
                 }
-        # Only suggest genuinely-related files (cosine distance cutoff), so we
-        # don't claim "관련 있어 보여요" for unrelated material.
-        max_distance = getattr(settings, "file_suggestion_max_distance", 0.75)
+        # Only suggest genuinely-related files (D28): cosine-distance cutoff
+        # (admin-tunable) + a margin gate so only CONFIDENT matches surface.
+        max_distance = await _suggestion_cutoff(client)
+        margin = float(settings.file_suggestion_margin)
         ranked = sorted(
             (b for b in best.values() if b["distance"] <= max_distance),
             key=lambda x: x["distance"],
         )
+        # Margin gate: the best candidate must be clearly inside the cutoff,
+        # else propose nothing (borderline matches are not "관련 있어 보여요").
+        if not ranked or ranked[0]["distance"] > (max_distance - margin):
+            return []
         return ranked[: settings.file_suggestion_top_n]
     except Exception:  # noqa: BLE001 - suggestions are optional
         logger.exception("File suggestion failed")

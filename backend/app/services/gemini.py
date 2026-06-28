@@ -63,38 +63,103 @@ def _build_contents(
     return contents
 
 
-def _system_instruction(
+# Per-block instruction wrappers. The wrapper text + its context together form
+# one prompt "part"; parts are joined with "\n\n". Keeping the exact strings in
+# one place lets compose_system_structured() report each part's char span (D35).
+_WRAP_MEMORY = (
+    "아래는 사용자가 다른 대화 분기에서 끌어온 참고 자료입니다. 현재 분기 "
+    "대화와 출처를 구분해 활용하되, 답변에 자연스럽게 반영하세요. 현재 "
+    "분기에서 실제로 오간 대화가 아님에 유의하세요.\n\n"
+)
+_WRAP_RAG = (
+    "아래는 사용자가 이 분기에 연결한 자료에서 검색된 내용입니다. 질문과 "
+    "관련된 근거로 우선 활용하고, 자료에 없는 내용은 일반 지식으로 보완하되 "
+    "출처를 구분하세요.\n\n"
+)
+_WRAP_COMPARISON = (
+    "아래는 사용자가 이번 질문에서만 비교 목적으로 참조한 다른 분기들의 "
+    "내용입니다. 현재 분기와 비교/대조해 답하되, 출처를 구분하세요.\n\n"
+)
+
+
+def compose_system_structured(
     reference_context: str | None,
     rag_context: str | None = None,
     comparison_context: str | None = None,
-) -> str:
-    """Base instruction plus SOURCE-LABELLED reference blocks (kept out of the
-    live ancestor-chain turns so the model treats them as separate reference):
+    *,
+    rag_sources: list[dict] | None = None,
+    reference_node_ids: list[str] | None = None,
+    comparison_node_ids: list[str] | None = None,
+) -> tuple[str, list[dict]]:
+    """Single source of truth (D35): build the system prompt AND the per-block
+    metadata (kind/order/source/raw_text/node_ids/sources/prompt_span) in one
+    place, so the saved prompt and the highlight offsets can never drift.
 
     - `reference_context`: imported other-branch content (Stage 3a memory link).
     - `rag_context`: chunks from files linked to the branch (Stage 3b-2 RAG).
     - `comparison_context`: one-time referenced branches for comparison (D15).
+
+    Returns ``(system_prompt, blocks)`` where each block's ``prompt_span`` is the
+    ``[start, end)`` char range of that part inside ``system_prompt``.
     """
-    parts = [_SYSTEM_INSTRUCTION]
+    # (kind, segment_text, source, raw_text, node_ids, sources)
+    parts: list[tuple[str, str, str | None, str | None, list | None, list | None]] = [
+        ("system_base", _SYSTEM_INSTRUCTION, None, None, None, None)
+    ]
     if reference_context:
         parts.append(
-            "아래는 사용자가 다른 대화 분기에서 끌어온 참고 자료입니다. 현재 분기 "
-            "대화와 출처를 구분해 활용하되, 답변에 자연스럽게 반영하세요. 현재 "
-            "분기에서 실제로 오간 대화가 아님에 유의하세요.\n\n" + reference_context
+            (
+                "memory_link",
+                _WRAP_MEMORY + reference_context,
+                "다른 분기 노드(기억 연결)",
+                reference_context,
+                reference_node_ids or None,
+                None,
+            )
         )
     if rag_context:
         parts.append(
-            "아래는 사용자가 이 분기에 연결한 자료에서 검색된 내용입니다. 질문과 "
-            "관련된 근거로 우선 활용하고, 자료에 없는 내용은 일반 지식으로 보완하되 "
-            "출처를 구분하세요.\n\n" + rag_context
+            (
+                "rag",
+                _WRAP_RAG + rag_context,
+                "이 분기에 연결한 자료",
+                rag_context,
+                None,
+                rag_sources or [],
+            )
         )
     if comparison_context:
         parts.append(
-            "아래는 사용자가 이번 질문에서만 비교 목적으로 참조한 다른 분기들의 "
-            "내용입니다. 현재 분기와 비교/대조해 답하되, 출처를 구분하세요.\n\n"
-            + comparison_context
+            (
+                "comparison",
+                _WRAP_COMPARISON + comparison_context,
+                "이번 질문 한정 비교 참조",
+                comparison_context,
+                comparison_node_ids or None,
+                None,
+            )
         )
-    return "\n\n".join(parts)
+
+    system_prompt = "\n\n".join(p[1] for p in parts)
+
+    blocks: list[dict] = []
+    cursor = 0
+    sep = len("\n\n")
+    for order, (kind, seg, source, raw_text, node_ids, sources) in enumerate(parts):
+        start = cursor
+        end = start + len(seg)
+        block: dict = {"kind": kind, "order": order, "prompt_span": [start, end]}
+        if source:
+            block["source"] = source
+        if raw_text:
+            block["raw_text"] = raw_text
+        if node_ids:
+            block["node_ids"] = node_ids
+        if sources is not None:
+            block["sources"] = sources
+        blocks.append(block)
+        cursor = end + sep
+    return system_prompt, blocks
 
 
 # Public alias so callers (e.g. turn logging) can capture the exact system
@@ -104,7 +169,9 @@ def compose_system_instruction(
     rag_context: str | None = None,
     comparison_context: str | None = None,
 ) -> str:
-    return _system_instruction(reference_context, rag_context, comparison_context)
+    return compose_system_structured(
+        reference_context, rag_context, comparison_context
+    )[0]
 
 
 async def stream_answer(
@@ -124,7 +191,7 @@ async def stream_answer(
     client = get_client()
     contents = _build_contents(history, question)
     config = types.GenerateContentConfig(
-        system_instruction=_system_instruction(
+        system_instruction=compose_system_instruction(
             reference_context, rag_context, comparison_context
         )
     )

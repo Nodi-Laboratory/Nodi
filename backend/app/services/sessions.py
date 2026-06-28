@@ -20,7 +20,7 @@ from .supabase_client import UserClient
 # frontend can draw memory-link edges (Stage 3a).
 NODE_SELECT = (
     "id,session_id,parent_id,question,answer,label,is_navigator,"
-    "navigator_question,position_x,position_y,connections,created_at"
+    "navigator_question,position_x,position_y,connections,rag_sources,created_at"
 )
 # Same, plus the node's concept tags embedded (PostgREST nested select). RLS
 # (node_tags select via can_access_session, tags select via owner) keeps it to
