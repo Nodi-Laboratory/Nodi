@@ -12,6 +12,8 @@ import {
   Trash2,
 } from "lucide-react";
 import type { FileLink, FileRow, NodeRow } from "@/lib/types";
+import type { ProvisionalReplace } from "@/lib/useWorkspaceChat";
+import { useWorkspacePrefs } from "@/store/useWorkspacePrefs";
 import { buildNested, pathIdSet, buildById, type TreeNode } from "@/lib/tree";
 
 /**
@@ -36,6 +38,9 @@ const C = {
   fileFill: "#e3f1ef",
   fileBusy: "#e0a32e",
   fileFail: "#b54a3a",
+  provFill: "#fdfbe0", // D36 provisional 채움(연한 톤)
+  refRing: "#2a7d7a", // D46 참조 가능 leaf 하이라이트(청록 링)
+  navCollapse: "#9a948a", // D40 collapse 회색 버튼
 } as const;
 
 const TRACK_COLORS = ["#e0a32e", "#6e8a3c", "#c2702a", "#3a7d9a", "#9a5ea3"];
@@ -82,6 +87,8 @@ interface Props {
   selectedTrackIds: string[];
   onToggleTrack: (nodeId: string) => void;
   onEnterTrack: (nodeId: string) => void;
+  /** D36: 직전 provisional→real 교체 정보(좌표 승계·전환 모션용). */
+  lastReplace: ProvisionalReplace | null;
 }
 
 type HNode = d3.HierarchyPointNode<TreeNode>;
@@ -98,7 +105,13 @@ export default function SessionGraphCanvas(props: Props) {
     fileLinkMode,
     trackMode,
     selectedTrackIds,
+    lastReplace,
   } = props;
+
+  // D40: 네비게이터 collapse 상태(개인 prefs, localStorage).
+  const collapsedNavParents = useWorkspacePrefs((s) => s.collapsedNavParents);
+  const expandedNavParents = useWorkspacePrefs((s) => s.expandedNavParents);
+  const toggleNavParent = useWorkspacePrefs((s) => s.toggleNavParent);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -107,7 +120,9 @@ export default function SessionGraphCanvas(props: Props) {
   const connGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const fileGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const nodeGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const navToggleGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const tempGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const processedReplaceNonceRef = useRef(0);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const transformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity.translate(0, 60).scale(0.9));
 
@@ -193,6 +208,7 @@ export default function SessionGraphCanvas(props: Props) {
     connGRef.current = g.append("g").attr("class", "connections");
     fileGRef.current = g.append("g").attr("class", "filenodes");
     nodeGRef.current = g.append("g").attr("class", "nodes");
+    navToggleGRef.current = g.append("g").attr("class", "navtoggle");
     tempGRef.current = g.append("g").attr("class", "temp");
 
     const zoom = d3
@@ -266,13 +282,40 @@ export default function SessionGraphCanvas(props: Props) {
     const connLayer = connGRef.current;
     const fileLayer = fileGRef.current;
     const nodeLayer = nodeGRef.current;
+    const navToggleLayer = navToggleGRef.current;
 
-    const nested = buildNested(nodes, rootNodeId);
+    // ── D40: 네비게이터 collapse 계산 ──
+    // 부모가 실(비네비) 자식 + 네비 자식을 동시에 가지면 기본 collapse(재로드 휴리스틱).
+    const navChildCount = new Map<string, number>();
+    const hasRealChild = new Set<string>();
+    for (const n of nodes) {
+      if (!n.parent_id) continue;
+      if (n.is_navigator)
+        navChildCount.set(n.parent_id, (navChildCount.get(n.parent_id) ?? 0) + 1);
+      else hasRealChild.add(n.parent_id);
+    }
+    const effCollapsed = (pid: string): boolean => {
+      const def = (navChildCount.get(pid) ?? 0) > 0 && hasRealChild.has(pid);
+      if (collapsedNavParents.includes(pid)) return true;
+      if (expandedNavParents.includes(pid)) return false;
+      return def;
+    };
+    const hiddenNavIds = new Set<string>();
+    for (const n of nodes) {
+      if (n.is_navigator && n.parent_id && effCollapsed(n.parent_id))
+        hiddenNavIds.add(n.id);
+    }
+    const displayNodes = hiddenNavIds.size
+      ? nodes.filter((n) => !hiddenNavIds.has(n.id))
+      : nodes;
+
+    const nested = buildNested(displayNodes, rootNodeId);
     if (!nested) {
       // 대화 노드가 아직 없어도 떠다니는 자료 노드는 표시(D22)
       linkLayer.selectAll("*").remove();
       connLayer.selectAll("*").remove();
       nodeLayer.selectAll("*").remove();
+      navToggleLayer?.selectAll("*").remove();
 
       fileNodes.forEach((f, i) => {
         if (filePosRef.current.has(f.id)) return;
@@ -361,7 +404,23 @@ export default function SessionGraphCanvas(props: Props) {
     const root = layout(d3.hierarchy(nested, (d) => d.children));
     const allNodes = root.descendants();
 
-    // 좌표 해석: 재정렬 강제 시 레이아웃, 아니면 (드래그 캐시 → 저장 좌표 → 레이아웃)
+    // D38: 평행이동 계산을 위해 "레이아웃 원좌표"를 먼저 보관(해석으로 d.x/d.y가 덮이기 전).
+    const layoutPosOf = new Map<string, Pt>();
+    allNodes.forEach((d) => layoutPosOf.set(d.data.data.id, { x: d.x, y: d.y }));
+
+    // D36: provisional→real 교체 시 좌표 승계(점프 방지) + 전환 모션 대상 표시.
+    let animateRealId: string | null = null;
+    if (lastReplace && lastReplace.nonce !== processedReplaceNonceRef.current) {
+      processedReplaceNonceRef.current = lastReplace.nonce;
+      const tempPos = posRef.current.get(lastReplace.tempId);
+      if (tempPos) {
+        posRef.current.set(lastReplace.realId, { x: tempPos.x, y: tempPos.y });
+        posRef.current.delete(lastReplace.tempId);
+      }
+      animateRealId = lastReplace.realId;
+    }
+
+    // 좌표 해석: 재정렬 강제 시 레이아웃, 아니면 (드래그 캐시 → 저장 좌표 → 새 노드는 부모 평행이동)
     allNodes.forEach((d) => {
       const node = d.data.data;
       if (forceLayout) {
@@ -377,7 +436,25 @@ export default function SessionGraphCanvas(props: Props) {
         d.y = node.position_y;
         posRef.current.set(node.id, { x: d.x, y: d.y });
       } else {
-        posRef.current.set(node.id, { x: d.x, y: d.y });
+        // D38: 새 노드(캐시·저장좌표 없음; provisional 포함) = 부모의 평행이동 적용.
+        const pid = node.parent_id;
+        const parentLayout = pid ? layoutPosOf.get(pid) : null;
+        const parentPos = pid ? posRef.current.get(pid) : null;
+        if (pid && parentLayout && parentPos) {
+          const dx = parentPos.x - parentLayout.x;
+          const dy = parentPos.y - parentLayout.y;
+          d.x = d.x + dx;
+          d.y = d.y + dy;
+          posRef.current.set(node.id, { x: d.x, y: d.y });
+          // provisional(임시 id)은 영속하지 않음; 실 노드만 좌표 영속.
+          if (!node._provisional) {
+            pr.current.onPersistPositions([
+              { node_id: node.id, x: d.x, y: d.y },
+            ]);
+          }
+        } else {
+          posRef.current.set(node.id, { x: d.x, y: d.y });
+        }
       }
     });
 
@@ -552,9 +629,33 @@ export default function SessionGraphCanvas(props: Props) {
         pr.current.onRemoveFileLink(l.file_id, l.target_node_id);
       });
 
+    // D44: 좌클릭 탭 활성화(파일링크/참조/포커스·네비게이터 팝업). 연결모드는 드래그가
+    //      비활성이라 네이티브 click(아래)이 처리하므로 여기선 일반 동작만 다룬다.
+    const activateNodeTap = (d: HNode) => {
+      const node = d.data.data;
+      if (node._provisional) return;
+      const P = pr.current;
+      if (P.fileLinkMode) {
+        if (!node.is_navigator) P.onLinkTarget(node.id);
+        return;
+      }
+      if (P.trackMode) {
+        if (node.id === P.activeNodeId) return;
+        const isLeaf = !nodes.some(
+          (c) => c.parent_id === node.id && !c.is_navigator,
+        );
+        if (isLeaf && !node.is_navigator) P.onToggleTrack(node.id);
+        return;
+      }
+      // 일반/네비게이터: WorkspaceInner가 네비게이터면 팝업 오픈(D40), 아니면 포커스 이동.
+      P.onNodeClick(node.id);
+    };
+
     // ── 드래그(대화 노드, 서브트리 동반 + y 제약 + 좌표 영속) ──
+    // D44: clickDistance(6) — 미세 지터를 클릭으로 허용(첫 탭 삼킴 방지).
     const drag = d3
       .drag<SVGGElement, HNode>()
+      .clickDistance(6)
       .filter(
         (event) =>
           (event as MouseEvent).button === 0 &&
@@ -608,31 +709,65 @@ export default function SessionGraphCanvas(props: Props) {
         redrawConnections();
         redrawFileLines();
       })
-      .on("end", function (_event, d) {
+      .on("end", function (event, d) {
         const s = d as unknown as { _moved?: boolean };
-        if (!s._moved) return;
-        const subtreeIds = d.descendants().map((n) => n.data.data.id);
-        debouncedPersist(
-          subtreeIds
-            .map((id) => {
-              const p = posRef.current.get(id);
-              return p ? { node_id: id, x: p.x, y: p.y } : null;
-            })
-            .filter((v): v is { node_id: string; x: number; y: number } => !!v),
-        );
+        if (s._moved) {
+          // 이동: 서브트리 좌표 영속.
+          const subtreeIds = d.descendants().map((n) => n.data.data.id);
+          debouncedPersist(
+            subtreeIds
+              .map((id) => {
+                const p = posRef.current.get(id);
+                return p ? { node_id: id, x: p.x, y: p.y } : null;
+              })
+              .filter((v): v is { node_id: string; x: number; y: number } => !!v),
+          );
+          return;
+        }
+        // D44: 이동이 거의 없으면 탭(클릭) = 활성화. 네이티브 click 의존 제거.
+        // 우클릭/터치 sourceEvent는 제외(좌클릭/포인터 탭만).
+        const se = event.sourceEvent as { type?: string } | undefined;
+        if (se?.type && String(se.type).startsWith("touch")) return;
+        activateNodeTap(d);
       });
 
     // ── 대화 노드 ──
     const sel = nodeLayer
       .selectAll<SVGGElement, HNode>("g.node")
       .data(allNodes, (d) => d.data.data.id);
-    sel.exit().remove();
+    // D40: 사라지는 노드(숨겨진 네비게이터 등)는 부모로 흡수(translate+fade) 후 제거.
+    //      단, provisional은 같은 자리에 real이 들어오므로 즉시 제거(중복 방지).
+    sel.exit<HNode>().each(function (d) {
+      const dd = d.data.data;
+      const self = d3.select(this);
+      if (dd._provisional) {
+        self.remove();
+        return;
+      }
+      const pid = dd.parent_id;
+      const pp = pid ? posRef.current.get(pid) : null;
+      if (pp) {
+        self
+          .transition()
+          .duration(260)
+          .attr("transform", `translate(${pp.x},${pp.y})`)
+          .style("opacity", 0)
+          .remove();
+      } else {
+        self.remove();
+      }
+    });
     const enter = sel
       .enter()
       .append("g")
       .attr("class", "node")
       .style("cursor", "pointer");
+    const enteringNavIds = new Set<string>();
+    enter.each((d) => {
+      if (d.data.data.is_navigator) enteringNavIds.add(d.data.data.id);
+    });
     enter.append("circle").attr("class", "hit").attr("r", R + 10).attr("fill", "transparent");
+    enter.append("circle").attr("class", "refring").attr("fill", "none"); // D46
     enter.append("circle").attr("class", "halo").attr("fill", "none");
     enter.append("circle").attr("class", "core").attr("r", R).attr("stroke-width", 2);
     enter
@@ -657,8 +792,30 @@ export default function SessionGraphCanvas(props: Props) {
       .attr("fill", "#fff");
     enter.append("title").attr("class", "tip");
 
+    // D40: 새로 펼쳐지는/생성되는 네비게이터는 부모 좌표에서 솟아나는 모션(재펼침/생성).
+    enter
+      .filter((d) => enteringNavIds.has(d.data.data.id))
+      .each(function (d) {
+        const pid = d.data.data.parent_id;
+        const pp = pid ? posRef.current.get(pid) : null;
+        if (pp)
+          d3.select(this)
+            .attr("transform", `translate(${pp.x},${pp.y})`)
+            .style("opacity", 0);
+      });
+
     const merged = enter.merge(sel);
-    merged.attr("transform", (d) => `translate(${d.x},${d.y})`);
+    // 흡수/재펼침 모션 대상(entering nav)을 제외하고 즉시 위치 지정.
+    merged
+      .filter((d) => !enteringNavIds.has(d.data.data.id))
+      .attr("transform", (d) => `translate(${d.x},${d.y})`);
+    // entering nav는 부모 → 제자리로 transition.
+    enter
+      .filter((d) => enteringNavIds.has(d.data.data.id))
+      .transition()
+      .duration(260)
+      .attr("transform", (d) => `translate(${d.x},${d.y})`)
+      .style("opacity", 1);
 
     const effectiveTracks = trackMode
       ? Array.from(
@@ -668,17 +825,68 @@ export default function SessionGraphCanvas(props: Props) {
         )
       : [];
 
+    // D46: 참조모드에서 참조 가능한 leaf 실노드(자식 없는 비네비) 집합.
+    const referenceableIds = new Set<string>();
+    if (trackMode) {
+      for (const n of displayNodes) {
+        if (n.is_navigator) continue;
+        const hasRealKid = nodes.some(
+          (c) => c.parent_id === n.id && !c.is_navigator,
+        );
+        if (!hasRealKid) referenceableIds.add(n.id);
+      }
+    }
+
     merged.each(function (d) {
       const node = d.data.data;
       const g = d3.select(this);
       const isPath = onPath.has(node.id);
       const isActive = node.id === activeNodeId;
       const isNav = node.is_navigator;
-      g.select<SVGCircleElement>("circle.core")
-        .attr("fill", isNav ? C.navFill : C.nodeFill)
+      const isProv = !!node._provisional;
+      const isAnimReal = node.id === animateRealId;
+      const enteringNav = enteringNavIds.has(node.id);
+
+      const core = g.select<SVGCircleElement>("circle.core");
+      core
+        .attr("fill", isNav ? C.navFill : isProv ? C.provFill : C.nodeFill)
         .attr("stroke", isNav ? C.navStroke : isPath ? C.pathStroke : C.nodeStroke)
-        .attr("stroke-width", isPath ? 3 : 2)
-        .attr("stroke-dasharray", isNav ? "3 3" : null);
+        .attr("stroke-width", isPath ? 3 : 2);
+      if (isAnimReal) {
+        // D36: provisional 룩(점선)에서 실선으로 부드럽게 전환.
+        core
+          .interrupt()
+          .attr("stroke-dasharray", "3 3")
+          .transition()
+          .duration(300)
+          .attr("stroke-dasharray", null);
+      } else {
+        core.attr("stroke-dasharray", isNav || isProv ? "3 3" : null);
+      }
+
+      // 그룹 투명도: provisional=0.4, 교체 직후 0.4→1 transition, entering nav는 모션이 처리.
+      if (isProv) {
+        g.interrupt().style("opacity", 0.4);
+      } else if (isAnimReal) {
+        g.interrupt().style("opacity", 0.4).transition().duration(300).style("opacity", 1);
+      } else if (!enteringNav) {
+        g.style("opacity", 1);
+      }
+
+      // D46: 참조 가능 leaf 하이라이트(은은한 청록 링). 선택분은 아래 track 배지 유지.
+      const refring = g.select<SVGCircleElement>("circle.refring");
+      const showRef =
+        trackMode &&
+        referenceableIds.has(node.id) &&
+        node.id !== activeNodeId &&
+        !effectiveTracks.includes(node.id);
+      refring
+        .attr("r", R + 4)
+        .attr("stroke", C.refRing)
+        .attr("stroke-width", 1.5)
+        .attr("stroke-dasharray", "1 3")
+        .attr("opacity", showRef ? 0.8 : 0);
+
       g.select<SVGCircleElement>("circle.halo")
         .attr("r", R + 5)
         .attr("stroke", C.pathStroke)
@@ -709,19 +917,21 @@ export default function SessionGraphCanvas(props: Props) {
 
     merged.call(drag);
 
+    // D44: 일반 활성화는 drag.on("end") 탭이 담당(지터에 첫 클릭 삼킴 방지).
+    //      네이티브 click은 *연결 모드*(드래그가 filter로 비활성)에서 타깃 선택만 처리.
     merged.on("click", function (event, d) {
-      event.stopPropagation();
-      if ((d as unknown as { _moved?: boolean })._moved) return;
       const node = d.data.data;
       const P = pr.current;
-      // 자료 연결(파일 노드 source) 모드: 클릭한 분기 노드를 RAG 연결 타깃으로
+      if (node._provisional) return;
       if (connectingFileRef.current) {
+        event.stopPropagation();
         const fid = connectingFileRef.current;
         if (!node.is_navigator) P.onConnectFileToNode(fid, node.id);
         setConnectingFileId(null);
         return;
       }
       if (connectingRef.current) {
+        event.stopPropagation();
         const src = connectingRef.current;
         if (!node.is_navigator && isValidConnectTarget(src, node.id, byId)) {
           P.onConnectNodes(src, node.id);
@@ -729,19 +939,7 @@ export default function SessionGraphCanvas(props: Props) {
         setConnectingSourceId(null);
         return;
       }
-      if (P.fileLinkMode) {
-        if (!node.is_navigator) P.onLinkTarget(node.id);
-        return;
-      }
-      if (P.trackMode) {
-        if (node.id === P.activeNodeId) return;
-        const isLeaf = !nodes.some(
-          (c) => c.parent_id === node.id && !c.is_navigator,
-        );
-        if (isLeaf && !node.is_navigator) P.onToggleTrack(node.id);
-        return;
-      }
-      P.onNodeClick(node.id);
+      // 연결모드가 아니면 drag-end 탭이 처리 → 여기선 무시.
     });
 
     merged.on("contextmenu", function (event, d) {
@@ -842,6 +1040,56 @@ export default function SessionGraphCanvas(props: Props) {
     });
 
     redrawFileLines();
+
+    // ── D40: collapse된 부모의 회색 원형 버튼(네비게이터 개수 배지) ──
+    interface NavBtn {
+      parentId: string;
+      count: number;
+    }
+    const navBtns: NavBtn[] = [];
+    for (const [pid, count] of navChildCount) {
+      if (count > 0 && effCollapsed(pid) && nodeById.has(pid)) {
+        navBtns.push({ parentId: pid, count });
+      }
+    }
+    const nbSel = navToggleLayer!
+      .selectAll<SVGGElement, NavBtn>("g.navbtn")
+      .data(navBtns, (d) => d.parentId);
+    nbSel.exit().remove();
+    const nbEnter = nbSel
+      .enter()
+      .append("g")
+      .attr("class", "navbtn")
+      .style("cursor", "pointer");
+    nbEnter.append("title");
+    nbEnter
+      .append("circle")
+      .attr("r", 9)
+      .attr("fill", C.navCollapse)
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 1.5);
+    nbEnter
+      .append("text")
+      .attr("class", "nb-count")
+      .attr("text-anchor", "middle")
+      .attr("dominant-baseline", "central")
+      .style("font-size", "10px")
+      .style("font-weight", "700")
+      .style("pointer-events", "none")
+      .attr("fill", "#fff");
+    const nbMerged = nbEnter.merge(nbSel);
+    nbMerged.each(function (b) {
+      const pp = posRef.current.get(b.parentId);
+      const sel2 = d3.select(this);
+      if (pp) sel2.attr("transform", `translate(${pp.x + R + 6},${pp.y + R + 6})`);
+      sel2.select("text.nb-count").text(String(b.count));
+      sel2.select("title").text(`추천 질문 ${b.count}개 — 클릭하면 펼칩니다`);
+    });
+    nbMerged.on("click", function (event, b) {
+      event.stopPropagation();
+      // 기본 휴리스틱(실+네비 동시) 기준으로 토글 → 펼침.
+      toggleNavParent(b.parentId, true);
+    });
   }, [
     nodes,
     activeNodeId,
@@ -854,6 +1102,10 @@ export default function SessionGraphCanvas(props: Props) {
     trackMode,
     selectedTrackIds,
     reorderNonce,
+    lastReplace,
+    collapsedNavParents,
+    expandedNavParents,
+    toggleNavParent,
   ]);
 
   // ── 마우스 추적 연결선(D14 기억연결 / D22 자료연결) ──
@@ -1002,7 +1254,6 @@ export default function SessionGraphCanvas(props: Props) {
         <div
           className="absolute z-30 w-48 overflow-hidden rounded-lg border border-accent-border/50 bg-bg-elevated py-1 text-sm shadow-lg"
           style={{ left: Math.min(menu.x, (dim.width || 9999) - 200), top: menu.y }}
-          onMouseLeave={() => setMenu(null)}
         >
           <button
             type="button"
@@ -1043,7 +1294,6 @@ export default function SessionGraphCanvas(props: Props) {
         <div
           className="absolute z-30 w-44 overflow-hidden rounded-lg border border-accent-border/50 bg-bg-elevated py-1 text-sm shadow-lg"
           style={{ left: Math.min(menu.x, (dim.width || 9999) - 190), top: menu.y }}
-          onMouseLeave={() => setMenu(null)}
         >
           <button
             type="button"

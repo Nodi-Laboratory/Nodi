@@ -168,6 +168,40 @@ async def set_file_position(
     )
 
 
+# --- RAG source detail (D41) ---------------------------------------------
+@router.get("/chunks/{chunk_id}/context")
+async def get_chunk_context(
+    chunk_id: str,
+    neighbors: int = Query(1, ge=0, le=5),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Full text + neighbours of a RAG source chunk (the "⋯" detail panel, D41).
+
+    Calls the get_chunk_context RPC under the caller's JWT; visibility (own file
+    or class_material the caller belongs to) is enforced inside the RPC, so a
+    chunk the caller cannot access yields 0 rows -> 404. Returns
+    ``{file_id, name, seq, page, chunk_text, prev_text, next_text}``.
+    """
+    client = UserClient.from_user(user)
+    rows = await client.rpc(
+        "get_chunk_context",
+        {"p_chunk_id": chunk_id, "p_neighbors": neighbors},
+    )
+    if isinstance(rows, list):
+        if not rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Chunk not found or not accessible.",
+            )
+        return rows[0]
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chunk not found or not accessible.",
+        )
+    return rows
+
+
 # --- Visual RAG links (Stage 3b-2) ---------------------------------------
 @router.post("/{file_id}/links", status_code=201)
 async def add_link(

@@ -1,13 +1,32 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
-import { Send, GitFork, Paperclip, Layers, X } from "lucide-react";
-import { useFileSuggestions, useSessionDetail } from "@/lib/queries";
+import {
+  Send,
+  GitFork,
+  Paperclip,
+  Layers,
+  X,
+  MoreHorizontal,
+  GitBranch,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
+import { sessionKey, useFileSuggestions, useSessionDetail } from "@/lib/queries";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
+import { useWorkspacePrefs } from "@/store/useWorkspacePrefs";
+import { getChunkContext, getSession } from "@/lib/api";
 import { ancestorChain, buildById, pathIdSet } from "@/lib/tree";
 import type { WorkspaceChat } from "@/lib/useWorkspaceChat";
-import type { FileLink, NodeRow, RagSource } from "@/lib/types";
+import type {
+  ChunkContext,
+  FileLink,
+  NodeRow,
+  RagSource,
+  ReferenceSource,
+} from "@/lib/types";
 
 /**
  * 대화 패널(중): 포커스 노드 기준 조상체인 스레드 표시 + 입력.
@@ -73,14 +92,32 @@ export function ChatPanel({
       .map((l) => l.file_id),
   ).size;
 
-  // 미연결 분기 파일 제안(3b-3): 연결 파일이 없을 때만 조회
+  // D37/D47: 제안 enable 게이트.
+  // 설정 on + 이 세션 미dismiss + 연결파일 0 + 분기에 실질 내용 있을 때만(잡담 방엔 호출도 안 함).
+  const fileSuggestionEnabled = useWorkspacePrefs((s) => s.fileSuggestionEnabled);
+  const isSuggestionDismissed = useWorkspacePrefs((s) => s.isSuggestionDismissed);
+  const dismissSuggestion = useWorkspacePrefs((s) => s.dismissSuggestion);
+  const dismissed = activeSessionId
+    ? isSuggestionDismissed(activeSessionId)
+    : false;
+  // 분기 실노드 질문 텍스트 총량(클라 1차 게이트, 네트워크 절약).
+  const branchSubstanceChars = thread
+    .filter((n) => !n.is_navigator)
+    .reduce((sum, n) => sum + (n.question?.trim().length ?? 0), 0);
+  const branchHasSubstance = branchSubstanceChars >= 20;
+  const suggestionEnabled =
+    linkedFileCount === 0 &&
+    fileSuggestionEnabled &&
+    !dismissed &&
+    branchHasSubstance;
+
   const { data: suggestions } = useFileSuggestions(
     activeSessionId,
     activeNodeId,
-    linkedFileCount === 0,
+    suggestionEnabled,
   );
   const showSuggestions =
-    linkedFileCount === 0 && !!suggestions && suggestions.length > 0;
+    suggestionEnabled && !!suggestions && suggestions.length > 0;
 
   // 새 메시지/스트리밍 시 하단으로 스크롤
   useEffect(() => {
@@ -93,8 +130,10 @@ export function ChatPanel({
   ).length;
 
   const handleSend = async () => {
+    // D39: 스트리밍 중엔 입력을 지우지 않고 early-return(미리 써둔 질문 보존).
+    if (chat.streaming) return;
     const q = input.trim();
-    if (!q || chat.streaming) return;
+    if (!q) return;
     setInput("");
     const refs =
       trackMode && referenceNodeIds.length > 0 ? referenceNodeIds : undefined;
@@ -131,6 +170,8 @@ export function ChatPanel({
                 node={n}
                 active={n.id === activeNodeId}
                 onFocus={() => setActiveNode(n.id)}
+                sessionNodes={nodes}
+                currentSessionId={activeSessionId}
               />
             ))}
 
@@ -163,6 +204,16 @@ export function ChatPanel({
           <div className="mx-auto mb-2 max-w-2xl rounded-lg border border-[#2a7d7a]/40 bg-[#2a7d7a]/5 px-3 py-2">
             <div className="flex items-center gap-1.5 text-xs text-[#2a7d7a]">
               <Paperclip size={13} />이 자료가 관련 있어 보여요 — 연결할까요?
+              <button
+                type="button"
+                onClick={() =>
+                  activeSessionId && dismissSuggestion(activeSessionId)
+                }
+                title="이 대화에서 제안 숨기기"
+                className="ml-auto text-[#2a7d7a]/70 hover:text-[#2a7d7a]"
+              >
+                <X size={13} />
+              </button>
             </div>
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {suggestions!.slice(0, 3).map((s) => (
@@ -226,14 +277,20 @@ export function ChatPanel({
               }
             }}
             rows={1}
-            placeholder="질문을 입력하세요"
-            disabled={chat.streaming}
-            className="no-scrollbar max-h-40 flex-1 resize-none overflow-y-auto rounded-xl border border-accent-border/50 bg-bg-elevated px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:border-accent-deep disabled:opacity-60"
+            placeholder={
+              chat.streaming
+                ? "답변 생성 중 — 다음 질문을 미리 입력할 수 있어요"
+                : "질문을 입력하세요"
+            }
+            className="no-scrollbar max-h-40 flex-1 resize-none overflow-y-auto rounded-xl border border-accent-border/50 bg-bg-elevated px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:border-accent-deep"
           />
           <button
             type="button"
             onClick={handleSend}
             disabled={chat.streaming || !input.trim()}
+            title={
+              chat.streaming ? "답변 생성 중에는 전송할 수 없어요" : undefined
+            }
             className="flex items-center gap-1 rounded-xl bg-accent-deep px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-95 disabled:opacity-60"
           >
             <Send size={15} />
@@ -281,11 +338,160 @@ function TagChips({ tags }: { tags: string[] }) {
   );
 }
 
-/** D32: RAG 답변의 출처 칩 + 클릭 시 snippet 펼침. 청록(C.file) 톤. */
-function RagSourceChips({ sources }: { sources: RagSource[] }) {
-  const [open, setOpen] = useState<number | null>(null);
+// ── D41: 질문 토큰 오버랩 근사 하이라이트 ──────────────────────────────
+const STOPWORDS = new Set([
+  "그리고", "그러나", "하지만", "또는", "또한", "그래서", "때문", "위해",
+  "에서", "으로", "에게", "에는", "이다", "있다", "없다", "하는", "한다",
+  "the", "and", "for", "with", "that", "this", "from", "what", "how",
+  "은", "는", "이", "가", "을", "를", "의", "에", "와", "과", "도", "만",
+]);
+
+function normalizeToken(t: string): string {
+  return t.toLowerCase().replace(/[^0-9a-z가-힣]/gi, "");
+}
+
+function questionTokenSet(question: string): Set<string> {
+  const set = new Set<string>();
+  for (const raw of question.split(/\s+/)) {
+    const n = normalizeToken(raw);
+    if (n.length >= 2 && !STOPWORDS.has(n)) set.add(n);
+  }
+  return set;
+}
+
+/** 질문 토큰과 겹치는 어절을 <mark>로 감싼 근사 하이라이트. */
+function HighlightedText({
+  text,
+  question,
+}: {
+  text: string;
+  question: string;
+}) {
+  const tokens = questionTokenSet(question);
+  if (tokens.size === 0) return <>{text}</>;
+  const parts = text.split(/(\s+)/);
+  return (
+    <>
+      {parts.map((part, i) => {
+        const n = normalizeToken(part);
+        const hit = n.length >= 2 && tokens.has(n);
+        return hit ? (
+          <mark
+            key={i}
+            className="rounded bg-[#fcf58b] px-0.5 text-fg"
+          >
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        );
+      })}
+    </>
+  );
+}
+
+/** D41: 출처 청크 전문 + 인접 청크 + 근사 하이라이트(온디맨드 조회). */
+function ChunkDetail({
+  chunkId,
+  question,
+}: {
+  chunkId: string;
+  question: string;
+}) {
+  const [showPrev, setShowPrev] = useState(false);
+  const [showNext, setShowNext] = useState(false);
+  const {
+    data: ctx,
+    isLoading: loading,
+    isError: error,
+  } = useQuery<ChunkContext>({
+    queryKey: ["chunk-context", chunkId],
+    queryFn: () => getChunkContext(chunkId, 1),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  if (loading)
+    return (
+      <div className="rounded-md border border-[#2a7d7a]/30 bg-[#2a7d7a]/5 px-2 py-1.5 text-[11px] text-fg-muted">
+        원문 불러오는 중…
+      </div>
+    );
+  if (error || !ctx)
+    return (
+      <div className="rounded-md border border-danger/30 bg-danger/5 px-2 py-1.5 text-[11px] text-danger">
+        원문을 불러오지 못했습니다.
+      </div>
+    );
+
+  return (
+    <div className="rounded-md border border-[#2a7d7a]/30 bg-[#2a7d7a]/5 px-2.5 py-2 text-[11px] leading-relaxed">
+      <div className="mb-1 flex items-center gap-1.5 font-medium text-[#2a7d7a]">
+        📄 {ctx.name ?? "자료"}
+        {ctx.seq != null ? <span>· #{ctx.seq}</span> : null}
+        {ctx.page != null ? <span>· p.{ctx.page}</span> : null}
+        <span className="ml-auto text-[10px] font-normal text-fg-muted">
+          관련 부분(근사)
+        </span>
+      </div>
+
+      {ctx.prev_text ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowPrev((v) => !v);
+          }}
+          className="mb-1 flex items-center gap-0.5 text-[10px] text-fg-muted hover:text-fg"
+        >
+          {showPrev ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+          이전 청크
+        </button>
+      ) : null}
+      {showPrev && ctx.prev_text ? (
+        <p className="mb-1 whitespace-pre-wrap border-l-2 border-[#2a7d7a]/20 pl-2 text-fg-muted">
+          {ctx.prev_text}
+        </p>
+      ) : null}
+
+      <p className="whitespace-pre-wrap text-fg">
+        <HighlightedText text={ctx.chunk_text} question={question} />
+      </p>
+
+      {ctx.next_text ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowNext((v) => !v);
+          }}
+          className="mt-1 flex items-center gap-0.5 text-[10px] text-fg-muted hover:text-fg"
+        >
+          {showNext ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+          다음 청크
+        </button>
+      ) : null}
+      {showNext && ctx.next_text ? (
+        <p className="mt-1 whitespace-pre-wrap border-l-2 border-[#2a7d7a]/20 pl-2 text-fg-muted">
+          {ctx.next_text}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** D32/D41: RAG 출처 칩 + snippet 펼침 + chunk_id 있으면 ⋯ 전문 패널. 청록(C.file) 톤. */
+function RagSourceChips({
+  sources,
+  question,
+}: {
+  sources: RagSource[];
+  question: string;
+}) {
+  const [open, setOpen] = useState<number | null>(null); // snippet 펼침
+  const [detail, setDetail] = useState<number | null>(null); // ⋯ 전문 패널
   if (sources.length === 0) return null;
   const active = open != null ? sources[open] : null;
+  const detailSrc = detail != null ? sources[detail] : null;
   return (
     <div className="flex flex-col gap-1 pl-1">
       <div className="flex flex-wrap items-center gap-1">
@@ -295,29 +501,169 @@ function RagSourceChips({ sources }: { sources: RagSource[] }) {
             s.seq != null ? ` #${s.seq}` : ""
           }${s.page != null ? ` · p.${s.page}` : ""}`;
           return (
-            <button
+            <span
               key={`${s.file_id}-${s.seq ?? "x"}-${i}`}
-              type="button"
-              title={s.snippet ?? undefined}
-              onClick={(e) => {
-                e.stopPropagation();
-                setOpen(open === i ? null : i);
-              }}
-              className={`max-w-[15rem] truncate rounded-md border px-1.5 py-0.5 text-[10px] transition-colors ${
-                open === i
+              className={`inline-flex items-center rounded-md border text-[10px] transition-colors ${
+                open === i || detail === i
                   ? "border-[#2a7d7a] bg-[#2a7d7a]/15 text-[#2a7d7a]"
-                  : "border-[#2a7d7a]/50 bg-[#2a7d7a]/5 text-[#2a7d7a] hover:bg-[#2a7d7a]/10"
+                  : "border-[#2a7d7a]/50 bg-[#2a7d7a]/5 text-[#2a7d7a]"
               }`}
             >
-              📄 {label}
-            </button>
+              <button
+                type="button"
+                title={s.snippet ?? undefined}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen(open === i ? null : i);
+                }}
+                className="max-w-[14rem] truncate px-1.5 py-0.5 hover:brightness-110"
+              >
+                📄 {label}
+              </button>
+              {s.chunk_id ? (
+                <button
+                  type="button"
+                  title="원문 보기"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDetail(detail === i ? null : i);
+                  }}
+                  className="border-l border-[#2a7d7a]/30 px-1 py-0.5 hover:brightness-110"
+                >
+                  <MoreHorizontal size={12} />
+                </button>
+              ) : null}
+            </span>
           );
         })}
       </div>
-      {active?.snippet && (
+      {active?.snippet && detail == null && (
         <div className="whitespace-pre-wrap rounded-md border border-[#2a7d7a]/30 bg-[#2a7d7a]/5 px-2 py-1 text-[11px] leading-relaxed text-fg-muted">
           {active.snippet}
         </div>
+      )}
+      {detailSrc?.chunk_id && (
+        <ChunkDetail chunkId={detailSrc.chunk_id} question={question} />
+      )}
+    </div>
+  );
+}
+
+/** D46: 참조 브랜치 체인 컨텍스트 팝업. 같은 세션=캐시, 다른 세션=getSession 조회. */
+function BranchContextPopup({
+  source,
+  sessionNodes,
+  currentSessionId,
+  onClose,
+}: {
+  source: ReferenceSource;
+  sessionNodes: NodeRow[];
+  currentSessionId: string | null;
+  onClose: () => void;
+}) {
+  const sameSession = source.session_id === currentSessionId;
+  const { data: fetched, isLoading } = useQuery({
+    queryKey: sessionKey(source.session_id),
+    queryFn: () => getSession(source.session_id),
+    enabled: !sameSession,
+  });
+  const sourceNodes = sameSession ? sessionNodes : fetched?.nodes ?? null;
+  const loading = !sameSession && isLoading;
+  const chain = useMemo(() => {
+    if (!sourceNodes) return null;
+    const byId = buildById(sourceNodes);
+    // leaf_id 기준 조상 체인(루트→leaf). 없으면 node_ids 순서대로.
+    const c = ancestorChain(source.leaf_id, byId);
+    if (c.length > 0) return c;
+    return source.node_ids
+      .map((id) => byId.get(id))
+      .filter((n): n is NodeRow => !!n);
+  }, [sourceNodes, source.leaf_id, source.node_ids]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[70vh] w-full max-w-lg flex-col rounded-2xl border border-[#9a5ea3]/50 bg-bg-elevated shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-[#9a5ea3]/30 px-4 py-2.5">
+          <span className="flex items-center gap-1.5 text-sm font-semibold text-[#9a5ea3]">
+            <GitBranch size={14} /> 참조 브랜치 · {source.label}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-fg-muted hover:text-fg"
+            aria-label="닫기"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+          {loading || chain == null ? (
+            <p className="text-sm text-fg-muted">불러오는 중…</p>
+          ) : chain.length === 0 ? (
+            <p className="text-sm text-fg-muted">
+              브랜치 내용을 불러올 수 없습니다.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {chain.map((n) => (
+                <div key={n.id} className="flex flex-col gap-1">
+                  <p className="text-xs font-medium text-fg">{n.question}</p>
+                  <p className="whitespace-pre-wrap rounded-lg bg-[#9a5ea3]/5 px-2.5 py-1.5 text-xs leading-relaxed text-fg-muted">
+                    {n.answer || "…"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** D46: 답변 박스 우측 하단 참조 브랜치 칩 + 브랜치 버튼(보라 비교 톤). */
+function ReferenceSourceChips({
+  sources,
+  sessionNodes,
+  currentSessionId,
+}: {
+  sources: ReferenceSource[];
+  sessionNodes: NodeRow[];
+  currentSessionId: string | null;
+}) {
+  const [popup, setPopup] = useState<ReferenceSource | null>(null);
+  if (sources.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-1 pr-1">
+      <span className="text-[10px] font-medium text-[#9a5ea3]">참조 브랜치</span>
+      {sources.map((s, i) => (
+        <button
+          key={`${s.leaf_id}-${i}`}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setPopup(s);
+          }}
+          title="이 브랜치의 대화 맥락 보기"
+          className="flex max-w-[15rem] items-center gap-1 truncate rounded-md border border-[#9a5ea3]/50 bg-[#9a5ea3]/5 px-1.5 py-0.5 text-[10px] text-[#9a5ea3] transition-colors hover:bg-[#9a5ea3]/10"
+        >
+          <GitBranch size={11} />
+          <span className="truncate">{s.label}</span>
+        </button>
+      ))}
+      {popup && (
+        <BranchContextPopup
+          source={popup}
+          sessionNodes={sessionNodes}
+          currentSessionId={currentSessionId}
+          onClose={() => setPopup(null)}
+        />
       )}
     </div>
   );
@@ -327,10 +673,14 @@ function ExchangeBubble({
   node,
   active,
   onFocus,
+  sessionNodes,
+  currentSessionId,
 }: {
   node: NodeRow;
   active: boolean;
   onFocus: () => void;
+  sessionNodes: NodeRow[];
+  currentSessionId: string | null;
 }) {
   return (
     <div
@@ -354,7 +704,14 @@ function ExchangeBubble({
       </AnswerBubble>
       {node.tags && node.tags.length > 0 ? <TagChips tags={node.tags} /> : null}
       {node.rag_sources && node.rag_sources.length > 0 ? (
-        <RagSourceChips sources={node.rag_sources} />
+        <RagSourceChips sources={node.rag_sources} question={node.question} />
+      ) : null}
+      {node.reference_sources && node.reference_sources.length > 0 ? (
+        <ReferenceSourceChips
+          sources={node.reference_sources}
+          sessionNodes={sessionNodes}
+          currentSessionId={currentSessionId}
+        />
       ) : null}
     </div>
   );

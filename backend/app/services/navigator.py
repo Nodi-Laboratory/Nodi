@@ -65,6 +65,17 @@ def _branch_has_pending_navigator(
     )
 
 
+def _clamp_int(value: Any, default: int, lo: int, hi: int) -> int:
+    """Per-request override (D47), clamped to an admin-safe range, else default."""
+    if value is None:
+        return default
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, v))
+
+
 def _period_elapsed(real_branch_len: int, k: int, period: int) -> bool:
     """Eligible only at branch real-node counts K, K+period, K+2*period, ...
 
@@ -104,13 +115,27 @@ async def maybe_generate(
     session_id: str,
     head_id: str,
     nodes: list[dict[str, Any]],
+    override: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Evaluate the gate and, if it fires, create navigator nodes.
 
     `nodes` must already include the just-created head node. Returns the created
-    navigator nodes ({id, parent_id, navigator_question}) or [].
+    navigator nodes ({id, parent_id, navigator_question, navigator_meta}) or [].
+
+    `override` (D47, per-request user settings) is clamped to an admin-safe range
+    and takes precedence over config: ``enabled`` False disables generation for
+    this turn; ``count`` (1..5), ``gate_k`` (1..10), ``period`` (1..20).
     """
-    k = settings.navigator_gate_k
+    override = override or {}
+    # D47 enabled gate: an explicit user opt-out disables navigator this turn.
+    if override.get("enabled") is False:
+        return []
+
+    k = _clamp_int(override.get("gate_k"), settings.navigator_gate_k, 1, 10)
+    period = _clamp_int(override.get("period"), settings.navigator_period, 1, 20)
+    count = _clamp_int(
+        override.get("count"), settings.navigator_question_count, 1, 5
+    )
     c = settings.navigator_gate_c
 
     chain = _ancestor_chain(nodes, head_id)
@@ -124,7 +149,7 @@ async def maybe_generate(
     # consumed, do not re-fire until the branch has grown to the next eligible
     # length (K, K+period, K+2*period, ...). Deleted bundles leave no trace, so
     # we key off the branch real-node count rather than "nodes since last fire".
-    if not _period_elapsed(len(real_branch), k, settings.navigator_period):
+    if not _period_elapsed(len(real_branch), k, period):
         return []
 
     common_tags = await _branch_common_tags(
@@ -149,23 +174,38 @@ async def maybe_generate(
         thought="Branch matured (>=K nodes, shared tags); suggest follow-ups.",
         branch=branch_qa,
         tags=common_tags,
-        count=settings.navigator_question_count,
+        count=count,
     )
-    questions = [q for q in (obs.get("questions") or []) if q][
-        : settings.navigator_question_count
-    ]
-    if not questions:
+    # D40: the skill returns {question, rationale} objects (rationale <=40 chars,
+    # "what this question reveals"). Normalize defensively — older/degenerate
+    # outputs may yield bare strings; treat those as rationale-less.
+    items: list[dict[str, str]] = []
+    for it in obs.get("questions") or []:
+        if isinstance(it, dict):
+            q = (it.get("question") or "").strip()
+            r = (it.get("rationale") or "").strip()
+        elif isinstance(it, str):
+            q, r = it.strip(), ""
+        else:
+            continue
+        if q:
+            items.append({"question": q, "rationale": r[:40]})
+        if len(items) >= count:
+            break
+    if not items:
         return []
 
     created: list[dict[str, Any]] = []
-    for q in questions:
+    for item in items:
+        meta = {"rationale": item["rationale"]} if item["rationale"] else {}
         node = await client.insert(
             "nodes",
             {
                 "session_id": session_id,
                 "parent_id": head_id,
                 "is_navigator": True,
-                "navigator_question": q,
+                "navigator_question": item["question"],
+                "navigator_meta": meta,  # D40: rationale for the click popup
             },
         )
         created.append(
@@ -173,6 +213,7 @@ async def maybe_generate(
                 "id": node["id"],
                 "parent_id": node.get("parent_id"),
                 "navigator_question": node.get("navigator_question"),
+                "navigator_meta": node.get("navigator_meta") or meta,
             }
         )
     return created
