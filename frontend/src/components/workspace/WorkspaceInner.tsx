@@ -1,13 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { addConnection, removeConnection, spaceTargetFromId } from "@/lib/api";
-import { sessionKey, useSessionDetail } from "@/lib/queries";
+import {
+  addConnection,
+  addFileLink,
+  removeConnection,
+  removeFileLink,
+  spaceTargetFromId,
+} from "@/lib/api";
+import {
+  fileLinksKey,
+  sessionKey,
+  useSessionDetail,
+  useSessionFileLinks,
+} from "@/lib/queries";
 import { useWorkspaceChat } from "@/lib/useWorkspaceChat";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type { SessionDetail } from "@/lib/types";
 import { SessionList } from "./SessionList";
+import { FilesPanel } from "./FilesPanel";
 import { ChatPanel } from "./ChatPanel";
 import { SessionGraph } from "./SessionGraph";
 
@@ -126,6 +138,44 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     [patchConnections],
   );
 
+  // ── 시각적 RAG: 파일↔분기 연결 ──
+  const { data: fileLinks = [] } = useSessionFileLinks(activeSessionId);
+  // 자료 패널에서 시작한 "분기에 연결" 중인 파일 id (그래프 클릭으로 target 선택)
+  const [linkFileId, setLinkFileId] = useState<string | null>(null);
+
+  const refreshFileLinks = useCallback(() => {
+    void queryClient.invalidateQueries({
+      queryKey: fileLinksKey(activeSessionId),
+    });
+  }, [queryClient, activeSessionId]);
+
+  const handleLinkTarget = useCallback(
+    async (nodeId: string) => {
+      if (!linkFileId) return;
+      const fileId = linkFileId;
+      setLinkFileId(null);
+      try {
+        await addFileLink(fileId, nodeId);
+        refreshFileLinks();
+      } catch {
+        /* 무시(백엔드가 소유권 검증) */
+      }
+    },
+    [linkFileId, refreshFileLinks],
+  );
+
+  const handleRemoveFileLink = useCallback(
+    async (fileId: string, nodeId: string) => {
+      try {
+        await removeFileLink(fileId, nodeId);
+        refreshFileLinks();
+      } catch {
+        /* 무시 */
+      }
+    },
+    [refreshFileLinks],
+  );
+
   const spaceLabel = spaceId === "personal" ? "개인 공간" : "학급 공간";
 
   return (
@@ -140,9 +190,18 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_380px]">
-        <SessionList target={target} />
+        <div className="flex min-h-0 flex-col border-r border-accent-border/30">
+          <SessionList target={target} />
+          <FilesPanel
+            target={target}
+            fileLinks={fileLinks}
+            linkFileId={linkFileId}
+            onStartLink={setLinkFileId}
+            onCancelLink={() => setLinkFileId(null)}
+          />
+        </div>
         <div className="flex min-h-0 flex-col border-x border-accent-border/30">
-          <ChatPanel chat={chat} />
+          <ChatPanel chat={chat} fileLinks={fileLinks} />
         </div>
         <div className="min-h-0 border-l border-accent-border/30">
           <SessionGraph
@@ -152,6 +211,10 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             onNodeClick={handleNodeClick}
             onConnectSource={handleConnectSource}
             onRemoveConnection={handleRemoveConnection}
+            fileLinks={fileLinks}
+            fileLinkMode={!!linkFileId}
+            onLinkTarget={handleLinkTarget}
+            onRemoveFileLink={handleRemoveFileLink}
           />
         </div>
       </div>

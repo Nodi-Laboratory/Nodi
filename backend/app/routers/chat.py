@@ -37,7 +37,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
-from ..services import gemini, memory, navigator
+from ..services import gemini, memory, navigator, rag
 from ..services import sessions as svc
 from ..services import tagging
 from ..services.supabase_client import UserClient
@@ -90,6 +90,8 @@ async def chat_stream(
     reference_context = await memory.build_reference_context(
         client, body.session_id, chain, {n["id"]: n for n in nodes}
     )
+    # Visual RAG: chunks from files linked to this branch (Stage 3b-2).
+    rag_context = await rag.build_rag_context(client, chain, body.question)
     existing_root = session.get("root_node_id")
 
     async def event_stream():
@@ -100,7 +102,10 @@ async def chat_stream(
         answer_parts: list[str] = []
         try:
             async for delta in gemini.stream_answer(
-                history, body.question, reference_context=reference_context
+                history,
+                body.question,
+                reference_context=reference_context,
+                rag_context=rag_context,
             ):
                 answer_parts.append(delta)
                 yield _sse("token", {"delta": delta})

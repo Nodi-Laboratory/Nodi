@@ -38,7 +38,7 @@ export function SessionList({ target }: { target: SpaceTarget }) {
   };
 
   return (
-    <aside className="flex h-full min-h-0 flex-col border-r border-accent-border/30">
+    <aside className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-between px-4 py-3">
         <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
           대화기록

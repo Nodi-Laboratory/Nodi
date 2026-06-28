@@ -57,6 +57,36 @@ class Settings(BaseSettings):
     # Truncate each imported answer in the reference block (char budget).
     memory_answer_char_cap: int = 400
 
+    # --- File RAG embeddings (Stage 3b-1) ---
+    # NOTE: text-embedding-004 is unavailable on this API key; gemini-embedding-001
+    # is the current model and supports output_dimensionality (768 here -> the
+    # file_chunks.embedding vector(768) column). Reduced dims are not pre-
+    # normalized, so the worker L2-normalizes before storing.
+    gemini_embedding_model: str = "gemini-embedding-001"
+    embedding_dimension: int = 768
+    # Chunks per embedding_batch child job; sub-batched per embed request.
+    embedding_batch_size: int = 64
+    embedding_request_max_chunks: int = 32  # per embed_content call
+    embedding_worker_concurrency: int = 3  # parallel jobs claimed per poll
+    embedding_worker_poll_seconds: int = 5
+    embedding_max_attempts: int = 3
+    # A 'running' job older than this (no progress) is considered orphaned by a
+    # crashed worker and recovered (requeued while attempts remain, else failed).
+    embedding_stale_seconds: int = 120
+    # Text chunking.
+    chunk_size_chars: int = 1200
+    chunk_overlap_chars: int = 150
+    # Supabase Storage bucket for uploaded files.
+    storage_bucket: str = "files"
+    # Upper bound on a single uploaded file (bytes) — guard before processing.
+    file_max_bytes: int = 25 * 1024 * 1024
+
+    # --- File RAG search + tagging (Stage 3b-2) ---
+    rag_top_k: int = 5  # chunks retrieved per query from linked files
+    file_tag_max: int = 50  # concept tags per file (denser than node 1..3)
+    # Chars of file text sampled for tag extraction.
+    file_tag_sample_chars: int = 6000
+
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).
     jwt_audience: str = "authenticated"
@@ -87,6 +117,12 @@ class Settings(BaseSettings):
     def auth_issuer(self) -> str:
         """Expected `iss` claim of Supabase-issued user JWTs."""
         return f"{self.supabase_url.rstrip('/')}/auth/v1" if self.supabase_url else ""
+
+    @property
+    def storage_url(self) -> str:
+        return (
+            f"{self.supabase_url.rstrip('/')}/storage/v1" if self.supabase_url else ""
+        )
 
 
 @lru_cache
