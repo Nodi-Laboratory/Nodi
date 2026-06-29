@@ -169,6 +169,10 @@ export interface ChatDoneEvent {
     parent_id: string | null;
     label: string | null;
     tags?: string[] | null;
+    /** D57: 이번 턴 비교참조 출처(있으면). 리페치 전에도 참조 칩 즉시 표시. */
+    reference_sources?: ReferenceSource[] | null;
+    /** D57-보강: 네비게이터 근거(해당되면). */
+    navigator_meta?: NavigatorMeta | null;
   };
   current_head_id: string | null;
   root_node_id: string | null;
@@ -297,6 +301,39 @@ export interface FileSuggestion {
   distance: number;
   sample: string | null;
   kind: string | null;
+}
+
+/**
+ * D58: 자료 그래프 배치(placement). 파일(공간 소유)을 특정 세션 그래프에 자유 노드로
+ * 둔 행. 표시(좌표)는 이 행이 결정하고, RAG 연결(file_node_links)과는 독립이다.
+ */
+export interface FileGraphNode {
+  id: string;
+  file_id: string;
+  session_id: string;
+  position_x: number | null;
+  position_y: number | null;
+  created_at: string;
+  /** D58 낙관적 삽입 중인 임시 placement(서버 확정 전). */
+  _provisional?: boolean;
+  files: {
+    id: string;
+    storage_path: string | null;
+    mime: string | null;
+    kind?: string | null;
+    status: FileStatus;
+    chunk_total: number | null;
+    chunk_done: number | null;
+    space_kind?: string | null;
+    space_ref?: string | null;
+  } | null;
+}
+
+/** D55b: 네비게이터 유효 기본값(config ⊕ admin override 합성, 서버가 숫자로 반환). */
+export interface NavigatorDefaults {
+  question_count: number;
+  gate_k: number;
+  period: number;
 }
 
 // ── Stage 4c: 관리자 ─────────────────────────────────────────────────
