@@ -21,6 +21,7 @@ from typing import Any
 from ..ai.react import Budget, ReActRunner
 from ..ai.skills.base import SkillContext
 from ..config import get_settings
+from . import app_settings
 from .supabase_client import UserClient
 
 logger = logging.getLogger("nodi.overseer")
@@ -65,12 +66,25 @@ async def gather(
 ) -> dict[str, Any]:
     """Run the read-skills to assemble the snapshot + raw data for actions."""
     ctx = SkillContext(client=client, owner_id=owner_id)
+    # D62: ReAct budget is admin-tunable via the overlay.
+    overlay = await app_settings.get_overlay()
     runner = ReActRunner(
         client,
         owner_id,
         kind="overseer",
         session_id=None,
-        budget=Budget(settings.react_max_steps, settings.react_max_tokens),
+        budget=Budget(
+            app_settings.as_int(
+                overlay, "react_max_steps", settings.react_max_steps, 1, 100
+            ),
+            app_settings.as_int(
+                overlay,
+                "react_max_tokens",
+                settings.react_max_tokens,
+                1000,
+                1_000_000,
+            ),
+        ),
     )
     spaces = (await runner.run_skill("read_my_spaces", ctx=ctx)).get("spaces", [])
     recents = (

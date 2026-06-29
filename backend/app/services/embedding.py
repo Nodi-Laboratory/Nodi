@@ -15,10 +15,17 @@ from google import genai
 from google.genai import types
 
 from ..config import get_settings
+from . import app_settings
 from .gemini import get_client
 
 logger = logging.getLogger("nodi.embedding")
 settings = get_settings()
+
+# The file_chunks.embedding column is a FIXED vector(768) (migration 0009). The
+# embedding worker guards against an admin setting embedding_dimension to any
+# other value (it would make insert/search fail or be meaningless) — see
+# embedding_worker. This constant is the contract that guard checks against.
+DB_VECTOR_DIM = 768
 
 
 def _l2_normalize(vec: list[float]) -> list[float]:
@@ -29,24 +36,44 @@ def _l2_normalize(vec: list[float]) -> list[float]:
 
 
 async def embed_texts(
-    texts: list[str], *, task_type: str = "RETRIEVAL_DOCUMENT"
+    texts: list[str],
+    *,
+    task_type: str = "RETRIEVAL_DOCUMENT",
+    model: str | None = None,
+    dimension: int | None = None,
 ) -> list[list[float]]:
-    """Embed a list of texts -> list of 768-dim L2-normalized vectors.
+    """Embed a list of texts -> list of L2-normalized vectors.
 
     Sub-batches by `embedding_request_max_chunks` per embed_content call.
+
+    D62: `model`/`dimension` default to the admin overlay (falling back to
+    config) so model/dimension changes take effect. Callers that have already
+    resolved (and guarded) these values — the embedding worker — pass them
+    explicitly; the query path (rag.search) leaves them None to auto-resolve,
+    keeping query and document embeddings in the SAME space.
     """
     if not texts:
         return []
+    if model is None or dimension is None:
+        overlay = await app_settings.get_overlay()
+        if model is None:
+            model = app_settings.as_str(
+                overlay, "embedding_model", settings.gemini_embedding_model
+            )
+        if dimension is None:
+            dimension = app_settings.as_int(
+                overlay, "embedding_dimension", settings.embedding_dimension, 1, 10000
+            )
     client: genai.Client = get_client()
     out: list[list[float]] = []
     step = max(1, settings.embedding_request_max_chunks)
     for i in range(0, len(texts), step):
         batch = texts[i : i + step]
         resp = await client.aio.models.embed_content(
-            model=settings.gemini_embedding_model,
+            model=model,
             contents=batch,
             config=types.EmbedContentConfig(
-                output_dimensionality=settings.embedding_dimension,
+                output_dimensionality=dimension,
                 task_type=task_type,
             ),
         )

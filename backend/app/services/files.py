@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from ..config import get_settings
+from . import app_settings
 from .service_client import ServiceClient
 from .supabase_client import UserClient
 
@@ -103,10 +104,14 @@ async def upload_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Empty file.",
         )
-    if len(data) > settings.file_max_bytes:
+    overlay = await app_settings.get_overlay()
+    max_bytes = app_settings.as_int(
+        overlay, "file_max_bytes", settings.file_max_bytes, 1024, 100 * 1024 * 1024
+    )
+    if len(data) > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds {settings.file_max_bytes} bytes.",
+            detail=f"File exceeds {max_bytes} bytes.",
         )
 
     file_id = str(uuid.uuid4())

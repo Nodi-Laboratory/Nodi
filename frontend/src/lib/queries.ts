@@ -7,6 +7,7 @@ import {
   getHomeSummary,
   getHomeSuggestions,
   getNavigatorDefaults,
+  fetchTeacherOverview,
   getSession,
   listClassMaterials,
   listClassStudents,
@@ -33,6 +34,7 @@ import type {
   SessionRow,
   TagRow,
   TeacherClass,
+  TeacherClassOverview,
   TeacherStudent,
 } from "@/lib/types";
 
@@ -52,6 +54,14 @@ export function useTeacherClasses() {
   return useQuery<TeacherClass[]>({
     queryKey: ["teacher", "classes"],
     queryFn: listTeacherClasses,
+  });
+}
+
+/** D67: 교사 콘솔 홈 — 학급 개요(학생수·자료수·최근활동). */
+export function useTeacherOverview() {
+  return useQuery<TeacherClassOverview[]>({
+    queryKey: ["teacher", "overview"],
+    queryFn: fetchTeacherOverview,
   });
 }
 

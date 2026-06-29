@@ -18,6 +18,7 @@ import unicodedata
 from google.genai import types
 
 from ..config import get_settings
+from . import app_settings
 from .gemini import get_client
 from .supabase_client import UserClient
 
@@ -87,14 +88,17 @@ def _parse_tags(raw: str, max_tags: int) -> list[str]:
 
 async def extract_concepts(question: str, answer: str) -> list[str]:
     """Return 1..max_tags concept strings (empty list on any failure)."""
-    max_tags = settings.max_tags_per_node
+    overlay = await app_settings.get_overlay()
+    max_tags = app_settings.as_int(
+        overlay, "max_tags_per_node", settings.max_tags_per_node, 1, 5
+    )
     prompt = _TAG_PROMPT.format(
         max_tags=max_tags, question=question, answer=answer
     )
     try:
         client = get_client()
         resp = await client.aio.models.generate_content(
-            model=settings.gemini_tag_model,
+            model=app_settings.as_str(overlay, "tag_model", settings.gemini_tag_model),
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -129,8 +133,9 @@ async def extract_file_concepts(text: str) -> list[str]:
     prompt = _FILE_TAG_PROMPT.format(max_tags=max_tags, text=excerpt)
     try:
         client = get_client()
+        overlay = await app_settings.get_overlay()
         resp = await client.aio.models.generate_content(
-            model=settings.gemini_tag_model,
+            model=app_settings.as_str(overlay, "tag_model", settings.gemini_tag_model),
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

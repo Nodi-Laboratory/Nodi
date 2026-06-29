@@ -28,7 +28,7 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ..config import get_settings
-from . import embedding, gemini, tagging
+from . import app_settings, embedding, gemini, tagging
 from .service_client import ServiceClient, get_service_client
 
 logger = logging.getLogger("nodi.embedding_worker")
@@ -190,6 +190,31 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         return
     f = files[0]
 
+    # D65 integrity guard: the embedding column is a fixed vector(768). If the
+    # admin set embedding_dimension to anything else, embedding now would write
+    # vectors that don't match the column/index — fail the file as "re-embed
+    # required" WITHOUT inserting anything, rather than corrupt the DB. Fixing
+    # the dimension back to 768 + retry recovers it.
+    overlay = await app_settings.get_overlay()
+    embed_dim = app_settings.as_int(
+        overlay, "embedding_dimension", settings.embedding_dimension, 1, 10000
+    )
+    if embed_dim != embedding.DB_VECTOR_DIM:
+        logger.warning(
+            "embedding_dimension=%s != %s (vector column); failing split "
+            "file=%s (dimension mismatch; re-embed required)",
+            embed_dim,
+            embedding.DB_VECTOR_DIM,
+            file_id,
+        )
+        await svc.update(
+            "files",
+            {"id": f"eq.{file_id}"},
+            {"status": "failed", "error": "dimension mismatch; re-embed required"},
+        )
+        await _fail_job(svc, job["id"], "dimension mismatch; re-embed required")
+        return
+
     # Idempotency (crash recovery): if batch jobs already exist for this file the
     # split already fanned out — just mark this (re-queued) split done. Otherwise
     # clear any partial chunks from a crashed prior split and start fresh (no
@@ -210,7 +235,15 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
 
     data = await svc.storage_download(settings.storage_bucket, f["storage_path"])
     text = await _extract_text(data, f.get("mime"), f["storage_path"])
-    chunks = embedding.chunk_text(text)
+    # D65 new-only: chunk size/overlap come from the admin overlay and apply to
+    # THIS (new) job; existing chunks are untouched until re-uploaded.
+    chunk_size = app_settings.as_int(
+        overlay, "chunk_size_chars", settings.chunk_size_chars, 400, 4000
+    )
+    chunk_overlap = app_settings.as_int(
+        overlay, "chunk_overlap_chars", settings.chunk_overlap_chars, 0, 500
+    )
+    chunks = embedding.chunk_text(text, chunk_size, chunk_overlap)
 
     if not chunks:
         await svc.update(
@@ -282,10 +315,32 @@ async def _handle_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
         },
     )
     if chunks:
+        # D65 integrity guard (also here: config may change between split and
+        # batch). Mismatched dimension -> fail this job WITHOUT writing vectors;
+        # chunks stay pending so a retry after fixing the dimension recovers.
+        overlay = await app_settings.get_overlay()
+        embed_dim = app_settings.as_int(
+            overlay, "embedding_dimension", settings.embedding_dimension, 1, 10000
+        )
+        embed_model = app_settings.as_str(
+            overlay, "embedding_model", settings.gemini_embedding_model
+        )
+        if embed_dim != embedding.DB_VECTOR_DIM:
+            logger.warning(
+                "embedding_dimension=%s != %s (vector column); failing batch "
+                "file=%s (dimension mismatch; re-embed required)",
+                embed_dim,
+                embedding.DB_VECTOR_DIM,
+                file_id,
+            )
+            await _fail_job(svc, job["id"], "dimension mismatch; re-embed required")
+            return
         try:
             vectors = await embedding.embed_texts(
                 [c["chunk_text"] for c in chunks],
                 task_type="RETRIEVAL_DOCUMENT",
+                model=embed_model,
+                dimension=embed_dim,
             )
         except Exception as exc:  # noqa: BLE001 - mark chunks failed, not crash
             logger.exception("Batch embedding failed file=%s", file_id)
