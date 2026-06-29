@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Home,
   Settings,
@@ -11,6 +12,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useMyClasses, useProfile } from "@/lib/hooks";
+import { listSessions, spaceTargetFromId } from "@/lib/api";
+import { sessionsKey, STALE } from "@/lib/queries";
 import { roleHome } from "@/lib/roleHome";
 
 /**
@@ -55,15 +58,18 @@ function SpaceBadge({
   label,
   short,
   active,
+  onPrefetch,
 }: {
   href: string;
   label: string;
   short: string;
   active: boolean;
+  onPrefetch?: () => void;
 }) {
   return (
     <Link
       href={href}
+      onMouseEnter={onPrefetch}
       title={`공간 전환: ${label}`}
       aria-label={`공간 전환: ${label}`}
       aria-current={active ? "page" : undefined}
@@ -88,12 +94,23 @@ export function IconSidebar() {
   const pathname = usePathname();
   const { data: profile } = useProfile();
   const { data: myClasses = [] } = useMyClasses();
+  const queryClient = useQueryClient();
 
   const role = profile?.role ?? null;
   const isStudent = !role || role === "student";
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
+
+  // 08 G: 공간 배지 hover 시 그 공간의 세션 목록을 선반입(공간 전환 즉시 표시).
+  const prefetchSpace = (spaceId: string) => {
+    const target = spaceTargetFromId(spaceId);
+    void queryClient.prefetchQuery({
+      queryKey: sessionsKey(target),
+      queryFn: () => listSessions(target),
+      staleTime: STALE.sessions,
+    });
+  };
 
   return (
     <nav
@@ -123,6 +140,7 @@ export function IconSidebar() {
               label="개인 공간"
               short="개인"
               active={isActive("/space/personal")}
+              onPrefetch={() => prefetchSpace("personal")}
             />
             {myClasses.map((m) => {
               const href = `/space/${m.class_id}`;
@@ -134,6 +152,7 @@ export function IconSidebar() {
                   label={label}
                   short={initials(m.classes?.name, "반")}
                   active={isActive(href)}
+                  onPrefetch={() => prefetchSpace(m.class_id)}
                 />
               );
             })}

@@ -2,9 +2,15 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { MessageSquare, ChevronRight, Lightbulb, TreeDeciduous } from "lucide-react";
 import { useProfile } from "@/lib/hooks";
-import { useHomeSummary, useHomeSuggestions } from "@/lib/queries";
+import {
+  prefetchSessionData,
+  useHomeSummary,
+  useHomeSuggestions,
+} from "@/lib/queries";
+import { isRealId } from "@/lib/ids";
 import { useStartSession } from "@/lib/useStartSession";
 import { ConceptBubbles } from "@/components/home/ConceptBubbles";
 import { Overseer } from "@/components/home/Overseer";
@@ -19,7 +25,13 @@ export default function HomePage() {
   const { data: summary, isLoading: summaryLoading } = useHomeSummary();
   const { data: suggestionsData } = useHomeSuggestions();
   const { startSeeded, openSession } = useStartSession();
+  const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // 08 G: 최근 대화 hover 시 그 세션 데이터 선반입 → 클릭→워크스페이스 진입이 즉시 채워짐.
+  const prefetchRecent = (id: string) => {
+    if (isRealId(id)) prefetchSessionData(queryClient, id);
+  };
 
   const displayName = profile?.display_name ?? profile?.email ?? null;
   const concepts = summary?.top_concepts ?? [];
@@ -177,6 +189,7 @@ export default function HomePage() {
                     <button
                       type="button"
                       onClick={() => handleOpenRecent(s)}
+                      onMouseEnter={() => prefetchRecent(s.id)}
                       className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/30"
                     >
                       <span className="shrink-0">

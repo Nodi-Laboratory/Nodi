@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { assertRealId, isRealId } from "@/lib/ids";
 import type {
   AdminLogDetail,
   AdminLogsResponse,
@@ -34,15 +35,51 @@ import type {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
-/** Supabase 세션의 access_token을 Authorization 헤더로. (키 하드코딩 없음) */
-async function authHeaders(json = false): Promise<Record<string, string>> {
+/**
+ * 08 G(D67): access_token 메모리 캐시. 모든 fetch가 호출당 `getSession()`을 await하던
+ * 비용을 줄인다(보통 로컬 캐시지만 보장 없음). expires_at까지 재사용하되 만료 60초 전엔
+ * getSession을 다시 불러 supabase가 갱신한 최신 토큰을 받는다(안전 마진).
+ */
+let tokenCache: { token: string; expiresAtMs: number } | null = null;
+
+/**
+ * 08 M1: access_token 캐시 무효화. 인증 상태가 바뀌면(로그아웃/로그인/토큰 갱신)
+ * 반드시 호출해 캐시가 만료 전 옛 토큰을 들고 있는 것을 막는다(동작 불변 보장).
+ * Providers의 supabase onAuthStateChange가 모든 이벤트에서 호출한다.
+ */
+export function clearTokenCache(): void {
+  tokenCache = null;
+}
+
+async function getAccessToken(): Promise<string | null> {
+  const now = Date.now();
+  if (tokenCache && tokenCache.expiresAtMs - 60_000 > now) {
+    return tokenCache.token;
+  }
   const supabase = createClient();
   const {
     data: { session },
   } = await supabase.auth.getSession();
-  const headers: Record<string, string> = {};
   if (session?.access_token) {
-    headers.Authorization = `Bearer ${session.access_token}`;
+    tokenCache = {
+      token: session.access_token,
+      // expires_at은 unix 초. 없으면 보수적으로 1분만 캐시.
+      expiresAtMs: session.expires_at
+        ? session.expires_at * 1000
+        : now + 60_000,
+    };
+    return session.access_token;
+  }
+  tokenCache = null;
+  return null;
+}
+
+/** Supabase 세션의 access_token을 Authorization 헤더로. (키 하드코딩 없음) */
+async function authHeaders(json = false): Promise<Record<string, string>> {
+  const token = await getAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
   if (json) headers["Content-Type"] = "application/json";
   return headers;
@@ -197,6 +234,7 @@ export async function listCooccurrence(
 
 /** 네비게이터(is_navigator) 노드 삭제. 204 반환. */
 export async function deleteNode(id: string): Promise<void> {
+  assertRealId(id, "node_id"); // D63: 임시 노드 id는 DB 경계로 못 보냄
   await ensureOk(
     await fetch(`${API_BASE}/nodes/${id}`, {
       method: "DELETE",
@@ -385,6 +423,8 @@ export async function addFileLink(
   fileId: string,
   targetNodeId: string,
 ): Promise<unknown> {
+  assertRealId(fileId, "file_id"); // D63
+  assertRealId(targetNodeId, "target_node_id");
   const res = await ensureOk(
     await fetch(`${API_BASE}/files/${fileId}/links`, {
       method: "POST",
@@ -399,6 +439,8 @@ export async function removeFileLink(
   fileId: string,
   nodeId: string,
 ): Promise<void> {
+  assertRealId(fileId, "file_id"); // D63
+  assertRealId(nodeId, "node_id");
   await ensureOk(
     await fetch(`${API_BASE}/files/${fileId}/links/${nodeId}`, {
       method: "DELETE",
@@ -458,6 +500,8 @@ export async function addFileGraphNode(
   x: number | null,
   y: number | null,
 ): Promise<FileGraphNode> {
+  assertRealId(sessionId, "session_id"); // D63
+  assertRealId(fileId, "file_id");
   const res = await ensureOk(
     await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes`, {
       method: "POST",
@@ -479,6 +523,8 @@ export async function patchFileGraphNode(
   x: number,
   y: number,
 ): Promise<FileGraphNode> {
+  assertRealId(sessionId, "session_id"); // D63
+  assertRealId(fileId, "file_id");
   const res = await ensureOk(
     await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes`, {
       method: "PATCH",
@@ -498,6 +544,8 @@ export async function removeFileGraphNode(
   sessionId: string,
   fileId: string,
 ): Promise<void> {
+  assertRealId(sessionId, "session_id"); // D63
+  assertRealId(fileId, "file_id");
   await ensureOk(
     await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes/${fileId}`, {
       method: "DELETE",
@@ -513,6 +561,8 @@ export async function addConnection(
   targetId: string,
   sourceId: string,
 ): Promise<ConnectionResponse> {
+  assertRealId(targetId, "target_node_id"); // D63
+  assertRealId(sourceId, "source_node_id");
   const res = await ensureOk(
     await fetch(`${API_BASE}/nodes/${targetId}/connections`, {
       method: "POST",
@@ -528,6 +578,8 @@ export async function removeConnection(
   targetId: string,
   sourceId: string,
 ): Promise<ConnectionResponse> {
+  assertRealId(targetId, "target_node_id"); // D63
+  assertRealId(sourceId, "source_node_id");
   const res = await ensureOk(
     await fetch(`${API_BASE}/nodes/${targetId}/connections/${sourceId}`, {
       method: "DELETE",
@@ -557,35 +609,36 @@ export interface ChatStreamBody {
   navigator?: ChatNavigatorOverride | null;
 }
 
-/** 표준 UUID(8-4-4-4-12). */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
  * 노드 좌표 일괄 영속(D20). 드래그 종료/재정렬 시 저장.
- * D52: 영속 직전 비-UUID id(provisional:/pending: 등)를 필터링한다. PostgREST가
- * 비-UUID를 받으면 400→502가 나므로, 단일 방어선으로 모든 호출 경로를 보호한다.
- * 남은 게 없으면 네트워크 호출 자체를 생략.
+ *
+ * 08 C(D69): 노드마다 1 RT(서버 for-루프)였던 set_node_positions를 단일 RPC
+ * `set_node_positions_bulk`(0026) 1회 호출로 교체한다(N RT→1). RPC는 SECURITY INVOKER라
+ * 호출자 JWT + nodes RLS로 owner 본인 노드만 갱신하며, PostgREST rpc 패턴
+ * (예: join_class_by_code)을 따라 supabase 클라이언트로 직접 호출한다.
+ *
+ * D52/D63: 영속 직전 비-UUID id(provisional:/optimistic: 등)를 isRealId로 1차 필터한다
+ * (RPC도 캐스트 전 필터하지만 이중 방어). 남은 게 없으면 호출 자체를 생략.
  */
 export async function putNodePositions(
   sessionId: string,
   positions: { node_id: string; x: number; y: number }[],
 ): Promise<void> {
-  const valid = positions.filter((p) => UUID_RE.test(p.node_id));
+  if (!isRealId(sessionId)) return;
+  const valid = positions.filter((p) => isRealId(p.node_id));
   if (valid.length === 0) return;
-  await ensureOk(
-    await fetch(`${API_BASE}/sessions/${sessionId}/node-positions`, {
-      method: "PUT",
-      headers: await authHeaders(true),
-      body: JSON.stringify({
-        positions: valid.map((p) => ({
-          node_id: p.node_id,
-          x: Math.round(p.x),
-          y: Math.round(p.y),
-        })),
-      }),
-    }),
-  );
+  const supabase = createClient();
+  const { error } = await supabase.rpc("set_node_positions_bulk", {
+    p_session_id: sessionId,
+    p_positions: valid.map((p) => ({
+      node_id: p.node_id,
+      x: Math.round(p.x),
+      y: Math.round(p.y),
+    })),
+  });
+  if (error) {
+    throw new ApiError(500, error.message ?? "좌표 저장에 실패했습니다.");
+  }
 }
 
 export interface ChatStreamHandlers {

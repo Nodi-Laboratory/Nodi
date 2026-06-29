@@ -22,6 +22,45 @@ from ..config import get_settings
 logger = logging.getLogger("nodi.service_client")
 settings = get_settings()
 
+# ---------------------------------------------------------------------------
+# Shared connection pool (08 refactoring D65, worker side).
+#
+# Like UserClient, every ServiceClient call used to open a throwaway
+# httpx.AsyncClient (fresh TCP+TLS handshake per request). The embedding worker
+# fires many of these, so a single module-level keep-alive pool removes the
+# repeated handshakes. The shared client carries a default timeout; each method
+# still passes its OWN per-call timeout (select 30 / insert 60 / storage 120 …)
+# via the request-level `timeout=` override, so behavior is unchanged.
+#
+# Created lazily on first use (inside the running loop); closed on FastAPI
+# shutdown via `aclose_service_http()` (wired in app.main lifespan).
+# ---------------------------------------------------------------------------
+_SERVICE_LIMITS = httpx.Limits(
+    max_connections=50,
+    max_keepalive_connections=10,
+    keepalive_expiry=30.0,
+)
+
+_service_http: httpx.AsyncClient | None = None
+
+
+def _get_http() -> httpx.AsyncClient:
+    """Lazily create / return the process-wide pooled httpx client (worker)."""
+    global _service_http
+    if _service_http is None or _service_http.is_closed:
+        _service_http = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0), limits=_SERVICE_LIMITS
+        )
+    return _service_http
+
+
+async def aclose_service_http() -> None:
+    """Close the worker's shared pool (FastAPI shutdown). No-op if unused."""
+    global _service_http
+    if _service_http is not None and not _service_http.is_closed:
+        await _service_http.aclose()
+    _service_http = None
+
 
 class ServiceClient:
     """Thin PostgREST + Storage client authenticated with the service role."""
@@ -50,10 +89,13 @@ class ServiceClient:
 
     # --- PostgREST -------------------------------------------------------
     async def select(self, table: str, params: dict[str, str]) -> list[dict]:
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            r = await c.get(
-                f"{self._rest}/{table}", params=params, headers=self._rest_headers()
-            )
+        c = _get_http()
+        r = await c.get(
+            f"{self._rest}/{table}",
+            params=params,
+            headers=self._rest_headers(),
+            timeout=30.0,
+        )
         if r.status_code >= 400:
             self._raise(r, f"select {table}")
         return r.json()
@@ -62,12 +104,13 @@ class ServiceClient:
         self, table: str, rows: dict | list[dict], *, returning: bool = True
     ) -> list[dict]:
         prefer = "return=representation" if returning else "return=minimal"
-        async with httpx.AsyncClient(timeout=60.0) as c:
-            r = await c.post(
-                f"{self._rest}/{table}",
-                json=rows,
-                headers=self._rest_headers(prefer=prefer),
-            )
+        c = _get_http()
+        r = await c.post(
+            f"{self._rest}/{table}",
+            json=rows,
+            headers=self._rest_headers(prefer=prefer),
+            timeout=60.0,
+        )
         if r.status_code >= 400:
             self._raise(r, f"insert {table}")
         return r.json() if returning else []
@@ -75,13 +118,14 @@ class ServiceClient:
     async def update(
         self, table: str, filters: dict[str, str], patch: dict[str, Any]
     ) -> list[dict]:
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            r = await c.patch(
-                f"{self._rest}/{table}",
-                params=filters,
-                json=patch,
-                headers=self._rest_headers(prefer="return=representation"),
-            )
+        c = _get_http()
+        r = await c.patch(
+            f"{self._rest}/{table}",
+            params=filters,
+            json=patch,
+            headers=self._rest_headers(prefer="return=representation"),
+            timeout=30.0,
+        )
         if r.status_code >= 400:
             self._raise(r, f"update {table}")
         return r.json()
@@ -90,8 +134,10 @@ class ServiceClient:
         """Exact row count for the given filters (via Content-Range header)."""
         headers = self._rest_headers(prefer="count=exact")
         q = {**params, "select": "id", "limit": "1"}
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            r = await c.get(f"{self._rest}/{table}", params=q, headers=headers)
+        c = _get_http()
+        r = await c.get(
+            f"{self._rest}/{table}", params=q, headers=headers, timeout=30.0
+        )
         if r.status_code >= 400:
             self._raise(r, f"count {table}")
         cr = r.headers.get("content-range", "")
@@ -103,22 +149,26 @@ class ServiceClient:
         return len(r.json())
 
     async def delete(self, table: str, filters: dict[str, str]) -> list[dict]:
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            r = await c.request(
-                "DELETE",
-                f"{self._rest}/{table}",
-                params=filters,
-                headers=self._rest_headers(prefer="return=representation"),
-            )
+        c = _get_http()
+        r = await c.request(
+            "DELETE",
+            f"{self._rest}/{table}",
+            params=filters,
+            headers=self._rest_headers(prefer="return=representation"),
+            timeout=30.0,
+        )
         if r.status_code >= 400:
             self._raise(r, f"delete {table}")
         return r.json()
 
     async def rpc(self, fn: str, args: dict[str, Any]) -> Any:
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            r = await c.post(
-                f"{self._rest}/rpc/{fn}", json=args, headers=self._rest_headers()
-            )
+        c = _get_http()
+        r = await c.post(
+            f"{self._rest}/rpc/{fn}",
+            json=args,
+            headers=self._rest_headers(),
+            timeout=30.0,
+        )
         if r.status_code >= 400:
             self._raise(r, f"rpc {fn}")
         return r.json()
@@ -133,31 +183,37 @@ class ServiceClient:
             "Content-Type": content_type or "application/octet-stream",
             "x-upsert": "true",
         }
-        async with httpx.AsyncClient(timeout=120.0) as c:
-            r = await c.post(
-                f"{self._storage}/object/{bucket}/{path}",
-                content=data,
-                headers=headers,
-            )
+        c = _get_http()
+        r = await c.post(
+            f"{self._storage}/object/{bucket}/{path}",
+            content=data,
+            headers=headers,
+            timeout=120.0,
+        )
         if r.status_code >= 400:
             self._raise(r, f"storage upload {bucket}/{path}")
 
     async def storage_download(self, bucket: str, path: str) -> bytes:
         headers = {"apikey": self._key, "Authorization": f"Bearer {self._key}"}
-        async with httpx.AsyncClient(timeout=120.0) as c:
-            r = await c.get(
-                f"{self._storage}/object/{bucket}/{path}", headers=headers
-            )
+        c = _get_http()
+        r = await c.get(
+            f"{self._storage}/object/{bucket}/{path}",
+            headers=headers,
+            timeout=120.0,
+        )
         if r.status_code >= 400:
             self._raise(r, f"storage download {bucket}/{path}")
         return r.content
 
     async def storage_delete(self, bucket: str, path: str) -> None:
         headers = {"apikey": self._key, "Authorization": f"Bearer {self._key}"}
-        async with httpx.AsyncClient(timeout=60.0) as c:
-            r = await c.request(
-                "DELETE", f"{self._storage}/object/{bucket}/{path}", headers=headers
-            )
+        c = _get_http()
+        r = await c.request(
+            "DELETE",
+            f"{self._storage}/object/{bucket}/{path}",
+            headers=headers,
+            timeout=60.0,
+        )
         # 404 is fine (already gone); only raise on other errors.
         if r.status_code >= 400 and r.status_code != 404:
             self._raise(r, f"storage delete {bucket}/{path}")

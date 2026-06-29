@@ -14,11 +14,16 @@ import {
 import {
   createSession,
   deleteSession,
-  getSession,
   patchSession,
   type SpaceTarget,
 } from "@/lib/api";
-import { sessionKey, sessionsKey, useSessions } from "@/lib/queries";
+import {
+  prefetchSessionData,
+  sessionsKey,
+  useSessions,
+} from "@/lib/queries";
+import { isRealId, makeOptimisticId } from "@/lib/ids";
+import { SkeletonList } from "@/components/ui/Skeleton";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type { SessionRow } from "@/lib/types";
 
@@ -36,41 +41,62 @@ export function SessionList({ target }: { target: SpaceTarget }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
 
-  // 목록 로드 후 선택된 세션이 없으면 첫 세션 자동 선택
+  // 목록 로드 후 선택된 세션이 없으면 첫 "실제" 세션 자동 선택.
+  // 08 F: 낙관(미확정) 행의 임시 id가 active로 잡혀 채팅/영속 경로에 새지 않도록
+  // isRealId로 거른다(D63).
   useEffect(() => {
     if (!activeSessionId && sessions && sessions.length > 0) {
-      setActiveSession(sessions[0].id);
+      const firstReal = sessions.find((s) => isRealId(s.id));
+      if (firstReal) setActiveSession(firstReal.id);
     }
   }, [sessions, activeSessionId, setActiveSession]);
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: sessionsKey(target) });
 
-  // hover 시 세션 상세 선반입(D24) — 클릭 시 이미 캐시
+  // hover 시 세션 진입 데이터 선반입(D24/08 G) — 클릭 시 이미 캐시.
+  // 세션 상세뿐 아니라 그 세션의 파일링크·그래프배치까지 한 번에 prefetch.
   const prefetch = (id: string) => {
-    void queryClient.prefetchQuery({
-      queryKey: sessionKey(id),
-      queryFn: () => getSession(id),
-      staleTime: 30 * 1000,
-    });
+    if (!isRealId(id)) return;
+    prefetchSessionData(queryClient, id);
   };
 
+  // 08 F: "새 대화"도 낙관 표준 — 클릭 즉시 pending 행을 상단에 띄우고,
+  // 서버 확정 시 실데이터로 교체(active 전환은 real id 도착 후) / 실패 시 롤백.
+  // active 전환을 real 도착 후로 미루는 이유: 임시 session id가 채팅 전송에 새면
+  // 비-UUID session_id로 400이 난다(D63 취지).
   const handleNew = async () => {
+    const tempId = makeOptimisticId("session");
+    const optimistic: SessionRow = {
+      id: tempId,
+      title: null,
+      root_node_id: null,
+      current_head_id: null,
+      _pending: true,
+    };
+    queryClient.setQueryData<SessionRow[]>(sessionsKey(target), (old) => [
+      optimistic,
+      ...(old ?? []),
+    ]);
     setCreating(true);
     try {
       const session = await createSession(target);
-      await invalidate();
+      await invalidate(); // 실데이터로 교체(temp 제거)
       setActiveSession(session.id);
     } catch {
-      /* 실패 무시 */
+      // 롤백: 낙관 행 제거
+      queryClient.setQueryData<SessionRow[]>(sessionsKey(target), (old) =>
+        (old ?? []).filter((s) => s.id !== tempId),
+      );
     } finally {
       setCreating(false);
     }
   };
 
-  // 세션 선택: 현재 세션이면 no-op(activeNodeId가 null로 초기화돼 빈 화면 되는 버그 방지)
+  // 세션 선택: 현재 세션이면 no-op(activeNodeId가 null로 초기화돼 빈 화면 되는 버그 방지).
+  // 낙관(미확정) 행은 선택 불가(임시 id 차단).
   const handleSelect = (id: string) => {
-    if (id === activeSessionId) return;
+    if (id === activeSessionId || !isRealId(id)) return;
     setActiveSession(id);
   };
 
@@ -80,31 +106,45 @@ export function SessionList({ target }: { target: SpaceTarget }) {
     setEditTitle(s.title ?? "");
   };
 
+  // 08 F: 이름변경도 낙관 — 즉시 제목 반영 후 서버 확정 / 실패 시 롤백.
   const saveRename = async (id: string) => {
     const title = editTitle.trim();
     setEditingId(null);
     if (!title) return;
+    const prev = queryClient.getQueryData<SessionRow[]>(sessionsKey(target));
+    queryClient.setQueryData<SessionRow[]>(sessionsKey(target), (old) =>
+      (old ?? []).map((s) => (s.id === id ? { ...s, title } : s)),
+    );
     try {
       await patchSession(id, title);
       await invalidate();
     } catch {
-      /* 무시 */
+      if (prev) queryClient.setQueryData(sessionsKey(target), prev); // 롤백
     }
   };
 
+  // 08 F: 삭제도 낙관 — 즉시 목록에서 제거 + active 이동 후 서버 확정 / 실패 시 롤백.
   const handleDelete = async (s: SessionRow) => {
     setMenuId(null);
     if (!window.confirm(`"${s.title?.trim() || "새 대화"}" 대화를 삭제할까요?`))
       return;
+    const prev = queryClient.getQueryData<SessionRow[]>(sessionsKey(target));
+    const prevActive = activeSessionId; // 실패 시 선택 상태도 원복
+    queryClient.setQueryData<SessionRow[]>(sessionsKey(target), (old) =>
+      (old ?? []).filter((x) => x.id !== s.id),
+    );
+    if (s.id === activeSessionId) {
+      const remaining = (sessions ?? []).filter(
+        (x) => x.id !== s.id && isRealId(x.id),
+      );
+      setActiveSession(remaining[0]?.id ?? null);
+    }
     try {
       await deleteSession(s.id);
-      if (s.id === activeSessionId) {
-        const remaining = (sessions ?? []).filter((x) => x.id !== s.id);
-        setActiveSession(remaining[0]?.id ?? null);
-      }
       await invalidate();
     } catch {
-      /* 무시 */
+      if (prev) queryClient.setQueryData(sessionsKey(target), prev); // 롤백
+      setActiveSession(prevActive); // 선택 상태 롤백
     }
   };
 
@@ -128,7 +168,7 @@ export function SessionList({ target }: { target: SpaceTarget }) {
 
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-3">
         {isLoading ? (
-          <p className="px-2 py-3 text-sm text-fg-muted">불러오는 중…</p>
+          <SkeletonList rows={5} className="px-1 py-2" />
         ) : isError ? (
           <p className="px-2 py-3 text-sm text-danger">
             세션을 불러오지 못했습니다.
@@ -142,6 +182,17 @@ export function SessionList({ target }: { target: SpaceTarget }) {
             {sessions.map((s) => {
               const active = s.id === activeSessionId;
               const editing = s.id === editingId;
+              // 08 F: 낙관(미확정) 행 — 반투명·비상호작용. 서버 확정 시 실행으로 교체.
+              if (s._pending) {
+                return (
+                  <li key={s.id} className="relative">
+                    <div className="flex animate-pulse items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg opacity-40">
+                      <MessageSquare size={14} className="shrink-0 opacity-70" />
+                      <span className="truncate">새 대화</span>
+                    </div>
+                  </li>
+                );
+              }
               return (
                 <li key={s.id} className="group relative">
                   {editing ? (

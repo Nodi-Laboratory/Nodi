@@ -68,6 +68,8 @@ export interface SessionRow {
   current_head_id: string | null;
   created_at?: string;
   updated_at?: string;
+  /** 08 F: 낙관(미확정) 세션 행 — "새 대화" 클릭 즉시 표시, 서버 확정 전. */
+  _pending?: boolean;
 }
 
 export interface NodeRow {
@@ -283,6 +285,8 @@ export interface FileRow {
   session_id?: string | null;
   position_x?: number | null;
   position_y?: number | null;
+  /** 08 F: 낙관 배치(placement) 미확정 — 캔버스가 파일 노드를 반투명 pending으로 렌더. */
+  _pending?: boolean;
 }
 
 /** 시각적 RAG: 파일↔노드 링크 (GET /sessions/{id}/file-links). */
