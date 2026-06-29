@@ -239,6 +239,12 @@ async def chat_stream(
                             "parent_id": node.get("parent_id"),
                             "label": node.get("label"),
                             "tags": tags,
+                            # D57: surface the same reference provenance we just
+                            # persisted so the "참조 브랜치" chips/popup show
+                            # immediately (before the trailing session refetch),
+                            # matching what NODE_SELECT now reads back. [] when
+                            # this turn referenced no other branch.
+                            "reference_sources": comparison_sources or [],
                         },
                         "current_head_id": node["id"],
                         "root_node_id": existing_root or node["id"],
