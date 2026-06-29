@@ -31,6 +31,8 @@ interface Props {
   onRemoveFileLink: (fileId: string, nodeId: string) => void;
   onConnectFileToNode: (fileId: string, nodeId: string) => void;
   onDeleteFile: (fileId: string) => void;
+  onRemoveFromGraph: (fileId: string) => void;
+  onPlaceFile: (fileId: string, x: number, y: number) => void;
   onFilePosition: (fileId: string, x: number, y: number) => void;
   onDropUpload: (files: File[], x: number, y: number) => void;
   onPersistPositions: (

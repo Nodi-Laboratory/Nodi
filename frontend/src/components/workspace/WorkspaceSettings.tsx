@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Settings, X } from "lucide-react";
 import { useWorkspacePrefs } from "@/store/useWorkspacePrefs";
+import { useNavigatorDefaults } from "@/lib/queries";
 
 /**
  * D47: 워크스페이스 우상단 톱니 → 개인 설정 팝오버.
@@ -26,6 +27,14 @@ export function WorkspaceSettings() {
   const resetNavigatorCount = useWorkspacePrefs((s) => s.resetNavigatorCount);
   const navigatorGateK = useWorkspacePrefs((s) => s.navigatorGateK);
   const setNavigatorGateK = useWorkspacePrefs((s) => s.setNavigatorGateK);
+
+  // D55b: 서버 유효 기본값(관리자 기본). 미커스터마이즈면 이 숫자를 그대로 표시한다.
+  const { data: defaults } = useNavigatorDefaults();
+  // 표시 숫자: 커스터마이즈됨 → 사용자 값, 아니면 서버 기본(로딩 전엔 클라 fallback).
+  const shownCount = navigatorCountCustomized
+    ? navigatorCount
+    : defaults?.question_count ?? navigatorCount;
+  const shownGateK = navigatorGateK ?? defaults?.gate_k;
 
   // 바깥 클릭으로 닫기
   useEffect(() => {
@@ -109,12 +118,12 @@ export function WorkspaceSettings() {
                       min={1}
                       max={5}
                       step={1}
-                      value={navigatorCount}
+                      value={shownCount}
                       onChange={(e) => setNavigatorCount(Number(e.target.value))}
                       className="w-28 accent-[#e0a32e]"
                     />
                     <span className="w-8 text-right text-xs font-medium text-fg">
-                      {navigatorCountCustomized ? navigatorCount : "기본"}
+                      {shownCount}
                     </span>
                   </div>
                 </div>
@@ -130,8 +139,7 @@ export function WorkspaceSettings() {
                     type="number"
                     min={1}
                     max={20}
-                    value={navigatorGateK ?? ""}
-                    placeholder="기본"
+                    value={shownGateK ?? ""}
                     onChange={(e) => {
                       const v = e.target.value.trim();
                       setNavigatorGateK(v === "" ? undefined : Number(v));
@@ -170,13 +178,14 @@ function Toggle({
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors ${
+        className={`relative mt-0.5 h-5 w-10 shrink-0 rounded-full transition-colors ${
           checked ? "bg-accent-deep" : "bg-fg-muted/40"
         }`}
       >
+        {/* D55a: thumb를 명시 좌표(left)로 이동 — translate 누적/클리핑 제거. */}
         <span
-          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-            checked ? "translate-x-4" : "translate-x-0.5"
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-[left] ${
+            checked ? "left-[calc(100%-1.125rem)]" : "left-0.5"
           }`}
         />
       </button>

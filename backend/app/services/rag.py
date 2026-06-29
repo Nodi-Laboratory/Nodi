@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from typing import Any
 
 from ..config import get_settings
@@ -33,46 +32,6 @@ def _vector_literal(vec: list[float]) -> str:
 def _file_basename(storage_path: str | None) -> str:
     """Filename from a "{owner}/{file_id}/{name}" storage path."""
     return (storage_path or "").split("/")[-1]
-
-
-# --- D28: runtime cutoff override (app_settings), best-effort + short cache ----
-_CUTOFF_CACHE: dict[str, Any] = {"value": None, "fetched_at": 0.0}
-_CUTOFF_TTL_SECONDS = 30.0
-
-
-async def _suggestion_cutoff(client: UserClient) -> float:
-    """Cosine-distance cutoff for file suggestions.
-
-    Reads `file_suggestion_max_distance` from app_settings at request time
-    (admin-tunable, D28), falling back to the static config default. Best-effort
-    and cached briefly. NOTE: app_settings is admin-RLS; for non-admin callers
-    the read yields nothing and the config default applies (by design).
-    """
-    default = float(settings.file_suggestion_max_distance)
-    now = time.monotonic()
-    if (
-        _CUTOFF_CACHE["value"] is not None
-        and now - _CUTOFF_CACHE["fetched_at"] < _CUTOFF_TTL_SECONDS
-    ):
-        return _CUTOFF_CACHE["value"]
-    value = default
-    try:
-        rows = await client.select(
-            "app_settings",
-            {
-                "key": "eq.file_suggestion_max_distance",
-                "select": "value",
-                "limit": "1",
-            },
-        )
-        if rows:
-            raw = rows[0].get("value")
-            value = float(raw)
-    except Exception:  # noqa: BLE001 - tuning is optional, fall back to config
-        value = default
-    _CUTOFF_CACHE["value"] = value
-    _CUTOFF_CACHE["fetched_at"] = now
-    return value
 
 
 async def linked_file_ids(
@@ -228,7 +187,12 @@ async def build_rag_context(
 
 
 def _branch_query_text(chain: list[dict[str, Any]]) -> str:
-    """Use the tail of the branch (recent Q&A) as the suggestion query."""
+    """Use the tail of the branch (recent Q&A) as the RAG-injection query.
+
+    RAG-INJECTION ONLY (build_rag_context path): it searches files already LINKED
+    to the branch, so blending the whole chain is safe (low false-positive risk).
+    NOTE: file SUGGESTION no longer uses this — see _suggestion_query_text (D56).
+    """
     parts: list[str] = []
     for n in reversed(chain):
         if n.get("is_navigator"):
@@ -241,6 +205,37 @@ def _branch_query_text(chain: list[dict[str, Any]]) -> str:
             break
     text = "\n".join(reversed(parts))
     return text[: settings.file_suggestion_query_chars]
+
+
+# D56: char cap for the focus-centred SUGGESTION query (small on purpose).
+SUGGEST_QUERY_CHARS = settings.file_suggestion_suggest_query_chars
+
+
+def _suggestion_query_text(chain: list[dict[str, Any]]) -> str:
+    """Focus-centred query for FILE SUGGESTIONS (D56).
+
+    Root cause of unrelated-branch suggestions: the old query blended the WHOLE
+    ancestor chain (root->focus) into one ~1500-char embedding, so a topic touched
+    anywhere upstream (whose file exists) sat near that file even after the focus
+    moved on. Here we use the FOCUS node's question as the main signal, add only
+    the immediate parent's question as weak context, and at most the head 200
+    chars of the focus answer — capped small (~450). Distant ancestors are
+    dropped, so the query reflects "what's being asked right now", not an average
+    of the whole branch.
+    """
+    reals = [n for n in chain if not n.get("is_navigator")]
+    if not reals:
+        return ""
+    focus = reals[-1]
+    parts: list[str] = [
+        (focus.get("question") or "").strip(),
+        (focus.get("answer") or "").strip()[:200],
+    ]
+    if len(reals) >= 2:
+        # Weak parent context (question only) ahead of the focus signal.
+        parts.insert(0, (reals[-2].get("question") or "").strip())
+    text = "\n".join(p for p in parts if p)
+    return text[:SUGGEST_QUERY_CHARS]
 
 
 # --- D48: conservative greeting / small-talk stoplist -----------------------
@@ -345,9 +340,11 @@ async def suggest_files(
         if not files:
             return []
         by_id = {f["id"]: f for f in files}
-        query = _branch_query_text(chain)
+        # D56: focus-centred query (NOT the whole-chain _branch_query_text) so
+        # unrelated ancestor topics no longer pull in their files.
+        query = _suggestion_query_text(chain)
         # D48 content gate (relaxed). Two cheap, conservative pre-filters only;
-        # PRECISION is owned by the distance cutoff (0.50) + margin (0.05) below.
+        # PRECISION is owned by the suggestion-only distance cutoff + margin below.
         #  1) hard floor: skip empty / whitespace-only branch queries (min 10).
         #  2) greeting stoplist: skip when the branch's QUESTIONS are pure
         #     greetings/small-talk (covers greetings whose long answer would
@@ -377,10 +374,12 @@ async def suggest_files(
                     "sample": (c.get("chunk_text") or "")[:300],
                     "kind": by_id[fid].get("kind"),
                 }
-        # Only suggest genuinely-related files (D28): cosine-distance cutoff
-        # (admin-tunable) + a margin gate so only CONFIDENT matches surface.
-        max_distance = await _suggestion_cutoff(client)
-        margin = float(settings.file_suggestion_margin)
+        # Only suggest genuinely-related files. D56: use the SUGGESTION-ONLY
+        # cutoff/margin (config, default 0.38/0.05) — STRICTER and decoupled from
+        # the older shared 0.50 cutoff, so proposals require a clearly-related top
+        # match. Borderline candidates are not proposed.
+        max_distance = float(settings.file_suggestion_suggest_max_distance)
+        margin = float(settings.file_suggestion_suggest_margin)
         ranked = sorted(
             (b for b in best.values() if b["distance"] <= max_distance),
             key=lambda x: x["distance"],

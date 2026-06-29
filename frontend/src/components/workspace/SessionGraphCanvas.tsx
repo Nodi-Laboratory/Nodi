@@ -10,6 +10,7 @@ import {
   Upload,
   Link2,
   Trash2,
+  EyeOff,
 } from "lucide-react";
 import type { FileLink, FileRow, NodeRow } from "@/lib/types";
 import type { ProvisionalReplace } from "@/lib/useWorkspaceChat";
@@ -72,9 +73,13 @@ interface Props {
   onRemoveFileLink: (fileId: string, nodeId: string) => void;
   /** D22: 파일 노드 우클릭→추적선→분기 노드 클릭으로 RAG 연결. */
   onConnectFileToNode: (fileId: string, nodeId: string) => void;
-  /** D22: 파일 노드 삭제. */
+  /** D22: 파일 노드 삭제(파일 자체). */
   onDeleteFile: (fileId: string) => void;
-  /** 파일 노드 좌표 영속(D13/D20). */
+  /** D58: 그래프에서 제거(placement 삭제, 파일·RAG링크 유지). */
+  onRemoveFromGraph: (fileId: string) => void;
+  /** D58: 좌측 목록을 캔버스에 드롭 → 그 좌표에 placement 생성. */
+  onPlaceFile: (fileId: string, x: number, y: number) => void;
+  /** 파일 노드 좌표 영속(D13/D20 → D58 placement PATCH). */
   onFilePosition: (fileId: string, x: number, y: number) => void;
   /** OS 파일 드롭 업로드(D16). 좌표는 그래프 좌표. */
   onDropUpload: (files: File[], x: number, y: number) => void;
@@ -423,6 +428,11 @@ export default function SessionGraphCanvas(props: Props) {
       if (tempPos) {
         posRef.current.set(lastReplace.realId, { x: tempPos.x, y: tempPos.y });
         posRef.current.delete(lastReplace.tempId);
+        // D52(보강): 승계한 real 좌표를 1회 영속(유효 UUID). 이전엔 캐시에만 남아
+        // 새로고침 시 좌표가 풀리던 부수버그를 함께 해소.
+        pr.current.onPersistPositions([
+          { node_id: lastReplace.realId, x: tempPos.x, y: tempPos.y },
+        ]);
       }
       animateRealId = lastReplace.realId;
     }
@@ -470,8 +480,11 @@ export default function SessionGraphCanvas(props: Props) {
 
     if (forceLayout) {
       forceLayoutRef.current = false;
+      // D52(소스 가드): provisional 노드는 영속에서 제외(api.ts 싱크 가드와 이중 방어).
       pr.current.onPersistPositions(
-        allNodes.map((d) => ({ node_id: d.data.data.id, x: d.x, y: d.y })),
+        allNodes
+          .filter((d) => !d.data.data._provisional)
+          .map((d) => ({ node_id: d.data.data.id, x: d.x, y: d.y })),
       );
     }
 
@@ -593,6 +606,16 @@ export default function SessionGraphCanvas(props: Props) {
         sel.select<SVGPathElement>("path.fl-vis").attr("d", path);
         sel.select<SVGPathElement>("path.fl-hit").attr("d", path);
       });
+
+    // D53②: 부모 드래그 시 회색 네비 버튼을 부모 현재좌표로 재배치(노드와 동일 프레임).
+    const redrawNavBtns = (moved: Set<string>) =>
+      navToggleLayer
+        ?.selectAll<SVGGElement, { parentId: string }>("g.navbtn")
+        .filter((b) => moved.has(b.parentId))
+        .attr("transform", (b) => {
+          const p = posRef.current.get(b.parentId);
+          return p ? `translate(${p.x + R + 6},${p.y + R + 6})` : "";
+        });
     const flSel = connLayer
       .selectAll<SVGGElement, FileLink>("g.fileconn")
       .data(visibleLinks, (d) => `${d.file_id}->${d.target_node_id}`);
@@ -715,12 +738,17 @@ export default function SessionGraphCanvas(props: Props) {
         redrawLinks();
         redrawConnections();
         redrawFileLines();
+        redrawNavBtns(movedSet);
       })
       .on("end", function (event, d) {
         const s = d as unknown as { _moved?: boolean };
         if (s._moved) {
           // 이동: 서브트리 좌표 영속.
-          const subtreeIds = d.descendants().map((n) => n.data.data.id);
+          // D52(소스 가드): provisional 노드는 영속에서 제외(api.ts 싱크 가드와 이중 방어).
+          const subtreeIds = d
+            .descendants()
+            .filter((n) => !n.data.data._provisional)
+            .map((n) => n.data.data.id);
           debouncedPersist(
             subtreeIds
               .map((id) => {
@@ -1048,17 +1076,20 @@ export default function SessionGraphCanvas(props: Props) {
 
     redrawFileLines();
 
-    // ── D40: collapse된 부모의 회색 원형 버튼(네비게이터 개수 배지) ──
+    // ── D40/D53: 성숙한 부모의 네비게이터 토글 버튼(양방향) ──
+    // D53①: collapse/expand 상태와 무관하게 "성숙한 부모"면 항상 렌더하고,
+    //        collapsed 플래그로 모양·툴팁을 분기해 접기 어포던스를 항상 제공한다.
     interface NavBtn {
       parentId: string;
       count: number;
+      collapsed: boolean;
     }
     const navBtns: NavBtn[] = [];
-    // D51: off면 회색 재펼침 버튼도 생략(숨긴 노드를 펼칠 진입점 자체를 두지 않음).
+    // D51/D60: off면 버튼 자체 생략(숨긴 노드를 펼칠 진입점을 두지 않음).
     if (navigatorEnabled) {
       for (const [pid, count] of navChildCount) {
-        if (count > 0 && effCollapsed(pid) && nodeById.has(pid)) {
-          navBtns.push({ parentId: pid, count });
+        if (count > 0 && hasRealChild.has(pid) && nodeById.has(pid)) {
+          navBtns.push({ parentId: pid, count, collapsed: effCollapsed(pid) });
         }
       }
     }
@@ -1074,9 +1105,8 @@ export default function SessionGraphCanvas(props: Props) {
     nbEnter.append("title");
     nbEnter
       .append("circle")
+      .attr("class", "nb-circle")
       .attr("r", 9)
-      .attr("fill", C.navCollapse)
-      .attr("stroke", "#fff")
       .attr("stroke-width", 1.5);
     nbEnter
       .append("text")
@@ -1087,17 +1117,44 @@ export default function SessionGraphCanvas(props: Props) {
       .style("font-weight", "700")
       .style("pointer-events", "none")
       .attr("fill", "#fff");
+    // 펼침 상태의 접기 어포던스(chevron-up). collapsed면 숨김.
+    nbEnter
+      .append("path")
+      .attr("class", "nb-chevron")
+      .attr("d", "M-4,2 L0,-2.5 L4,2")
+      .attr("fill", "none")
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 2)
+      .attr("stroke-linecap", "round")
+      .attr("stroke-linejoin", "round")
+      .style("pointer-events", "none");
     const nbMerged = nbEnter.merge(nbSel);
     nbMerged.each(function (b) {
       const pp = posRef.current.get(b.parentId);
       const sel2 = d3.select(this);
       if (pp) sel2.attr("transform", `translate(${pp.x + R + 6},${pp.y + R + 6})`);
-      sel2.select("text.nb-count").text(String(b.count));
-      sel2.select("title").text(`추천 질문 ${b.count}개 — 클릭하면 펼칩니다`);
+      // collapsed: 채운 회색 원 + 개수 배지(펼치기). expanded: 윤곽 원 + chevron-up(접기).
+      sel2
+        .select("circle.nb-circle")
+        .attr("fill", b.collapsed ? C.navCollapse : C.navFill)
+        .attr("stroke", b.collapsed ? "#fff" : C.navCollapse);
+      const countEl = sel2.select("text.nb-count").text(String(b.count));
+      const chevEl = sel2
+        .select("path.nb-chevron")
+        .attr("stroke", b.collapsed ? "#fff" : C.navCollapse);
+      countEl.style("display", b.collapsed ? "inline" : "none");
+      chevEl.style("display", b.collapsed ? "none" : "inline");
+      sel2
+        .select("title")
+        .text(
+          b.collapsed
+            ? `추천 질문 ${b.count}개 — 클릭하면 펼칩니다`
+            : "추천 질문 접기",
+        );
     });
     nbMerged.on("click", function (event, b) {
       event.stopPropagation();
-      // 기본 휴리스틱(실+네비 동시) 기준으로 토글 → 펼침.
+      // 성숙한 부모 기본(collapse 휴리스틱=true) 기준으로 양방향 토글.
       toggleNavParent(b.parentId, true);
     });
   }, [
@@ -1173,11 +1230,16 @@ export default function SessionGraphCanvas(props: Props) {
     setReorderNonce((n) => n + 1);
   };
 
-  // ── 드래그&드롭 업로드(D16) ──
+  // ── 드래그&드롭(D16 OS 업로드 + D58 좌측 목록→그래프 배치) ──
   const onDragOver = (e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes("Files")) {
+    const types = e.dataTransfer.types;
+    // D58: 내부 자료 드래그(좌측 목록) 또는 OS 파일 드롭 둘 다 드롭 허용.
+    if (
+      types.includes("application/x-nodi-file") ||
+      types.includes("Files")
+    ) {
       e.preventDefault();
-      if (!dropActive) setDropActive(true);
+      if (types.includes("Files") && !dropActive) setDropActive(true);
     }
   };
   const onDragLeave = (e: React.DragEvent) => {
@@ -1186,9 +1248,15 @@ export default function SessionGraphCanvas(props: Props) {
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDropActive(false);
+    const p = toGraph(e.clientX, e.clientY);
+    // D58: 내부 자료 드래그면 OS 업로드 대신 placement 생성(드롭 그래프 좌표).
+    const internalFileId = e.dataTransfer.getData("application/x-nodi-file");
+    if (internalFileId) {
+      pr.current.onPlaceFile(internalFileId, p.x, p.y);
+      return;
+    }
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
-    const p = toGraph(e.clientX, e.clientY);
     pr.current.onDropUpload(files, p.x, p.y);
   };
 
@@ -1316,6 +1384,17 @@ export default function SessionGraphCanvas(props: Props) {
             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-accent/30"
           >
             <Link2 size={13} style={{ color: C.file }} /> 자료 연결
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const id = menu.id;
+              setMenu(null);
+              pr.current.onRemoveFromGraph(id);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-accent/30"
+          >
+            <EyeOff size={13} /> 그래프에서 제거
           </button>
           <button
             type="button"

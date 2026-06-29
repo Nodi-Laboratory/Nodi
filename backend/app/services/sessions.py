@@ -18,9 +18,14 @@ from .supabase_client import UserClient
 # Columns returned to the client for tree reconstruction.
 # `connections` (uuid[]) lists other-branch nodes imported into this node, so the
 # frontend can draw memory-link edges (Stage 3a).
+# `reference_sources` (D46/0019) carries which branches an answer referenced this
+# turn — without it the "참조 브랜치" chips/popup never render (D57). `navigator_meta`
+# (D40/0019) holds the navigator question rationale so the click popup survives a
+# session refetch (otherwise it blanks after reload, D57-보강).
 NODE_SELECT = (
     "id,session_id,parent_id,question,answer,label,is_navigator,"
-    "navigator_question,position_x,position_y,connections,rag_sources,created_at"
+    "navigator_question,navigator_meta,position_x,position_y,"
+    "connections,rag_sources,reference_sources,created_at"
 )
 # Same, plus the node's concept tags embedded (PostgREST nested select). RLS
 # (node_tags select via can_access_session, tags select via owner) keeps it to

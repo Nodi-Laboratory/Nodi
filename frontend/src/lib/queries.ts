@@ -6,10 +6,12 @@ import {
   getFileTags,
   getHomeSummary,
   getHomeSuggestions,
+  getNavigatorDefaults,
   getSession,
   listClassMaterials,
   listClassStudents,
   listCooccurrence,
+  listFileGraphNodes,
   listFiles,
   listSessionFileLinks,
   listSessions,
@@ -20,11 +22,13 @@ import {
 } from "@/lib/api";
 import type {
   CooccurrenceRow,
+  FileGraphNode,
   FileLink,
   FileRow,
   FileSuggestion,
   HomeSuggestions,
   HomeSummary,
+  NavigatorDefaults,
   SessionDetail,
   SessionRow,
   TagRow,
@@ -100,6 +104,10 @@ export function fileLinksKey(sessionId: string | null) {
   return ["file-links", sessionId] as const;
 }
 
+export function fileGraphNodesKey(sessionId: string | null) {
+  return ["file-graph-nodes", sessionId] as const;
+}
+
 export function cooccurrenceKey(target: SpaceTarget) {
   return ["cooccurrence", target.space_kind, target.space_ref ?? null] as const;
 }
@@ -140,6 +148,25 @@ export function useSessionFileLinks(sessionId: string | null) {
     queryKey: fileLinksKey(sessionId),
     queryFn: () => listSessionFileLinks(sessionId as string),
     enabled: !!sessionId,
+  });
+}
+
+/**
+ * D58: 현재 세션 그래프에 배치된 자료 노드(placement). 그래프 파일노드의 표시 소스.
+ * 배치된 파일이 임베딩 진행 중이면 2.5초 폴링(진행률 반영).
+ */
+export function useFileGraphNodes(sessionId: string | null) {
+  return useQuery<FileGraphNode[]>({
+    queryKey: fileGraphNodesKey(sessionId),
+    queryFn: () => listFileGraphNodes(sessionId as string),
+    enabled: !!sessionId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const active = data?.some(
+        (p) => p.files && FILE_IN_PROGRESS.has(p.files.status),
+      );
+      return active ? 2500 : false;
+    },
   });
 }
 
@@ -219,5 +246,14 @@ export function useHomeSuggestions() {
   return useQuery<HomeSuggestions>({
     queryKey: ["home", "suggestions"],
     queryFn: () => getHomeSuggestions(),
+  });
+}
+
+/** D55b: 네비게이터 유효 기본값(추천 개수·생성 시점·주기). 거의 안 변하므로 staleTime 길게. */
+export function useNavigatorDefaults() {
+  return useQuery<NavigatorDefaults>({
+    queryKey: ["navigator-defaults"],
+    queryFn: () => getNavigatorDefaults(),
+    staleTime: 10 * 60 * 1000,
   });
 }

@@ -7,8 +7,7 @@ import {
   FileText,
   AlertTriangle,
   CheckCircle2,
-  Link2,
-  X,
+  Plus,
   Trash2,
   RotateCcw,
 } from "lucide-react";
@@ -54,17 +53,14 @@ const STATUS_META: Record<
 export function FilesPanel({
   target,
   fileLinks,
-  linkFileId,
-  onStartLink,
-  onCancelLink,
+  onAddToGraph,
   onRefresh,
   onUpload,
 }: {
   target: SpaceTarget;
   fileLinks: FileLink[];
-  linkFileId: string | null;
-  onStartLink: (fileId: string) => void;
-  onCancelLink: () => void;
+  /** D58: 자료를 현재 세션 그래프에 노드로 추가(placement). */
+  onAddToGraph: (fileId: string) => void;
   onRefresh?: () => void;
   /** D22: 업로드는 현재 세션 id를 붙여 처리(WorkspaceInner). */
   onUpload: (file: File) => Promise<void>;
@@ -171,9 +167,7 @@ export function FilesPanel({
                 key={f.id}
                 file={f}
                 linkCount={fileLinks.filter((l) => l.file_id === f.id).length}
-                linking={linkFileId === f.id}
-                onStartLink={() => onStartLink(f.id)}
-                onCancelLink={onCancelLink}
+                onAddToGraph={() => onAddToGraph(f.id)}
                 onDelete={() => handleDelete(f.id)}
                 onRetry={() => handleRetry(f.id)}
               />
@@ -188,17 +182,13 @@ export function FilesPanel({
 function FileItem({
   file,
   linkCount,
-  linking,
-  onStartLink,
-  onCancelLink,
+  onAddToGraph,
   onDelete,
   onRetry,
 }: {
   file: FileRow;
   linkCount: number;
-  linking: boolean;
-  onStartLink: () => void;
-  onCancelLink: () => void;
+  onAddToGraph: () => void;
   onDelete: () => void;
   onRetry: () => void;
 }) {
@@ -206,7 +196,6 @@ function FileItem({
   const total = file.chunk_total ?? 0;
   const done = file.chunk_done ?? 0;
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-  const canLink = file.status === "indexed";
   const canRetry = file.status === "failed" || file.status === "partial";
 
   const { data: tags } = useFileTags(file.id, file.status === "indexed");
@@ -215,9 +204,14 @@ function FileItem({
 
   return (
     <li
-      className={`rounded-lg border bg-bg-elevated px-2.5 py-2 ${
-        linking ? "border-[#2a7d7a]" : "border-accent-border/30"
-      }`}
+      // D58: 목록 항목을 캔버스로 드래그하면 그 좌표에 그래프 노드(placement) 생성.
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("application/x-nodi-file", file.id);
+        e.dataTransfer.effectAllowed = "copy";
+      }}
+      title="그래프로 드래그해 추가할 수 있어요"
+      className="cursor-grab rounded-lg border border-accent-border/30 bg-bg-elevated px-2.5 py-2 active:cursor-grabbing"
     >
       <div className="flex items-center gap-2">
         {file.status === "indexed" ? (
@@ -283,33 +277,17 @@ function FileItem({
         </div>
       )}
 
-      {/* 액션: 연결 / 재시도 */}
+      {/* 액션: 그래프에 추가 / 재시도 */}
       <div className="mt-1.5 ml-6 flex flex-wrap items-center gap-2">
-        {linking ? (
-          <button
-            type="button"
-            onClick={onCancelLink}
-            className="flex items-center gap-1 rounded-md border border-[#2a7d7a] bg-[#2a7d7a]/10 px-2 py-0.5 text-[11px] font-medium text-[#2a7d7a]"
-          >
-            <X size={11} />
-            그래프에서 노드 선택 중… (취소)
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onStartLink}
-            disabled={!canLink}
-            title={
-              canLink
-                ? "분기에 연결: 그래프에서 노드를 클릭"
-                : "임베딩 완료 후 연결할 수 있어요"
-            }
-            className="flex items-center gap-1 rounded-md border border-accent-border/50 px-2 py-0.5 text-[11px] font-medium text-fg-muted transition-colors hover:text-fg disabled:opacity-50"
-          >
-            <Link2 size={11} />
-            분기에 연결
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onAddToGraph}
+          title="현재 대화 그래프에 자료 노드로 추가(드래그도 가능)"
+          className="flex items-center gap-1 rounded-md border border-[#2a7d7a]/50 px-2 py-0.5 text-[11px] font-medium text-[#2a7d7a] transition-colors hover:bg-[#2a7d7a]/10"
+        >
+          <Plus size={11} />
+          그래프에 추가
+        </button>
         {canRetry && (
           <button
             type="button"

@@ -13,11 +13,13 @@ import type {
   ConnectionResponse,
   CooccurrenceRow,
   CreatedClass,
+  FileGraphNode,
   FileLink,
   FileRow,
   FileSuggestion,
   HomeSuggestions,
   HomeSummary,
+  NavigatorDefaults,
   OverseerDoneEvent,
   Profile,
   SessionDetail,
@@ -132,6 +134,16 @@ export async function deleteSession(id: string): Promise<void> {
       headers: await authHeaders(),
     }),
   );
+}
+
+/** D55b: 네비게이터 유효 기본값(config ⊕ admin override 합성). 비-admin도 읽기 가능. */
+export async function getNavigatorDefaults(): Promise<NavigatorDefaults> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/auth/me/navigator-defaults`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
 }
 
 /** 온보딩 1회 완료 표시(D18). */
@@ -413,6 +425,76 @@ export async function listSessionFileLinks(
   return res.json();
 }
 
+// ── D58/D59: 자료 그래프 배치(placement) ─────────────────────────────
+// 표시 소스. files.session_id 필터를 대체한다(owner-only, user-JWT).
+
+/** 현재 세션 그래프에 배치된 자료 노드 목록(files 메타 조인). */
+export async function listFileGraphNodes(
+  sessionId: string,
+): Promise<FileGraphNode[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+/** 자료를 그래프에 배치(POST). file_id+session_id 멱등 upsert. 좌표 null이면 서버 기본. */
+export async function addFileGraphNode(
+  sessionId: string,
+  fileId: string,
+  x: number | null,
+  y: number | null,
+): Promise<FileGraphNode> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes`, {
+      method: "POST",
+      headers: await authHeaders(true),
+      body: JSON.stringify({
+        file_id: fileId,
+        position_x: x == null ? null : Math.round(x),
+        position_y: y == null ? null : Math.round(y),
+      }),
+    }),
+  );
+  return res.json();
+}
+
+/** 배치 좌표 갱신(PATCH, 드래그 이동). */
+export async function patchFileGraphNode(
+  sessionId: string,
+  fileId: string,
+  x: number,
+  y: number,
+): Promise<FileGraphNode> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes`, {
+      method: "PATCH",
+      headers: await authHeaders(true),
+      body: JSON.stringify({
+        file_id: fileId,
+        position_x: Math.round(x),
+        position_y: Math.round(y),
+      }),
+    }),
+  );
+  return res.json();
+}
+
+/** 그래프에서 자료 제거(DELETE). 파일·RAG링크는 유지. */
+export async function removeFileGraphNode(
+  sessionId: string,
+  fileId: string,
+): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes/${fileId}`, {
+      method: "DELETE",
+      headers: await authHeaders(),
+    }),
+  );
+}
+
 // ── 노드 기억 연결 (Stage 3a) ────────────────────────────────────────
 
 /** target 노드에 source 노드를 기억 연결로 추가. */
@@ -464,18 +546,28 @@ export interface ChatStreamBody {
   navigator?: ChatNavigatorOverride | null;
 }
 
-/** 노드 좌표 일괄 영속(D20). 드래그 종료/재정렬 시 저장. */
+/** 표준 UUID(8-4-4-4-12). */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * 노드 좌표 일괄 영속(D20). 드래그 종료/재정렬 시 저장.
+ * D52: 영속 직전 비-UUID id(provisional:/pending: 등)를 필터링한다. PostgREST가
+ * 비-UUID를 받으면 400→502가 나므로, 단일 방어선으로 모든 호출 경로를 보호한다.
+ * 남은 게 없으면 네트워크 호출 자체를 생략.
+ */
 export async function putNodePositions(
   sessionId: string,
   positions: { node_id: string; x: number; y: number }[],
 ): Promise<void> {
-  if (positions.length === 0) return;
+  const valid = positions.filter((p) => UUID_RE.test(p.node_id));
+  if (valid.length === 0) return;
   await ensureOk(
     await fetch(`${API_BASE}/sessions/${sessionId}/node-positions`, {
       method: "PUT",
       headers: await authHeaders(true),
       body: JSON.stringify({
-        positions: positions.map((p) => ({
+        positions: valid.map((p) => ({
           node_id: p.node_id,
           x: Math.round(p.x),
           y: Math.round(p.y),

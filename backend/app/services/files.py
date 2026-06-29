@@ -352,3 +352,129 @@ async def set_file_position(
             detail="File not found or not yours.",
         )
     return rows[0]
+
+
+# ---------------------------------------------------------------------------
+# Graph-node PLACEMENTS (D58/D59) — display only, decoupled from RAG links.
+#
+# A placement (file_graph_nodes, 0021) means "show this file as a free node on
+# THIS session's graph", with its own coordinates. Independent of file_node_links
+# (RAG): placing a file does NOT make it a RAG source, and RAG retrieval still
+# reads file_node_links ONLY (rag.linked_file_ids — unchanged). One file can be
+# placed on many session graphs. All reads/writes go through the caller's
+# RLS-scoped client (owner-only, fgn_* policies).
+# ---------------------------------------------------------------------------
+PLACEMENT_SELECT = (
+    "id,file_id,session_id,position_x,position_y,created_at,"
+    "files(id,storage_path,mime,kind,status,chunk_total,chunk_done,"
+    "space_kind,space_ref)"
+)
+
+
+async def _owned_session(
+    client: UserClient, owner_id: str, session_id: str
+) -> dict[str, Any]:
+    """Return the session row, requiring the caller to OWN it (not just read it)."""
+    rows = await client.select(
+        "sessions",
+        {
+            "id": f"eq.{session_id}",
+            "select": "id,owner_id,space_kind,space_ref",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found."
+        )
+    if rows[0].get("owner_id") != owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not own this session.",
+        )
+    return rows[0]
+
+
+async def add_placement(
+    client: UserClient,
+    owner_id: str,
+    file_id: str,
+    session_id: str,
+    position_x: float | None,
+    position_y: float | None,
+) -> dict[str, Any]:
+    """Place a file as a node on a session graph (idempotent upsert on
+    file_id+session_id). Caller must own both the file and the session, and they
+    must share the same space (mirrors add_link isolation)."""
+    file_row = await get_file(client, file_id)  # 404 unless accessible (RLS)
+    if file_row.get("owner_id") != owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the file owner can place it.",
+        )
+    session = await _owned_session(client, owner_id, session_id)
+    if (file_row.get("space_kind") != session.get("space_kind")) or (
+        file_row.get("space_ref") != session.get("space_ref")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="File and session must belong to the same space.",
+        )
+    return await client.upsert(
+        "file_graph_nodes",
+        {
+            "file_id": file_id,
+            "session_id": session_id,
+            "owner_id": owner_id,
+            "position_x": position_x,
+            "position_y": position_y,
+        },
+        on_conflict="file_id,session_id",
+    )
+
+
+async def list_placements(
+    client: UserClient, session_id: str
+) -> list[dict[str, Any]]:
+    """Placements on a session graph, with the placed file's display meta joined
+    (status/storage_path/chunk progress/kind) for graph file-node rendering."""
+    return await client.select(
+        "file_graph_nodes",
+        {
+            "session_id": f"eq.{session_id}",
+            "select": PLACEMENT_SELECT,
+            "order": "created_at.asc",
+        },
+    )
+
+
+async def move_placement(
+    client: UserClient,
+    file_id: str,
+    session_id: str,
+    position_x: float | None,
+    position_y: float | None,
+) -> dict[str, Any]:
+    """Update a placement's coordinates after drag (owner only via RLS)."""
+    rows = await client.update(
+        "file_graph_nodes",
+        {"file_id": f"eq.{file_id}", "session_id": f"eq.{session_id}"},
+        {"position_x": position_x, "position_y": position_y},
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Placement not found or not yours.",
+        )
+    return rows[0]
+
+
+async def remove_placement(
+    client: UserClient, file_id: str, session_id: str
+) -> None:
+    """Remove a file from a session graph (placement only — the file itself and
+    any RAG links are untouched; it stays in the space's file list)."""
+    await client.delete(
+        "file_graph_nodes",
+        {"file_id": f"eq.{file_id}", "session_id": f"eq.{session_id}"},
+    )

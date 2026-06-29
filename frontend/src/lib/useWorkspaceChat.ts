@@ -196,6 +196,10 @@ export function useWorkspaceChat(target: SpaceTarget): WorkspaceChat {
               position_y: null,
               created_at: new Date().toISOString(),
               tags: data.node.tags ?? null,
+              // D57: done 이벤트가 실어준 비교참조 출처/네비 근거를 즉시 반영 →
+              // 리페치 전에도 참조 브랜치 칩+팝업이 보인다(이후 invalidate로 재확인).
+              reference_sources: data.node.reference_sources ?? null,
+              navigator_meta: data.node.navigator_meta ?? null,
             };
 
             // D36: 단 한 번의 reconcile — provisional 제거 + real 추가(부분상태 노출 금지).

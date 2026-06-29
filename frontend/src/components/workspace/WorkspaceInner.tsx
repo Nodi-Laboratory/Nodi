@@ -4,21 +4,25 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   addConnection,
+  addFileGraphNode,
   addFileLink,
   createSession,
   deleteFile,
-  patchFilePosition,
+  patchFileGraphNode,
   putNodePositions,
   removeConnection,
+  removeFileGraphNode,
   removeFileLink,
   spaceTargetFromId,
   uploadFile,
 } from "@/lib/api";
 import {
+  fileGraphNodesKey,
   fileLinksKey,
   filesKey,
   sessionKey,
   sessionsKey,
+  useFileGraphNodes,
   useFiles,
   useFileTagsMap,
   useSessionDetail,
@@ -27,7 +31,13 @@ import {
 import { useWorkspaceChat } from "@/lib/useWorkspaceChat";
 import { useResizablePanels } from "@/lib/useResizablePanels";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
-import type { FileLink, NodeRow, SessionDetail } from "@/lib/types";
+import type {
+  FileGraphNode,
+  FileLink,
+  FileRow,
+  NodeRow,
+  SessionDetail,
+} from "@/lib/types";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { SessionList } from "./SessionList";
 import { FilesPanel } from "./FilesPanel";
@@ -167,15 +177,33 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     [activeSessionId],
   );
 
-  // ── 파일(D13/D16): 세션 파일을 그래프 노드로 ──
+  // ── 자료(D58): 좌측 목록은 공간 단위, 그래프 표시는 placement(세션별 배치) 기준 ──
   const { data: spaceFiles = [] } = useFiles(target);
-  const fileNodes = useMemo(
-    () =>
-      activeSessionId
-        ? spaceFiles.filter((f) => f.session_id === activeSessionId)
-        : [],
-    [spaceFiles, activeSessionId],
-  );
+  const { data: placements = [] } = useFileGraphNodes(activeSessionId);
+  // placement + files 메타 조인 → 캔버스가 쓰는 FileRow 형태로 변환(좌표=placement).
+  const fileNodes = useMemo<FileRow[]>(() => {
+    if (!activeSessionId) return [];
+    return placements.map((p) => {
+      const f = spaceFiles.find((sf) => sf.id === p.file_id);
+      const fm = p.files;
+      return {
+        id: p.file_id,
+        kind: fm?.kind ?? f?.kind ?? null,
+        name: f?.name ?? null,
+        filename: f?.filename ?? null,
+        storage_path: fm?.storage_path ?? f?.storage_path ?? null,
+        mime: fm?.mime ?? f?.mime ?? null,
+        size_bytes: f?.size_bytes ?? null,
+        status: fm?.status ?? f?.status ?? "indexed",
+        chunk_total: fm?.chunk_total ?? f?.chunk_total ?? null,
+        chunk_done: fm?.chunk_done ?? f?.chunk_done ?? null,
+        created_at: f?.created_at ?? p.created_at,
+        session_id: activeSessionId,
+        position_x: p.position_x,
+        position_y: p.position_y,
+      } as FileRow;
+    });
+  }, [placements, spaceFiles, activeSessionId]);
 
   // 그래프 파일 노드 툴팁용 태그 맵(indexed 파일만)
   const indexedFileIds = useMemo(
@@ -185,7 +213,6 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
   const fileTags = useFileTagsMap(indexedFileIds);
 
   const { data: fileLinks = [] } = useSessionFileLinks(activeSessionId);
-  const [linkFileId, setLinkFileId] = useState<string | null>(null);
   // D31: 자료 연결 실패 시 짧게 뜨는 토스트(롤백 안내).
   const [linkToast, setLinkToast] = useState<string | null>(null);
 
@@ -195,6 +222,11 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
   const refreshFileLinks = useCallback(() => {
     void queryClient.invalidateQueries({
       queryKey: fileLinksKey(activeSessionId),
+    });
+  }, [queryClient, activeSessionId]);
+  const refreshFileGraphNodes = useCallback(() => {
+    void queryClient.invalidateQueries({
+      queryKey: fileGraphNodesKey(activeSessionId),
     });
   }, [queryClient, activeSessionId]);
 
@@ -272,15 +304,115 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     [insertProvisionalLink, rollbackProvisionalLink, refreshFileLinks],
   );
 
-  // 자료 패널 버튼 경로(파일 선택 → 분기 노드 클릭).
-  const handleLinkTarget = useCallback(
-    async (nodeId: string) => {
-      if (!linkFileId) return;
-      const fileId = linkFileId;
-      setLinkFileId(null);
+  // ── D58: placement 낙관적 렌더(그래프 노드 즉시 표시) ──────────────
+  // 좌표 null이면 캔버스가 head 근처에 자동 배치. 같은 file이 이미 배치돼 있으면 무삽입.
+  const insertProvisionalPlacement = useCallback(
+    (fileId: string, x: number | null, y: number | null): boolean => {
+      if (!activeSessionId) return false;
+      const key = fileGraphNodesKey(activeSessionId);
+      const current = queryClient.getQueryData<FileGraphNode[]>(key) ?? [];
+      if (current.some((p) => p.file_id === fileId)) return false;
+      const f = spaceFiles.find((sf) => sf.id === fileId);
+      const provisional: FileGraphNode = {
+        id: `provisional:${fileId}`,
+        file_id: fileId,
+        session_id: activeSessionId,
+        position_x: x,
+        position_y: y,
+        created_at: new Date().toISOString(),
+        _provisional: true,
+        files: f
+          ? {
+              id: f.id,
+              storage_path: f.storage_path ?? null,
+              mime: f.mime ?? null,
+              kind: f.kind ?? null,
+              status: f.status,
+              chunk_total: f.chunk_total ?? null,
+              chunk_done: f.chunk_done ?? null,
+            }
+          : null,
+      };
+      queryClient.setQueryData<FileGraphNode[]>(key, [...current, provisional]);
+      return true;
+    },
+    [queryClient, activeSessionId, spaceFiles],
+  );
+
+  const rollbackProvisionalPlacement = useCallback(
+    (fileId: string) => {
+      if (!activeSessionId) return;
+      const key = fileGraphNodesKey(activeSessionId);
+      queryClient.setQueryData<FileGraphNode[]>(key, (old) =>
+        (old ?? []).filter((p) => !(p._provisional && p.file_id === fileId)),
+      );
+    },
+    [queryClient, activeSessionId],
+  );
+
+  // 그래프에 배치(placement): 낙관 삽입 → 서버 확정 → (성공)실데이터 / (실패)롤백.
+  const placeFileOptimistic = useCallback(
+    async (fileId: string, x: number | null = null, y: number | null = null) => {
+      if (!activeSessionId) return;
+      const inserted = insertProvisionalPlacement(fileId, x, y);
+      try {
+        await addFileGraphNode(activeSessionId, fileId, x, y);
+        refreshFileGraphNodes();
+      } catch {
+        if (inserted) rollbackProvisionalPlacement(fileId);
+        setLinkToast("그래프에 추가하지 못했습니다.");
+      }
+    },
+    [
+      activeSessionId,
+      insertProvisionalPlacement,
+      rollbackProvisionalPlacement,
+      refreshFileGraphNodes,
+    ],
+  );
+
+  // D59: 제안 "연결" 수락 = 배치(노드 즉시 표시) + file_node_links(RAG) 둘 다(각각 롤백).
+  const handleAcceptSuggestion = useCallback(
+    async (fileId: string, nodeId: string) => {
+      await placeFileOptimistic(fileId);
       await linkFileOptimistic(fileId, nodeId);
     },
-    [linkFileId, linkFileOptimistic],
+    [placeFileOptimistic, linkFileOptimistic],
+  );
+
+  // D58: 좌측 목록 "그래프에 추가" 버튼(head 근처 좌표).
+  const handleAddToGraph = useCallback(
+    (fileId: string) => {
+      void placeFileOptimistic(fileId);
+    },
+    [placeFileOptimistic],
+  );
+
+  // D58: 좌측 목록을 캔버스에 드롭(그래프 좌표에 배치).
+  const handlePlaceFile = useCallback(
+    (fileId: string, x: number, y: number) => {
+      void placeFileOptimistic(fileId, x, y);
+    },
+    [placeFileOptimistic],
+  );
+
+  // D58: 그래프에서 제거(placement 삭제). 파일·RAG링크는 유지.
+  const handleRemoveFromGraph = useCallback(
+    async (fileId: string) => {
+      if (!activeSessionId) return;
+      const key = fileGraphNodesKey(activeSessionId);
+      const prev = queryClient.getQueryData<FileGraphNode[]>(key);
+      queryClient.setQueryData<FileGraphNode[]>(key, (old) =>
+        (old ?? []).filter((p) => p.file_id !== fileId),
+      );
+      try {
+        await removeFileGraphNode(activeSessionId, fileId);
+        refreshFileGraphNodes();
+      } catch {
+        if (prev) queryClient.setQueryData<FileGraphNode[]>(key, prev);
+      }
+    },
+    [activeSessionId, queryClient, refreshFileGraphNodes],
   );
 
   const handleRemoveFileLink = useCallback(
@@ -310,17 +442,20 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     return () => clearTimeout(t);
   }, [linkToast]);
 
-  // 자료 패널 삭제/재시도 후: 파일 목록 + 링크 갱신(그래프 반영)
+  // 자료 패널 삭제/재시도 후: 파일 목록 + 링크 + 배치 갱신(그래프 반영)
   const handleFilesChanged = useCallback(() => {
     refreshFiles();
     refreshFileLinks();
-  }, [refreshFiles, refreshFileLinks]);
+    refreshFileGraphNodes();
+  }, [refreshFiles, refreshFileLinks, refreshFileGraphNodes]);
 
+  // D58: 파일 노드 드래그 이동 = placement 좌표 갱신(PATCH).
   const handleFilePosition = useCallback(
     (fileId: string, x: number, y: number) => {
-      void patchFilePosition(fileId, x, y).catch(() => {});
+      if (!activeSessionId) return;
+      void patchFileGraphNode(activeSessionId, fileId, x, y).catch(() => {});
     },
-    [],
+    [activeSessionId],
   );
 
   // 활성 세션 보장(빈 워크스페이스면 먼저 생성, D22)
@@ -333,17 +468,19 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     return session.id;
   }, [target, queryClient, setActiveSession]);
 
-  // 자료 패널 업로드: 현재 세션 + 노드로 표시(좌표 미지정 → 그래프가 head 근처 배치)
+  // 자료 패널 업로드: 업로드 후 현재 세션 그래프에 placement 생성(head 근처 배치)
   const handlePanelUpload = useCallback(
     async (file: File) => {
       const sid = await ensureSession();
-      await uploadFile(target, file, { sessionId: sid });
+      const f = await uploadFile(target, file, { sessionId: sid });
+      await addFileGraphNode(sid, f.id, null, null).catch(() => {});
       refreshFiles();
+      void queryClient.invalidateQueries({ queryKey: fileGraphNodesKey(sid) });
     },
-    [ensureSession, target, refreshFiles],
+    [ensureSession, target, refreshFiles, queryClient],
   );
 
-  // OS 드래그&드롭 업로드: 세션 보장 + 드롭 좌표
+  // OS 드래그&드롭 업로드: 세션 보장 + 업로드 후 드롭 좌표에 placement 생성
   const handleDropUpload = useCallback(
     async (files: File[], x: number, y: number) => {
       let sid: string;
@@ -354,18 +491,16 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
       }
       for (const file of files) {
         try {
-          await uploadFile(target, file, {
-            sessionId: sid,
-            positionX: x,
-            positionY: y,
-          });
+          const f = await uploadFile(target, file, { sessionId: sid });
+          await addFileGraphNode(sid, f.id, x, y).catch(() => {});
         } catch {
           /* 503 등은 자료 패널 업로드에서 안내 */
         }
       }
       refreshFiles();
+      void queryClient.invalidateQueries({ queryKey: fileGraphNodesKey(sid) });
     },
-    [ensureSession, target, refreshFiles],
+    [ensureSession, target, refreshFiles, queryClient],
   );
 
   // 파일 노드 삭제(D22)
@@ -376,11 +511,12 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
         await deleteFile(fileId);
         refreshFiles();
         refreshFileLinks();
+        refreshFileGraphNodes();
       } catch {
         /* 무시 */
       }
     },
-    [refreshFiles, refreshFileLinks],
+    [refreshFiles, refreshFileLinks, refreshFileGraphNodes],
   );
 
   // ── 브랜치 참조(D15) ──
@@ -464,32 +600,9 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             {spaceLabel}
           </span>
         </h1>
+        {/* D54: 좌·우 접기 토글은 각 사이드바 상단으로 이동. 헤더엔 설정만. */}
         <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={panels.toggleLeft}
-            title={panels.leftCollapsed ? "왼쪽 패널 펼치기" : "왼쪽 패널 접기"}
-            className="flex items-center justify-center rounded-lg border border-accent-border/50 p-1.5 text-fg-muted transition-colors hover:text-fg"
-          >
-            {panels.leftCollapsed ? (
-              <ChevronRight size={16} />
-            ) : (
-              <ChevronLeft size={16} />
-            )}
-          </button>
           <WorkspaceSettings />
-          <button
-            type="button"
-            onClick={panels.toggleRight}
-            title={panels.rightCollapsed ? "오른쪽 패널 펼치기" : "오른쪽 패널 접기"}
-            className="flex items-center justify-center rounded-lg border border-accent-border/50 p-1.5 text-fg-muted transition-colors hover:text-fg"
-          >
-            {panels.rightCollapsed ? (
-              <ChevronLeft size={16} />
-            ) : (
-              <ChevronRight size={16} />
-            )}
-          </button>
         </div>
       </header>
 
@@ -510,13 +623,25 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
               className="flex min-h-0 shrink-0 flex-col border-r border-accent-border/30"
               style={{ width: panels.leftW }}
             >
+              {/* D54: 좌 패널 상단 헤더 스트립 우측에 접기 버튼. */}
+              <div className="flex items-center justify-between border-b border-accent-border/30 px-3 py-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+                  대화 · 자료
+                </span>
+                <button
+                  type="button"
+                  onClick={panels.toggleLeft}
+                  title="왼쪽 패널 접기"
+                  className="flex items-center justify-center rounded-md p-1 text-fg-muted transition-colors hover:text-fg"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+              </div>
               <SessionList target={target} />
               <FilesPanel
                 target={target}
                 fileLinks={fileLinks}
-                linkFileId={linkFileId}
-                onStartLink={setLinkFileId}
-                onCancelLink={() => setLinkFileId(null)}
+                onAddToGraph={handleAddToGraph}
                 onRefresh={handleFilesChanged}
                 onUpload={handlePanelUpload}
               />
@@ -534,7 +659,7 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             referenceNodeIds={referenceNodeIds}
             onToggleTrackMode={toggleTrackMode}
             onClearTracks={clearTracks}
-            onLinkFile={handleLinkFile}
+            onLinkFile={handleAcceptSuggestion}
           />
         </div>
 
@@ -555,6 +680,15 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
               className="relative min-h-0 shrink-0 border-l border-accent-border/30"
               style={{ width: panels.rightW }}
             >
+              {/* D54: 우 그래프 패널 우상단 오버레이 접기 버튼(줌/리센터=우하단과 분리). */}
+              <button
+                type="button"
+                onClick={panels.toggleRight}
+                title="오른쪽 패널 접기"
+                className="absolute right-2 top-2 z-10 flex items-center justify-center rounded-lg border border-accent-border/50 bg-bg/80 p-1.5 text-fg-muted shadow-sm backdrop-blur transition-colors hover:text-fg"
+              >
+                <ChevronRight size={16} />
+              </button>
               <SessionGraph
                 nodes={nodes}
                 rootNodeId={rootNodeId}
@@ -565,11 +699,13 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
                 fileLinks={fileLinks}
                 fileNodes={fileNodes}
                 fileTags={fileTags}
-                fileLinkMode={!!linkFileId}
-                onLinkTarget={handleLinkTarget}
+                fileLinkMode={false}
+                onLinkTarget={() => {}}
                 onRemoveFileLink={handleRemoveFileLink}
                 onConnectFileToNode={handleLinkFile}
                 onDeleteFile={handleDeleteFile}
+                onRemoveFromGraph={handleRemoveFromGraph}
+                onPlaceFile={handlePlaceFile}
                 onFilePosition={handleFilePosition}
                 onDropUpload={handleDropUpload}
                 onPersistPositions={handlePersistPositions}

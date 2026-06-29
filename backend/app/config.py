@@ -91,7 +91,9 @@ class Settings(BaseSettings):
     # Multimodal model for image OCR (text extraction from images / scans).
     ocr_model: str = "gemini-2.5-flash"
     # File-suggestion ("연결할까요?") tuning.
-    file_suggestion_top_n: int = 3  # files proposed
+    # D56: top-N proposed is boostrapped to 1 — suggestions now require a single
+    # CONFIDENT top match (was 3, which surfaced borderline extras).
+    file_suggestion_top_n: int = 1  # files proposed (1..2)
     file_suggestion_search_k: int = 20  # chunks scanned before grouping by file
     file_suggestion_query_chars: int = 1500  # branch text used as the query
     # D48 content gate (relaxed from D37's 40): a SAFETY FLOOR only — block
@@ -109,6 +111,16 @@ class Settings(BaseSettings):
     # this much INSIDE the cutoff (best_distance <= cutoff - margin), i.e. only
     # confident matches — borderline ones are not proposed.
     file_suggestion_margin: float = 0.05
+    # --- D56: SUGGESTION-ONLY gate (decoupled from RAG injection) ---
+    # The proposal query is now the FOCUS node's question (rag._suggestion_query_text),
+    # not the whole ancestor chain, so unrelated ancestors no longer pollute it. A
+    # STRICTER, suggestion-only cutoff (separate from the 0.50 RAG-injection cutoff)
+    # ensures only genuinely-related files surface. Distances are cosine (0=same).
+    file_suggestion_suggest_max_distance: float = 0.38
+    file_suggestion_suggest_margin: float = 0.05
+    # Char cap for the focus-centred suggestion query (focus question + brief
+    # parent context + short focus-answer head). Small on purpose (~400..500).
+    file_suggestion_suggest_query_chars: int = 450
 
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).
