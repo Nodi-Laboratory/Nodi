@@ -29,6 +29,8 @@ import {
   useSessionFileLinks,
 } from "@/lib/queries";
 import { useWorkspaceChat } from "@/lib/useWorkspaceChat";
+import { useOptimisticList } from "@/lib/useOptimisticList";
+import { isRealId } from "@/lib/ids";
 import { useResizablePanels } from "@/lib/useResizablePanels";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type {
@@ -43,6 +45,7 @@ import { SessionList } from "./SessionList";
 import { FilesPanel } from "./FilesPanel";
 import { ChatPanel } from "./ChatPanel";
 import { SessionGraph } from "./SessionGraph";
+import { SkeletonGraph } from "@/components/ui/Skeleton";
 import { NavigatorPopup } from "./NavigatorPopup";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 
@@ -96,7 +99,8 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     setPendingSession,
   ]);
 
-  const { data: detail } = useSessionDetail(activeSessionId);
+  const { data: detail, isLoading: detailLoading } =
+    useSessionDetail(activeSessionId);
   const nodes = useMemo(() => detail?.nodes ?? [], [detail?.nodes]);
   const rootNodeId = detail?.session?.root_node_id ?? null;
 
@@ -143,29 +147,50 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     [queryClient, activeSessionId],
   );
 
+  // 08 F: 기억 연결 추가/삭제도 낙관 표준(즉시 반영 → 서버 확정 → 실패 롤백).
+  // 임시(낙관) 노드끼리는 영속 대상이 아니므로 isRealId로 차단(D63).
   const handleConnectNodes = useCallback(
     async (sourceId: string, targetId: string) => {
       if (!targetId || targetId === sourceId) return;
+      if (!isRealId(sourceId) || !isRealId(targetId)) return;
+      const key = sessionKey(activeSessionId);
+      const prev = queryClient.getQueryData<SessionDetail>(key);
+      const target = prev?.nodes.find((n) => n.id === targetId);
+      // 즉시 낙관 반영(중복 방지)
+      if (target && !(target.connections ?? []).includes(sourceId)) {
+        patchConnections(targetId, [...(target.connections ?? []), sourceId]);
+      }
       try {
         const resp = await addConnection(targetId, sourceId);
-        patchConnections(targetId, resp.connections);
+        patchConnections(targetId, resp.connections); // 실체화(권위값)
       } catch {
-        /* 백엔드가 self/소유권/유효성 검증 */
+        if (prev) queryClient.setQueryData(key, prev); // 롤백
       }
     },
-    [patchConnections],
+    [activeSessionId, queryClient, patchConnections],
   );
 
   const handleRemoveConnection = useCallback(
     async (targetId: string, sourceId: string) => {
+      if (!isRealId(sourceId) || !isRealId(targetId)) return;
+      const key = sessionKey(activeSessionId);
+      const prev = queryClient.getQueryData<SessionDetail>(key);
+      const target = prev?.nodes.find((n) => n.id === targetId);
+      // 즉시 낙관 제거
+      if (target) {
+        patchConnections(
+          targetId,
+          (target.connections ?? []).filter((id) => id !== sourceId),
+        );
+      }
       try {
         const resp = await removeConnection(targetId, sourceId);
         patchConnections(targetId, resp.connections);
       } catch {
-        /* 무시 */
+        if (prev) queryClient.setQueryData(key, prev); // 롤백
       }
     },
-    [patchConnections],
+    [activeSessionId, queryClient, patchConnections],
   );
 
   // ── 좌표 영속(D20) ──
@@ -201,6 +226,8 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
         session_id: activeSessionId,
         position_x: p.position_x,
         position_y: p.position_y,
+        // 08 F: 낙관 배치는 캔버스에서 반투명 pending으로 렌더(서버 확정 시 실체화).
+        _pending: p._provisional ?? false,
       } as FileRow;
     });
   }, [placements, spaceFiles, activeSessionId]);
@@ -230,21 +257,18 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
     });
   }, [queryClient, activeSessionId]);
 
-  // ── D31: 자료 연결선 낙관적 렌더 ──────────────────────────────────
-  // 확정 즉시 provisional FileLink를 캐시에 삽입 → 캔버스가 흐린 선을 바로 그림.
-  // 성공 시 invalidate로 실데이터(선명한 선)로 교체, 실패 시 provisional 제거(롤백).
-  const insertProvisionalLink = useCallback(
-    (fileId: string, nodeId: string): boolean => {
-      const key = fileLinksKey(activeSessionId);
-      const current = queryClient.getQueryData<FileLink[]>(key) ?? [];
-      // 중복 가드: 같은 file→node 링크(실데이터·pending)가 이미 있으면 재삽입 안 함.
-      if (
-        current.some(
-          (l) => l.file_id === fileId && l.target_node_id === nodeId,
-        )
-      ) {
-        return false;
-      }
+  // ── 08 F: 자료 링크·배치 낙관 표준(useOptimisticList) ────────────────
+  // D31/D58의 손짜 낙관 헬퍼(insert/rollback)를 공용 훅으로 통일했다. 라이프사이클은
+  // 동일: 즉시 삽입(캔버스가 흐린 pending으로 렌더) → 서버 확정 → 성공 시 invalidate로
+  // 실체화 / 실패 시 해당 항목만 롤백 + 토스트.
+  const linkList = useOptimisticList<FileLink>(fileLinksKey(activeSessionId));
+  const placementList = useOptimisticList<FileGraphNode>(
+    fileGraphNodesKey(activeSessionId),
+  );
+
+  // 자료 연결: 낙관 삽입 → addFileLink → (성공)실데이터 교체 / (실패)롤백.
+  const linkFileOptimistic = useCallback(
+    async (fileId: string, nodeId: string) => {
       const f = spaceFiles.find((sf) => sf.id === fileId);
       const provisional: FileLink = {
         id: `pending:${fileId}->${nodeId}`,
@@ -266,52 +290,35 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
           : null,
         _pending: true,
       };
-      queryClient.setQueryData<FileLink[]>(key, [provisional, ...current]);
-      return true;
-    },
-    [queryClient, activeSessionId, spaceFiles],
-  );
-
-  const rollbackProvisionalLink = useCallback(
-    (fileId: string, nodeId: string) => {
-      const key = fileLinksKey(activeSessionId);
-      queryClient.setQueryData<FileLink[]>(key, (old) =>
-        (old ?? []).filter(
-          (l) =>
-            !(
-              l._pending &&
-              l.file_id === fileId &&
-              l.target_node_id === nodeId
-            ),
-        ),
-      );
-    },
-    [queryClient, activeSessionId],
-  );
-
-  // 자료 연결 공통: 낙관적 삽입 → 서버 확정 → (성공)실데이터 교체 / (실패)롤백.
-  const linkFileOptimistic = useCallback(
-    async (fileId: string, nodeId: string) => {
-      const inserted = insertProvisionalLink(fileId, nodeId);
+      // 중복 가드: 같은 file→node 링크(실데이터·pending)가 이미 있으면 재삽입 안 함.
+      const inserted = linkList.insert(provisional, {
+        front: true,
+        dup: (cur) =>
+          cur.some((l) => l.file_id === fileId && l.target_node_id === nodeId),
+      });
       try {
         await addFileLink(fileId, nodeId);
         refreshFileLinks();
       } catch {
-        if (inserted) rollbackProvisionalLink(fileId, nodeId);
+        if (inserted) {
+          linkList.removeWhere(
+            (l) =>
+              !!l._pending &&
+              l.file_id === fileId &&
+              l.target_node_id === nodeId,
+          );
+        }
         setLinkToast("자료 연결에 실패했습니다.");
       }
     },
-    [insertProvisionalLink, rollbackProvisionalLink, refreshFileLinks],
+    [linkList, spaceFiles, refreshFileLinks],
   );
 
-  // ── D58: placement 낙관적 렌더(그래프 노드 즉시 표시) ──────────────
-  // 좌표 null이면 캔버스가 head 근처에 자동 배치. 같은 file이 이미 배치돼 있으면 무삽입.
-  const insertProvisionalPlacement = useCallback(
-    (fileId: string, x: number | null, y: number | null): boolean => {
-      if (!activeSessionId) return false;
-      const key = fileGraphNodesKey(activeSessionId);
-      const current = queryClient.getQueryData<FileGraphNode[]>(key) ?? [];
-      if (current.some((p) => p.file_id === fileId)) return false;
+  // 그래프에 배치(placement): 낙관 삽입(좌표 null이면 캔버스가 head 근처 자동 배치) →
+  // addFileGraphNode → (성공)실데이터 / (실패)롤백. 같은 file이 이미 있으면 무삽입.
+  const placeFileOptimistic = useCallback(
+    async (fileId: string, x: number | null = null, y: number | null = null) => {
+      if (!activeSessionId) return;
       const f = spaceFiles.find((sf) => sf.id === fileId);
       const provisional: FileGraphNode = {
         id: `provisional:${fileId}`,
@@ -333,42 +340,22 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
             }
           : null,
       };
-      queryClient.setQueryData<FileGraphNode[]>(key, [...current, provisional]);
-      return true;
-    },
-    [queryClient, activeSessionId, spaceFiles],
-  );
-
-  const rollbackProvisionalPlacement = useCallback(
-    (fileId: string) => {
-      if (!activeSessionId) return;
-      const key = fileGraphNodesKey(activeSessionId);
-      queryClient.setQueryData<FileGraphNode[]>(key, (old) =>
-        (old ?? []).filter((p) => !(p._provisional && p.file_id === fileId)),
-      );
-    },
-    [queryClient, activeSessionId],
-  );
-
-  // 그래프에 배치(placement): 낙관 삽입 → 서버 확정 → (성공)실데이터 / (실패)롤백.
-  const placeFileOptimistic = useCallback(
-    async (fileId: string, x: number | null = null, y: number | null = null) => {
-      if (!activeSessionId) return;
-      const inserted = insertProvisionalPlacement(fileId, x, y);
+      const inserted = placementList.insert(provisional, {
+        dup: (cur) => cur.some((p) => p.file_id === fileId),
+      });
       try {
         await addFileGraphNode(activeSessionId, fileId, x, y);
         refreshFileGraphNodes();
       } catch {
-        if (inserted) rollbackProvisionalPlacement(fileId);
+        if (inserted) {
+          placementList.removeWhere(
+            (p) => !!p._provisional && p.file_id === fileId,
+          );
+        }
         setLinkToast("그래프에 추가하지 못했습니다.");
       }
     },
-    [
-      activeSessionId,
-      insertProvisionalPlacement,
-      rollbackProvisionalPlacement,
-      refreshFileGraphNodes,
-    ],
+    [activeSessionId, placementList, spaceFiles, refreshFileGraphNodes],
   );
 
   // D59: 제안 "연결" 수락 = 배치(노드 즉시 표시) + file_node_links(RAG) 둘 다(각각 롤백).
@@ -400,19 +387,16 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
   const handleRemoveFromGraph = useCallback(
     async (fileId: string) => {
       if (!activeSessionId) return;
-      const key = fileGraphNodesKey(activeSessionId);
-      const prev = queryClient.getQueryData<FileGraphNode[]>(key);
-      queryClient.setQueryData<FileGraphNode[]>(key, (old) =>
-        (old ?? []).filter((p) => p.file_id !== fileId),
-      );
+      const prev = placementList.snapshot(); // 롤백 스냅샷
+      placementList.removeWhere((p) => p.file_id === fileId); // 즉시 낙관 제거
       try {
         await removeFileGraphNode(activeSessionId, fileId);
         refreshFileGraphNodes();
       } catch {
-        if (prev) queryClient.setQueryData<FileGraphNode[]>(key, prev);
+        placementList.restore(prev); // 롤백
       }
     },
-    [activeSessionId, queryClient, refreshFileGraphNodes],
+    [activeSessionId, placementList, refreshFileGraphNodes],
   );
 
   const handleRemoveFileLink = useCallback(
@@ -715,6 +699,12 @@ export function WorkspaceInner({ spaceId }: { spaceId: string }) {
                 onEnterTrack={enterTrack}
                 lastReplace={chat.lastReplace}
               />
+              {/* 08 H: 세션 그래프 cold 로드 중 원형 노드 스켈레톤(빈 화면 방지). */}
+              {activeSessionId && detailLoading && nodes.length === 0 && (
+                <div className="pointer-events-none absolute inset-0 z-[5]">
+                  <SkeletonGraph />
+                </div>
+              )}
               {navigatorPopupNode && (
                 <NavigatorPopup
                   node={navigatorPopupNode}

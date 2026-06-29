@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { ApiError, deleteFile, retryFile, type SpaceTarget } from "@/lib/api";
 import { filesKey, useFileTags, useFiles } from "@/lib/queries";
+import { SkeletonList } from "@/components/ui/Skeleton";
 import type { FileLink, FileRow, FileStatus } from "@/lib/types";
 
 /**
@@ -155,7 +156,7 @@ export function FilesPanel({
 
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-3">
         {isLoading ? (
-          <p className="px-2 py-2 text-xs text-fg-muted">불러오는 중…</p>
+          <SkeletonList rows={3} className="px-1 py-1" />
         ) : !files || files.length === 0 ? (
           <p className="px-2 py-2 text-xs text-fg-muted">
             업로드한 자료가 없습니다.

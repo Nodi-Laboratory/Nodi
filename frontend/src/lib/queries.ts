@@ -1,6 +1,10 @@
 "use client";
 
-import { useQueries, useQuery } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useQueries,
+  useQuery,
+} from "@tanstack/react-query";
 import {
   getFileSuggestions,
   getFileTags,
@@ -39,6 +43,26 @@ import type {
 } from "@/lib/types";
 
 const FILE_IN_PROGRESS = new Set(["uploaded", "splitting", "embedding"]);
+
+/**
+ * 08 G(D67): staleTime 차등 정책. 전역 기본 60s(providers.tsx) 위에 데이터 변화
+ * 빈도에 맞춰 차등화한다 — 자주 안 바뀌는 목록(파일·태그)은 길게, 세션·노드는 중간.
+ * 쓰기 작업은 명시 invalidate로 즉시 갱신하므로 길게 잡아도 정합성은 유지된다.
+ */
+export const STALE = {
+  /** 세션 목록: 생성/이름변경/삭제는 invalidate로 즉시 반영. */
+  sessions: 30 * 1000,
+  /** 세션 상세(노드): 채팅 done 후 invalidate. 재진입 캐시 적중용 중간값. */
+  sessionDetail: 30 * 1000,
+  /** 파일 목록: 거의 안 바뀜(진행 중이면 폴링이 별도로 갱신). */
+  files: 5 * 60 * 1000,
+  /** 파일↔노드 링크: 연결 추가/삭제 시 invalidate. */
+  fileLinks: 60 * 1000,
+  /** 그래프 배치: 드래그/추가/제거 시 invalidate. */
+  fileGraphNodes: 30 * 1000,
+  /** 개념 태그·동시출현: 느리게 누적. */
+  tags: 5 * 60 * 1000,
+} as const;
 
 export function sessionsKey(target: SpaceTarget) {
   return ["sessions", target.space_kind, target.space_ref ?? null] as const;
@@ -127,6 +151,7 @@ export function useSessions(target: SpaceTarget) {
   return useQuery<SessionRow[]>({
     queryKey: sessionsKey(target),
     queryFn: () => listSessions(target),
+    staleTime: STALE.sessions,
   });
 }
 
@@ -136,6 +161,7 @@ export function useSessionDetail(sessionId: string | null) {
     queryKey: sessionKey(sessionId),
     queryFn: () => getSession(sessionId as string),
     enabled: !!sessionId,
+    staleTime: STALE.sessionDetail,
   });
 }
 
@@ -144,6 +170,7 @@ export function useFiles(target: SpaceTarget) {
   return useQuery<FileRow[]>({
     queryKey: filesKey(target),
     queryFn: () => listFiles(target),
+    staleTime: STALE.files,
     refetchInterval: (query) => {
       const data = query.state.data;
       const active = data?.some((f) => FILE_IN_PROGRESS.has(f.status));
@@ -158,6 +185,7 @@ export function useSessionFileLinks(sessionId: string | null) {
     queryKey: fileLinksKey(sessionId),
     queryFn: () => listSessionFileLinks(sessionId as string),
     enabled: !!sessionId,
+    staleTime: STALE.fileLinks,
   });
 }
 
@@ -170,6 +198,7 @@ export function useFileGraphNodes(sessionId: string | null) {
     queryKey: fileGraphNodesKey(sessionId),
     queryFn: () => listFileGraphNodes(sessionId as string),
     enabled: !!sessionId,
+    staleTime: STALE.fileGraphNodes,
     refetchInterval: (query) => {
       const data = query.state.data;
       const active = data?.some(
@@ -232,6 +261,7 @@ export function useTags(target: SpaceTarget) {
   return useQuery<TagRow[]>({
     queryKey: tagsKey(target),
     queryFn: () => listTags(target),
+    staleTime: STALE.tags,
   });
 }
 
@@ -240,6 +270,30 @@ export function useCooccurrence(target: SpaceTarget) {
   return useQuery<CooccurrenceRow[]>({
     queryKey: cooccurrenceKey(target),
     queryFn: () => listCooccurrence(target),
+    staleTime: STALE.tags,
+  });
+}
+
+/**
+ * 08 G(D67): 세션 진입 직전 선반입. 세션 hover/클릭 시 그 세션의 상세(노드)·파일링크·
+ * 그래프배치를 미리 받아 화면 도착 시 이미 채워지게 한다(cold 워터폴 제거).
+ * 임시(낙관) id는 호출하지 않는다(호출부에서 isRealId 가드).
+ */
+export function prefetchSessionData(qc: QueryClient, sessionId: string) {
+  void qc.prefetchQuery({
+    queryKey: sessionKey(sessionId),
+    queryFn: () => getSession(sessionId),
+    staleTime: STALE.sessionDetail,
+  });
+  void qc.prefetchQuery({
+    queryKey: fileLinksKey(sessionId),
+    queryFn: () => listSessionFileLinks(sessionId),
+    staleTime: STALE.fileLinks,
+  });
+  void qc.prefetchQuery({
+    queryKey: fileGraphNodesKey(sessionId),
+    queryFn: () => listFileGraphNodes(sessionId),
+    staleTime: STALE.fileGraphNodes,
   });
 }
 

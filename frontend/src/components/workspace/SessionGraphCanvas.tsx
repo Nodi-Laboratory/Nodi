@@ -16,6 +16,14 @@ import type { FileLink, FileRow, NodeRow } from "@/lib/types";
 import type { ProvisionalReplace } from "@/lib/useWorkspaceChat";
 import { useWorkspacePrefs } from "@/store/useWorkspacePrefs";
 import { buildNested, pathIdSet, buildById, type TreeNode } from "@/lib/tree";
+import {
+  PENDING_LINK_DASH,
+  PENDING_LINK_OPACITY,
+  PENDING_NODE_DASH,
+  PENDING_NODE_OPACITY,
+  SETTLE_TRANSITION_MS,
+  SOLID_LINK_DASH,
+} from "@/lib/loadingTokens";
 
 /**
  * 세션 그래프 뷰 — D3 수직 트리(위→아래) + Wave A 인터랙션(§10, D13~D20).
@@ -646,8 +654,10 @@ export default function SessionGraphCanvas(props: Props) {
     flMerged
       .select<SVGPathElement>("path.fl-vis")
       .attr("d", (l) => fileLinkD(l.file_id, l.target_node_id))
-      .attr("stroke-opacity", (l) => (l._pending ? 0.45 : 1))
-      .attr("stroke-dasharray", (l) => (l._pending ? "3 4" : "4 3"));
+      .attr("stroke-opacity", (l) => (l._pending ? PENDING_LINK_OPACITY : 1))
+      .attr("stroke-dasharray", (l) =>
+        l._pending ? PENDING_LINK_DASH : SOLID_LINK_DASH,
+      );
     flMerged
       .select<SVGPathElement>("path.fl-hit")
       .attr("d", (l) => fileLinkD(l.file_id, l.target_node_id))
@@ -891,19 +901,26 @@ export default function SessionGraphCanvas(props: Props) {
         // D36: provisional 룩(점선)에서 실선으로 부드럽게 전환.
         core
           .interrupt()
-          .attr("stroke-dasharray", "3 3")
+          .attr("stroke-dasharray", PENDING_NODE_DASH)
           .transition()
-          .duration(300)
+          .duration(SETTLE_TRANSITION_MS)
           .attr("stroke-dasharray", null);
       } else {
-        core.attr("stroke-dasharray", isNav || isProv ? "3 3" : null);
+        core.attr(
+          "stroke-dasharray",
+          isNav || isProv ? PENDING_NODE_DASH : null,
+        );
       }
 
       // 그룹 투명도: provisional=0.4, 교체 직후 0.4→1 transition, entering nav는 모션이 처리.
       if (isProv) {
-        g.interrupt().style("opacity", 0.4);
+        g.interrupt().style("opacity", PENDING_NODE_OPACITY);
       } else if (isAnimReal) {
-        g.interrupt().style("opacity", 0.4).transition().duration(300).style("opacity", 1);
+        g.interrupt()
+          .style("opacity", PENDING_NODE_OPACITY)
+          .transition()
+          .duration(SETTLE_TRANSITION_MS)
+          .style("opacity", 1);
       } else if (!enteringNav) {
         g.style("opacity", 1);
       }
@@ -1048,6 +1065,8 @@ export default function SessionGraphCanvas(props: Props) {
       const busy = f.status !== "indexed";
       const fail = f.status === "failed" || f.status === "partial";
       const stroke = fail ? C.fileFail : busy ? C.fileBusy : C.file;
+      // 08 F: 낙관 배치(미확정)는 반투명 pending(서버 확정 시 1.0으로 실체화).
+      s2.style("opacity", f._pending ? PENDING_NODE_OPACITY : 1);
       s2.select("rect.fbox").attr("fill", C.fileFill).attr("stroke", stroke).attr("stroke-width", 1.5);
       s2.selectAll("line.fl").attr("stroke", stroke).attr("stroke-width", 1);
       const nm =

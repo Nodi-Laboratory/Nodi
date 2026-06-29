@@ -9,6 +9,7 @@ import {
   type SpaceTarget,
 } from "@/lib/api";
 import { sessionKey, sessionsKey } from "@/lib/queries";
+import { makeOptimisticId } from "@/lib/ids";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { useWorkspacePrefs } from "@/store/useWorkspacePrefs";
 import type { ChatNavigatorEvent, NodeRow, SessionDetail } from "@/lib/types";
@@ -143,11 +144,9 @@ export function useWorkspaceChat(target: SpaceTarget): WorkspaceChat {
         : undefined;
 
       // D36: 전송 즉시 provisional 노드를 1회 삽입(부모 아래는 캔버스 D38 규칙).
-      const tempId = `provisional:${
-        typeof crypto !== "undefined" && crypto.randomUUID
-          ? crypto.randomUUID()
-          : Math.random().toString(36).slice(2)
-      }`;
+      // 08 F: 임시 id는 공용 makeOptimisticId로 표준화(접두 provisional: 유지 →
+      // 캔버스 _provisional 플래그가 pending 시각을 구동, isRealId 가드가 영속 차단).
+      const tempId = makeOptimisticId("provisional");
       const provisional: NodeRow = {
         id: tempId,
         session_id: sessionId,
