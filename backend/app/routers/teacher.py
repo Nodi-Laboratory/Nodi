@@ -52,6 +52,23 @@ async def list_classes(
     return result if isinstance(result, list) else []
 
 
+@router.get("/classes/overview")
+async def list_class_overview(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_teacher),
+) -> list[dict[str, Any]]:
+    """Teacher console HOME data (D67): one row per class the caller teaches,
+    each with student_count, material_count and last_activity_at.
+
+    Delegates to the teacher_class_overview() SECURITY DEFINER RPC (0023), which
+    self-guards via is_class_teacher(c.id) — so a teacher sees only their own
+    classes. The legacy /classes (dropdown) endpoint is unchanged.
+    """
+    client = UserClient.from_user(user)
+    result = await client.rpc("teacher_class_overview", {})
+    return result if isinstance(result, list) else []
+
+
 class CreateClassBody(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 

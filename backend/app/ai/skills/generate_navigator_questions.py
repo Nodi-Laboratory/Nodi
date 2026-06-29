@@ -86,9 +86,13 @@ async def run(
     branch: list[tuple[str, str]],
     tags: list[str],
     count: int | None = None,
+    model: str | None = None,
     **_: object,
 ) -> dict:
     n = count or settings.navigator_question_count
+    # D62/D64: caller (navigator.maybe_generate) resolves the model from the
+    # admin overlay and passes it; fall back to config when absent.
+    model = model or settings.gemini_navigator_model
     prompt = _PROMPT.format(
         n=n,
         tags=", ".join(tags) if tags else "(none)",
@@ -96,7 +100,7 @@ async def run(
     )
     client = get_client()
     resp = await client.aio.models.generate_content(
-        model=settings.gemini_navigator_model,
+        model=model,
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",

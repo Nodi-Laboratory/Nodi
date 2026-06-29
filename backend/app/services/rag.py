@@ -18,7 +18,7 @@ import re
 from typing import Any
 
 from ..config import get_settings
-from . import embedding
+from . import app_settings, embedding
 from .supabase_client import UserClient
 
 logger = logging.getLogger("nodi.rag")
@@ -62,7 +62,11 @@ async def search(
     """Cosine top-K chunks from the given (owned) files for the query."""
     if not file_ids or not query.strip():
         return []
-    k = k or settings.rag_top_k
+    if k is None:
+        # RAG-injection path (suggest_files passes its own search_k). D62: the
+        # admin-tunable rag_top_k overrides the config default.
+        overlay = await app_settings.get_overlay()
+        k = app_settings.as_int(overlay, "rag_top_k", settings.rag_top_k, 1, 50)
     vec = await embedding.embed_texts([query], task_type="RETRIEVAL_QUERY")
     if not vec:
         return []
@@ -208,10 +212,14 @@ def _branch_query_text(chain: list[dict[str, Any]]) -> str:
 
 
 # D56: char cap for the focus-centred SUGGESTION query (small on purpose).
+# D62: the cap is now admin-tunable (file_suggestion_suggest_query_chars) and
+# passed in by suggest_files; this constant is the config fallback default.
 SUGGEST_QUERY_CHARS = settings.file_suggestion_suggest_query_chars
 
 
-def _suggestion_query_text(chain: list[dict[str, Any]]) -> str:
+def _suggestion_query_text(
+    chain: list[dict[str, Any]], cap: int = SUGGEST_QUERY_CHARS
+) -> str:
     """Focus-centred query for FILE SUGGESTIONS (D56).
 
     Root cause of unrelated-branch suggestions: the old query blended the WHOLE
@@ -235,7 +243,7 @@ def _suggestion_query_text(chain: list[dict[str, Any]]) -> str:
         # Weak parent context (question only) ahead of the focus signal.
         parts.insert(0, (reals[-2].get("question") or "").strip())
     text = "\n".join(p for p in parts if p)
-    return text[:SUGGEST_QUERY_CHARS]
+    return text[:cap]
 
 
 # --- D48: conservative greeting / small-talk stoplist -----------------------
@@ -324,6 +332,13 @@ async def suggest_files(
     files. Best-effort.
     """
     try:
+        # D62/D63: resolve the suggestion gate from the admin overlay (falling
+        # back to config). All knobs read here so an admin slider change takes
+        # live effect on the next turn.
+        overlay = await app_settings.get_overlay()
+        # Global on/off: admin can disable file suggestions entirely.
+        if not app_settings.as_bool(overlay, "file_suggestion_enabled", True):
+            return []
         # Already has linked files on this branch -> no suggestion.
         if await linked_file_ids(client, chain):
             return []
@@ -341,8 +356,16 @@ async def suggest_files(
             return []
         by_id = {f["id"]: f for f in files}
         # D56: focus-centred query (NOT the whole-chain _branch_query_text) so
-        # unrelated ancestor topics no longer pull in their files.
-        query = _suggestion_query_text(chain)
+        # unrelated ancestor topics no longer pull in their files. D62: the cap
+        # is admin-tunable.
+        suggest_query_chars = app_settings.as_int(
+            overlay,
+            "file_suggestion_suggest_query_chars",
+            settings.file_suggestion_suggest_query_chars,
+            100,
+            1500,
+        )
+        query = _suggestion_query_text(chain, suggest_query_chars)
         # D48 content gate (relaxed). Two cheap, conservative pre-filters only;
         # PRECISION is owned by the suggestion-only distance cutoff + margin below.
         #  1) hard floor: skip empty / whitespace-only branch queries (min 10).
@@ -350,13 +373,25 @@ async def suggest_files(
         #     greetings/small-talk (covers greetings whose long answer would
         #     slip past the floor). Short-but-real questions ("미분이 뭐야?") now
         #     reach search and are judged by relevance, not length.
-        if len(query.strip()) < settings.file_suggestion_min_query_chars:
+        min_query_chars = app_settings.as_int(
+            overlay,
+            "file_suggestion_min_query_chars",
+            settings.file_suggestion_min_query_chars,
+            0,
+            500,
+        )
+        if len(query.strip()) < min_query_chars:
             return []
         if _greeting_only(chain):
             return []
-        chunks = await search(
-            client, list(by_id), query, k=settings.file_suggestion_search_k
+        search_k = app_settings.as_int(
+            overlay,
+            "file_suggestion_search_k",
+            settings.file_suggestion_search_k,
+            1,
+            100,
         )
+        chunks = await search(client, list(by_id), query, k=search_k)
         # Group chunks by file, keep best (smallest) distance + a sample.
         best: dict[str, dict[str, Any]] = {}
         for c in chunks:
@@ -378,8 +413,23 @@ async def suggest_files(
         # cutoff/margin (config, default 0.38/0.05) — STRICTER and decoupled from
         # the older shared 0.50 cutoff, so proposals require a clearly-related top
         # match. Borderline candidates are not proposed.
-        max_distance = float(settings.file_suggestion_suggest_max_distance)
-        margin = float(settings.file_suggestion_suggest_margin)
+        max_distance = app_settings.as_float(
+            overlay,
+            "file_suggestion_suggest_max_distance",
+            settings.file_suggestion_suggest_max_distance,
+            0.1,
+            0.9,
+        )
+        margin = app_settings.as_float(
+            overlay,
+            "file_suggestion_suggest_margin",
+            settings.file_suggestion_suggest_margin,
+            0.0,
+            0.5,
+        )
+        top_n = app_settings.as_int(
+            overlay, "file_suggestion_top_n", settings.file_suggestion_top_n, 1, 5
+        )
         ranked = sorted(
             (b for b in best.values() if b["distance"] <= max_distance),
             key=lambda x: x["distance"],
@@ -388,7 +438,7 @@ async def suggest_files(
         # else propose nothing (borderline matches are not "관련 있어 보여요").
         if not ranked or ranked[0]["distance"] > (max_distance - margin):
             return []
-        return ranked[: settings.file_suggestion_top_n]
+        return ranked[:top_n]
     except Exception:  # noqa: BLE001 - suggestions are optional
         logger.exception("File suggestion failed")
         return []

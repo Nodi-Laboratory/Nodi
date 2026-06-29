@@ -25,6 +25,7 @@ from typing import Any
 
 from ..ai.react import Budget, ReActRunner
 from ..config import get_settings
+from . import app_settings
 from .supabase_client import UserClient
 
 logger = logging.getLogger("nodi.navigator")
@@ -131,12 +132,44 @@ async def maybe_generate(
     if override.get("enabled") is False:
         return []
 
-    k = _clamp_int(override.get("gate_k"), settings.navigator_gate_k, 1, 10)
-    period = _clamp_int(override.get("period"), settings.navigator_period, 1, 20)
-    count = _clamp_int(
-        override.get("count"), settings.navigator_question_count, 1, 5
+    # D62/D64: priority override > overlay(admin) > config. The clamp default is
+    # synthesized as "overlay ⊕ config" so the admin baseline applies unless the
+    # user set a per-request override (which still wins).
+    overlay = await app_settings.get_overlay()
+    # Global on/off: admin can disable navigator generation entirely.
+    if not app_settings.as_bool(overlay, "navigator_enabled", True):
+        return []
+
+    k = _clamp_int(
+        override.get("gate_k"),
+        app_settings.as_int(overlay, "navigator_k", settings.navigator_gate_k),
+        1,
+        10,
     )
-    c = settings.navigator_gate_c
+    period = _clamp_int(
+        override.get("period"),
+        app_settings.as_int(overlay, "navigator_period", settings.navigator_period),
+        1,
+        20,
+    )
+    count = _clamp_int(
+        override.get("count"),
+        app_settings.as_int(
+            overlay, "navigator_question_count", settings.navigator_question_count
+        ),
+        1,
+        5,
+    )
+    c = app_settings.as_int(overlay, "navigator_c", settings.navigator_gate_c, 0, 100)
+    nav_model = app_settings.as_str(
+        overlay, "navigator_model", settings.gemini_navigator_model
+    )
+    react_max_steps = app_settings.as_int(
+        overlay, "react_max_steps", settings.react_max_steps, 1, 100
+    )
+    react_max_tokens = app_settings.as_int(
+        overlay, "react_max_tokens", settings.react_max_tokens, 1000, 1_000_000
+    )
 
     chain = _ancestor_chain(nodes, head_id)
     real_branch = [n for n in chain if not n.get("is_navigator")]
@@ -167,7 +200,7 @@ async def maybe_generate(
         owner_id,
         kind="navigator",
         session_id=session_id,
-        budget=Budget(settings.react_max_steps, settings.react_max_tokens),
+        budget=Budget(react_max_steps, react_max_tokens),
     )
     obs = await runner.run_skill(
         "generate_navigator_questions",
@@ -175,6 +208,7 @@ async def maybe_generate(
         branch=branch_qa,
         tags=common_tags,
         count=count,
+        model=nav_model,
     )
     # D40: the skill returns {question, rationale} objects (rationale <=40 chars,
     # "what this question reveals"). Normalize defensively — older/degenerate

@@ -102,10 +102,10 @@ class Settings(BaseSettings):
     # distance cutoff + margin below — NOT by a blunt length gate (which used to
     # false-negative short-but-real questions like "미분이 뭐야?").
     file_suggestion_min_query_chars: int = 10
-    # D28: cosine-distance cutoff for "이 자료 연결할까요?" — 0.50 (was 0.75, which
-    # let near-everything through given the 768-d L2-normalized embedding's
-    # unrelated-pair distance ≈ 0.55..0.75). Admin-tunable via app_settings
-    # (`file_suggestion_max_distance`); this is the fallback default.
+    # DEPRECATED (D63): this key is DEAD — no runtime path reads it. The real
+    # suggestion gate is `file_suggestion_suggest_max_distance` (0.38) below.
+    # Kept only for non-destructive back-compat; do NOT wire it. Not exposed in
+    # the admin console and not seeded by 0022.
     file_suggestion_max_distance: float = 0.50
     # Margin gate: only surface a suggestion when the BEST candidate is at least
     # this much INSIDE the cutoff (best_distance <= cutoff - margin), i.e. only

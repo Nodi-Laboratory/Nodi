@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
+from ..services import app_settings
 from ..services.supabase_client import UserClient
 
 logger = logging.getLogger("nodi.admin")
@@ -88,10 +89,15 @@ async def put_setting(
     user: CurrentUser = Depends(get_current_user),
     _: Profile = Depends(require_admin),
 ) -> dict[str, Any]:
-    """Upsert one runtime setting. NOTE: editing here updates app_settings only;
-    runtime wiring (live effect) is a follow-up (see report)."""
+    """Upsert one runtime setting and invalidate the overlay cache (D62).
+
+    The value lands in app_settings AND, because every tunable call site now
+    reads through the app_settings overlay (services/app_settings.py), takes
+    LIVE effect — instantly in this process via bust_cache(), within the TTL
+    elsewhere. (Danger keys like embedding_dimension are guarded at the worker.)
+    """
     client = UserClient.from_user(user)
-    return await client.upsert(
+    result = await client.upsert(
         "app_settings",
         {
             "key": key,
@@ -101,6 +107,8 @@ async def put_setting(
         },
         on_conflict="key",
     )
+    app_settings.bust_cache()
+    return result
 
 
 # ---------------------------------------------------------------------------

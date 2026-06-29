@@ -16,6 +16,7 @@ from google import genai
 from google.genai import types
 
 from ..config import get_settings
+from . import app_settings
 
 logger = logging.getLogger("nodi.gemini")
 settings = get_settings()
@@ -195,8 +196,9 @@ async def stream_answer(
             reference_context, rag_context, comparison_context
         )
     )
+    overlay = await app_settings.get_overlay()
     stream = await client.aio.models.generate_content_stream(
-        model=settings.gemini_chat_model,
+        model=app_settings.as_str(overlay, "chat_model", settings.gemini_chat_model),
         contents=contents,
         config=config,
     )
@@ -216,8 +218,9 @@ async def ocr_image_bytes(data: bytes, mime: str) -> str:
     """OCR an image with the multimodal model. Returns '' on failure/empty."""
     try:
         client = get_client()
+        overlay = await app_settings.get_overlay()
         resp = await client.aio.models.generate_content(
-            model=settings.ocr_model,
+            model=app_settings.as_str(overlay, "ocr_model", settings.ocr_model),
             contents=[
                 types.Part.from_bytes(data=data, mime_type=mime),
                 types.Part.from_text(text=_OCR_PROMPT),
@@ -235,7 +238,10 @@ async def ocr_image_bytes(data: bytes, mime: str) -> str:
 async def generate_label(question: str, answer: str) -> str | None:
     """Short topic label for a node. Best-effort: returns None on failure."""
     client = get_client()
-    max_chars = settings.node_label_max_chars
+    overlay = await app_settings.get_overlay()
+    max_chars = app_settings.as_int(
+        overlay, "node_label_max_chars", settings.node_label_max_chars, 4, 16
+    )
     prompt = (
         "LANGUAGE RULE (most important): write the label in the SAME language as "
         "the QUESTION below. Do NOT translate to any other language.\n"
@@ -246,7 +252,9 @@ async def generate_label(question: str, answer: str) -> str | None:
     )
     try:
         resp = await client.aio.models.generate_content(
-            model=settings.gemini_label_model,
+            model=app_settings.as_str(
+                overlay, "label_model", settings.gemini_label_model
+            ),
             contents=prompt,
             config=types.GenerateContentConfig(
                 max_output_tokens=20, temperature=0.0
@@ -284,8 +292,9 @@ async def stream_overseer(snapshot: str, message: str) -> AsyncIterator[str]:
     contents = [
         types.Content(role="user", parts=[types.Part.from_text(text=message)])
     ]
+    overlay = await app_settings.get_overlay()
     stream = await client.aio.models.generate_content_stream(
-        model=settings.gemini_chat_model,
+        model=app_settings.as_str(overlay, "chat_model", settings.gemini_chat_model),
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=system,
@@ -335,8 +344,11 @@ async def generate_home_suggestions(
     )
     try:
         client = get_client()
+        overlay = await app_settings.get_overlay()
         resp = await client.aio.models.generate_content(
-            model=settings.gemini_navigator_model,
+            model=app_settings.as_str(
+                overlay, "navigator_model", settings.gemini_navigator_model
+            ),
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

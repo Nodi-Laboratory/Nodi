@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from ..auth.deps import CurrentUser, get_current_user
 from ..config import get_settings
+from ..services import app_settings
 from ..services import files as svc
 from ..services.service_client import get_service_client
 from ..services.supabase_client import UserClient
@@ -63,11 +64,16 @@ async def upload(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="File uploads are disabled (service-role key not configured).",
         )
-    # Early reject on declared size (avoid buffering an oversized body).
-    if file.size is not None and file.size > settings.file_max_bytes:
+    # Early reject on declared size (avoid buffering an oversized body). D62:
+    # the limit is admin-tunable via the overlay (upload_file re-checks it too).
+    overlay = await app_settings.get_overlay()
+    max_bytes = app_settings.as_int(
+        overlay, "file_max_bytes", settings.file_max_bytes, 1024, 100 * 1024 * 1024
+    )
+    if file.size is not None and file.size > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds {settings.file_max_bytes} bytes.",
+            detail=f"File exceeds {max_bytes} bytes.",
         )
     data = await file.read()
     return await svc.upload_file(
