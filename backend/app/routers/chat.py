@@ -85,8 +85,13 @@ async def chat_stream(
     client = UserClient.from_user(user)
 
     # Validate access + resolve context BEFORE streaming so auth/404 errors are
-    # plain HTTP responses (not mid-stream SSE errors).
-    session = await svc.get_session(client, body.session_id)
+    # plain HTTP responses (not mid-stream SSE errors). Session meta and the node
+    # list are independent reads -> fetch concurrently (D66). A 404 from
+    # get_session still propagates out of gather as a plain HTTP error.
+    session, nodes = await asyncio.gather(
+        svc.get_session(client, body.session_id),
+        svc.get_session_nodes(client, body.session_id),
+    )
 
     # Only the session OWNER may write nodes. Reject up front (saves AI tokens):
     # a class teacher can SELECT a class session but must not stream into it.
@@ -97,33 +102,33 @@ async def chat_stream(
         )
 
     parent_id = body.parent_node_id or session.get("current_head_id")
-    nodes = await svc.get_session_nodes(client, body.session_id)
     chain = svc.ancestor_chain_nodes(nodes, parent_id)
+    by_id = {n["id"]: n for n in nodes}
     history = [
         (n.get("question") or "", n.get("answer") or "")
         for n in chain
         if not n.get("is_navigator")
     ]
-    # Imported other-branch context via node connections (LCA-trimmed, Stage 3a).
-    # Best-effort: never blocks the turn. Also returns the imported node ids (D35).
-    reference_context, reference_node_ids = await memory.build_reference_context(
-        client, body.session_id, chain, {n["id"]: n for n in nodes}
+    # All three context builders read the same ancestor chain but are otherwise
+    # independent, and each is internally best-effort (own try/except, safe
+    # defaults on failure). Run them concurrently to cut first-token latency —
+    # the RAG builder's question-embedding Gemini call is the heaviest leg (D66).
+    #   - reference:  imported other-branch context (node connections, LCA-trimmed, 3a, D35)
+    #   - rag:        chunks from files linked to this branch (Stage 3b-2, D32 sources)
+    #   - comparison: one-time branch references for THIS turn (D15/D46, LCA-trimmed)
+    (
+        (reference_context, reference_node_ids),
+        rag_result,
+        (comparison_context, comparison_node_ids, comparison_sources),
+    ) = await asyncio.gather(
+        memory.build_reference_context(client, body.session_id, chain, by_id),
+        rag.build_rag_context(client, chain, body.question),
+        memory.build_comparison_context(
+            client, body.reference_node_ids or [], chain, by_id
+        ),
     )
-    # Visual RAG: chunks from files linked to this branch (Stage 3b-2). Structured
-    # result carries the injection block AND per-chunk source metadata (D32).
-    rag_result = await rag.build_rag_context(client, chain, body.question)
     rag_context = rag_result["block"] if rag_result else None
     rag_sources = rag_result["sources"] if rag_result else []
-    # One-time branch comparison references (D15) — injected this turn; the
-    # source branches are persisted on the answer node for the UI (D46).
-    # current_chain/by_id let same-session references be LCA-trimmed.
-    (
-        comparison_context,
-        comparison_node_ids,
-        comparison_sources,
-    ) = await memory.build_comparison_context(
-        client, body.reference_node_ids or [], chain, {n["id"]: n for n in nodes}
-    )
     existing_root = session.get("root_node_id")
 
     # Turn log (D25) + structured prompt composition (D35). compose_system_structured
@@ -192,33 +197,25 @@ async def chat_stream(
                     client, body.session_id, parent_id, body.question, answer, label
                 )
                 tlog.set_final(node["id"], answer)
-                # D32: persist the answer's RAG provenance on the node so the
-                # source chips can be shown when the answer is re-opened.
-                # Best-effort — a provenance write must not fail the saved turn.
+                # D32/D46: persist the answer's provenance on the node so the
+                # source chips can be shown when the answer is re-opened —
+                # rag_sources (linked-file chunks) and reference_sources (the
+                # branches this turn referenced). Both target the SAME node, so
+                # write them in ONE PATCH (1 round-trip instead of 2). Best-effort
+                # — a provenance write must never fail the already-saved turn.
+                provenance: dict = {}
                 if rag_sources:
-                    try:
-                        await client.update(
-                            "nodes",
-                            {"id": f"eq.{node['id']}"},
-                            {"rag_sources": rag_sources},
-                        )
-                    except Exception:  # noqa: BLE001
-                        logger.warning(
-                            "rag_sources persist failed node=%s", node["id"]
-                        )
-                # D46: persist which branches this answer referenced so the UI
-                # can show source chips + branch buttons when the node reopens.
-                # Best-effort — a provenance write must not fail the saved turn.
+                    provenance["rag_sources"] = rag_sources
                 if comparison_sources:
+                    provenance["reference_sources"] = comparison_sources
+                if provenance:
                     try:
                         await client.update(
-                            "nodes",
-                            {"id": f"eq.{node['id']}"},
-                            {"reference_sources": comparison_sources},
+                            "nodes", {"id": f"eq.{node['id']}"}, provenance
                         )
                     except Exception:  # noqa: BLE001
                         logger.warning(
-                            "reference_sources persist failed node=%s", node["id"]
+                            "provenance persist failed node=%s", node["id"]
                         )
                 # Best-effort: reuse-or-create + link tags. A tag failure must
                 # NOT turn into a "save failed" — the node is already persisted.
@@ -255,7 +252,13 @@ async def chat_stream(
                 # AFTER `done` so the answer is already shown; only fires when the
                 # branch matured. A failure never affects the saved node.
                 try:
-                    all_nodes = await svc.get_session_nodes(client, body.session_id)
+                    # navigator needs the full node list INCLUDING the
+                    # just-created head node. We already hold the pre-append list
+                    # (`nodes`, fetched at request start) and the new node row
+                    # (append_chat_node RETURNING * — same columns), and this node
+                    # is the ONLY mutation since that fetch, so append in-memory
+                    # instead of a second full refetch (saves 1 round-trip).
+                    all_nodes = [*nodes, node]
                     nav_nodes = await navigator.maybe_generate(
                         client,
                         user.id,

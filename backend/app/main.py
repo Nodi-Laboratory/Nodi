@@ -26,6 +26,8 @@ from .routers import (
     teacher,
 )
 from .services import embedding_worker
+from .services.service_client import aclose_service_http
+from .services.supabase_client import aclose_shared_client
 
 settings = get_settings()
 
@@ -33,10 +35,14 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Startup: embedding worker (no-op if SUPABASE_SERVICE_ROLE_KEY is unset).
+    # The shared PostgREST connection pools (D65, user + worker) are created
+    # lazily on first use.
     embedding_worker.start(_app)
     yield
-    # Shutdown: stop the scheduler.
+    # Shutdown: stop the scheduler + close both shared httpx connection pools.
     embedding_worker.stop()
+    await aclose_shared_client()
+    await aclose_service_http()
 
 
 app = FastAPI(

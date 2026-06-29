@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -80,8 +81,14 @@ async def get_session(
 ) -> dict[str, Any]:
     """Session metadata + all of its nodes, for client-side tree reconstruction."""
     client = UserClient.from_user(user)
-    session = await svc.get_session(client, session_id)
-    nodes = await svc.get_session_nodes(client, session_id, with_tags=True)
+    # Session meta and the node list are independent reads -> fetch concurrently
+    # (same pattern as chat.py). Return shape/fields are unchanged (with_tags=True
+    # keeps the NODE_SELECT_WITH_TAGS contract). A 404 from get_session still
+    # propagates out of gather as a plain HTTP error.
+    session, nodes = await asyncio.gather(
+        svc.get_session(client, session_id),
+        svc.get_session_nodes(client, session_id, with_tags=True),
+    )
     return {"session": session, "nodes": nodes}
 
 
@@ -197,9 +204,14 @@ async def get_file_suggestions(
     """When the current branch has no linked files, propose space files to link
     (embedding match). Empty if files are already linked or none indexed."""
     client = UserClient.from_user(user)
-    session = await svc.get_session(client, session_id)
+    # Session meta and the node list are independent reads -> fetch concurrently.
+    # Only `head`/`chain` depend on the session (current_head_id), so they stay
+    # after the gather. A 404 from get_session propagates out of gather.
+    session, nodes = await asyncio.gather(
+        svc.get_session(client, session_id),
+        svc.get_session_nodes(client, session_id),
+    )
     head = node_id or session.get("current_head_id")
-    nodes = await svc.get_session_nodes(client, session_id)
     chain = svc.ancestor_chain_nodes(nodes, head)
     suggestions = await rag.suggest_files(
         client, chain, session.get("space_kind"), session.get("space_ref")
