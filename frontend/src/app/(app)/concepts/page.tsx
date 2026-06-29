@@ -3,15 +3,15 @@
 import { useState } from "react";
 import { TreeDeciduous } from "lucide-react";
 import { spaceTargetFromId } from "@/lib/api";
-import { useCooccurrence, useTags } from "@/lib/queries";
+import { useTags } from "@/lib/queries";
 import { useMyClasses } from "@/lib/hooks";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
-import { ConceptCanopy } from "@/components/concepts/ConceptCanopy";
+import { ConceptBoard } from "@/components/concepts/ConceptBoard";
 
 /**
- * 개념 노드 페이지 — 세션 그래프와 분리된 별도 라우트.
- * 현재 공간의 태그 + co-occurrence를 "나무 수관" 디자인으로 보여준다(force-graph 아님).
- * 공간 전환 시 갱신. (열린 질문 B의 1차 시안)
+ * 개념 페이지 — 세션 그래프와 분리된 별도 라우트.
+ * 현재 공간에서 지금까지 쓴 개념을 사용빈도 티어로 한눈에 보여준다(D68: 연결 시각화 없음).
+ * 공간 전환 시 갱신.
  */
 export default function ConceptsPage() {
   const activeSpaceId = useWorkspaceStore((s) => s.activeSpaceId);
@@ -28,11 +28,8 @@ export default function ConceptsPage() {
 
   const target = spaceTargetFromId(spaceId);
   const { data: tags, isLoading: tagsLoading } = useTags(target);
-  const { data: cooccurrence } = useCooccurrence(target);
 
-  const sortedTags = (tags ?? [])
-    .slice()
-    .sort((a, b) => b.usage_count - a.usage_count);
+  const conceptCount = tags?.length ?? 0;
 
   return (
     <div className="flex h-full w-full flex-col">
@@ -65,7 +62,7 @@ export default function ConceptsPage() {
           <div className="flex h-full items-center justify-center text-sm text-fg-muted">
             개념을 불러오는 중…
           </div>
-        ) : sortedTags.length === 0 ? (
+        ) : conceptCount === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
             <TreeDeciduous size={40} className="text-fg-muted opacity-30" />
             <p className="text-sm text-fg-muted">
@@ -75,34 +72,7 @@ export default function ConceptsPage() {
             </p>
           </div>
         ) : (
-          <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_240px]">
-            {/* 수관 */}
-            <div className="min-h-0 overflow-hidden p-2">
-              <ConceptCanopy
-                tags={sortedTags}
-                cooccurrence={cooccurrence ?? []}
-              />
-            </div>
-            {/* 많이 쓴 개념 목록 (잎이 작아 라벨이 안 보일 때 보조) */}
-            <aside className="min-h-0 overflow-auto border-l border-accent-border/30 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
-                많이 쓴 개념
-              </div>
-              <ul className="mt-3 flex flex-col gap-1.5">
-                {sortedTags.slice(0, 30).map((t) => (
-                  <li
-                    key={t.id}
-                    className="flex items-center justify-between gap-2 rounded-lg bg-bg-elevated px-3 py-1.5 text-sm"
-                  >
-                    <span className="truncate text-fg">#{t.name}</span>
-                    <span className="shrink-0 text-xs text-fg-muted">
-                      {t.usage_count}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </aside>
-          </div>
+          <ConceptBoard tags={tags ?? []} />
         )}
       </div>
     </div>

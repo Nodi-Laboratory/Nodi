@@ -27,6 +27,7 @@ import type {
   SpaceKind,
   TagRow,
   TeacherClass,
+  TeacherClassOverview,
   TeacherStudent,
   UserRole,
 } from "@/lib/types";
@@ -268,6 +269,16 @@ export async function listFiles(target: SpaceTarget): Promise<FileRow[]> {
 export async function listTeacherClasses(): Promise<TeacherClass[]> {
   const res = await ensureOk(
     await fetch(`${API_BASE}/teacher/classes`, { headers: await authHeaders() }),
+  );
+  return res.json();
+}
+
+/** D67: 교사 콘솔 홈 — 학급별 학생수·자료수·최근활동(last_activity_at desc nulls last). */
+export async function fetchTeacherOverview(): Promise<TeacherClassOverview[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/teacher/classes/overview`, {
+      headers: await authHeaders(),
+    }),
   );
   return res.json();
 }
