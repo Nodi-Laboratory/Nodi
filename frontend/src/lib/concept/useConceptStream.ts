@@ -5,13 +5,17 @@
 // /art/search, and clusters concepts into the semantic-similarity tree. Rehydrates
 // deterministically from persisted session nodes on load.
 //
-// 09 배치: send는 SSE 전에 POST /retrieve를 선행(≤4s) —
-//   서버가 계산한 near.{x,y}에 pending 플레이스홀더를 표시한다.
-//   SSE 중 `place` 이벤트가 올 때마다 pendingCoords에 기록하고,
-//   cstart 승격 시 place 좌표를 사용한다(없으면 첫 개념 곁 로컬 폴백).
+// 09 배치: 좌표는 서버 place 이벤트가 유일 소스(프론트 격자 계산 제거).
+//   send는 SSE 전에 POST /retrieve를 선행(≤4s) — 서버가 계산한 near.{x,y}에
+//   pending 플레이스홀더를 표시한다. SSE 중 `place`(is_final=false)를 받을 때마다
+//   pendingCoords에 기록하고 cstart 승격 시 그 좌표를 사용한다(없으면 첫 개념 곁
+//   near 승계). done 후 서버가 같은 concept_index를 is_final=true로 재전송하면
+//   해당 개념 좌표를 최종값으로 갱신 → 카드가 CSS 트랜지션으로 안착(settle).
+//   리프(영상/삽화)는 개념 좌표 곁 단순 오프셋(오른쪽·순번마다 아래로).
 // 영속(§8, C5): done 후 PATCH /nodes/{id}에 retrieve 결과(ebs/art)를
 //   fire-and-forget 저장. 좌표는 서버 done 훅이 canvas_cards upsert로 저장.
-// 재수화: 노드별 attachments.canvas.concepts[{i,x,y}]로 좌표 적용.
+// 재수화: 노드별 attachments.canvas.concepts[{i,x,y,h}]로 좌표·높이 적용
+//   (격자 폴백 제거; 좌표 미저장 구 노드는 near 중앙 폴백).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -28,12 +32,17 @@ import { sessionsKey, useSessionDetail } from "@/lib/queries";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type { ChatDoneEvent, NodeRow } from "@/lib/types";
 import { createConceptParser } from "./conceptParser";
-import { placeConcepts } from "./layout";
+import { LAYOUT } from "./layout";
 import { buildGroups } from "./grouping";
 import type { CanvasLeafNode, Concept, ConceptGroup, ParserEvent } from "./types";
 
 // 리프 스폰 계단식 삽입 간격(ms) — 위치는 즉시 확정(결정적), 삽입만 지연.
 const LEAF_SPAWN_STAGGER_MS = 250;
+
+// 09: 리프(영상/삽화) 배치 오프셋 — 격자 계산 대신 개념 좌표 곁 단순 오프셋.
+// x: 카드 오른쪽 옆(CARD_W + MARGIN), y: 리프 순번마다 아래로 누적.
+const LEAF_OFFSET_X = LAYOUT.CARD_W + LAYOUT.MARGIN; // 460
+const LEAF_OFFSET_Y = 240;
 
 // Cross-render/session cache of art-search results, keyed by concept title, so a
 // reload (which re-resolves every concept) hits the cache instead of the network.
@@ -53,17 +62,12 @@ async function cachedSearchArt(title: string): Promise<ArtSearchResult> {
 interface PersistedCanvas {
   ebs?: Array<{ video_id?: string; title?: string; thumb?: string; score?: number }>;
   art?: Array<{ slug?: string; url?: string; title?: string; score?: number }>;
-  /** 09: place 이벤트로 확정된 개념별 좌표. i = 답변 내 0-based 로컬 인덱스. */
-  concepts?: Array<{ i?: number; x?: number; y?: number }>;
+  /** 09: place 이벤트로 확정된 개념별 좌표. i = 답변 내 0-based 로컬 인덱스. h = 카드 높이. */
+  concepts?: Array<{ i?: number; x?: number; y?: number; h?: number }>;
 }
 type NodeRowWithAttachments = NodeRow & {
   attachments?: { canvas?: PersistedCanvas | null } | null;
 };
-
-// placeConcepts 점유칸 합집합용 매핑(개념 + 리프, cluster는 무의미하므로 "").
-function asPlaced(items: Array<{ id: string; x: number; y: number }>) {
-  return items.map((n) => ({ id: n.id, cluster: "", x: n.x, y: n.y }));
-}
 
 function updateLast(list: Concept[], fn: (c: Concept) => Concept): Concept[] {
   if (!list.length) return list;
@@ -301,24 +305,18 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
         return;
       }
 
-      // 이후 cstart(concept_index ≥ 1): place 맵에서 좌표 조회.
+      // 이후 cstart(concept_index ≥ 1): 좌표는 place 맵(서버)이 유일 소스.
+      // 아직 place가 안 왔으면 이번 send 첫 개념 곁 near 좌표를 승계(격자 계산 없음).
+      // settle(is_final) place가 done 후 최종 위치로 재정착시킨다.
       if (ev.t === "cstart") {
         // 이번 답변 내 개념 인덱스 = 현재 concepts 수 - baseConceptIdx
         const localIdx = conceptsRef.current.length - baseConceptIdxRef.current;
         const placeCoord = pendingCoordsRef.current.get(localIdx);
-        let xy: { x: number; y: number };
-        if (placeCoord) {
-          xy = placeCoord;
-        } else {
-          // 폴백: 첫 개념 곁 로컬 폴백(placeConcepts near)
-          const firstConcept = conceptsRef.current[baseConceptIdxRef.current];
-          const near = firstConcept ? { x: firstConcept.x, y: firstConcept.y } : undefined;
-          const pid = "c" + (conceptsRef.current.length + 1);
-          xy = placeConcepts(
-            conceptsRef.current.map((c) => ({ id: c.id, cluster: c.cluster, x: c.x, y: c.y })),
-            { id: pid, cluster: "", near },
-          );
-        }
+        const firstConcept = conceptsRef.current[baseConceptIdxRef.current];
+        const near = firstConcept
+          ? { x: firstConcept.x, y: firstConcept.y }
+          : { x: 40, y: 40 };
+        const xy = placeCoord ?? near;
         const next = reduceConcept(conceptsRef.current, ev, xy);
         commitConcepts(next);
         return;
@@ -375,15 +373,12 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       // retrieve 자체 실패(r.near.x===0, r.near.y===0)면 로컬 폴백.
       let nearXY: { x: number; y: number };
       if (r.degraded && r.near.x === 0 && r.near.y === 0) {
-        // retrieve 자체가 실패했을 때 로컬 폴백:
-        // 카드가 있으면 마지막 카드 곁 빈 셀, 없으면 (40,40).
+        // retrieve 자체가 실패했을 때 로컬 폴백(격자 계산 없음):
+        // 카드가 있으면 마지막 카드 곁 단순 오프셋, 없으면 (40,40).
+        // 서버 place(is_final)가 done 후 최종 위치로 재정착시킨다.
         if (conceptsRef.current.length > 0) {
           const last = conceptsRef.current[conceptsRef.current.length - 1];
-          const pid = "c" + (conceptsRef.current.length + 1);
-          nearXY = placeConcepts(
-            conceptsRef.current.map((c) => ({ id: c.id, cluster: c.cluster, x: c.x, y: c.y })),
-            { id: pid, cluster: "", near: { x: last.x, y: last.y } },
-          );
+          nearXY = { x: last.x + LEAF_OFFSET_X, y: last.y };
         } else {
           nearXY = { x: 40, y: 40 };
         }
@@ -413,42 +408,28 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       ]);
 
       // (c) 리프 노드(영상/삽화) — retrieve 성공(ebs/art 있을 때)만 스폰.
-      // 잠정 위치(nearXY) 곁, 개념+리프 점유칸 합집합 회피.
+      // 09: 격자 계산 대신 잠정 위치(nearXY) 곁 단순 오프셋(개념 오른쪽, 순번마다 아래로).
       const batch: CanvasLeafNode[] = [];
-      const occupied = () => [
-        ...asPlaced(conceptsRef.current),
-        ...asPlaced(leafNodesRef.current),
-        ...asPlaced(batch),
-      ];
       let seq = leafNodesRef.current.length;
+      let leafOrder = 0;
       for (const e of r.ebs) {
         const lid = "l" + ++seq;
-        const pos = placeConcepts(occupied(), {
-          id: lid,
-          cluster: "",
-          near: nearXY,
-        });
         batch.push({
           id: lid,
           type: "video",
-          x: pos.x,
-          y: pos.y,
+          x: nearXY.x + LEAF_OFFSET_X,
+          y: nearXY.y + leafOrder++ * LEAF_OFFSET_Y,
           conceptId: pid,
           video: { videoId: e.videoId, title: e.title, thumb: e.thumb },
         });
       }
       for (const a of r.art) {
         const lid = "l" + ++seq;
-        const pos = placeConcepts(occupied(), {
-          id: lid,
-          cluster: "",
-          near: nearXY,
-        });
         batch.push({
           id: lid,
           type: "art",
-          x: pos.x,
-          y: pos.y,
+          x: nearXY.x + LEAF_OFFSET_X,
+          y: nearXY.y + leafOrder++ * LEAF_OFFSET_Y,
           conceptId: pid,
           art: { slug: a.slug, url: a.url, title: a.title },
         });
@@ -502,11 +483,23 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           onError: (msg) => {
             setReply(msg || "앗, 문제가 생겼어요. 다시 시도해 주세요.");
           },
-          // 09: place 이벤트 수신 — pendingCoordsRef에 기록.
-          // concept_index 0이면 플레이스홀더 좌표도 즉시 이동(이동 트랜지션).
+          // 09: place 이벤트 수신 — 좌표는 서버가 유일하게 결정한다.
+          //   is_final=false: 스트리밍 중 추정 위치 → pendingCoords에 기록(cstart 승계용).
+          //     concept_index 0이면 플레이스홀더 좌표도 즉시 이동(이동 트랜지션).
+          //   is_final=true: done 후 settle 재전송 → 해당 개념(전역 인덱스)을 최종값으로
+          //     갱신해 카드가 최종 위치로 CSS 트랜지션.
           onPlace: (p: PlaceEvent) => {
             const localIdx = p.concept_index;
             pendingCoordsRef.current.set(localIdx, { x: p.x, y: p.y });
+            if (p.is_final) {
+              const globalIdx = baseConceptIdxRef.current + localIdx;
+              commitConcepts(
+                conceptsRef.current.map((c, i) =>
+                  i === globalIdx ? { ...c, x: p.x, y: p.y } : c,
+                ),
+              );
+              return;
+            }
             if (localIdx === 0 && pendingIdRef.current) {
               // 플레이스홀더 좌표를 서버 확정 좌표로 이동(CSS 트랜지션이 애니메이트).
               commitConcepts(
@@ -580,11 +573,11 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
 
     const { concepts: built, firstIdxByNode } = replayNodes(reals);
 
-    // 09: attachments.canvas.concepts[{i,x,y}]로 좌표 적용.
+    // 09: attachments.canvas.concepts[{i,x,y,h}]로 좌표 적용(서버 place가 유일 소스).
     // i = 답변 내 0-based 로컬 인덱스 → 노드의 FIRST 개념 전역 인덱스에 더해
     // built[] 전역 인덱스로 변환(firstIdxByNode). 범위 밖 인덱스는 무시(방어).
-    // concepts가 없는 구 노드: (40,40)부터 빈 셀 순차 배치(하위호환 불필요).
-    const coordMap = new Map<number, { x: number; y: number }>();
+    // h = 카드 높이(Task 8 ConceptCard가 우선 사용) — 개념 객체에 실어 전달.
+    const coordMap = new Map<number, { x: number; y: number; h?: number }>();
     for (const n of reals) {
       const canvas = (n as NodeRowWithAttachments).attachments?.canvas;
       if (!canvas?.concepts) continue;
@@ -592,44 +585,47 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       if (base == null) continue; // 이 답변이 만든 개념 없음 → 좌표 적용 대상 없음
       for (const c of canvas.concepts) {
         if (typeof c.i === "number" && typeof c.x === "number" && typeof c.y === "number") {
-          coordMap.set(base + c.i, { x: c.x, y: c.y });
+          coordMap.set(base + c.i, {
+            x: c.x,
+            y: c.y,
+            h: typeof c.h === "number" ? c.h : undefined,
+          });
         }
       }
     }
 
-    // 좌표 맵으로 built 배열 좌표 override.
-    // 맵에 없는 인덱스(구 노드): placeConcepts로 순차 배치(빈 셀).
+    // 좌표 맵으로 built 배열 좌표 override(격자 계산 제거).
+    // 맵에 없는 인덱스(좌표 미저장 구 노드): near 중앙 폴백으로 단순 배치.
     for (let i = 0; i < built.length; i++) {
       const coord = coordMap.get(i);
       if (coord) {
-        built[i] = { ...built[i], x: coord.x, y: coord.y };
+        built[i] = { ...built[i], x: coord.x, y: coord.y, h: coord.h };
       } else {
-        // 폴백: 점유된 셀들 회피한 첫 번째 빈 셀에 순차 배치
-        const occupied = built.slice(0, i).map((c) => ({ id: c.id, cluster: c.cluster, x: c.x, y: c.y }));
-        const fid = "c" + (i + 1);
-        const pos = placeConcepts(occupied, { id: fid, cluster: "" });
-        built[i] = { ...built[i], x: pos.x, y: pos.y };
+        // 폴백(구 노드): 직전 카드 곁 단순 오프셋, 없으면 near 중앙(40,40).
+        const prev = i > 0 ? built[i - 1] : undefined;
+        const xy = prev ? { x: prev.x + LEAF_OFFSET_X, y: prev.y } : { x: 40, y: 40 };
+        built[i] = { ...built[i], x: xy.x, y: xy.y };
       }
     }
 
-    // attachments.canvas → 리프 재생성(개념 곁 placeConcepts, 점유칸 합집합).
+    // attachments.canvas → 리프 재생성(격자 계산 대신 개념 곁 단순 오프셋).
+    // 앵커 개념 오른쪽(LEAF_OFFSET_X), 노드별 리프 순번마다 아래로 누적.
     const leaves: CanvasLeafNode[] = [];
-    const occupied = () => [...asPlaced(built), ...asPlaced(leaves)];
     for (const n of reals) {
       const canvas = (n as NodeRowWithAttachments).attachments?.canvas;
       if (!canvas) continue;
       const idx = firstIdxByNode.get(n.id);
       const anchor = idx == null ? undefined : built[idx];
-      const near = anchor ? { x: anchor.x, y: anchor.y } : undefined;
+      const baseXY = anchor ? { x: anchor.x, y: anchor.y } : { x: 40, y: 40 };
+      let leafOrder = 0;
       for (const e of canvas.ebs ?? []) {
         if (!e?.video_id) continue;
         const lid = "l" + (leaves.length + 1);
-        const pos = placeConcepts(occupied(), { id: lid, cluster: "", near });
         leaves.push({
           id: lid,
           type: "video",
-          x: pos.x,
-          y: pos.y,
+          x: baseXY.x + LEAF_OFFSET_X,
+          y: baseXY.y + leafOrder++ * LEAF_OFFSET_Y,
           conceptId: anchor?.id,
           video: {
             videoId: String(e.video_id),
@@ -642,12 +638,11 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       for (const a of canvas.art ?? []) {
         if (!a?.slug) continue;
         const lid = "l" + (leaves.length + 1);
-        const pos = placeConcepts(occupied(), { id: lid, cluster: "", near });
         leaves.push({
           id: lid,
           type: "art",
-          x: pos.x,
-          y: pos.y,
+          x: baseXY.x + LEAF_OFFSET_X,
+          y: baseXY.y + leafOrder++ * LEAF_OFFSET_Y,
           conceptId: anchor?.id,
           art: {
             slug: String(a.slug),
