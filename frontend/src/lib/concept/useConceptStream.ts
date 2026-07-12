@@ -369,19 +369,15 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       const spawnedLeafIds = new Set<string>();
       const localTimers: Array<ReturnType<typeof setTimeout>> = [];
 
-      // (b) 잠정 플레이스홀더 — 항상 표시(degraded여도 near 폴백 좌표로).
-      // retrieve 자체 실패(r.near.x===0, r.near.y===0)면 로컬 폴백.
+      // (b) 잠정 플레이스홀더 — 항상 표시. degraded(유사도 계산 불가)면 서버 near가
+      // 늘 캔버스 중앙을 반환하므로, 이미 카드가 있으면 로컬로 마지막 카드 곁에
+      // 오프셋해 중앙에 겹쳐 쌓이는 것을 막는다(격자 계산 없음). 카드가 없으면
+      // 서버 중앙 좌표를 그대로 쓴다. 서버 place(is_final)가 done 후 최종 위치로
+      // 재정착시키므로 이 값은 잠정 표시일 뿐이다.
       let nearXY: { x: number; y: number };
-      if (r.degraded && r.near.x === 0 && r.near.y === 0) {
-        // retrieve 자체가 실패했을 때 로컬 폴백(격자 계산 없음):
-        // 카드가 있으면 마지막 카드 곁 단순 오프셋, 없으면 (40,40).
-        // 서버 place(is_final)가 done 후 최종 위치로 재정착시킨다.
-        if (conceptsRef.current.length > 0) {
-          const last = conceptsRef.current[conceptsRef.current.length - 1];
-          nearXY = { x: last.x + LEAF_OFFSET_X, y: last.y };
-        } else {
-          nearXY = { x: 40, y: 40 };
-        }
+      if (r.degraded && conceptsRef.current.length > 0) {
+        const last = conceptsRef.current[conceptsRef.current.length - 1];
+        nearXY = { x: last.x + LEAF_OFFSET_X, y: last.y };
       } else {
         nearXY = { x: r.near.x, y: r.near.y };
       }
