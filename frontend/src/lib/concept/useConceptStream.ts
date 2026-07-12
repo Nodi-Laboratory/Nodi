@@ -54,7 +54,7 @@ async function cachedSearchArt(title: string): Promise<ArtSearchResult> {
 interface PersistedCanvas {
   ebs?: Array<{ video_id?: string; title?: string; thumb?: string; score?: number }>;
   art?: Array<{ slug?: string; url?: string; title?: string; score?: number }>;
-  /** 09: place 이벤트로 확정된 개념별 좌표. i = concept_index(0-based, 세션 누적). */
+  /** 09: place 이벤트로 확정된 개념별 좌표. i = 답변 내 0-based 로컬 인덱스. */
   concepts?: Array<{ i?: number; x?: number; y?: number }>;
 }
 type NodeRowWithAttachments = NodeRow & {
@@ -581,15 +581,18 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     const { concepts: built, firstIdxByNode } = replayNodes(reals);
 
     // 09: attachments.canvas.concepts[{i,x,y}]로 좌표 적용.
-    // i = 세션 내 concept_index(0-based, 세션 누적). built 배열 인덱스와 동일.
+    // i = 답변 내 0-based 로컬 인덱스 → 노드의 FIRST 개념 전역 인덱스에 더해
+    // built[] 전역 인덱스로 변환(firstIdxByNode). 범위 밖 인덱스는 무시(방어).
     // concepts가 없는 구 노드: (40,40)부터 빈 셀 순차 배치(하위호환 불필요).
     const coordMap = new Map<number, { x: number; y: number }>();
     for (const n of reals) {
       const canvas = (n as NodeRowWithAttachments).attachments?.canvas;
       if (!canvas?.concepts) continue;
+      const base = firstIdxByNode.get(n.id);
+      if (base == null) continue; // 이 답변이 만든 개념 없음 → 좌표 적용 대상 없음
       for (const c of canvas.concepts) {
         if (typeof c.i === "number" && typeof c.x === "number" && typeof c.y === "number") {
-          coordMap.set(c.i, { x: c.x, y: c.y });
+          coordMap.set(base + c.i, { x: c.x, y: c.y });
         }
       }
     }
