@@ -17,7 +17,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   createSession,
-  patchNodeCanvas,
   retrieve,
   searchArt,
   streamChat,
@@ -477,6 +476,21 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           parent_node_id: headRef.current ?? undefined,
           // 09: retrieve near 좌표 릴레이 — 서버가 place_hint로 첫 개념 배치.
           place_hint: { x: nearXY.x, y: nearXY.y },
+          // 09 단일 writer: ebs/art를 서버에 전달해 done 훅이 단일 PATCH로 통합 저장.
+          retrieved: (r.ebs.length > 0 || r.art.length > 0) ? {
+            ebs: r.ebs.map((e) => ({
+              video_id: e.videoId,
+              title: e.title,
+              thumb: e.thumb,
+              score: e.score,
+            })),
+            art: r.art.map((a) => ({
+              slug: a.slug,
+              url: a.url,
+              title: a.title,
+              score: a.score,
+            })),
+          } : null,
         },
         {
           onToken: (delta) => parser.push(delta),
@@ -524,29 +538,9 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
         );
       }
 
-      // (f) done: retrieve 결과(ebs/art) 영속(C5, best-effort).
-      // 09: 좌표 저장은 서버 done 훅이 담당 — patchNodeCanvas에서 positionX/Y 제거.
-      const doneNodeId = doneBox.current?.node?.id;
-      if (doneNodeId) {
-        const hasAttach = r.ebs.length > 0 || r.art.length > 0;
-        if (hasAttach) {
-          await patchNodeCanvas(doneNodeId, {
-            attachmentsCanvas: {
-              ebs: r.ebs.map((e) => ({
-                video_id: e.videoId,
-                title: e.title,
-                thumb: e.thumb,
-                score: e.score,
-              })),
-              art: r.art.map((a) => ({
-                slug: a.slug,
-                url: a.url,
-                title: a.title,
-                score: a.score,
-              })),
-            },
-          });
-        }
+      // (f) done: sessionsKey invalidate(제목 갱신). ebs/art 영속은 서버 done
+      // 훅이 concepts + ebs/art를 단일 PATCH로 처리(09 단일 writer 계약).
+      if (doneBox.current?.node?.id) {
         // 09 회귀 수정: done 후 sessionKey(sid) invalidate를 하지 않는다.
         // 좌표는 서버 done 훅이 fire-and-forget으로 늦게 저장하므로, 여기서
         // 재수화를 트리거하면 아직 concepts 좌표가 없는 스냅샷으로 라이브 place

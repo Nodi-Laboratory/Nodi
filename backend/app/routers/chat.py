@@ -79,6 +79,28 @@ class PlaceHint(BaseModel):
     y: int
 
 
+class RetrievedEbsItem(BaseModel):
+    """프론트가 /retrieve에서 받은 EBS 항목 — snake_case로 서버 전달."""
+    video_id: str
+    title: str
+    thumb: str
+    score: float
+
+
+class RetrievedArtItem(BaseModel):
+    """프론트가 /retrieve에서 받은 삽화 항목."""
+    slug: str
+    url: str
+    title: str
+    score: float
+
+
+class RetrievedBody(BaseModel):
+    """done 훅에서 attachments.canvas에 통합 저장할 ebs/art 검색 결과."""
+    ebs: list[RetrievedEbsItem] = Field(default_factory=list)
+    art: list[RetrievedArtItem] = Field(default_factory=list)
+
+
 class ChatStreamBody(BaseModel):
     session_id: str
     question: str = Field(min_length=1, max_length=QUESTION_MAX_CHARS)
@@ -91,6 +113,10 @@ class ChatStreamBody(BaseModel):
     navigator: NavigatorOverride | None = None
     # 서버 권위 좌표 — /retrieve near를 릴레이. null이면 서버가 폴백 계산.
     place_hint: PlaceHint | None = None
+    # 09 단일 writer: 프론트 retrieve 결과(ebs/art)를 서버에 전달해 done 훅이
+    # concepts + ebs/art를 한 번의 PATCH로 attachments.canvas에 통합 저장.
+    # null이면 ebs/art는 저장하지 않음(첫 질문 전 degraded 케이스 등).
+    retrieved: RetrievedBody | None = None
 
 
 def _sse(event: str, data: dict) -> str:
@@ -125,6 +151,7 @@ async def _save_canvas_cards(
     node_id: str,
     answer: str,
     placed_coords: dict[int, tuple[int, int]],
+    retrieved: RetrievedBody | None = None,
 ) -> None:
     """done 훅 — fire-and-forget: 개념 임베딩 + canvas_cards upsert + attachments 병합.
 
@@ -175,9 +202,9 @@ async def _save_canvas_cards(
         if points:
             await qdrant_store.upsert(qdrant_store.COL_CANVAS_CARDS, points)
 
-        # attachments.canvas.concepts 병합 PATCH (기존 ebs/art 키 보존)
+        # attachments.canvas 단일 writer PATCH — concepts + ebs/art 통합
         if concepts_meta:
-            await _patch_canvas_concepts(client, node_id, concepts_meta)
+            await _patch_canvas_unified(client, node_id, concepts_meta, retrieved)
 
     except Exception:  # noqa: BLE001
         logger.warning(
@@ -187,14 +214,16 @@ async def _save_canvas_cards(
         )
 
 
-async def _patch_canvas_concepts(
+async def _patch_canvas_unified(
     client: UserClient,
     node_id: str,
     concepts_meta: list[dict],
+    retrieved: RetrievedBody | None = None,
 ) -> None:
-    """nodes.attachments.canvas.concepts[] 병합 PATCH.
+    """nodes.attachments.canvas 단일 writer PATCH.
 
-    기존 ebs/art 키를 보존하고 concepts 키만 갱신 (read-modify-write).
+    concepts 좌표 + ebs/art를 한 번의 PATCH로 저장해 이중 writer RMW 레이스를
+    방지한다. 프론트 patchNodeCanvas(ebs/art)는 더 이상 호출하지 않음(09 계약).
 
     계약(프론트와 공유): concepts[].i는 "이 답변(노드) 내 0-based 로컬
     인덱스" — place SSE의 concept_index와 동일한 의미. 프론트 리플레이가
@@ -210,10 +239,11 @@ async def _patch_canvas_concepts(
         attachments = rows[0].get("attachments") or {}
         if not isinstance(attachments, dict):
             attachments = {}
-        canvas = attachments.get("canvas") or {}
-        if not isinstance(canvas, dict):
-            canvas = {}
+        canvas: dict = {}
         canvas["concepts"] = concepts_meta
+        if retrieved is not None:
+            canvas["ebs"] = [e.model_dump() for e in retrieved.ebs]
+            canvas["art"] = [a.model_dump() for a in retrieved.art]
         attachments["canvas"] = canvas
         await client.update("nodes", {"id": f"eq.{node_id}"}, {"attachments": attachments})
     except Exception:  # noqa: BLE001
@@ -355,7 +385,7 @@ async def chat_stream(
                     # 라인 버퍼에 토큰을 추가하고, 개행마다 @concept: 감지
                     for ch in delta:
                         if ch == "\n":
-                            line = line_buf.strip()
+                            line = line_buf.rstrip()
                             line_buf = ""
                             if _CONCEPT_LINE_RE.match(line):
                                 yield _sse("place", _next_place_event())
@@ -364,7 +394,7 @@ async def chat_stream(
 
                 # 스트림 종료 flush: 개행 없이 끝난 마지막 라인이 @concept:면
                 # place 1회 방출 — done 훅의 전체 재파싱 인덱스와 어긋나지 않도록.
-                if _CONCEPT_LINE_RE.match(line_buf.strip()):
+                if _CONCEPT_LINE_RE.match(line_buf.rstrip()):
                     line_buf = ""
                     yield _sse("place", _next_place_event())
 
@@ -431,6 +461,7 @@ async def chat_stream(
                 )
 
                 # done 훅: canvas_cards 저장 + attachments 병합 (fire-and-forget)
+                # retrieved(ebs/art)도 함께 전달해 단일 writer PATCH로 저장.
                 if placed_coords:
                     asyncio.create_task(
                         _save_canvas_cards(
@@ -440,6 +471,7 @@ async def chat_stream(
                             node_id=node["id"],
                             answer=answer,
                             placed_coords=placed_coords,
+                            retrieved=body.retrieved,
                         )
                     )
 

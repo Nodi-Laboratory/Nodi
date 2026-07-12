@@ -612,6 +612,15 @@ export interface ChatStreamBody {
    * null이면 서버가 자체 폴백 앵커로 계산.
    */
   place_hint?: { x: number; y: number } | null;
+  /**
+   * 09 단일 writer: retrieve 결과(ebs/art)를 서버에 전달해 done 훅이
+   * concepts + ebs/art를 한 번의 PATCH로 attachments.canvas에 통합 저장.
+   * null이면 ebs/art 저장 생략(degraded 등).
+   */
+  retrieved?: {
+    ebs: Array<{ video_id: string; title: string; thumb: string; score: number }>;
+    art: Array<{ slug: string; url: string; title: string; score: number }>;
+  } | null;
 }
 
 /**
@@ -800,7 +809,7 @@ export interface ArtHit {
 export interface ArtSearchResult {
   /** 임계값 이내 매치가 있으면 삽화, 없으면 null. */
   art: ArtHit | null;
-  /** 질의 임베딩(768d) — 개념 유사도 그룹핑에 재사용(호출 1회로 삽화+그룹핑). */
+  /** 질의 임베딩(4096d) — 개념 유사도 그룹핑에 재사용(호출 1회로 삽화+그룹핑). */
   embedding: number[] | null;
 }
 
