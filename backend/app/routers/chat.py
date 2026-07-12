@@ -87,6 +87,7 @@ class ChatStreamBody(BaseModel):
     # only (not persisted, does not touch node.connections).
     reference_node_ids: list[str] | None = Field(default=None, max_length=20)
     # D47: per-request navigator override (user workspace settings).
+    # 프론트 구계약 호환용 — 수신만 하고 무시한다(네비게이터 생성은 제거됨).
     navigator: NavigatorOverride | None = None
     # 서버 권위 좌표 — /retrieve near를 릴레이. null이면 서버가 폴백 계산.
     place_hint: PlaceHint | None = None
@@ -96,17 +97,25 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def _compute_place_fallback_anchor(
-    owner_id: str, session_id: str
-) -> tuple[int, int]:
-    """place_hint 없을 때 서버가 폴백 앵커를 계산한다."""
+async def _scroll_session_cards(owner_id: str, session_id: str) -> list[dict]:
+    """세션 기존 canvas_cards scroll — best-effort, 실패(Qdrant 다운) 시 [].
+
+    스트림당 1회 호출해 결과를 두 용도로 재사용한다(조회 중복 없음):
+      (1) place_hint 없을 때 폴백 앵커 계산
+      (2) place 점유 셋 시딩 — place_hint 셀이 기존 카드로 점유돼 있으면
+          nearest_free_cell이 곁 빈 셀로 스냅하도록.
+    """
     try:
-        cards = await qdrant_store.scroll_canvas_cards(
+        return await qdrant_store.scroll_canvas_cards(
             owner_id=owner_id, session_id=session_id
         )
-        return fallback_anchor(cards)
     except Exception:  # noqa: BLE001
-        return (0, 0)
+        logger.warning(
+            "canvas_cards scroll 실패 — 빈 점유 셋으로 진행 session=%s",
+            session_id,
+            exc_info=True,
+        )
+        return []
 
 
 async def _save_canvas_cards(
@@ -137,6 +146,8 @@ async def _save_canvas_cards(
         now = time.time()
 
         for b, vec in zip(blocks, vectors):
+            # concept_blocks.parse의 index는 답변 내 0-based 로컬 인덱스 —
+            # place SSE의 concept_index·concepts[].i와 같은 좌표계다.
             idx = b["index"]
             coord = placed_coords.get(idx)
             if coord is None:
@@ -184,6 +195,10 @@ async def _patch_canvas_concepts(
     """nodes.attachments.canvas.concepts[] 병합 PATCH.
 
     기존 ebs/art 키를 보존하고 concepts 키만 갱신 (read-modify-write).
+
+    계약(프론트와 공유): concepts[].i는 "이 답변(노드) 내 0-based 로컬
+    인덱스" — place SSE의 concept_index와 동일한 의미. 프론트 리플레이가
+    이 가정으로 좌표를 매칭한다.
     """
     try:
         rows = await client.select(
@@ -279,11 +294,12 @@ async def chat_stream(
         history_chars=sum(len(q) + len(a) for q, a in history),
     )
 
-    # place_hint 좌표 (없으면 스트림 시작 전에 폴백 계산)
+    # 스트림 시작 전 1회 scroll: 폴백 앵커 + place 점유 셋 시딩에 재사용.
+    session_cards = await _scroll_session_cards(user.id, body.session_id)
     if body.place_hint is not None:
         hint_anchor = xy_to_cell(body.place_hint.x, body.place_hint.y)
     else:
-        hint_anchor = await _compute_place_fallback_anchor(user.id, body.session_id)
+        hint_anchor = fallback_anchor(session_cards)
 
     async def event_stream():
         yield _sse(
@@ -296,11 +312,32 @@ async def chat_stream(
         # placed_coords: {concept_index: (x, y)} — done 훅에서 재사용
         placed_coords: dict[int, tuple[int, int]] = {}
         concept_count = 0
-        # 점유 셀 집합 — 스트림 중 place 이벤트마다 갱신
-        # 세션 기존 카드들도 포함해야 하므로 초기값은 hint 앵커 셀만
-        # (기존 카드는 canvas_cards를 검색해야 하나, retrieve에서 이미 반영됨.
-        #  스트림-로컬 점유는 이번 스트림에서 배정된 셀만 추적하면 충분.)
-        local_occupied: set[str] = set()
+        # 점유 셀 집합 — 세션 기존 카드 셀로 시딩(스트림 시작 전 scroll 1회),
+        # 이후 place 이벤트마다 갱신. place_hint 셀이 기존 카드로 점유돼 있으면
+        # nearest_free_cell이 곁 빈 셀로 스냅한다.
+        local_occupied: set[str] = build_occupied(session_cards)
+
+        def _next_place_event() -> dict:
+            """다음 @concept의 좌표를 계산하고 스트림 상태를 갱신한다.
+
+            계약(프론트와 공유): concept_index는 "이 답변(노드) 내 0-based
+            로컬 인덱스"다 — attachments.canvas.concepts의 `i`와 동일한 의미
+            (concept_blocks.parse의 index와도 일치, done 훅에서 대조).
+              - index 0 → place_hint 셀(점유면 곁 빈 셀로 스냅)
+              - index k≥1 → index 0 좌표를 앵커로 빈 셀
+            """
+            nonlocal concept_count
+            idx = concept_count
+            concept_count += 1
+            if idx == 0 or 0 not in placed_coords:
+                anchor = hint_anchor
+            else:
+                anchor = xy_to_cell(*placed_coords[0])
+            col, row = nearest_free_cell(anchor, local_occupied)
+            local_occupied.add(f"{col},{row}")
+            x, y = cell_to_xy(col, row)
+            placed_coords[idx] = (x, y)
+            return {"concept_index": idx, "x": x, "y": y}
 
         # 라인 버퍼 (스트리밍 중 @concept: 감지용)
         line_buf = ""
@@ -320,31 +357,16 @@ async def chat_stream(
                         if ch == "\n":
                             line = line_buf.strip()
                             line_buf = ""
-                            cm = _CONCEPT_LINE_RE.match(line)
-                            if cm:
-                                idx = concept_count
-                                concept_count += 1
-
-                                if idx == 0:
-                                    # index 0: place_hint 셀 (또는 폴백 앵커)
-                                    anchor = hint_anchor
-                                else:
-                                    # index k≥1: index 0 좌표를 앵커로
-                                    if 0 in placed_coords:
-                                        anchor = xy_to_cell(*placed_coords[0])
-                                    else:
-                                        anchor = hint_anchor
-
-                                free_cell = nearest_free_cell(anchor, local_occupied)
-                                col, row = free_cell
-                                local_occupied.add(f"{col},{row}")
-                                x, y = cell_to_xy(col, row)
-                                placed_coords[idx] = (x, y)
-                                yield _sse("place", {"concept_index": idx, "x": x, "y": y})
+                            if _CONCEPT_LINE_RE.match(line):
+                                yield _sse("place", _next_place_event())
                         else:
                             line_buf += ch
 
-                    # 버퍼 끝 @concept: 감지 (개행 없이 스트림이 끝나는 경우 대비는 done 후 처리)
+                # 스트림 종료 flush: 개행 없이 끝난 마지막 라인이 @concept:면
+                # place 1회 방출 — done 훅의 전체 재파싱 인덱스와 어긋나지 않도록.
+                if _CONCEPT_LINE_RE.match(line_buf.strip()):
+                    line_buf = ""
+                    yield _sse("place", _next_place_event())
 
             except Exception:  # noqa: BLE001 - details go to logs, not the client
                 logger.exception("EXAONE streaming failed")
