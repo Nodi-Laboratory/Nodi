@@ -1,29 +1,26 @@
-"""Chat (SSE) — Stage 1 tree-conversation core.
+"""Chat (SSE) — concept-card conversation core (EXAONE).
 
-Flow (architecture.md §4):
+Flow:
   1. Resolve parent (body.parent_node_id or session.current_head_id).
   2. Assemble ancestor-chain context (siblings excluded).
-  3. Stream Gemini answer as SSE: start -> token* -> done (error on failure).
-  4. Persist (question, answer) = 1 node, advance head (set root if first),
-     auto-label (<=10 chars), and report the node in the `done` event.
+  3. Stream the EXAONE answer as SSE: start -> token* -> place* -> done (error on failure).
+     The answer is the structured concept-card format (CHAT:/@concept/…/@end);
+     the frontend parser turns the token stream into cards.
+  4. During streaming, scan line buffer for "@concept:" lines — emit `place` SSE
+     immediately with the computed (x, y) for that concept_index.
+  5. Persist (question, structured-answer) = 1 node with a NULL label, advance
+     head (set root if first), and report the node in the `done` event.
+  6. After done: fire-and-forget task embeds concepts + upserts canvas_cards
+     + patches nodes.attachments.canvas.concepts (best-effort, log only on failure).
 
 SSE event schema:
-  event: start      data: {"session_id","parent_node_id"}
-  event: token      data: {"delta"}
-  event: done       data: {"node":{"id","parent_id","label","tags":[...]},
-                           "current_head_id","root_node_id"}
-  event: navigator  data: {"nodes":[{"id","parent_id","navigator_question"}]}
-  event: error      data: {"detail"}
-
-Tagging (Stage 2 Part A): after the node is persisted, concept tags are
-attached and returned INLINE in the `done` event (node.tags). Label and tag
-extraction run concurrently to limit added latency; tagging is best-effort
-(failure -> empty tags, never an error).
-
-Navigator (Stage 2 Part B): after `done`, a gate may fire and create waiting
-is_navigator nodes; when it does, a separate `navigator` event carries them.
-Generated INLINE (not a background job) under the caller's JWT — see
-services/navigator.py for the rationale. Best-effort: never blocks the turn.
+  event: start   data: {"session_id","parent_node_id"}
+  event: token   data: {"delta"}
+  event: place   data: {"concept_index": int, "x": int, "y": int}
+  event: done    data: {"node":{"id","parent_id","label":null,"tags":[],
+                        "reference_sources":[...]},
+                        "current_head_id","root_node_id"}
+  event: error   data: {"detail"}
 """
 
 from __future__ import annotations
@@ -31,22 +28,35 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
-from ..services import gemini, memory, navigator, rag
+from ..services import exaone, gemini, memory, rag
 from ..services import sessions as svc
-from ..services import tagging
+from ..services import concept_blocks, qdrant_store, upstage
+from ..services.canvas_layout import (
+    build_occupied,
+    cell_to_xy,
+    fallback_anchor,
+    nearest_free_cell,
+    xy_to_cell,
+)
 from ..services.supabase_client import UserClient
 from ..services.turn_log import TurnLog
+from ..config import get_settings
 
 logger = logging.getLogger("nodi.chat")
 router = APIRouter(prefix="/chat", tags=["chat"])
+settings = get_settings()
 
 QUESTION_MAX_CHARS = 8000
+
+_CONCEPT_LINE_RE = re.compile(r"^@concept:\s*(.*)$")
 
 
 class NavigatorOverride(BaseModel):
@@ -62,6 +72,13 @@ class NavigatorOverride(BaseModel):
     period: int | None = None
 
 
+class PlaceHint(BaseModel):
+    """프론트가 /retrieve near를 릴레이하는 초기 배치 힌트."""
+
+    x: int
+    y: int
+
+
 class ChatStreamBody(BaseModel):
     session_id: str
     question: str = Field(min_length=1, max_length=QUESTION_MAX_CHARS)
@@ -71,10 +88,121 @@ class ChatStreamBody(BaseModel):
     reference_node_ids: list[str] | None = Field(default=None, max_length=20)
     # D47: per-request navigator override (user workspace settings).
     navigator: NavigatorOverride | None = None
+    # 서버 권위 좌표 — /retrieve near를 릴레이. null이면 서버가 폴백 계산.
+    place_hint: PlaceHint | None = None
 
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _compute_place_fallback_anchor(
+    owner_id: str, session_id: str
+) -> tuple[int, int]:
+    """place_hint 없을 때 서버가 폴백 앵커를 계산한다."""
+    try:
+        cards = await qdrant_store.scroll_canvas_cards(
+            owner_id=owner_id, session_id=session_id
+        )
+        return fallback_anchor(cards)
+    except Exception:  # noqa: BLE001
+        return (0, 0)
+
+
+async def _save_canvas_cards(
+    client: UserClient,
+    user_id: str,
+    session_id: str,
+    node_id: str,
+    answer: str,
+    placed_coords: dict[int, tuple[int, int]],
+) -> None:
+    """done 훅 — fire-and-forget: 개념 임베딩 + canvas_cards upsert + attachments 병합.
+
+    실패는 logger.warning만 — 스트림/답변 저장에 영향 없음.
+    """
+    try:
+        blocks = concept_blocks.parse(answer)
+        if not blocks:
+            return
+
+        # 개념 텍스트 목록 구성 (제목 + 본문)
+        texts = [f"{b['title']}\n{b['body']}" for b in blocks]
+
+        # Upstage embedding-passage 배치 1회
+        vectors = await upstage.embed_passages(texts)
+
+        points = []
+        concepts_meta: list[dict] = []
+        now = time.time()
+
+        for b, vec in zip(blocks, vectors):
+            idx = b["index"]
+            coord = placed_coords.get(idx)
+            if coord is None:
+                continue  # place 이벤트가 방출되지 않은 개념은 스킵
+            x, y = coord
+            point_id = qdrant_store.canvas_card_point_id(node_id, idx)
+            points.append(
+                {
+                    "id": point_id,
+                    "vector": vec,
+                    "payload": {
+                        "owner_id": user_id,
+                        "session_id": session_id,
+                        "node_id": node_id,
+                        "concept_index": idx,
+                        "title": b["title"],
+                        "x": x,
+                        "y": y,
+                        "created_at": now,
+                    },
+                }
+            )
+            concepts_meta.append({"i": idx, "x": x, "y": y})
+
+        if points:
+            await qdrant_store.upsert(qdrant_store.COL_CANVAS_CARDS, points)
+
+        # attachments.canvas.concepts 병합 PATCH (기존 ebs/art 키 보존)
+        if concepts_meta:
+            await _patch_canvas_concepts(client, node_id, concepts_meta)
+
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "canvas_cards 저장 실패 node=%s — 다음 kNN에서 해당 카드 누락",
+            node_id,
+            exc_info=True,
+        )
+
+
+async def _patch_canvas_concepts(
+    client: UserClient,
+    node_id: str,
+    concepts_meta: list[dict],
+) -> None:
+    """nodes.attachments.canvas.concepts[] 병합 PATCH.
+
+    기존 ebs/art 키를 보존하고 concepts 키만 갱신 (read-modify-write).
+    """
+    try:
+        rows = await client.select(
+            "nodes",
+            {"id": f"eq.{node_id}", "select": "id,attachments", "limit": "1"},
+        )
+        if not rows:
+            return
+        attachments = rows[0].get("attachments") or {}
+        if not isinstance(attachments, dict):
+            attachments = {}
+        canvas = attachments.get("canvas") or {}
+        if not isinstance(canvas, dict):
+            canvas = {}
+        canvas["concepts"] = concepts_meta
+        attachments["canvas"] = canvas
+        await client.update("nodes", {"id": f"eq.{node_id}"}, {"attachments": attachments})
+    except Exception:  # noqa: BLE001
+        logger.warning("attachments.canvas 병합 실패 node=%s", node_id, exc_info=True)
 
 
 @router.post("/stream")
@@ -134,21 +262,28 @@ async def chat_stream(
     # Turn log (D25) + structured prompt composition (D35). compose_system_structured
     # is the SINGLE source of truth for both the system prompt string AND each
     # block's char span, so the saved prompt and the admin highlight never drift.
-    system_prompt, context_blocks = gemini.compose_system_structured(
+    system_prompt, context_blocks_list = gemini.compose_system_structured(
         reference_context,
         rag_context,
         comparison_context,
         rag_sources=rag_sources,
         reference_node_ids=reference_node_ids,
         comparison_node_ids=comparison_node_ids,
+        base_instruction=exaone.CONCEPT_CARD_SYSTEM_PROMPT,
     )
     tlog = TurnLog(user.id, body.session_id, body.question)
     tlog.set_system(system_prompt)
     tlog.set_contexts_structured(
-        blocks=context_blocks,
+        blocks=context_blocks_list,
         history_turns=len(history),
         history_chars=sum(len(q) + len(a) for q, a in history),
     )
+
+    # place_hint 좌표 (없으면 스트림 시작 전에 폴백 계산)
+    if body.place_hint is not None:
+        hint_anchor = xy_to_cell(body.place_hint.x, body.place_hint.y)
+    else:
+        hint_anchor = await _compute_place_fallback_anchor(user.id, body.session_id)
 
     async def event_stream():
         yield _sse(
@@ -156,19 +291,63 @@ async def chat_stream(
             {"session_id": body.session_id, "parent_node_id": parent_id},
         )
         answer_parts: list[str] = []
+
+        # place 이벤트 계산용 스트림-스코프 상태
+        # placed_coords: {concept_index: (x, y)} — done 훅에서 재사용
+        placed_coords: dict[int, tuple[int, int]] = {}
+        concept_count = 0
+        # 점유 셀 집합 — 스트림 중 place 이벤트마다 갱신
+        # 세션 기존 카드들도 포함해야 하므로 초기값은 hint 앵커 셀만
+        # (기존 카드는 canvas_cards를 검색해야 하나, retrieve에서 이미 반영됨.
+        #  스트림-로컬 점유는 이번 스트림에서 배정된 셀만 추적하면 충분.)
+        local_occupied: set[str] = set()
+
+        # 라인 버퍼 (스트리밍 중 @concept: 감지용)
+        line_buf = ""
+
         try:
             try:
-                async for delta in gemini.stream_answer(
+                async for delta in exaone.stream_answer(
                     history,
                     body.question,
-                    reference_context=reference_context,
-                    rag_context=rag_context,
-                    comparison_context=comparison_context,
+                    system_prompt,
                 ):
                     answer_parts.append(delta)
                     yield _sse("token", {"delta": delta})
+
+                    # 라인 버퍼에 토큰을 추가하고, 개행마다 @concept: 감지
+                    for ch in delta:
+                        if ch == "\n":
+                            line = line_buf.strip()
+                            line_buf = ""
+                            cm = _CONCEPT_LINE_RE.match(line)
+                            if cm:
+                                idx = concept_count
+                                concept_count += 1
+
+                                if idx == 0:
+                                    # index 0: place_hint 셀 (또는 폴백 앵커)
+                                    anchor = hint_anchor
+                                else:
+                                    # index k≥1: index 0 좌표를 앵커로
+                                    if 0 in placed_coords:
+                                        anchor = xy_to_cell(*placed_coords[0])
+                                    else:
+                                        anchor = hint_anchor
+
+                                free_cell = nearest_free_cell(anchor, local_occupied)
+                                col, row = free_cell
+                                local_occupied.add(f"{col},{row}")
+                                x, y = cell_to_xy(col, row)
+                                placed_coords[idx] = (x, y)
+                                yield _sse("place", {"concept_index": idx, "x": x, "y": y})
+                        else:
+                            line_buf += ch
+
+                    # 버퍼 끝 @concept: 감지 (개행 없이 스트림이 끝나는 경우 대비는 done 후 처리)
+
             except Exception:  # noqa: BLE001 - details go to logs, not the client
-                logger.exception("Gemini streaming failed")
+                logger.exception("EXAONE streaming failed")
                 tlog.add_error("ai_streaming_failed")
                 yield _sse("error", {"detail": "AI 응답 생성에 실패했습니다."})
                 return
@@ -186,23 +365,19 @@ async def chat_stream(
                 return
 
             try:
-                # Label + concept extraction run concurrently (both read Q+A).
-                # Label (best-effort) is needed for the atomic node insert; tag
-                # names are linked right after we have the node id.
-                label, tag_names = await asyncio.gather(
-                    gemini.generate_label(body.question, answer),
-                    tagging.extract_concepts(body.question, answer),
-                )
+                # Labels + concept tags are REMOVED (design decision): persist
+                # just the (question, structured-answer) node with a null label.
+                # The frontend parses the answer text into concept cards; concept
+                # grouping + illustrations are resolved client-side via
+                # /art/search. Navigator generation is likewise dropped.
                 node = await svc.append_node(
-                    client, body.session_id, parent_id, body.question, answer, label
+                    client, body.session_id, parent_id, body.question, answer, None
                 )
                 tlog.set_final(node["id"], answer)
-                # D32/D46: persist the answer's provenance on the node so the
-                # source chips can be shown when the answer is re-opened —
-                # rag_sources (linked-file chunks) and reference_sources (the
-                # branches this turn referenced). Both target the SAME node, so
-                # write them in ONE PATCH (1 round-trip instead of 2). Best-effort
-                # — a provenance write must never fail the already-saved turn.
+                # D32/D46: persist any answer provenance (rag/reference). In the
+                # concept-card UI these are normally empty, but keep the write so
+                # the (unrouted) tree UI still shows source chips. One PATCH,
+                # best-effort — never fails the already-saved turn.
                 provenance: dict = {}
                 if rag_sources:
                     provenance["rag_sources"] = rag_sources
@@ -217,30 +392,15 @@ async def chat_stream(
                         logger.warning(
                             "provenance persist failed node=%s", node["id"]
                         )
-                # Best-effort: reuse-or-create + link tags. A tag failure must
-                # NOT turn into a "save failed" — the node is already persisted.
-                try:
-                    tags = await tagging.apply_node_tags(
-                        client, node["id"], body.session_id, tag_names
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.exception("Tag application failed node=%s", node["id"])
-                    tlog.add_error("tag_apply_failed")
-                    tags = []
-                tlog.add_skill("tagging", count=len(tags))
+
                 yield _sse(
                     "done",
                     {
                         "node": {
                             "id": node["id"],
                             "parent_id": node.get("parent_id"),
-                            "label": node.get("label"),
-                            "tags": tags,
-                            # D57: surface the same reference provenance we just
-                            # persisted so the "참조 브랜치" chips/popup show
-                            # immediately (before the trailing session refetch),
-                            # matching what NODE_SELECT now reads back. [] when
-                            # this turn referenced no other branch.
+                            "label": None,
+                            "tags": [],
                             "reference_sources": comparison_sources or [],
                         },
                         "current_head_id": node["id"],
@@ -248,35 +408,19 @@ async def chat_stream(
                     },
                 )
 
-                # Navigator gate (best-effort, INLINE — see navigator.py). Runs
-                # AFTER `done` so the answer is already shown; only fires when the
-                # branch matured. A failure never affects the saved node.
-                try:
-                    # navigator needs the full node list INCLUDING the
-                    # just-created head node. We already hold the pre-append list
-                    # (`nodes`, fetched at request start) and the new node row
-                    # (append_chat_node RETURNING * — same columns), and this node
-                    # is the ONLY mutation since that fetch, so append in-memory
-                    # instead of a second full refetch (saves 1 round-trip).
-                    all_nodes = [*nodes, node]
-                    nav_nodes = await navigator.maybe_generate(
-                        client,
-                        user.id,
-                        body.session_id,
-                        node["id"],
-                        all_nodes,
-                        override=(
-                            body.navigator.model_dump()
-                            if body.navigator is not None
-                            else None
-                        ),
+                # done 훅: canvas_cards 저장 + attachments 병합 (fire-and-forget)
+                if placed_coords:
+                    asyncio.create_task(
+                        _save_canvas_cards(
+                            client,
+                            user_id=user.id,
+                            session_id=body.session_id,
+                            node_id=node["id"],
+                            answer=answer,
+                            placed_coords=placed_coords,
+                        )
                     )
-                    if nav_nodes:
-                        tlog.add_skill("navigator", count=len(nav_nodes))
-                        yield _sse("navigator", {"nodes": nav_nodes})
-                except Exception:  # noqa: BLE001 - navigator is optional
-                    logger.exception("Navigator generation failed")
-                    tlog.add_error("navigator_failed")
+
             except Exception:  # noqa: BLE001 - details to logs, not the client
                 logger.exception("Persisting node failed")
                 tlog.add_error("save_failed")

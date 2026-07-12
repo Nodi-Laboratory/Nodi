@@ -26,7 +26,39 @@ class Settings(BaseSettings):
     # Optional in Stage 0 — server-side privileged ops. App must boot without it.
     supabase_service_role_key: str = ""
 
-    # --- AI (Gemini) ---
+    # --- AI (EXAONE / Friendli) — chat-answer generation ---
+    # Friendli serverless endpoint (OpenAI-compatible chat completions). Replaces
+    # Gemini for the streamed chat answer. Embeddings now run on Upstage
+    # (4096d, Qdrant) — see the Upstage/Qdrant sections below.
+    exaone_api_key: str = ""  # Friendli API key (starts with flp_)
+    exaone_model: str = "LGAI-EXAONE/K-EXAONE-236B-A23B"  # serverless model id
+    friendli_base_url: str = "https://api.friendli.ai"
+    exaone_temperature: float = 0.5
+    exaone_max_tokens: int = 2048
+
+    # --- AI (Upstage) — 임베딩(4096d) + 문서 파싱(Document Parse) ---
+    # 비대칭 임베딩: 질의 embedding-query / 문서 embedding-passage (혼용 금지).
+    # PDF/이미지 텍스트 추출은 document-parse가 기존 Gemini OCR을 대체.
+    upstage_api_key: str = ""
+    upstage_base_url: str = "https://api.upstage.ai/v1"
+    upstage_embedding_query_model: str = "embedding-query"
+    upstage_embedding_passage_model: str = "embedding-passage"
+    upstage_document_parse_model: str = "document-parse"
+
+    # --- Qdrant (벡터 저장소 — pgvector 대체) ---
+    # 컬렉션: file_chunks / art_assets / ebs (전부 4096d, Cosine).
+    # Qdrant엔 RLS가 없다 — 스코핑은 백엔드 페이로드 필터로 강제(qdrant_store).
+    qdrant_url: str = "http://localhost:6333"
+
+    # --- /retrieve (개념 캔버스: 질의 임베딩 + EBS/아트 노드 검색) ---
+    retrieve_ebs_top_k: int = 1
+    retrieve_art_top_k: int = 2
+    retrieve_ebs_min_score: float = 0.35
+    retrieve_art_min_score: float = 0.35
+    # canvas_cards kNN 결과를 앵커로 사용할 최소 유사도 임계값 (§4-2).
+    canvas_near_min_score: float = 0.5
+
+    # --- AI (Gemini) — 비임베딩 LLM 작업만 (chat/label/tag; 임베딩은 Upstage) ---
     google_gemini_api_key: str = ""
     # Chat model (streaming). Label model is a lighter/cheaper flash variant.
     # Runtime override (admin) lands in a later stage; static config for now.
@@ -57,13 +89,16 @@ class Settings(BaseSettings):
     # Truncate each imported answer in the reference block (char budget).
     memory_answer_char_cap: int = 400
 
-    # --- File RAG embeddings (Stage 3b-1) ---
-    # NOTE: text-embedding-004 is unavailable on this API key; gemini-embedding-001
-    # is the current model and supports output_dimensionality (768 here -> the
-    # file_chunks.embedding vector(768) column). Reduced dims are not pre-
-    # normalized, so the worker L2-normalizes before storing.
+    # --- File RAG embeddings (Stage 3b-1; Upstage/Qdrant로 이전) ---
+    # 임베딩은 Upstage embedding-passage/query 4096d + Qdrant로 이전됨.
+    # gemini_embedding_model 키는 이전 완료 전까지 참조하는 코드가 남아 있어
+    # 유지(비활성 예정 — 새 코드는 services/upstage.py를 사용할 것).
     gemini_embedding_model: str = "gemini-embedding-001"
-    embedding_dimension: int = 768
+    embedding_dimension: int = 4096
+    # --- SVG art search (concept-card illustrations) ---
+    # Cosine distance cutoff for a query->art match (0=identical). Above this, no
+    # illustration is shown for the concept.
+    art_match_max_distance: float = 0.42
     # Chunks per embedding_batch child job; sub-batched per embed request.
     embedding_batch_size: int = 64
     embedding_request_max_chunks: int = 32  # per embed_content call
