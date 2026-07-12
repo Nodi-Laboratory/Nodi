@@ -58,6 +58,23 @@ class Settings(BaseSettings):
     # canvas_cards kNN 결과를 앵커로 사용할 최소 유사도 임계값 (§4-2).
     canvas_near_min_score: float = 0.5
 
+    # 힘-기반 클러스터 배치(spec 2026-07-12-force-cluster). 전부 결정론 상수.
+    force_s_merge: float = 0.80      # 이상이면 목표거리 0(동일 군집 중심)
+    force_s_min: float = 0.30        # 이하면 최대거리(완전 분리)
+    force_gamma: float = 2.0         # 중간 유사도 거리 곡률(군집 조밀도)
+    force_d_max: float = 1200.0      # 최대 목표 거리(px)
+    force_min_gap: float = 24.0      # 카드 간 최소 간격(px)
+    force_k_attr: float = 0.1        # 스트레스 경사 스텝 계수
+    force_k_rep: float = 0.9         # 충돌 밀어내기 계수
+    force_tau: float = 0.15          # 초기 무게중심 softmax 온도
+    force_iters: int = 200           # 이완 반복(결정론 고정)
+    force_t0: float = 0.9            # 쿨링 초기 온도
+    force_alpha: float = 0.95        # 쿨링 감쇠
+    card_w: float = 420.0            # 카드 폭(고정)
+    card_h_min: float = 160.0        # 카드 높이 최소
+    card_h_max: float = 560.0        # 카드 높이 최대
+    card_h_per_line: float = 28.0    # 본문 줄당 높이 증가(px)
+
     # --- AI (Gemini) — 비임베딩 LLM 작업만 (chat/label/tag; 임베딩은 Upstage) ---
     google_gemini_api_key: str = ""
     # Chat model (streaming). Label model is a lighter/cheaper flash variant.
