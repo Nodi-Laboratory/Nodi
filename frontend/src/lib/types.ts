@@ -99,6 +99,21 @@ export interface NodeRow {
   navigator_meta?: NavigatorMeta | null;
   /** D46: 이 답변이 이번 턴에 참조한 브랜치 출처들(구노드엔 없음). */
   reference_sources?: ReferenceSource[] | null;
+  /**
+   * 캔버스 리프 노드 영속분(C5). `attachments.canvas`에 이 노드가 생성한
+   * EBS 영상/아트 추천 노드를 담아 세션 재수화 때 복원한다. 그 외 attachments
+   * 키(기타 첨부)는 건드리지 않는다.
+   * concepts: 09 — place 이벤트가 확정한 개념별 좌표(재수화 원본).
+   */
+  attachments?: {
+    canvas?: {
+      ebs?: { video_id: string; title: string; thumb: string; score?: number }[];
+      art?: { slug: string; url: string; title: string; score?: number }[];
+      /** 09: place 이벤트가 서버에 저장한 개념별 좌표. i = concept_index(0-based). */
+      concepts?: { i: number; x: number; y: number }[];
+    } | null;
+    [key: string]: unknown;
+  } | null;
 }
 
 /** D40: 네비게이터 근거 메타. */

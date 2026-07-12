@@ -607,6 +607,11 @@ export interface ChatStreamBody {
   reference_node_ids?: string[];
   /** D47: 네비게이터 자동생성 per-request override(서버가 안전범위로 clamp). */
   navigator?: ChatNavigatorOverride | null;
+  /**
+   * 09: /retrieve의 near 좌표 릴레이 — 서버가 첫 개념(index 0)을 이 셀에 배치.
+   * null이면 서버가 자체 폴백 앵커로 계산.
+   */
+  place_hint?: { x: number; y: number } | null;
 }
 
 /**
@@ -641,12 +646,21 @@ export async function putNodePositions(
   }
 }
 
+/** 09: place SSE 이벤트 페이로드. */
+export interface PlaceEvent {
+  concept_index: number;
+  x: number;
+  y: number;
+}
+
 export interface ChatStreamHandlers {
   onStart?: (data: ChatStartEvent) => void;
   onToken?: (delta: string) => void;
   onDone?: (data: ChatDoneEvent) => void;
   onNavigator?: (data: ChatNavigatorEvent) => void;
   onError?: (detail: string) => void;
+  /** 09: 서버가 개념 배치 좌표를 확정할 때마다 전송하는 place 이벤트. */
+  onPlace?: (data: PlaceEvent) => void;
 }
 
 interface SSEEvent {
@@ -759,6 +773,10 @@ export async function streamChat(
         case "navigator":
           handlers.onNavigator?.(ev.data as unknown as ChatNavigatorEvent);
           break;
+        case "place":
+          // 09: 서버 좌표 확정 이벤트 — concept_index별 x/y 전달
+          handlers.onPlace?.(ev.data as unknown as PlaceEvent);
+          break;
         case "error":
           handlers.onError?.((ev.data.detail as string) ?? "스트리밍 오류");
           break;
@@ -767,6 +785,167 @@ export async function streamChat(
     (d) => handlers.onError?.(d),
     signal,
   );
+}
+
+// ── SVG 삽화 검색 (Claude 사전생성 라이브러리 · pgvector) ──────────────
+
+export interface ArtHit {
+  slug: string;
+  url: string;
+  title: string | null;
+  tags: string[] | null;
+  distance: number;
+}
+
+export interface ArtSearchResult {
+  /** 임계값 이내 매치가 있으면 삽화, 없으면 null. */
+  art: ArtHit | null;
+  /** 질의 임베딩(768d) — 개념 유사도 그룹핑에 재사용(호출 1회로 삽화+그룹핑). */
+  embedding: number[] | null;
+}
+
+/** 개념 제목으로 유사 SVG를 검색한다. 실패/무매치 시 art=null. */
+export async function searchArt(
+  q: string,
+  k = 1,
+): Promise<ArtSearchResult> {
+  const query = q.trim();
+  if (!query) return { art: null, embedding: null };
+  const params = new URLSearchParams({ q: query, k: String(k) });
+  try {
+    const res = await fetch(`${API_BASE}/art/search?${params.toString()}`, {
+      headers: await authHeaders(),
+    });
+    if (!res.ok) return { art: null, embedding: null };
+    return (await res.json()) as ArtSearchResult;
+  } catch {
+    return { art: null, embedding: null };
+  }
+}
+
+// ── 임베딩 검색 + 캔버스 영속 (Upstage /retrieve · PATCH /nodes, C4/C5) ──
+
+export interface RetrieveEbsHit {
+  videoId: string;
+  title: string;
+  thumb: string;
+  score: number;
+}
+
+export interface RetrieveArtHit {
+  slug: string;
+  url: string;
+  title: string;
+  score: number;
+}
+
+export interface RetrieveResult {
+  /**
+   * 09: 서버가 계산한 캔버스 배치 좌표 — 항상 존재(degraded여도 폴백 좌표).
+   * retrieve 자체가 reject/타임아웃이면 프론트 로컬 폴백(아래 degradedRetrieve).
+   */
+  near: { x: number; y: number; score: number | null };
+  ebs: RetrieveEbsHit[];
+  art: RetrieveArtHit[];
+  /** 백엔드 임베딩/Qdrant 실패 — near는 폴백 좌표로 채워진 채 반환됨(09 계약). */
+  degraded: boolean;
+}
+
+const RETRIEVE_TIMEOUT_MS = 4000;
+
+/** retrieve 자체가 네트워크 실패/타임아웃일 때 — near 좌표는 호출부가 로컬 폴백 계산. */
+function degradedRetrieve(): RetrieveResult {
+  return { near: { x: 0, y: 0, score: null }, ebs: [], art: [], degraded: true };
+}
+
+/**
+ * POST /retrieve (09) — 서버 좌표(near) + EBS/삽화 추천. SSE 선행 호출이므로
+ * 절대 reject하지 않고, 타임아웃(4s)·오류 모두 degraded(near={0,0})로 resolve한다.
+ * session_id 추가 필수 — 서버가 같은 세션 카드와 kNN 유사도로 좌표를 계산함.
+ */
+export async function retrieve(
+  question: string,
+  sessionId: string,
+): Promise<RetrieveResult> {
+  const q = question.trim();
+  if (!q) return degradedRetrieve();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RETRIEVE_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API_BASE}/retrieve`, {
+      method: "POST",
+      headers: await authHeaders(true),
+      body: JSON.stringify({ question: q.slice(0, 2000), session_id: sessionId }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return degradedRetrieve();
+    const body = (await res.json()) as {
+      near?: { x?: number; y?: number; score?: number | null } | null;
+      ebs?: Array<{ video_id?: string; title?: string; thumb?: string; score?: number }>;
+      art?: Array<{ slug?: string; url?: string; title?: string; score?: number }>;
+      degraded?: boolean;
+    };
+    return {
+      // near는 서버가 항상 채움 — 없으면 폴백(0,0)으로 안전 처리
+      near: {
+        x: typeof body?.near?.x === "number" ? body.near.x : 0,
+        y: typeof body?.near?.y === "number" ? body.near.y : 0,
+        score: body?.near?.score ?? null,
+      },
+      ebs: (body?.ebs ?? [])
+        .filter((e) => e?.video_id)
+        .map((e) => ({
+          videoId: String(e.video_id),
+          title: e.title ?? "",
+          thumb: e.thumb ?? `https://i.ytimg.com/vi/${e.video_id}/hqdefault.jpg`,
+          score: e.score ?? 0,
+        })),
+      art: (body?.art ?? [])
+        .filter((a) => a?.slug)
+        .map((a) => ({
+          slug: String(a.slug),
+          url: a.url ?? `/art/${a.slug}.svg`,
+          title: a.title ?? "",
+          score: a.score ?? 0,
+        })),
+      degraded: !!body?.degraded,
+    };
+  } catch {
+    return degradedRetrieve();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** C5/09: nodes.attachments.canvas에 병합 저장되는 형태(ebs/art — snake_case). */
+export interface NodeCanvasAttachment {
+  ebs: Array<{ video_id: string; title: string; thumb: string; score: number }>;
+  art: Array<{ slug: string; url: string; title: string; score: number }>;
+}
+
+/**
+ * PATCH /nodes/{id} (C5) — retrieve 결과(ebs/art) 영속.
+ * 09: 좌표 저장은 서버 done 훅이 담당 → positionX/Y 전달 제거.
+ * done 이후 fire-and-forget: 실패는 삼킨다(캔버스는 replay만으로도 재구성 가능).
+ */
+export async function patchNodeCanvas(
+  nodeId: string,
+  patch: {
+    attachmentsCanvas?: NodeCanvasAttachment | null;
+  },
+): Promise<void> {
+  if (!isRealId(nodeId)) return; // D63: 임시 id는 DB 경계로 못 보냄
+  try {
+    await fetch(`${API_BASE}/nodes/${nodeId}`, {
+      method: "PATCH",
+      headers: await authHeaders(true),
+      body: JSON.stringify({
+        attachments_canvas: patch.attachmentsCanvas ?? null,
+      }),
+    });
+  } catch {
+    /* best-effort */
+  }
 }
 
 // ── 홈 + 총괄 AI (Stage 4a) ──────────────────────────────────────────
