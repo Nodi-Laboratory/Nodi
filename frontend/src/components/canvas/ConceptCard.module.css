@@ -4,6 +4,12 @@
   position: absolute; /* concept.x/y absolute (top-left) */
   width: 420px;
   box-sizing: border-box;
+  /* 08: 본문량 기반 동적 높이 클램프 — 백엔드 config(card_h_min/max)와 일치.
+     인라인 style의 height를 [min,max] 범위로 강제하고, 내용이 넘치면 스크롤 없이
+     max-height 내에서 클리핑(디자인 유지). */
+  min-height: 160px;
+  max-height: 560px;
+  overflow: hidden;
   padding: 18px;
   border-radius: 18px;
   background: color-mix(in srgb, var(--bg) 55%, #ffffff);
