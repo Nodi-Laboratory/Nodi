@@ -71,10 +71,15 @@ class NavigatorOverride(BaseModel):
 
 
 class PlaceHint(BaseModel):
-    """프론트가 /retrieve near를 릴레이하는 초기 배치 힌트."""
+    """프론트가 /retrieve near를 릴레이하는 초기 배치 힌트.
 
-    x: int
-    y: int
+    좌표는 힘 솔버가 계산한 연속 실수(float) — int로 두면 소수점 좌표에서 422가
+    난다. 솔버가 벡터 유사도로 배치하므로 이 값은 현재 참조하지 않지만(프론트
+    구계약 호환), 검증 실패로 요청을 막지 않도록 float로 수용한다.
+    """
+
+    x: float
+    y: float
 
 
 class RetrievedEbsItem(BaseModel):
@@ -533,7 +538,11 @@ async def chat_stream(
                         body_text = block["body"]
                         lines = body_text.count("\n") + 1 if body_text else 0
                         h = estimate_card_height(lines)
-                        x, y = place_new_card(h, existing_final, block["index"])
+                        # count_seed = 누적 카드 수(황금각 방향 결정) — block["index"]를
+                        # 쓰면 단일 개념 답변마다 0이 되어 오프셋이 항상 (1,0)→모든
+                        # 카드가 같은 y에 수평 정렬되는 1차원 퇴화가 발생한다.
+                        # 스트리밍 경로(_place_for_new_concept, len(existing))와 동일 계약.
+                        x, y = place_new_card(h, existing_final, len(existing_final))
                         placed_coords[block["index"]] = (x, y)
                         placed_heights[block["index"]] = h
                         existing_final.append(ExistingCard(x=x, y=y, h=h, sim=0.9))

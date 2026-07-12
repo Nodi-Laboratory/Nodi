@@ -723,7 +723,12 @@ async function consumeSSE(
   if (!res.ok || !res.body) {
     let detail = `HTTP ${res.status}`;
     try {
-      detail = (await res.json())?.detail ?? detail;
+      // detail은 문자열이 아닐 수 있다(예: 422의 Pydantic 오류 배열
+      // [{type,loc,msg,input}]). 그대로 onError→렌더로 넘기면 React가
+      // 객체를 자식으로 렌더하려다 크래시하므로 문자열로 정규화한다.
+      const d = (await res.json())?.detail;
+      if (typeof d === "string") detail = d;
+      else if (d != null) detail = JSON.stringify(d);
     } catch {
       /* ignore */
     }

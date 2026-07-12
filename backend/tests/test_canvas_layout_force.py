@@ -8,6 +8,30 @@ from app.config import get_settings
 S = get_settings()
 
 
+def test_sequential_placement_is_2d_not_collinear():
+    # 회귀 가드: 카드를 순차 배치할 때 count_seed=현재 카드 수를 넘기면(황금각이
+    # 카드마다 달라짐) 서로 다른 y로 퍼진다. count_seed를 0으로 고정하면(예전
+    # settle 버그) 오프셋이 항상 (1,0)→모두 같은 y로 붕괴하는 1차원 퇴화가 났다.
+    existing = [ExistingCard(x=1300.0, y=800.0, h=200.0, sim=0.55)]
+    ys = {800}
+    for _ in range(4):
+        x, y = place_new_card(200.0, existing, len(existing))
+        ys.add(round(y))
+        existing.append(ExistingCard(x=x, y=y, h=200.0, sim=0.55))
+    assert len(ys) >= 3, f"1차원 퇴화 의심 — 서로 다른 y가 부족: {ys}"
+
+
+def test_collinear_regression_seed_zero_collapses():
+    # count_seed를 0으로 고정하면 모두 같은 y(≈앵커 y)로 붕괴함을 명시적으로 포착.
+    existing = [ExistingCard(x=1300.0, y=800.0, h=200.0, sim=0.55)]
+    ys = set()
+    for _ in range(4):
+        x, y = place_new_card(200.0, existing, 0)  # 버그 재현: seed 고정
+        ys.add(round(y))
+        existing.append(ExistingCard(x=x, y=y, h=200.0, sim=0.55))
+    assert ys == {800}, f"seed 고정 시 수평 붕괴 예상이나: {ys}"
+
+
 def test_target_distance_merge_and_separate():
     assert target_distance(0.95) == 0.0          # >= S_MERGE → 0
     assert target_distance(0.10) == S.force_d_max # < S_MIN → D_MAX
