@@ -119,10 +119,11 @@ async def scroll_canvas_cards(
     session_id: str,
     *,
     limit: int = 200,
+    with_vectors: bool = False,
 ) -> list[dict]:
-    """canvas_cards 컬렉션을 세션 필터로 scroll — 벡터 제외, payload만 반환.
+    """canvas_cards 컬렉션을 세션 필터로 scroll — payload(+옵션 벡터) 반환.
 
-    반환: [{"id": str, "payload": {...}}]
+    반환: [{"id": str, "payload": {...}}] (with_vectors=True면 각 dict에 "vector" 추가).
     owner_id + session_id 조합으로 강제 스코핑 (Qdrant는 RLS 없음).
     """
     client = get_client()
@@ -142,10 +143,46 @@ async def scroll_canvas_cards(
         collection_name=COL_CANVAS_CARDS,
         scroll_filter=query_filter,
         limit=limit,
-        with_vectors=False,
+        with_vectors=with_vectors,
         with_payload=True,
     )
-    return [{"id": str(pt.id), "payload": pt.payload or {}} for pt in result]
+    out: list[dict] = []
+    for pt in result:
+        item = {"id": str(pt.id), "payload": pt.payload or {}}
+        if with_vectors:
+            item["vector"] = pt.vector
+        out.append(item)
+    return out
+
+
+async def upsert_canvas_card(
+    owner_id: str,
+    session_id: str,
+    node_id: str,
+    concept_index: int,
+    title: str,
+    x: float,
+    y: float,
+    size_h: float,
+    vector: list[float],
+) -> None:
+    """canvas_cards 멱등 upsert. 좌표(연속)+크기+벡터 저장."""
+    client = get_client()
+    point = models.PointStruct(
+        id=canvas_card_point_id(node_id, concept_index),
+        vector=vector,
+        payload={
+            "owner_id": owner_id,
+            "session_id": session_id,
+            "node_id": node_id,
+            "concept_index": concept_index,
+            "title": title,
+            "x": x,
+            "y": y,
+            "size_h": size_h,
+        },
+    )
+    await client.upsert(collection_name=COL_CANVAS_CARDS, points=[point])
 
 
 async def search_canvas_cards(
