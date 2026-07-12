@@ -660,6 +660,8 @@ export interface PlaceEvent {
   concept_index: number;
   x: number;
   y: number;
+  /** 09: 스트리밍 중간값은 false, done settle 재전송은 true. */
+  is_final: boolean;
 }
 
 export interface ChatStreamHandlers {

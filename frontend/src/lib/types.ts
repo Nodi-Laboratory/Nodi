@@ -109,8 +109,8 @@ export interface NodeRow {
     canvas?: {
       ebs?: { video_id: string; title: string; thumb: string; score?: number }[];
       art?: { slug: string; url: string; title: string; score?: number }[];
-      /** 09: place 이벤트가 서버에 저장한 개념별 좌표. i = concept_index(0-based). */
-      concepts?: { i: number; x: number; y: number }[];
+      /** 09: place 이벤트가 서버에 저장한 개념별 좌표. i = concept_index(0-based). h = 카드 높이. */
+      concepts?: { i: number; x: number; y: number; h?: number }[];
     } | null;
     [key: string]: unknown;
   } | null;
