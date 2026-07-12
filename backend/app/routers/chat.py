@@ -136,6 +136,20 @@ def _place_for_new_concept(
     return place_new_card(new_h, existing, seed)
 
 
+def _fill_missing_heights(
+    placed_coords: dict[int, tuple[float, float]],
+    placed_heights: dict[int, float],
+) -> None:
+    """settle 실패/부분 실패 보정 — 배치된 개념의 크기 기본값을 채운다(in-place).
+
+    settle(parse/솔버)가 예외로 갱신하지 못한 index는 스트리밍 단계의 좌표
+    (placed_coords, 이미 채워짐) + 기본 높이 estimate_card_height(2)로 저장되게 한다.
+    이미 settle이 확정한 index는 건드리지 않는다(멱등).
+    """
+    for idx in placed_coords:
+        placed_heights.setdefault(idx, estimate_card_height(2))
+
+
 async def _scroll_session_cards(owner_id: str, session_id: str) -> list[dict]:
     """세션 기존 canvas_cards scroll(벡터 포함) — best-effort, 실패 시 [].
 
@@ -507,25 +521,40 @@ async def chat_stream(
                 # 세션 기존 카드(이번 답변 제외)만 pin으로 두고, 답변 내 개념은
                 # 확정 순서대로 하나씩 pin에 합류시켜 서로 겹치지 않게 한다.
                 # concept_blocks.parse의 index = place SSE의 concept_index(0-based 로컬).
-                parsed = concept_blocks.parse(answer)
-                existing_final = _session_cards_as_existing(session_cards, qvec)
-                for block in parsed:
-                    body_text = block["body"]
-                    lines = body_text.count("\n") + 1 if body_text else 0
-                    h = estimate_card_height(lines)
-                    x, y = place_new_card(h, existing_final, seed=block["index"])
-                    placed_coords[block["index"]] = (x, y)
-                    placed_heights[block["index"]] = h
-                    existing_final.append(ExistingCard(x=x, y=y, h=h, sim=0.9))
-                    yield _sse(
-                        "place",
-                        {
-                            "concept_index": block["index"],
-                            "x": x,
-                            "y": y,
-                            "is_final": True,
-                        },
+                #
+                # 자체 격리: settle(parse/솔버)가 실패해도 스트림/저장은 무영향이어야
+                # 한다 — 예외는 warning만, error SSE 방출 금지, 아래 canvas_cards
+                # 저장(create_task)은 항상 도달한다. 실패 시 좌표는 스트리밍 단계의
+                # placed_coords로 폴백(이미 채워짐), placed_heights는 기본값으로 보정.
+                try:
+                    parsed = concept_blocks.parse(answer)
+                    existing_final = _session_cards_as_existing(session_cards, qvec)
+                    for block in parsed:
+                        body_text = block["body"]
+                        lines = body_text.count("\n") + 1 if body_text else 0
+                        h = estimate_card_height(lines)
+                        x, y = place_new_card(h, existing_final, block["index"])
+                        placed_coords[block["index"]] = (x, y)
+                        placed_heights[block["index"]] = h
+                        existing_final.append(ExistingCard(x=x, y=y, h=h, sim=0.9))
+                        yield _sse(
+                            "place",
+                            {
+                                "concept_index": block["index"],
+                                "x": x,
+                                "y": y,
+                                "is_final": True,
+                            },
+                        )
+                except Exception:  # noqa: BLE001 - settle 실패 = 스트림/저장 무영향
+                    logger.warning(
+                        "done settle 실패 node=%s — 스트리밍 좌표로 폴백 저장",
+                        node["id"],
+                        exc_info=True,
                     )
+
+                # settle 실패/부분 실패 대비 — 배치된 개념의 크기 기본값 보정.
+                _fill_missing_heights(placed_coords, placed_heights)
 
                 # done 훅: canvas_cards 저장 + attachments 병합 (fire-and-forget)
                 # settle에서 확정한 최종 좌표(placed_coords)+크기(placed_heights)를
