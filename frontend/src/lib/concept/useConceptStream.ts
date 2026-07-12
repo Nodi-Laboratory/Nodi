@@ -25,7 +25,7 @@ import {
   type PlaceEvent,
   type SpaceTarget,
 } from "@/lib/api";
-import { sessionKey, sessionsKey, useSessionDetail } from "@/lib/queries";
+import { sessionsKey, useSessionDetail } from "@/lib/queries";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type { ChatDoneEvent, NodeRow } from "@/lib/types";
 import { createConceptParser } from "./conceptParser";
@@ -547,7 +547,13 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
             },
           });
         }
-        void queryClient.invalidateQueries({ queryKey: sessionKey(sid) });
+        // 09 회귀 수정: done 후 sessionKey(sid) invalidate를 하지 않는다.
+        // 좌표는 서버 done 훅이 fire-and-forget으로 늦게 저장하므로, 여기서
+        // 재수화를 트리거하면 아직 concepts 좌표가 없는 스냅샷으로 라이브 place
+        // 좌표를 폴백((40,40)부터 순차)으로 덮어써 카드가 점프/중복된다.
+        // 라이브 상태가 진실의 원천 — 새로고침/세션전환 시 useSessionDetail이
+        // 자연히 fresh fetch해 저장된 좌표로 재수화한다(§5-3 경로 보존).
+        // sessionsKey(목록) invalidate만 유지 — 세션 제목/updated_at 갱신용.
         void queryClient.invalidateQueries({ queryKey: sessionsKey(target) });
       }
 
