@@ -60,8 +60,8 @@ class Settings(BaseSettings):
 
     # 힘-기반 클러스터 배치(spec 2026-07-12-force-cluster). 전부 결정론 상수.
     force_s_merge: float = 0.80      # 이상이면 목표거리 0(동일 군집 중심)
-    force_s_min: float = 0.30        # 이하면 최대거리(완전 분리)
-    force_gamma: float = 2.0         # 중간 유사도 거리 곡률(군집 조밀도)
+    force_s_min: float = 0.20        # 이하면 최대거리(완전 분리) — 인력 구간 확대(조밀)
+    force_gamma: float = 4.0         # 중간 유사도 거리 곡률↑ = 유사 개념 급격히 조밀화
     force_d_max: float = 1200.0      # 최대 목표 거리(px)
     force_min_gap: float = 24.0      # 카드 간 최소 간격(px)
     force_k_attr: float = 0.1        # 스트레스 경사 스텝 계수
