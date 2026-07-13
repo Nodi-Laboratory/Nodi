@@ -1,8 +1,8 @@
 "use client";
 
-// 태그 클러스터 d3-force 레이아웃 훅. 카드=force 노드: 자기 태그 무게중심으로 응집 +
-// forceManyBody(노드 많은 태그가 더 멀리 밀어냄) + forceCollide(무겹침). 좌표는 창발적,
-// 결정론 시드(tagSeed)로 재수화 안정. 데이터 변화 시 재가열 → 틱마다 위치 갱신(부드러운 이동).
+// 태그 클러스터 d3-force 레이아웃 훅. 카드=force 노드: 자기 태그 고정 앵커로 응집 +
+// forceManyBody(클러스터 내 균등 분산) + forceCollide(무겹침). 태그 위치는 고정,
+// 결정론 시드(고정 앵커 근처)로 재수화 안정. 데이터 변화 시 재가열 → 틱마다 위치 갱신(부드러운 이동).
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -11,7 +11,8 @@ import {
   forceCollide,
   type Simulation,
 } from "d3-force";
-import { tagSeed, tagCentroids as centroidsOf, CARD_W } from "./tagLayoutCore";
+import { CARD_W } from "./tagLayoutCore";
+import { tagAnchor } from "./curriculumTags";
 
 interface LNode {
   id: string;
@@ -26,15 +27,24 @@ interface LNode {
 type Positions = Map<string, { x: number; y: number }>;
 type Centroids = Map<string, { x: number; y: number; count: number }>;
 
-const COHESION = 0.08;  // 태그 무게중심 응집 강도
-const CHARGE = -1600;   // 카드 간 반발(음수) — 노드 많은 태그가 총합으로 더 밀어냄
+const COHESION = 0.08;  // 태그 고정 앵커 응집 강도
+const CHARGE = -500;    // 클러스터 내 균등 분산(인터-태그 분리는 고정 앵커)
 const COLLIDE_GAP = 28; // 무겹침 여백
 
-// 노드 배열 → 렌더용 좌표/무게중심 스냅샷(틱 핸들러·이펙트에서만 호출).
+// 노드 배열 → 렌더용 좌표/앵커 스냅샷(틱 핸들러·이펙트에서만 호출).
 function snapshot(arr: LNode[]): { positions: Positions; tagCentroids: Centroids } {
   const positions: Positions = new Map();
-  for (const n of arr) positions.set(n.id, { x: n.x, y: n.y });
-  return { positions, tagCentroids: centroidsOf(arr) };
+  const counts = new Map<string, number>();
+  for (const n of arr) {
+    positions.set(n.id, { x: n.x, y: n.y });
+    counts.set(n.tag, (counts.get(n.tag) ?? 0) + 1);
+  }
+  const tagCentroids: Centroids = new Map();
+  for (const [tag, count] of counts) {
+    const a = tagAnchor(tag);
+    tagCentroids.set(tag, { x: a.x, y: a.y, count }); // 위치=고정 앵커, populated-only
+  }
+  return { positions, tagCentroids };
 }
 
 export function useTagLayout(items: Array<{ id: string; tag: string; h: number }>) {
@@ -45,8 +55,7 @@ export function useTagLayout(items: Array<{ id: string; tag: string; h: number }
   }));
   const simRef = useRef<Simulation<LNode, undefined> | null>(null);
   const nodesRef = useRef<Map<string, LNode>>(new Map());
-  // 태그 첫등장 순서(결정론 시드용) — 세션 동안 누적.
-  const tagIndexRef = useRef<Map<string, number>>(new Map());
+  // 태그별 카드 개수(결정론 시드 오프셋용) — 세션 동안 누적.
   const tagCountRef = useRef<Map<string, number>>(new Map());
 
   // 입력 items의 안정 키(순서·태그·개수 변화 감지)
@@ -60,11 +69,13 @@ export function useTagLayout(items: Array<{ id: string; tag: string; h: number }
       seen.add(it.id);
       let n = nodes.get(it.id);
       if (!n) {
-        if (!tagIndexRef.current.has(tag)) tagIndexRef.current.set(tag, tagIndexRef.current.size);
         const cardIdx = tagCountRef.current.get(tag) ?? 0;
         tagCountRef.current.set(tag, cardIdx + 1);
-        const seed = tagSeed(tagIndexRef.current.get(tag)!, cardIdx);
-        n = { id: it.id, tag, h: it.h, x: seed.x, y: seed.y };
+        // 자기 태그 고정 앵커 근처로 시드(결정론 소나선 → 초기 겹침 방지, 즉시 제자리).
+        const a = tagAnchor(tag);
+        const cr = 60 * Math.sqrt(cardIdx + 1);
+        const cang = (cardIdx + 1) * 2.399963; // 황금각(rad)
+        n = { id: it.id, tag, h: it.h, x: a.x + cr * Math.cos(cang), y: a.y + cr * Math.sin(cang) };
         nodes.set(it.id, n);
       } else {
         n.tag = tag;
@@ -74,14 +85,12 @@ export function useTagLayout(items: Array<{ id: string; tag: string; h: number }
     for (const id of [...nodes.keys()]) if (!seen.has(id)) nodes.delete(id);
 
     const arr = [...nodes.values()];
-    // 태그 응집: 매 틱 무게중심 재계산 후 그쪽으로 속도 가함(커스텀 force).
+    // 태그 응집: 각 카드를 자기 태그의 "고정 앵커"로 당김(무게중심 아님 → 태그 위치 고정).
     const cohesion = (alpha: number) => {
-      const cs = centroidsOf(arr);
       for (const n of arr) {
-        const c = cs.get(n.tag);
-        if (!c) continue;
-        n.vx = (n.vx ?? 0) + (c.x - n.x) * COHESION * alpha;
-        n.vy = (n.vy ?? 0) + (c.y - n.y) * COHESION * alpha;
+        const a = tagAnchor(n.tag);
+        n.vx = (n.vx ?? 0) + (a.x - n.x) * COHESION * alpha;
+        n.vy = (n.vy ?? 0) + (a.y - n.y) * COHESION * alpha;
       }
     };
     // 틱마다 현재 노드 좌표를 스냅샷 상태로 밀어 리렌더(ref 읽기는 여기서만).
