@@ -73,7 +73,9 @@ async def _fake_stream_answer(history, question, system_prompt):
         yield line
 
 
-async def _consume(monkeypatch, *, settle_raises: bool):
+async def _consume(
+    monkeypatch, *, settle_raises: bool, textbook_result=None, spy: dict | None = None
+):
     """chat_stream을 최소 목으로 구동해 방출 SSE 이벤트 목록을 반환."""
     import asyncio
 
@@ -101,9 +103,20 @@ async def _consume(monkeypatch, *, settle_raises: bool):
     monkeypatch.setattr(C.memory, "build_reference_context", fake_reference)
     monkeypatch.setattr(C.rag, "build_rag_context", fake_rag)
     monkeypatch.setattr(C.memory, "build_comparison_context", fake_comparison)
-    monkeypatch.setattr(
-        C.gemini, "compose_system_structured", lambda *a, **k: ("sys", [])
-    )
+
+    async def fake_textbook(qv):
+        if spy is not None:
+            spy["textbook_qvec"] = qv
+        return textbook_result
+
+    monkeypatch.setattr(C.rag, "build_textbook_context", fake_textbook)
+
+    def fake_compose(*a, **k):
+        if spy is not None:
+            spy["compose_kwargs"] = k
+        return ("sys", [])
+
+    monkeypatch.setattr(C.gemini, "compose_system_structured", fake_compose)
     monkeypatch.setattr(C.exaone, "CONCEPT_CARD_SYSTEM_PROMPT", "base", raising=False)
     monkeypatch.setattr(C.exaone, "stream_answer", _fake_stream_answer)
 
@@ -201,3 +214,30 @@ async def test_settle_failure_is_isolated(monkeypatch):
     assert "error" not in names          # (1) error SSE 미방출
     assert "done" in names               # done은 정상 방출됨
     assert len(scheduled) == 1           # (2) canvas_cards 저장 경로 도달(폴백)
+
+
+@pytest.mark.asyncio
+async def test_textbook_context_wired_qvec_reused_and_composed(monkeypatch):
+    """교과서 RAG 배선: 캔버스용 질문 임베딩(qvec)이 재사용되고,
+    결과 block/sources가 compose_system_structured에 전달된다."""
+    spy = {}
+    tb = {
+        "block": "[교과서에서 참고]\n- [중학 과학 2 · p.12] 광합성",
+        "sources": [{"name": "중학 과학 2", "page": 12}],
+    }
+    events, _ = await _consume(
+        monkeypatch, settle_raises=False, textbook_result=tb, spy=spy
+    )
+    # qvec 재사용 — fake_embed_query가 준 벡터가 그대로 전달됨
+    assert spy["textbook_qvec"] == [0.1] * 10
+    assert spy["compose_kwargs"]["textbook_context"] == tb["block"]
+    assert spy["compose_kwargs"]["textbook_sources"] == tb["sources"]
+    assert "done" in _event_names(events)
+
+
+@pytest.mark.asyncio
+async def test_textbook_none_composes_without_block(monkeypatch):
+    spy = {}
+    await _consume(monkeypatch, settle_raises=False, textbook_result=None, spy=spy)
+    assert spy["compose_kwargs"]["textbook_context"] is None
+    assert spy["compose_kwargs"]["textbook_sources"] == []
