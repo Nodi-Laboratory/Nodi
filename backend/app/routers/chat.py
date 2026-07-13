@@ -238,11 +238,12 @@ async def _save_canvas_cards(
     placed_coords: dict[int, tuple[float, float]],
     placed_heights: dict[int, float],
     retrieved: RetrievedBody | None = None,
+    precomputed_vectors: dict[int, list[float]] | None = None,
 ) -> None:
-    """done 훅 — fire-and-forget: 개념 임베딩 + canvas_cards upsert + attachments 병합.
+    """done 훅 — 개념 임베딩 + canvas_cards upsert + attachments 병합.
 
-    done settle에서 확정한 최종 좌표(placed_coords) + 실제 카드 크기(placed_heights)를
-    passage 벡터와 함께 canvas_cards에 저장한다(size_h·vector 포함).
+    settle이 이미 계산한 passage 벡터(precomputed_vectors)가 전 개념을 덮으면
+    재임베딩하지 않고 재사용한다. 아니면(폴백) 여기서 embed_passages로 계산한다.
     실패는 logger.warning만 — 스트림/답변 저장에 영향 없음.
     """
     try:
@@ -250,21 +251,21 @@ async def _save_canvas_cards(
         if not blocks:
             return
 
-        # 개념 텍스트 목록 구성 (제목 + 본문) — passage 벡터 개념별 1배치
-        texts = [f"{b['title']}\n{b['body']}" for b in blocks]
-
-        # Upstage embedding-passage 배치 1회
-        vectors = await upstage.embed_passages(texts)
+        pv = precomputed_vectors or {}
+        if all(b["index"] in pv for b in blocks):
+            vectors_by_idx = pv  # settle 벡터 재사용(재임베딩 없음)
+        else:
+            texts = [f"{b['title']}\n{b['body']}" for b in blocks]
+            embedded = await upstage.embed_passages(texts)
+            vectors_by_idx = {b["index"]: embedded[k] for k, b in enumerate(blocks)}
 
         concepts_meta: list[dict] = []
-
-        for b, vec in zip(blocks, vectors):
-            # concept_blocks.parse의 index는 답변 내 0-based 로컬 인덱스 —
-            # place SSE의 concept_index·concepts[].i와 같은 좌표계다.
+        for b in blocks:
             idx = b["index"]
+            vec = vectors_by_idx.get(idx)
             coord = placed_coords.get(idx)
-            if coord is None:
-                continue  # place 이벤트가 방출되지 않은 개념은 스킵
+            if vec is None or coord is None:
+                continue  # 벡터/좌표 없는 개념 스킵
             x, y = coord
             h = placed_heights.get(idx) or estimate_card_height(2)
             await qdrant_store.upsert_canvas_card(
@@ -570,21 +571,25 @@ async def chat_stream(
                 # 한다 — 예외는 warning만, error SSE 방출 금지, 아래 canvas_cards
                 # 저장(create_task)은 항상 도달한다. 실패 시 좌표는 스트리밍 단계의
                 # placed_coords로 폴백(이미 채워짐), placed_heights는 기본값으로 보정.
+                # settle 재배치에 쓴 개념별 passage 벡터(저장에서 재사용 → 재임베딩 방지)
+                settle_vecs: dict[int, list[float]] = {}
                 try:
                     parsed = concept_blocks.parse(answer)
-                    existing_final = _session_cards_as_existing(session_cards, qvec)
-                    for block in parsed:
+                    # Part A: 응답 passage 임베딩을 settle에서 선계산(저장과 공유).
+                    texts = [f"{b['title']}\n{b['body']}" for b in parsed]
+                    pvecs = await upstage.embed_passages(texts) if texts else []
+                    placed: list[tuple[float, float, float, list[float]]] = []
+                    for block, pvec in zip(parsed, pvecs):
                         body_text = block["body"]
                         lines = body_text.count("\n") + 1 if body_text else 0
                         h = estimate_card_height(lines)
-                        # count_seed = 누적 카드 수(황금각 방향 결정) — block["index"]를
-                        # 쓰면 단일 개념 답변마다 0이 되어 오프셋이 항상 (1,0)→모든
-                        # 카드가 같은 y에 수평 정렬되는 1차원 퇴화가 발생한다.
-                        # 스트리밍 경로(_place_for_new_concept, len(existing))와 동일 계약.
-                        x, y = place_new_card(h, existing_final, len(existing_final))
+                        # 응답 개념↔개념 대칭 유사도로 위치 보정(질의 임베딩 아님).
+                        existing_i = _existing_for_vec(session_cards, placed, pvec)
+                        x, y = place_new_card(h, existing_i, len(existing_i))
                         placed_coords[block["index"]] = (x, y)
                         placed_heights[block["index"]] = h
-                        existing_final.append(ExistingCard(x=x, y=y, h=h, sim=0.9))
+                        placed.append((x, y, h, pvec))
+                        settle_vecs[block["index"]] = pvec
                         yield _sse(
                             "place",
                             {
@@ -618,6 +623,7 @@ async def chat_stream(
                             placed_coords=placed_coords,
                             placed_heights=placed_heights,
                             retrieved=body.retrieved,
+                            precomputed_vectors=settle_vecs,
                         )
                     )
 
