@@ -24,6 +24,7 @@ COL_FILE_CHUNKS = "file_chunks"
 COL_ART = "art_assets"
 COL_EBS = "ebs"
 COL_CANVAS_CARDS = "canvas_cards"
+COL_TEXTBOOK = "textbook"
 
 _client: AsyncQdrantClient | None = None
 
@@ -54,15 +55,20 @@ def canvas_card_point_id(node_id: str, concept_index: int) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"card:{node_id}:{concept_index}"))
 
 
+def textbook_point_id(source_name: str, seq: int) -> str:
+    """textbook 포인트 id — 재실행 ingest가 덮어쓰도록 결정론 uuid5."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"textbook:{source_name}:{seq}"))
+
+
 async def ensure_collections() -> None:
-    """3개 컬렉션(4096d, Cosine) 생성 보장 + file_chunks.file_id 키워드 인덱스.
+    """전체 컬렉션(4096d, Cosine) 생성 보장 + 페이로드 인덱스.
 
     멱등. 부팅 경로에서 호출되므로 절대 raise하지 않는다 — 실패는 로그만 남기고,
     실제 사용 시점(upsert/search)의 예외로 드러난다.
     """
     try:
         client = get_client()
-        for name in (COL_FILE_CHUNKS, COL_ART, COL_EBS, COL_CANVAS_CARDS):
+        for name in (COL_FILE_CHUNKS, COL_ART, COL_EBS, COL_CANVAS_CARDS, COL_TEXTBOOK):
             if not await client.collection_exists(name):
                 await client.create_collection(
                     collection_name=name,
@@ -89,6 +95,17 @@ async def ensure_collections() -> None:
             )
         except Exception:  # noqa: BLE001
             logger.debug("canvas_cards session_id 인덱스 생성 생략")
+        # textbook 키워드 인덱스 — source_name은 재인제스트 선삭제 필터용,
+        # subject/grade는 지금은 미사용(과목/학년 필터 대비, 스펙 2장).
+        for field in ("source_name", "subject", "grade"):
+            try:
+                await client.create_payload_index(
+                    collection_name=COL_TEXTBOOK,
+                    field_name=field,
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:  # noqa: BLE001 - 인덱스는 최적화일 뿐
+                logger.debug("textbook %s 인덱스 생성 생략", field)
     except Exception:  # noqa: BLE001 - 부팅을 죽이지 않는다
         logger.warning(
             "Qdrant 컬렉션 보장 실패 — 부팅은 계속, 사용 시점에 에러로 드러남 (url=%s)",
@@ -110,6 +127,29 @@ async def upsert(collection: str, points: list[dict]) -> None:
             )
             for p in points
         ],
+        wait=True,
+    )
+
+
+async def delete_textbook_source(source_name: str) -> None:
+    """textbook 컬렉션에서 해당 source_name 포인트 전부 삭제.
+
+    재인제스트 정합성: 청크 수가 줄면 결정론 id 업서트만으로는 옛 tail
+    포인트가 남으므로, 업서트 전에 소스 단위로 지운다 (스크립트 전용).
+    """
+    client = get_client()
+    await client.delete(
+        collection_name=COL_TEXTBOOK,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="source_name",
+                        match=models.MatchValue(value=source_name),
+                    )
+                ]
+            )
+        ),
         wait=True,
     )
 
