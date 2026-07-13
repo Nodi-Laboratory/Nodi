@@ -15,6 +15,15 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
+# Qdrant 로컬 볼륨 (docker-compose)
+qdrant_storage/
+
 # OS / 에디터
 Thumbs.db
 .DS_Store
+.superpowers/
+
+# 교과서 원문(저작권·용량) — 폴더 문서·예시 매니페스트만 커밋
+backend/textbooks/*
+!backend/textbooks/README.md
+!backend/textbooks/manifest.example.json
