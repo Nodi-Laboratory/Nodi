@@ -1,6 +1,7 @@
 "use client";
 
-// 태그 라벨 마커 — 태그 무게중심에 렌더(NoteCanvas 내부, 팬/줌 따라감). 카드 아래 레이어.
+// 태그 라벨 마커 — 태그 고정 앵커에 렌더(NoteCanvas 내부, 팬/줌 따라감).
+// 카드 위 레이어(zIndex) + 솔리드 칩 → 카드에 가려지지 않는다. pointerEvents:none로 클릭 방해 없음.
 import { CARD_W } from "@/lib/concept/tagLayoutCore";
 
 export default function TagMarker({
@@ -19,19 +20,22 @@ export default function TagMarker({
       data-testid="tag-marker"
       style={{
         position: "absolute",
-        left: x + CARD_W / 2 - 90,
-        top: y - 44,
-        width: 180,
+        left: x + CARD_W / 2 - 110,
+        top: y - 52,
+        width: 220,
+        zIndex: 5, // 카드 위
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
         gap: 6,
-        padding: "4px 12px",
-        background: "rgba(43,38,32,.06)",
-        border: "1px solid rgba(43,38,32,.14)",
+        padding: "5px 14px",
+        background: "rgba(255,255,255,.95)",
+        border: "1.5px solid var(--border, #f0e4c2)",
         borderRadius: 999,
+        boxShadow: "0 4px 14px rgba(120,90,0,.16)",
         fontFamily: "var(--font-title)",
-        fontSize: 15,
+        fontWeight: 700,
+        fontSize: 16,
         color: "var(--ink)",
         pointerEvents: "none",
         userSelect: "none",
@@ -39,7 +43,7 @@ export default function TagMarker({
       }}
     >
       <span>{tag}</span>
-      <span style={{ opacity: 0.6, fontSize: 12 }}>{count}</span>
+      <span style={{ opacity: 0.55, fontSize: 13, fontWeight: 600 }}>{count}</span>
     </div>
   );
 }

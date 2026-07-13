@@ -65,18 +65,6 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
     return { w: window.innerWidth, h: window.innerHeight };
   }, []);
 
-  // 미니맵 카메라 사각형용 렌더-세이프 뷰포트 크기(ref를 렌더 중 읽지 않도록 상태로 추적).
-  const [vpSize, setVpSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
-  useEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    const sync = () => setVpSize(vp());
-    sync();
-    const ro = new ResizeObserver(sync);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [vp]);
-
   // Space entry: clear selection + record active space (mirrors WorkspaceInner).
   useEffect(() => {
     reset();
@@ -173,10 +161,6 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
 
       <NoteCanvas camera={camera} onCameraChange={setCamera}>
         {concepts.length === 0 && !loading && <Welcome />}
-        {/* 태그 마커 — 무게중심에(카드 아래 레이어). */}
-        {[...tagCentroids.entries()].map(([tag, c]) => (
-          <TagMarker key={tag} tag={tag} x={c.x} y={c.y} count={c.count} />
-        ))}
         {concepts.map((c) => {
           // sim 좌표 우선, 아직 배치 전이면 기존 좌표 폴백.
           const p = positions.get(c.id);
@@ -207,6 +191,10 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
             <ArtNode key={n.id} node={laid} />
           );
         })}
+        {/* 태그 마커 — 고정 앵커에(카드/리프 위 레이어 + zIndex → 안 가려짐). */}
+        {[...tagCentroids.entries()].map(([tag, c]) => (
+          <TagMarker key={tag} tag={tag} x={c.x} y={c.y} count={c.count} />
+        ))}
         {/* 맵 앵커 로딩 — 생성 지점 위 버블(맵과 함께 팬/줌). */}
         {focusSignal && (
           <MapLoadingIndicator
@@ -226,8 +214,6 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
           y: c.y,
           count: c.count,
         }))}
-        camera={camera}
-        viewport={vpSize}
         onFocus={(target) =>
           setCamera(focusCamera(vp(), { x: target.x, y: target.y }, 1))
         }
