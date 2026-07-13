@@ -7,11 +7,12 @@ Flow:
      The answer is the structured concept-card format (CHAT:/@concept/…/@end);
      the frontend parser turns the token stream into cards.
   4. During streaming, scan line buffer for "@concept:" lines — emit `place` SSE
-     immediately with the computed (x, y) for that concept_index.
+     immediately with the tag-anchored (x, y) for that concept_index.
   5. Persist (question, structured-answer) = 1 node with a NULL label, advance
      head (set root if first), and report the node in the `done` event.
-  6. After done: fire-and-forget task embeds concepts + upserts canvas_cards
-     + patches nodes.attachments.canvas.concepts (best-effort, log only on failure).
+  6. After done: settle re-computes final tag-anchored coords per concept, then a
+     fire-and-forget task patches nodes.attachments.canvas.concepts (+ ebs/art in
+     one unified write; best-effort, log only on failure). No embedding/canvas_cards.
 
 SSE event schema:
   event: start   data: {"session_id","parent_node_id"}
@@ -38,12 +39,11 @@ from pydantic import BaseModel, Field
 from ..auth.deps import CurrentUser, get_current_user
 from ..services import exaone, gemini, memory, rag
 from ..services import sessions as svc
-from ..services import concept_blocks, qdrant_store, upstage
+from ..services import concept_blocks, upstage
 from ..services.canvas_layout import (
     ExistingCard,
     estimate_card_height,
     place_by_tag,
-    place_new_card,
     tag_anchor,
 )
 from ..services.supabase_client import UserClient
@@ -128,55 +128,6 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
-    """코사인 유사도[0,1] — 음수는 0으로 클램프(target_distance는 [0,1] 가정)."""
-    dot = sum(x * y for x, y in zip(a, b))
-    na = sum(x * x for x in a) ** 0.5 or 1e-9
-    nb = sum(x * x for x in b) ** 0.5 or 1e-9
-    return max(0.0, dot / (na * nb))
-
-
-def _place_for_new_concept(
-    existing: list[ExistingCard], seed: int, new_h: float
-) -> tuple[float, float]:
-    """스트리밍/settle 공용 — 기존 카드에 대해 새 카드 좌표 1개 계산(연속 좌표)."""
-    return place_new_card(new_h, existing, seed)
-
-
-def _fill_missing_heights(
-    placed_coords: dict[int, tuple[float, float]],
-    placed_heights: dict[int, float],
-) -> None:
-    """settle 실패/부분 실패 보정 — 배치된 개념의 크기 기본값을 채운다(in-place).
-
-    settle(parse/솔버)가 예외로 갱신하지 못한 index는 스트리밍 단계의 좌표
-    (placed_coords, 이미 채워짐) + 기본 높이 estimate_card_height(2)로 저장되게 한다.
-    이미 settle이 확정한 index는 건드리지 않는다(멱등).
-    """
-    for idx in placed_coords:
-        placed_heights.setdefault(idx, estimate_card_height(2))
-
-
-async def _scroll_session_cards(owner_id: str, session_id: str) -> list[dict]:
-    """세션 기존 canvas_cards scroll(벡터 포함) — best-effort, 실패 시 [].
-
-    스트림당 1회 호출해 스트리밍 place · done settle의 힘 솔버 pin
-    목록(ExistingCard) 구성에 재사용한다(조회 중복 없음). 벡터를 포함해
-    각 카드의 sim = _cosine(qvec, vec)을 산출한다.
-    """
-    try:
-        return await qdrant_store.scroll_canvas_cards(
-            owner_id=owner_id, session_id=session_id, with_vectors=True
-        )
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "canvas_cards scroll 실패 — 빈 pin 목록으로 진행 session=%s",
-            session_id,
-            exc_info=True,
-        )
-        return []
-
-
 def _tag_state_from_nodes(
     nodes: list[dict],
 ) -> tuple[list[ExistingCard], dict[str, int]]:
@@ -216,60 +167,6 @@ def _place_tagged(
     x, y = place_by_tag(anchor, cards, new_h)
     cards.append(ExistingCard(x=x, y=y, h=new_h))
     return x, y
-
-
-def _session_cards_as_existing(
-    session_cards: list[dict], qvec: list[float]
-) -> list[ExistingCard]:
-    """세션 scroll 결과 → ExistingCard 목록(솔버 pin). sim = _cosine(qvec, vec).
-
-    벡터/좌표가 없는 카드는 sim=0.0 · size_h 폴백(estimate_card_height(2))으로 채운다.
-    이번 답변에서 배치 중인 개념은 포함하지 않는다(호출부에서 별도 pin).
-    """
-    out: list[ExistingCard] = []
-    for c in session_cards:
-        pl = c.get("payload") or {}
-        vec = c.get("vector") or []
-        sim = _cosine(qvec, vec) if (vec and qvec) else 0.0
-        out.append(
-            ExistingCard(
-                x=float(pl.get("x", 0.0)),
-                y=float(pl.get("y", 0.0)),
-                h=float(pl.get("size_h") or estimate_card_height(2)),
-                sim=sim,
-            )
-        )
-    return out
-
-
-def _existing_for_vec(
-    session_cards: list[dict],
-    placed: list[tuple[float, float, float, list[float]]],
-    vec: list[float],
-) -> list[ExistingCard]:
-    """settle 위치 보정용 pin 목록 — 배치할 개념의 passage 벡터 `vec` 기준.
-
-    각 기존 세션 카드 sim = cosine(vec, 카드 passage벡터); 같은 답변에서 이미 배치된
-    개념 placed=[(x,y,h,pvec)]도 sim = cosine(vec, pvec)로 포함(고정 0.9 대신 대칭).
-    벡터 없는 카드는 sim=0.0. 결정론(입력 순서 보존).
-    """
-    out: list[ExistingCard] = []
-    for c in session_cards:
-        pl = c.get("payload") or {}
-        cvec = c.get("vector") or []
-        sim = _cosine(vec, cvec) if (vec and cvec) else 0.0
-        out.append(
-            ExistingCard(
-                x=float(pl.get("x", 0.0)),
-                y=float(pl.get("y", 0.0)),
-                h=float(pl.get("size_h") or estimate_card_height(2)),
-                sim=sim,
-            )
-        )
-    for (x, y, h, pvec) in placed:
-        sim = _cosine(vec, pvec) if (vec and pvec) else 0.0
-        out.append(ExistingCard(x=x, y=y, h=h, sim=sim))
-    return out
 
 
 async def _patch_canvas_unified(
@@ -341,14 +238,13 @@ async def chat_stream(
         for n in chain
         if not n.get("is_navigator")
     ]
-    # 질의 임베딩 1회 — (1) 교과서 RAG 검색과 (2) 기존 카드 코사인 유사도
-    # (솔버 sim) 근거로 재사용한다(추가 임베딩 호출 없음). 실패해도 턴을
-    # 죽이지 않는다: 빈 벡터 → 교과서 블록 생략 + sim 0.0 degraded 배치.
+    # 질의 임베딩 1회 — 교과서 RAG 검색용(배치는 태그 앵커 기반이라 임베딩 불필요).
+    # 실패해도 턴을 죽이지 않는다: 빈 벡터 → 교과서 블록만 생략(배치는 무영향).
     try:
         qvec = await upstage.embed_query(body.question)
     except Exception:  # noqa: BLE001
         logger.warning(
-            "질의 임베딩 실패 — 교과서 RAG 생략 + sim 0.0(degraded)로 배치 session=%s",
+            "질의 임베딩 실패 — 교과서 RAG 생략(배치는 태그 기반이라 무영향) session=%s",
             body.session_id,
             exc_info=True,
         )

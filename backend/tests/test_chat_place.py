@@ -1,41 +1,7 @@
-import math
-
 import pytest
 
 from app.routers import chat as C
-from app.routers.chat import (
-    ChatStreamBody,
-    _fill_missing_heights,
-    _place_for_new_concept,
-)
-from app.services.canvas_layout import ExistingCard, estimate_card_height
-
-
-def test_place_for_new_concept_returns_continuous_coords():
-    existing = [ExistingCard(x=1300, y=800, h=200, sim=0.95)]
-    x, y = _place_for_new_concept(existing, seed=1, new_h=estimate_card_height(2))
-    assert isinstance(x, float) and isinstance(y, float)
-    # 유사 카드 곁(겹치지 않음)
-    d = math.hypot(x - 1300, y - 800)
-    assert d > 0
-
-
-def test_place_for_new_concept_empty_existing_is_center():
-    from app.services.canvas_layout import CANVAS_W, CANVAS_H
-
-    x, y = _place_for_new_concept([], seed=0, new_h=estimate_card_height(2))
-    assert x == CANVAS_W / 2.0
-    assert y == CANVAS_H / 2.0
-
-
-def test_fill_missing_heights_fills_default_and_is_idempotent():
-    # settle이 갱신한 index(1)는 보존, 미갱신 index(0,2)는 기본 높이로 보정.
-    placed_coords = {0: (10.0, 20.0), 1: (30.0, 40.0), 2: (50.0, 60.0)}
-    placed_heights = {1: 999.0}
-    _fill_missing_heights(placed_coords, placed_heights)
-    assert placed_heights[1] == 999.0  # 확정값 보존(멱등)
-    assert placed_heights[0] == estimate_card_height(2)
-    assert placed_heights[2] == estimate_card_height(2)
+from app.routers.chat import ChatStreamBody
 
 
 # ---------------------------------------------------------------------------
@@ -119,11 +85,6 @@ async def _consume(
     monkeypatch.setattr(C.gemini, "compose_system_structured", fake_compose)
     monkeypatch.setattr(C.exaone, "CONCEPT_CARD_SYSTEM_PROMPT", "base", raising=False)
     monkeypatch.setattr(C.exaone, "stream_answer", _fake_stream_answer)
-
-    async def fake_scroll(owner_id, session_id, *, with_vectors=False):
-        return []
-
-    monkeypatch.setattr(C.qdrant_store, "scroll_canvas_cards", fake_scroll)
 
     async def fake_embed_query(q):
         return [0.1] * 10

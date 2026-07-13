@@ -1,11 +1,11 @@
-"""POST /retrieve — 개념 캔버스용 질의 임베딩 + EBS/아트 노드 검색 + canvas_cards near.
+"""POST /retrieve — 개념 캔버스용 질의 임베딩 + EBS/아트 노드 검색.
 
-Upstage embedding-query(4096d)로 질의를 임베딩하고:
-  1. Qdrant ebs/art_assets 코사인 검색(전역 카탈로그)
-  2. canvas_cards 벡터와 질의 임베딩 코사인 → 힘 솔버 초기 추정 좌표 계산
+Upstage embedding-query(4096d)로 질의를 임베딩해 Qdrant ebs/art_assets를
+코사인 검색한다(전역 카탈로그). 배치는 태그 앵커 기반이라 near는 항상 캔버스
+중앙 폴백 — 첫 place SSE가 태그 앵커로 카드를 이동시킨다(임베딩 near 제거).
 
 응답: {near: {x, y, score|null}, ebs[], art[], degraded}
-  - near: 항상 존재 (degraded/빈 세션이면 캔버스 중앙 폴백 — 로딩 카드 상시 표시 요구).
+  - near: 항상 존재 (캔버스 중앙 — 로딩 카드 상시 표시 요구).
   - embedding 필드: 응답에서 제거 (프론트가 더 이상 사용 안 함).
 
 best-effort: 어떤 실패든 200 + degraded=true (클라는 near 폴백 좌표로 배치).

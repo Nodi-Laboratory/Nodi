@@ -55,8 +55,6 @@ class Settings(BaseSettings):
     retrieve_art_top_k: int = 1
     retrieve_ebs_min_score: float = 0.35
     retrieve_art_min_score: float = 0.35
-    # canvas_cards kNN 결과를 앵커로 사용할 최소 유사도 임계값 (§4-2).
-    canvas_near_min_score: float = 0.5
 
     # 힘-기반 클러스터 배치(spec 2026-07-12-force-cluster). 전부 결정론 상수.
     force_s_merge: float = 0.80      # 이상이면 목표거리 0(동일 군집 중심)
