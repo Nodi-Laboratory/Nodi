@@ -1,14 +1,17 @@
-"""Visual RAG retrieval + chat injection (Stage 3b-2).
+"""Visual RAG retrieval + chat injection (Stage 3b-2; Upstage+Qdrant 이전).
 
 A file linked to a node applies to that node and its descendant branch. At chat
 time we collect the files linked anywhere on the current head's ancestor chain,
-embed the question (RETRIEVAL_QUERY, 768), cosine-search those files' chunks
-(pgvector, owner-scoped), and inject the top-K chunks as a SOURCE-LABELLED
-reference block ("[연결된 자료에서 참고]") distinct from the live branch and the
-Stage-3a memory-link block.
+embed the question (Upstage query, 4096d), cosine-search those files' chunks
+(Qdrant, file_id 페이로드 필터로 스코핑), and inject the top-K chunks as a
+SOURCE-LABELLED reference block ("[연결된 자료에서 참고]") distinct from the
+live branch and the Stage-3a memory-link block.
 
-Best-effort: any failure -> no RAG context, never blocks the turn. Reads use the
-caller's RLS-scoped client (own files only).
+Qdrant는 신뢰 경계가 아니다 — 히트한 chunk_id의 본문/메타는 반드시 USER
+스코프 클라이언트로 Supabase에서 재조회해 RLS가 접근(소유/클래스 자료)을
+재검증한다(교차 유저 유출 불변식 유지).
+
+Best-effort: any failure -> no RAG context, never blocks the turn.
 """
 
 from __future__ import annotations
@@ -18,15 +21,11 @@ import re
 from typing import Any
 
 from ..config import get_settings
-from . import app_settings, embedding
+from . import app_settings, embedding, qdrant_store
 from .supabase_client import UserClient
 
 logger = logging.getLogger("nodi.rag")
 settings = get_settings()
-
-
-def _vector_literal(vec: list[float]) -> str:
-    return "[" + ",".join(f"{v:.7f}" for v in vec) + "]"
 
 
 def _file_basename(storage_path: str | None) -> str:
@@ -59,7 +58,13 @@ async def linked_file_ids(
 async def search(
     client: UserClient, file_ids: list[str], query: str, k: int | None = None
 ) -> list[dict[str, Any]]:
-    """Cosine top-K chunks from the given (owned) files for the query."""
+    """Qdrant 코사인 top-K -> Supabase 본문 재조회(RLS) -> 구 RPC 호환 rows.
+
+    반환 shape은 폐기된 search_file_chunks RPC와 동일:
+    {file_id, chunk_id, seq, chunk_text, distance, meta}.
+    Qdrant는 유사도(score, 높을수록 유사)를 주므로 distance = 1 - score로
+    변환해 기존 거리 임계값(0.38/0.50 등) 의미를 그대로 유지한다.
+    """
     if not file_ids or not query.strip():
         return []
     if k is None:
@@ -70,15 +75,43 @@ async def search(
     vec = await embedding.embed_texts([query], task_type="RETRIEVAL_QUERY")
     if not vec:
         return []
-    result = await client.rpc(
-        "search_file_chunks",
+    hits = await qdrant_store.search(
+        qdrant_store.COL_FILE_CHUNKS,
+        vec[0],
+        k,
+        file_ids=[str(f) for f in file_ids],
+    )
+    if not hits:
+        return []
+    # 유사도 -> 거리 변환. 포인트 id == 청크 uuid(워커 업서트 규약).
+    distances = {h["id"]: 1.0 - float(h["score"]) for h in hits}
+    # 본문/메타는 USER 스코프 클라이언트로 재조회 — RLS가 소유/클래스 자료
+    # 접근을 재검증한다(Qdrant 페이로드의 본문 없음 + 신뢰 경계 아님).
+    rows = await client.select(
+        "file_chunks",
         {
-            "p_query_embedding": _vector_literal(vec[0]),
-            "p_file_ids": file_ids,
-            "p_k": k,
+            "id": f"in.({','.join(distances)})",
+            "status": "eq.embedded",
+            "select": "id,file_id,seq,chunk_text,meta",
         },
     )
-    return result if isinstance(result, list) else []
+    by_id = {str(r["id"]): r for r in rows}
+    out: list[dict[str, Any]] = []
+    for h in hits:  # Qdrant 랭킹 유지; RLS/삭제로 못 읽는 id는 조용히 탈락
+        r = by_id.get(h["id"])
+        if not r:
+            continue
+        out.append(
+            {
+                "file_id": r.get("file_id"),
+                "chunk_id": r.get("id"),
+                "seq": r.get("seq"),
+                "chunk_text": r.get("chunk_text"),
+                "distance": distances[h["id"]],
+                "meta": r.get("meta"),
+            }
+        )
+    return out
 
 
 SNIPPET_CHARS = 300
@@ -187,6 +220,78 @@ async def build_rag_context(
         return {"block": block, "sources": build_sources(chunks, names)}
     except Exception:  # noqa: BLE001 - RAG must never break chat
         logger.exception("RAG retrieval failed")
+        return None
+
+
+# --- 교과서 RAG (전역 코퍼스, 스펙 2026-07-13-textbook-rag-design) ---------
+# file_chunks와 달리 교과서는 시스템 공용 지식 베이스라 RLS 재검증이 없다 —
+# 본문은 Qdrant 페이로드(chunk_text)에서 바로 읽는다. Supabase 왕복 없음.
+TEXTBOOK_BLOCK_HEADER = "[교과서에서 참고]"
+
+
+async def build_textbook_context(
+    query_vector: list[float],
+) -> dict[str, Any] | None:
+    """질문 벡터로 교과서 컬렉션을 검색해 참고 블록 + 출처 메타를 조립.
+
+    호출부(chat)가 캔버스 배치용으로 이미 임베딩한 질문 벡터를 재사용한다
+    (추가 임베딩 API 호출 없음). 거리 게이트(textbook_rag_max_distance)를
+    통과한 청크가 없으면 None — 인사·잡담·교과 외 질문은 여기서 탈락한다.
+    Best-effort: 어떤 실패도 None으로 강등, 채팅을 절대 막지 않는다.
+    """
+    try:
+        if not query_vector:
+            return None
+        overlay = await app_settings.get_overlay()
+        if not app_settings.as_bool(
+            overlay, "textbook_rag_enabled", settings.textbook_rag_enabled
+        ):
+            return None
+        k = app_settings.as_int(
+            overlay, "textbook_rag_top_k", settings.textbook_rag_top_k, 1, 20
+        )
+        max_distance = app_settings.as_float(
+            overlay,
+            "textbook_rag_max_distance",
+            settings.textbook_rag_max_distance,
+            0.1,
+            0.9,
+        )
+        hits = await qdrant_store.search(
+            qdrant_store.COL_TEXTBOOK, query_vector, k
+        )
+        lines = [TEXTBOOK_BLOCK_HEADER]
+        sources: list[dict[str, Any]] = []
+        for h in hits:
+            distance = 1.0 - float(h["score"])
+            if distance > max_distance:
+                continue
+            payload = h.get("payload") or {}
+            text = (payload.get("chunk_text") or "").strip()
+            if not text:
+                continue
+            name = payload.get("source_name") or ""
+            page = payload.get("page")
+            seq = payload.get("seq")
+            # 라벨은 page 우선, 없으면 #seq (둘 다 표기하지 않는다)
+            label = _source_label(name, None if page is not None else seq, page)
+            lines.append(f"- [{label}] {text}" if label else f"- {text}")
+            sources.append(
+                {
+                    # file_id/chunk_id 없음 — 프론트는 optional로 처리(D41),
+                    # 이웃 청크("⋯") 패널은 미지원(Supabase에 본문 없음).
+                    "name": name,
+                    "seq": seq,
+                    "page": page,
+                    "distance": distance,
+                    "snippet": text[:SNIPPET_CHARS],
+                }
+            )
+        if len(lines) <= 1:
+            return None
+        return {"block": "\n".join(lines), "sources": sources}
+    except Exception:  # noqa: BLE001 - RAG must never break chat
+        logger.exception("Textbook RAG retrieval failed")
         return None
 
 
