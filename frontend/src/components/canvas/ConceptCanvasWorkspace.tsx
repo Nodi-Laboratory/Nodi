@@ -37,7 +37,7 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
   const pendingSession = useWorkspaceStore((s) => s.pendingSession);
   const setPendingSession = useWorkspaceStore((s) => s.setPendingSession);
 
-  const { concepts, groups, leafNodes, reply, busy, loading, focusSignal, send } =
+  const { concepts, leafNodes, reply, busy, loading, focusSignal, send } =
     useConceptStream(target);
 
   // 태그 클러스터 d3-force 레이아웃(비-pending 개념만). positions로 카드/리프 좌표를
@@ -50,7 +50,7 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
   const [camera, setCamera] = useState<Camera>(INITIAL_CAMERA);
   const [treeOpen, setTreeOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  // 클러스터 클릭은 팬 전용(하이라이트 없음). activeId는 여전히 ConceptCard/미니맵에 전달되나
+  // 클러스터 클릭은 팬 전용(하이라이트 없음). activeId는 여전히 ConceptCard에 전달되나
   // 현재 세터가 없어 null 유지 — 향후 하이라이트 재도입 시 setter를 다시 추가한다.
   const [activeId] = useState<string | null>(null);
   const didInitFocus = useRef(false);
@@ -220,9 +220,12 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
       <ConceptTreePanel
         open={treeOpen}
         onToggle={() => setTreeOpen((v) => !v)}
-        groups={groups}
-        concepts={concepts.filter((c) => !c.pending)}
-        activeId={activeId}
+        tagNodes={[...tagCentroids.entries()].map(([tag, c]) => ({
+          tag,
+          x: c.x,
+          y: c.y,
+          count: c.count,
+        }))}
         camera={camera}
         viewport={vpSize}
         onFocus={(target) =>
