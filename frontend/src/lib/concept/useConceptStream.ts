@@ -34,13 +34,21 @@ import type { ChatDoneEvent, NodeRow } from "@/lib/types";
 import { createConceptParser } from "./conceptParser";
 import { LAYOUT } from "./layout";
 import { buildGroups } from "./grouping";
+import {
+  cardRect,
+  leafRect,
+  LEAF_DIMS,
+  placeLeafClear,
+  type Rect,
+} from "./leafPlacement";
 import type { CanvasLeafNode, Concept, ConceptGroup, ParserEvent } from "./types";
 
 // 리프 스폰 계단식 삽입 간격(ms) — 위치는 즉시 확정(결정적), 삽입만 지연.
 const LEAF_SPAWN_STAGGER_MS = 250;
 
-// 09: 리프(영상/삽화) 배치 오프셋 — 격자 계산 대신 개념 좌표 곁 단순 오프셋.
-// x: 카드 오른쪽 옆(CARD_W + MARGIN), y: 리프 순번마다 아래로 누적.
+// 09: 리프(영상/삽화) 선호 오프셋 — 앵커 카드 오른쪽 옆(CARD_W + MARGIN)에서
+// 순번마다 아래로 누적. 이 값은 "선호 위치"일 뿐, placeLeafClear가 카드/다른
+// 리프와 겹치지 않는 가장 가까운 빈 자리로 확정한다(요구: 영상/삽화 ↔ 카드 무겹침).
 const LEAF_OFFSET_X = LAYOUT.CARD_W + LAYOUT.MARGIN; // 460
 const LEAF_OFFSET_Y = 240;
 
@@ -408,27 +416,32 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       const batch: CanvasLeafNode[] = [];
       let seq = leafNodesRef.current.length;
       let leafOrder = 0;
-      for (const e of r.ebs) {
+      // 충돌 회피: 기존 개념 카드(플레이스홀더 포함) + 기존 리프 + 이번 배치에서
+      // 이미 놓은 리프를 장애물로 삼아, 리프가 어떤 카드와도 겹치지 않는 가장 가까운
+      // 자리에 배치한다(선호 위치 = 앵커 오른쪽 스택).
+      const obstacles: Rect[] = [
+        ...conceptsRef.current.map(cardRect),
+        ...leafNodesRef.current.map(leafRect),
+      ];
+      const spawnLeaf = (
+        type: CanvasLeafNode["type"],
+        extra: Partial<CanvasLeafNode>,
+      ) => {
+        const d = LEAF_DIMS[type];
+        const prefX = nearXY.x + LEAF_OFFSET_X;
+        const prefY = nearXY.y + leafOrder++ * LEAF_OFFSET_Y;
+        const { x, y } = placeLeafClear(prefX, prefY, d.w, d.h, obstacles);
+        obstacles.push({ x, y, w: d.w, h: d.h });
         const lid = "l" + ++seq;
-        batch.push({
-          id: lid,
-          type: "video",
-          x: nearXY.x + LEAF_OFFSET_X,
-          y: nearXY.y + leafOrder++ * LEAF_OFFSET_Y,
-          conceptId: pid,
+        batch.push({ id: lid, type, x, y, conceptId: pid, ...extra });
+      };
+      for (const e of r.ebs) {
+        spawnLeaf("video", {
           video: { videoId: e.videoId, title: e.title, thumb: e.thumb },
         });
       }
       for (const a of r.art) {
-        const lid = "l" + ++seq;
-        batch.push({
-          id: lid,
-          type: "art",
-          x: nearXY.x + LEAF_OFFSET_X,
-          y: nearXY.y + leafOrder++ * LEAF_OFFSET_Y,
-          conceptId: pid,
-          art: { slug: a.slug, url: a.url, title: a.title },
-        });
+        spawnLeaf("art", { art: { slug: a.slug, url: a.url, title: a.title } });
       }
       batch.forEach((leaf, i) => {
         spawnedLeafIds.add(leaf.id);
@@ -604,9 +617,11 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       }
     }
 
-    // attachments.canvas → 리프 재생성(격자 계산 대신 개념 곁 단순 오프셋).
-    // 앵커 개념 오른쪽(LEAF_OFFSET_X), 노드별 리프 순번마다 아래로 누적.
+    // attachments.canvas → 리프 재생성. 좌표 전부 확정된 재수화 시점이므로 여기서
+    // 무겹침을 확정한다: 앵커 오른쪽 스택을 선호 위치로, 모든 카드 + 앞서 놓은
+    // 리프를 장애물로 삼아 placeLeafClear가 카드와 겹치지 않는 자리로 배치한다.
     const leaves: CanvasLeafNode[] = [];
+    const obstacles: Rect[] = built.map(cardRect);
     for (const n of reals) {
       const canvas = (n as NodeRowWithAttachments).attachments?.canvas;
       if (!canvas) continue;
@@ -614,15 +629,21 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       const anchor = idx == null ? undefined : built[idx];
       const baseXY = anchor ? { x: anchor.x, y: anchor.y } : { x: 40, y: 40 };
       let leafOrder = 0;
+      const pushLeaf = (
+        type: CanvasLeafNode["type"],
+        extra: Partial<CanvasLeafNode>,
+      ) => {
+        const d = LEAF_DIMS[type];
+        const prefX = baseXY.x + LEAF_OFFSET_X;
+        const prefY = baseXY.y + leafOrder++ * LEAF_OFFSET_Y;
+        const { x, y } = placeLeafClear(prefX, prefY, d.w, d.h, obstacles);
+        obstacles.push({ x, y, w: d.w, h: d.h });
+        const lid = "l" + (leaves.length + 1);
+        leaves.push({ id: lid, type, x, y, conceptId: anchor?.id, ...extra });
+      };
       for (const e of canvas.ebs ?? []) {
         if (!e?.video_id) continue;
-        const lid = "l" + (leaves.length + 1);
-        leaves.push({
-          id: lid,
-          type: "video",
-          x: baseXY.x + LEAF_OFFSET_X,
-          y: baseXY.y + leafOrder++ * LEAF_OFFSET_Y,
-          conceptId: anchor?.id,
+        pushLeaf("video", {
           video: {
             videoId: String(e.video_id),
             title: e.title ?? "",
@@ -633,13 +654,7 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       }
       for (const a of canvas.art ?? []) {
         if (!a?.slug) continue;
-        const lid = "l" + (leaves.length + 1);
-        leaves.push({
-          id: lid,
-          type: "art",
-          x: baseXY.x + LEAF_OFFSET_X,
-          y: baseXY.y + leafOrder++ * LEAF_OFFSET_Y,
-          conceptId: anchor?.id,
+        pushLeaf("art", {
           art: {
             slug: String(a.slug),
             url: a.url ?? `/art/${a.slug}.svg`,
