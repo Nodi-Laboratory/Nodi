@@ -5,7 +5,7 @@
   RELATED_RE: "^@related:\\s*(.*)$"
   @end 라인이 블록을 닫음. @end 없이 다음 @concept이 오면 자동으로 닫힘.
 
-출력: [{index: int, title: str, body: str}]
+출력: [{index: int, title: str, cluster: str, body: str}]
   body = "- " 본문 라인들을 "\n" 조인, **bold** / ==highlight== 마크업 제거.
 """
 
@@ -26,25 +26,28 @@ def _strip_markup(text: str) -> str:
 
 
 def parse(answer: str) -> list[dict]:
-    """답변 전문 파싱 → [{index, title, body}].
+    """답변 전문 파싱 → [{index, title, cluster, body}].
 
     @concept: 제목 | 분류 ~ @end 사이의 "- " 본문 라인들을 수집.
     @end 없이 다음 @concept이 오면 이전 블록을 자동으로 닫는다.
     """
     blocks: list[dict] = []
     current_title: str | None = None
+    current_cluster: str = ""
     current_lines: list[str] = []
 
     def _flush():
-        nonlocal current_title, current_lines
+        nonlocal current_title, current_cluster, current_lines
         if current_title is not None:
             body = _strip_markup("\n".join(current_lines))
             blocks.append({
                 "index": len(blocks),
                 "title": current_title,
+                "cluster": current_cluster,
                 "body": body,
             })
         current_title = None
+        current_cluster = ""
         current_lines = []
 
     for raw_line in answer.splitlines():
@@ -56,6 +59,7 @@ def parse(answer: str) -> list[dict]:
             _flush()  # 이전 블록 자동 닫기 (@end 없이 다음 @concept 내성)
             parts = cm.group(1).split("|")
             current_title = parts[0].strip()
+            current_cluster = parts[1].strip() if len(parts) > 1 else ""
             current_lines = []
             continue
 
