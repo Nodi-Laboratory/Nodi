@@ -70,6 +70,21 @@ def meta_for(filename: str, manifest: dict[str, dict]) -> dict:
     }
 
 
+def find_duplicate_sources(
+    files: list[str], manifest: dict[str, dict]
+) -> dict[str, list[str]]:
+    """같은 source_name으로 해소되는 파일이 둘 이상인 경우를 반환.
+
+    반환: {source_name: [filename, ...]} — 중복 그룹만 포함 (고유한 것은 제외).
+    main()이 인제스트 시작 전에 호출해 조용한 데이터 유실을 방지한다.
+    """
+    by_source: dict[str, list[str]] = {}
+    for name in files:
+        source = meta_for(name, manifest)["source_name"]
+        by_source.setdefault(source, []).append(name)
+    return {s: ns for s, ns in by_source.items() if len(ns) > 1}
+
+
 async def extract_text(path: str) -> str:
     """PDF는 Upstage Document Parse(마크다운), .txt/.md는 그대로."""
     if path.lower().endswith(".pdf"):
@@ -149,6 +164,17 @@ async def main() -> int:
         print(f"ERROR: no {SUPPORTED_EXTS} files in {args.dir}", file=sys.stderr)
         return 2
     manifest = load_manifest(args.dir)
+
+    # 중복 source_name 가드 — 같은 소스로 두 파일이 겹치면 나중 파일의
+    # 선삭제가 앞 파일 포인트를 지워 조용히 유실된다. 시작 전에 거부한다.
+    dups = find_duplicate_sources(files, manifest)
+    if dups:
+        for s, ns in dups.items():
+            print(
+                f"ERROR: duplicate source_name {s!r}: {', '.join(ns)}",
+                file=sys.stderr,
+            )
+        return 2
 
     if not args.dry_run:
         if not settings.upstage_api_key:

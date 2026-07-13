@@ -65,3 +65,15 @@ def test_build_points_ids_and_payload():
     assert p["grade"] == "중2"
     assert p["seq"] == 1
     assert points[1]["vector"] == [0.2] * 4
+
+
+def test_find_duplicate_sources_detects_stem_collision():
+    # book.pdf 와 book.txt 는 manifest 없이 둘 다 source_name="book" 으로 해소됨.
+    manifest: dict = {}
+    dups = I.find_duplicate_sources(["book.pdf", "book.txt", "other.md"], manifest)
+    assert dups == {"book": ["book.pdf", "book.txt"]}
+
+
+def test_find_duplicate_sources_empty_when_unique():
+    # 각 파일이 서로 다른 source_name 이면 중복 없음.
+    assert I.find_duplicate_sources(["a.pdf", "b.txt"], {}) == {}
