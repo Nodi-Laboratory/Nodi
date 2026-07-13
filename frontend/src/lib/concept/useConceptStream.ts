@@ -176,8 +176,8 @@ export interface ConceptStream {
   reply: string;
   busy: boolean;
   loading: boolean;
-  /** 답변당 첫 개념 생성 좌표(top-left). key는 send마다 증가 — 같은 좌표라도 effect 재발화. */
-  focusSignal: { x: number; y: number; key: number } | null;
+  /** 답변당 첫 개념. id로 그 개념의 sim 위치를 추적(카메라 추종). key는 send마다 증가. */
+  focusSignal: { x: number; y: number; key: number; id: string } | null;
   send: (question: string) => Promise<void>;
 }
 
@@ -193,7 +193,7 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [focusSignal, setFocusSignal] = useState<
-    { x: number; y: number; key: number } | null
+    { x: number; y: number; key: number; id: string } | null
   >(null);
 
   const conceptsRef = useRef<Concept[]>([]);
@@ -415,8 +415,8 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           pending: true,
         },
       ]);
-      // 자동 포커싱: 이번 답변 첫 개념(플레이스홀더) 생성 지점으로 카메라를 옮기게 신호.
-      setFocusSignal({ x: nearXY.x, y: nearXY.y, key: ++focusKeyRef.current });
+      // 자동 포커싱: 이번 답변 첫 개념(pid). 워크스페이스가 이 id의 sim 위치를 추종한다.
+      setFocusSignal({ x: nearXY.x, y: nearXY.y, key: ++focusKeyRef.current, id: pid });
 
       // (c) Part B: 맵당 영상 1·삽화 1 — 최고 스코어 후보만 대표로 유지/교체.
       // 스트림 실패 시 되돌리기 위한 스냅샷.
@@ -507,10 +507,8 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           onPlace: (p: PlaceEvent) => {
             const localIdx = p.concept_index;
             pendingCoordsRef.current.set(localIdx, { x: p.x, y: p.y });
-            if (!p.is_final && localIdx === 0) {
-              // 태그 앵커로 카드가 이동 → 카메라도 그 지점으로 재포커스(near=중앙 폴백 보정).
-              setFocusSignal({ x: p.x, y: p.y, key: ++focusKeyRef.current });
-            }
+            // 서버 place 좌표는 렌더에 안 쓴다(프론트 d3-force가 위치 소유) — 카메라는
+            // 워크스페이스가 sim 위치를 추종한다. 여기선 좌표 기록만.
             if (p.is_final) {
               const globalIdx = baseConceptIdxRef.current + localIdx;
               commitConcepts(

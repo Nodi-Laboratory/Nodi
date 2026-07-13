@@ -102,25 +102,30 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
     didInitFocus.current = false;
   }, [activeSessionId]);
 
-  // Focus the first card once it exists.
+  // 초기 포커스(재수화 등): 첫 카드의 sim 위치가 정해지면 1회 팬. sim이 배치할 때까지 대기.
   useEffect(() => {
     if (didInitFocus.current || concepts.length === 0) return;
-    didInitFocus.current = true;
     const c = concepts[0];
-    setCamera(focusCamera(vp(), { x: c.x + CARD_CX, y: c.y + CARD_CY }, 1));
-  }, [concepts, vp]);
-
-  // 생성 지점 자동 포커싱: 새 답변의 첫 개념 좌표로 부드럽게 1회 팬(NoteCanvas 0.7s 트랜지션).
-  // focusSignal.key가 매 send 증가 → 같은 좌표라도 재발화. 재수화는 focusSignal=null이라 무동작.
-  useEffect(() => {
-    if (!focusSignal) return;
-    // 카메라(외부 뷰포트)를 신호에 동기화하는 1회 side-effect — 파생 렌더 상태가 아니라
-    // 규칙 예외가 정당(위 초기 포커스 effect와 동일 패턴).
+    const p = positions.get(c.id);
+    if (!p) return;
+    didInitFocus.current = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCamera(
-      focusCamera(vp(), { x: focusSignal.x + CARD_CX, y: focusSignal.y + CARD_CY }, 1),
+    setCamera(focusCamera(vp(), { x: p.x + CARD_CX, y: p.y + CARD_CY }, 1));
+  }, [concepts, positions, vp]);
+
+  // 생성 지점 자동 포커싱: 새 답변 첫 개념(focusSignal.id)의 sim 위치를 추종한다.
+  // 카드가 d3-force로 자기 태그 앵커로 이동하는 동안 positions가 틱마다 갱신 → 카메라도 함께
+  // 이동(변하는 위치를 따라감). 시뮬 수렴 시 positions 안정 → 추종 정지. 현재 배율 유지.
+  useEffect(() => {
+    const id = focusSignal?.id;
+    if (!id) return;
+    const p = positions.get(id);
+    if (!p) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCamera((prev) =>
+      focusCamera(vp(), { x: p.x + CARD_CX, y: p.y + CARD_CY }, prev.scale),
     );
-  }, [focusSignal, vp]);
+  }, [focusSignal, positions, vp]);
 
   const zoomBy = useCallback(
     (factor: number) => {
@@ -137,11 +142,12 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
   const resetCamera = useCallback(() => {
     const c0 = concepts[0];
     if (c0) {
-      setCamera(focusCamera(vp(), { x: c0.x + CARD_CX, y: c0.y + CARD_CY }, 1));
+      const p = positions.get(c0.id) ?? { x: c0.x, y: c0.y };
+      setCamera(focusCamera(vp(), { x: p.x + CARD_CX, y: p.y + CARD_CY }, 1));
     } else {
       setCamera(INITIAL_CAMERA);
     }
-  }, [concepts, vp]);
+  }, [concepts, positions, vp]);
 
   return (
     <div
@@ -191,15 +197,22 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
             <ArtNode key={n.id} node={laid} />
           );
         })}
-        {/* 태그 마커 — 고정 앵커에(카드/리프 위 레이어 + zIndex → 안 가려짐). */}
-        {[...tagCentroids.entries()].map(([tag, c]) => (
-          <TagMarker key={tag} tag={tag} x={c.x} y={c.y} count={c.count} />
-        ))}
-        {/* 맵 앵커 로딩 — 생성 지점 위 버블(맵과 함께 팬/줌). */}
+        {/* 태그 마커 — 클러스터 위(최상단 카드보다 위)로 띄워 카드와 안 겹침 + zIndex. */}
+        {[...tagCentroids.entries()].map(([tag, c]) => {
+          let topY = Infinity;
+          for (const con of concepts) {
+            if (con.pending || (con.cluster || "기타") !== tag) continue;
+            const p = positions.get(con.id);
+            if (p) topY = Math.min(topY, p.y);
+          }
+          const markerY = Number.isFinite(topY) ? topY : c.y;
+          return <TagMarker key={tag} tag={tag} x={c.x} y={markerY} count={c.count} />;
+        })}
+        {/* 맵 앵커 로딩 — 생성 지점 버블(추종 카드의 sim 위치, 없으면 near 폴백). */}
         {focusSignal && (
           <MapLoadingIndicator
-            x={focusSignal.x}
-            y={focusSignal.y}
+            x={positions.get(focusSignal.id)?.x ?? focusSignal.x}
+            y={positions.get(focusSignal.id)?.y ?? focusSignal.y}
             visible={loading}
           />
         )}
