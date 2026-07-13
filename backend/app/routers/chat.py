@@ -199,6 +199,36 @@ def _session_cards_as_existing(
     return out
 
 
+def _existing_for_vec(
+    session_cards: list[dict],
+    placed: list[tuple[float, float, float, list[float]]],
+    vec: list[float],
+) -> list[ExistingCard]:
+    """settle 위치 보정용 pin 목록 — 배치할 개념의 passage 벡터 `vec` 기준.
+
+    각 기존 세션 카드 sim = cosine(vec, 카드 passage벡터); 같은 답변에서 이미 배치된
+    개념 placed=[(x,y,h,pvec)]도 sim = cosine(vec, pvec)로 포함(고정 0.9 대신 대칭).
+    벡터 없는 카드는 sim=0.0. 결정론(입력 순서 보존).
+    """
+    out: list[ExistingCard] = []
+    for c in session_cards:
+        pl = c.get("payload") or {}
+        cvec = c.get("vector") or []
+        sim = _cosine(vec, cvec) if (vec and cvec) else 0.0
+        out.append(
+            ExistingCard(
+                x=float(pl.get("x", 0.0)),
+                y=float(pl.get("y", 0.0)),
+                h=float(pl.get("size_h") or estimate_card_height(2)),
+                sim=sim,
+            )
+        )
+    for (x, y, h, pvec) in placed:
+        sim = _cosine(vec, pvec) if (vec and pvec) else 0.0
+        out.append(ExistingCard(x=x, y=y, h=h, sim=sim))
+    return out
+
+
 async def _save_canvas_cards(
     client: UserClient,
     user_id: str,
