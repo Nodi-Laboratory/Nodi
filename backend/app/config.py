@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     # --- /retrieve (개념 캔버스: 질의 임베딩 + EBS/아트 노드 검색) ---
     retrieve_ebs_top_k: int = 1
-    retrieve_art_top_k: int = 2
+    retrieve_art_top_k: int = 1
     retrieve_ebs_min_score: float = 0.35
     retrieve_art_min_score: float = 0.35
     # canvas_cards kNN 결과를 앵커로 사용할 최소 유사도 임계값 (§4-2).

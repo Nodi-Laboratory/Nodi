@@ -43,14 +43,10 @@ import {
 } from "./leafPlacement";
 import type { CanvasLeafNode, Concept, ConceptGroup, ParserEvent } from "./types";
 
-// 리프 스폰 계단식 삽입 간격(ms) — 위치는 즉시 확정(결정적), 삽입만 지연.
-const LEAF_SPAWN_STAGGER_MS = 250;
-
-// 09: 리프(영상/삽화) 선호 오프셋 — 앵커 카드 오른쪽 옆(CARD_W + MARGIN)에서
-// 순번마다 아래로 누적. 이 값은 "선호 위치"일 뿐, placeLeafClear가 카드/다른
-// 리프와 겹치지 않는 가장 가까운 빈 자리로 확정한다(요구: 영상/삽화 ↔ 카드 무겹침).
+// 09: 리프(영상/삽화) 선호 오프셋 — 앵커 카드 오른쪽 옆(CARD_W + MARGIN). 이 값은
+// "선호 위치"일 뿐, placeLeafClear가 카드/다른 리프와 겹치지 않는 가장 가까운 빈
+// 자리로 확정한다(요구: 영상/삽화 ↔ 카드 무겹침).
 const LEAF_OFFSET_X = LAYOUT.CARD_W + LAYOUT.MARGIN; // 460
-const LEAF_OFFSET_Y = 240;
 
 // Cross-render/session cache of art-search results, keyed by concept title, so a
 // reload (which re-resolves every concept) hits the cache instead of the network.
@@ -202,6 +198,10 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
 
   const conceptsRef = useRef<Concept[]>([]);
   const leafNodesRef = useRef<CanvasLeafNode[]>([]);
+  // Part B: 맵당 영상 1·삽화 1 — 현재 대표의 최고 스코어(교체 판정 기준선).
+  // 세션 동안 유지, 재수화 시 로드된 대표 스코어로 재설정.
+  const mapVideoScoreRef = useRef<number>(-Infinity);
+  const mapArtScoreRef = useRef<number>(-Infinity);
   const headRef = useRef<string | null>(null);
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -381,8 +381,6 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       const r = await retrieve(q, sid);
 
       let placeholderId: string | null = null;
-      const spawnedLeafIds = new Set<string>();
-      const localTimers: Array<ReturnType<typeof setTimeout>> = [];
 
       // (b) 잠정 플레이스홀더 — 항상 표시. degraded(유사도 계산 불가)면 서버 near가
       // 늘 캔버스 중앙을 반환하므로, 이미 카드가 있으면 로컬로 마지막 카드 곁에
@@ -420,47 +418,47 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       // 자동 포커싱: 이번 답변 첫 개념(플레이스홀더) 생성 지점으로 카메라를 옮기게 신호.
       setFocusSignal({ x: nearXY.x, y: nearXY.y, key: ++focusKeyRef.current });
 
-      // (c) 리프 노드(영상/삽화) — retrieve 성공(ebs/art 있을 때)만 스폰.
-      // 09: 격자 계산 대신 잠정 위치(nearXY) 곁 단순 오프셋(개념 오른쪽, 순번마다 아래로).
-      const batch: CanvasLeafNode[] = [];
-      let seq = leafNodesRef.current.length;
-      let leafOrder = 0;
-      // 충돌 회피: 기존 개념 카드(플레이스홀더 포함) + 기존 리프 + 이번 배치에서
-      // 이미 놓은 리프를 장애물로 삼아, 리프가 어떤 카드와도 겹치지 않는 가장 가까운
-      // 자리에 배치한다(선호 위치 = 앵커 오른쪽 스택).
-      const obstacles: Rect[] = [
-        ...conceptsRef.current.map(cardRect),
-        ...leafNodesRef.current.map(leafRect),
-      ];
-      const spawnLeaf = (
+      // (c) Part B: 맵당 영상 1·삽화 1 — 최고 스코어 후보만 대표로 유지/교체.
+      // 스트림 실패 시 되돌리기 위한 스냅샷.
+      const leafSnapshot = leafNodesRef.current;
+      const scoreSnapshot = {
+        v: mapVideoScoreRef.current,
+        a: mapArtScoreRef.current,
+      };
+      const placeRep = (
+        id: "map-video" | "map-art",
         type: CanvasLeafNode["type"],
         extra: Partial<CanvasLeafNode>,
       ) => {
         const d = LEAF_DIMS[type];
-        const prefX = nearXY.x + LEAF_OFFSET_X;
-        const prefY = nearXY.y + leafOrder++ * LEAF_OFFSET_Y;
-        const { x, y } = placeLeafClear(prefX, prefY, d.w, d.h, obstacles);
-        obstacles.push({ x, y, w: d.w, h: d.h });
-        const lid = "l" + ++seq;
-        batch.push({ id: lid, type, x, y, conceptId: pid, ...extra });
+        const others = leafNodesRef.current.filter((n) => n.id !== id);
+        const obstacles: Rect[] = [
+          ...conceptsRef.current.map(cardRect),
+          ...others.map(leafRect),
+        ];
+        const { x, y } = placeLeafClear(
+          nearXY.x + LEAF_OFFSET_X,
+          nearXY.y,
+          d.w,
+          d.h,
+          obstacles,
+        );
+        commitLeafNodes([...others, { id, type, x, y, conceptId: pid, ...extra }]);
       };
-      for (const e of r.ebs) {
-        spawnLeaf("video", {
-          video: { videoId: e.videoId, title: e.title, thumb: e.thumb },
+      const repVideo = r.ebs[0];
+      if (repVideo && typeof repVideo.score === "number" && repVideo.score > mapVideoScoreRef.current) {
+        mapVideoScoreRef.current = repVideo.score;
+        placeRep("map-video", "video", {
+          video: { videoId: repVideo.videoId, title: repVideo.title, thumb: repVideo.thumb },
         });
       }
-      for (const a of r.art) {
-        spawnLeaf("art", { art: { slug: a.slug, url: a.url, title: a.title } });
+      const repArt = r.art[0];
+      if (repArt && typeof repArt.score === "number" && repArt.score > mapArtScoreRef.current) {
+        mapArtScoreRef.current = repArt.score;
+        placeRep("map-art", "art", {
+          art: { slug: repArt.slug, url: repArt.url, title: repArt.title },
+        });
       }
-      batch.forEach((leaf, i) => {
-        spawnedLeafIds.add(leaf.id);
-        const timer = setTimeout(() => {
-          spawnTimersRef.current.delete(timer);
-          commitLeafNodes([...leafNodesRef.current, leaf]);
-        }, i * LEAF_SPAWN_STAGGER_MS);
-        spawnTimersRef.current.add(timer);
-        localTimers.push(timer);
-      });
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -538,15 +536,11 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           conceptsRef.current.filter((c) => c.id !== placeholderId),
         );
       }
-      // 스트림 실패(done 미수신) 시 이번 send가 스폰한 리프 + 대기 타이머 회수.
-      if (!doneBox.current && spawnedLeafIds.size) {
-        for (const t of localTimers) {
-          clearTimeout(t);
-          spawnTimersRef.current.delete(t);
-        }
-        commitLeafNodes(
-          leafNodesRef.current.filter((n) => !spawnedLeafIds.has(n.id)),
-        );
+      // 스트림 실패(done 미수신) 시 이번 send의 대표 교체를 되돌린다.
+      if (!doneBox.current) {
+        commitLeafNodes(leafSnapshot);
+        mapVideoScoreRef.current = scoreSnapshot.v;
+        mapArtScoreRef.current = scoreSnapshot.a;
       }
 
       // (f) done: sessionsKey invalidate(제목 갱신). ebs/art 영속은 서버 done
@@ -629,48 +623,61 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     // attachments.canvas → 리프 재생성. 좌표 전부 확정된 재수화 시점이므로 여기서
     // 무겹침을 확정한다: 앵커 오른쪽 스택을 선호 위치로, 모든 카드 + 앞서 놓은
     // 리프를 장애물로 삼아 placeLeafClear가 카드와 겹치지 않는 자리로 배치한다.
-    const leaves: CanvasLeafNode[] = [];
-    const obstacles: Rect[] = built.map(cardRect);
+    // Part B: 전 노드 후보 중 최고 스코어로 영상 1·삽화 1 결정(argmax, 동점=첫 노드).
+    let bestVideo: { score: number; nodeId: string; e: NonNullable<PersistedCanvas["ebs"]>[number] } | null = null;
+    let bestArt: { score: number; nodeId: string; a: NonNullable<PersistedCanvas["art"]>[number] } | null = null;
     for (const n of reals) {
       const canvas = (n as NodeRowWithAttachments).attachments?.canvas;
       if (!canvas) continue;
-      const idx = firstIdxByNode.get(n.id);
-      const anchor = idx == null ? undefined : built[idx];
-      const baseXY = anchor ? { x: anchor.x, y: anchor.y } : { x: 40, y: 40 };
-      let leafOrder = 0;
-      const pushLeaf = (
-        type: CanvasLeafNode["type"],
-        extra: Partial<CanvasLeafNode>,
-      ) => {
-        const d = LEAF_DIMS[type];
-        const prefX = baseXY.x + LEAF_OFFSET_X;
-        const prefY = baseXY.y + leafOrder++ * LEAF_OFFSET_Y;
-        const { x, y } = placeLeafClear(prefX, prefY, d.w, d.h, obstacles);
-        obstacles.push({ x, y, w: d.w, h: d.h });
-        const lid = "l" + (leaves.length + 1);
-        leaves.push({ id: lid, type, x, y, conceptId: anchor?.id, ...extra });
-      };
       for (const e of canvas.ebs ?? []) {
-        if (!e?.video_id) continue;
-        pushLeaf("video", {
-          video: {
-            videoId: String(e.video_id),
-            title: e.title ?? "",
-            thumb:
-              e.thumb ?? `https://i.ytimg.com/vi/${e.video_id}/hqdefault.jpg`,
-          },
-        });
+        if (!e?.video_id || typeof e.score !== "number") continue;
+        if (!bestVideo || e.score > bestVideo.score) bestVideo = { score: e.score, nodeId: n.id, e };
       }
       for (const a of canvas.art ?? []) {
-        if (!a?.slug) continue;
-        pushLeaf("art", {
-          art: {
-            slug: String(a.slug),
-            url: a.url ?? `/art/${a.slug}.svg`,
-            title: a.title ?? "",
-          },
-        });
+        if (!a?.slug || typeof a.score !== "number") continue;
+        if (!bestArt || a.score > bestArt.score) bestArt = { score: a.score, nodeId: n.id, a };
       }
+    }
+    const leaves: CanvasLeafNode[] = [];
+    const obstacles: Rect[] = built.map(cardRect);
+    const anchorXY = (nodeId: string) => {
+      const idx = firstIdxByNode.get(nodeId);
+      const anchor = idx == null ? undefined : built[idx];
+      return anchor ? { x: anchor.x, y: anchor.y, id: anchor.id } : { x: 40, y: 40, id: undefined };
+    };
+    if (bestVideo) {
+      const base = anchorXY(bestVideo.nodeId);
+      const d = LEAF_DIMS.video;
+      const { x, y } = placeLeafClear(base.x + LEAF_OFFSET_X, base.y, d.w, d.h, obstacles);
+      obstacles.push({ x, y, w: d.w, h: d.h });
+      leaves.push({
+        id: "map-video", type: "video", x, y, conceptId: base.id,
+        video: {
+          videoId: String(bestVideo.e.video_id),
+          title: bestVideo.e.title ?? "",
+          thumb: bestVideo.e.thumb ?? `https://i.ytimg.com/vi/${bestVideo.e.video_id}/hqdefault.jpg`,
+        },
+      });
+      mapVideoScoreRef.current = bestVideo.score;
+    } else {
+      mapVideoScoreRef.current = -Infinity;
+    }
+    if (bestArt) {
+      const base = anchorXY(bestArt.nodeId);
+      const d = LEAF_DIMS.art;
+      const { x, y } = placeLeafClear(base.x + LEAF_OFFSET_X, base.y, d.w, d.h, obstacles);
+      obstacles.push({ x, y, w: d.w, h: d.h });
+      leaves.push({
+        id: "map-art", type: "art", x, y, conceptId: base.id,
+        art: {
+          slug: String(bestArt.a.slug),
+          url: bestArt.a.url ?? `/art/${bestArt.a.slug}.svg`,
+          title: bestArt.a.title ?? "",
+        },
+      });
+      mapArtScoreRef.current = bestArt.score;
+    } else {
+      mapArtScoreRef.current = -Infinity;
     }
 
     commitConcepts(built);
