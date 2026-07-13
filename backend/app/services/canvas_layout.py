@@ -34,7 +34,7 @@ class ExistingCard:
     x: float
     y: float
     h: float
-    sim: float
+    sim: float = 0.0
 
 
 def target_distance(sim: float) -> float:
@@ -219,3 +219,33 @@ def _first_free_position(
             if _free(cx, cy):
                 return (cx, cy)
     return _clamp(px, py)
+
+
+_TAG_GOLDEN = math.radians(137.5)
+
+
+def tag_anchor(k: int) -> tuple[float, float]:
+    """태그 첫 등장 순서 k(0-based) → Vogel(해바라기) 나선 앵커(중앙 기준). 결정론.
+
+    k=0 → 캔버스 중앙. k>0 → r=TAG_R0·√k, angle=k·137.5°로 부채꼴 분산.
+    """
+    cx, cy = CANVAS_W / 2.0, CANVAS_H / 2.0
+    if k <= 0:
+        return (cx, cy)
+    r = _S.tag_r0 * math.sqrt(k)
+    ang = k * _TAG_GOLDEN
+    return (cx + r * math.cos(ang), cy + r * math.sin(ang))
+
+
+def place_by_tag(
+    anchor: tuple[float, float], existing: list[ExistingCard], new_h: float
+) -> tuple[float, float]:
+    """앵커를 카드 중심으로 두고, 기존 카드와 안 겹치는 가장 가까운 자리를 반환.
+
+    같은 태그 카드는 같은 앵커에서 나선 확장 → 앵커 주변 조밀 클러스터.
+    _first_free_position이 경계 클램프 + AABB 무겹침을 보장한다.
+    """
+    ax, ay = anchor
+    px = ax - _S.card_w / 2.0   # 앵커=중심 → 좌상단 보정
+    py = ay - new_h / 2.0
+    return _first_free_position(px, py, new_h, existing)

@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     card_h_min: float = 160.0        # 카드 높이 최소
     card_h_max: float = 560.0        # 카드 높이 최대
     card_h_per_line: float = 28.0    # 본문 줄당 높이 증가(px)
+    tag_r0: float = 560.0            # 태그 앵커 나선 반경 계수(px) — Vogel r=TAG_R0*√k
 
     # --- AI (Gemini) — 비임베딩 LLM 작업만 (chat/label/tag; 임베딩은 Upstage) ---
     google_gemini_api_key: str = ""
