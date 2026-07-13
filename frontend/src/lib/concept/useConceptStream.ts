@@ -67,7 +67,7 @@ interface PersistedCanvas {
   ebs?: Array<{ video_id?: string; title?: string; thumb?: string; score?: number }>;
   art?: Array<{ slug?: string; url?: string; title?: string; score?: number }>;
   /** 09: place 이벤트로 확정된 개념별 좌표. i = 답변 내 0-based 로컬 인덱스. h = 카드 높이. */
-  concepts?: Array<{ i?: number; x?: number; y?: number; h?: number }>;
+  concepts?: Array<{ i?: number; x?: number; y?: number; h?: number; tag?: string }>;
 }
 type NodeRowWithAttachments = NodeRow & {
   attachments?: { canvas?: PersistedCanvas | null } | null;
@@ -507,6 +507,10 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           onPlace: (p: PlaceEvent) => {
             const localIdx = p.concept_index;
             pendingCoordsRef.current.set(localIdx, { x: p.x, y: p.y });
+            if (!p.is_final && localIdx === 0) {
+              // 태그 앵커로 카드가 이동 → 카메라도 그 지점으로 재포커스(near=중앙 폴백 보정).
+              setFocusSignal({ x: p.x, y: p.y, key: ++focusKeyRef.current });
+            }
             if (p.is_final) {
               const globalIdx = baseConceptIdxRef.current + localIdx;
               commitConcepts(
