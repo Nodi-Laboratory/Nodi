@@ -42,7 +42,9 @@ from ..services import concept_blocks, qdrant_store, upstage
 from ..services.canvas_layout import (
     ExistingCard,
     estimate_card_height,
+    place_by_tag,
     place_new_card,
+    tag_anchor,
 )
 from ..services.supabase_client import UserClient
 from ..services.turn_log import TurnLog
@@ -175,6 +177,47 @@ async def _scroll_session_cards(owner_id: str, session_id: str) -> list[dict]:
         return []
 
 
+def _tag_state_from_nodes(
+    nodes: list[dict],
+) -> tuple[list[ExistingCard], dict[str, int]]:
+    """세션 노드(created_at.asc)의 attachments.canvas.concepts[]에서
+    기존 카드 rect + 태그 첫등장 순서를 재구성. is_navigator 제외.
+
+    returns (existing_cards, tag_index={tag: k}). 빈 분류는 "기타".
+    """
+    cards: list[ExistingCard] = []
+    tag_index: dict[str, int] = {}
+    for n in nodes:
+        if n.get("is_navigator"):
+            continue
+        canvas = (n.get("attachments") or {}).get("canvas") or {}
+        for c in canvas.get("concepts") or []:
+            tag = (c.get("tag") or "").strip() or "기타"
+            if tag not in tag_index:
+                tag_index[tag] = len(tag_index)
+            x, y = c.get("x"), c.get("y")
+            if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                h = c.get("h")
+                cards.append(ExistingCard(
+                    x=float(x), y=float(y),
+                    h=float(h) if isinstance(h, (int, float)) else estimate_card_height(2),
+                ))
+    return cards, tag_index
+
+
+def _place_tagged(
+    tag: str, cards: list[ExistingCard], tag_index: dict[str, int], new_h: float
+) -> tuple[float, float]:
+    """태그 tag의 앵커에서 무겹침 배치. cards/tag_index를 in-place 갱신."""
+    t = (tag or "").strip() or "기타"
+    if t not in tag_index:
+        tag_index[t] = len(tag_index)
+    anchor = tag_anchor(tag_index[t])
+    x, y = place_by_tag(anchor, cards, new_h)
+    cards.append(ExistingCard(x=x, y=y, h=new_h))
+    return x, y
+
+
 def _session_cards_as_existing(
     session_cards: list[dict], qvec: list[float]
 ) -> list[ExistingCard]:
@@ -227,70 +270,6 @@ def _existing_for_vec(
         sim = _cosine(vec, pvec) if (vec and pvec) else 0.0
         out.append(ExistingCard(x=x, y=y, h=h, sim=sim))
     return out
-
-
-async def _save_canvas_cards(
-    client: UserClient,
-    user_id: str,
-    session_id: str,
-    node_id: str,
-    answer: str,
-    placed_coords: dict[int, tuple[float, float]],
-    placed_heights: dict[int, float],
-    retrieved: RetrievedBody | None = None,
-    precomputed_vectors: dict[int, list[float]] | None = None,
-) -> None:
-    """done 훅 — 개념 임베딩 + canvas_cards upsert + attachments 병합.
-
-    settle이 이미 계산한 passage 벡터(precomputed_vectors)가 전 개념을 덮으면
-    재임베딩하지 않고 재사용한다. 아니면(폴백) 여기서 embed_passages로 계산한다.
-    실패는 logger.warning만 — 스트림/답변 저장에 영향 없음.
-    """
-    try:
-        blocks = concept_blocks.parse(answer)
-        if not blocks:
-            return
-
-        pv = precomputed_vectors or {}
-        if all(b["index"] in pv for b in blocks):
-            vectors_by_idx = pv  # settle 벡터 재사용(재임베딩 없음)
-        else:
-            texts = [f"{b['title']}\n{b['body']}" for b in blocks]
-            embedded = await upstage.embed_passages(texts)
-            vectors_by_idx = {b["index"]: embedded[k] for k, b in enumerate(blocks)}
-
-        concepts_meta: list[dict] = []
-        for b in blocks:
-            idx = b["index"]
-            vec = vectors_by_idx.get(idx)
-            coord = placed_coords.get(idx)
-            if vec is None or coord is None:
-                continue  # 벡터/좌표 없는 개념 스킵
-            x, y = coord
-            h = placed_heights.get(idx) or estimate_card_height(2)
-            await qdrant_store.upsert_canvas_card(
-                owner_id=user_id,
-                session_id=session_id,
-                node_id=node_id,
-                concept_index=idx,
-                title=b["title"],
-                x=x,
-                y=y,
-                size_h=h,
-                vector=vec,
-            )
-            concepts_meta.append({"i": idx, "x": x, "y": y, "h": h})
-
-        # attachments.canvas 단일 writer PATCH — concepts + ebs/art 통합
-        if concepts_meta:
-            await _patch_canvas_unified(client, node_id, concepts_meta, retrieved)
-
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "canvas_cards 저장 실패 node=%s — 다음 kNN에서 해당 카드 누락",
-            node_id,
-            exc_info=True,
-        )
 
 
 async def _patch_canvas_unified(
@@ -424,9 +403,11 @@ async def chat_stream(
         history_chars=sum(len(q) + len(a) for q, a in history),
     )
 
-    # 스트림 시작 전 1회 scroll(벡터 포함): 스트리밍 place · done settle의 힘
-    # 솔버 pin 목록(ExistingCard) 구성에 재사용.
-    session_cards = await _scroll_session_cards(user.id, body.session_id)
+    # 스트림 시작 전 세션 상태를 attachments에서 재구성(canvas_cards scroll 대신):
+    # 각 노드의 attachments.canvas.concepts[]에서 기존 카드 rect + 태그 첫등장
+    # 순서(tag_index)를 얻는다. nodes는 위에서 svc.get_session_nodes로 이미 조회됨
+    # (created_at.asc, is_navigator 포함) — 재조회 없이 재사용.
+    stream_cards, stream_tag_index = _tag_state_from_nodes(nodes)
 
     async def event_stream():
         yield _sse(
@@ -438,36 +419,33 @@ async def chat_stream(
         # place 이벤트 계산용 스트림-스코프 상태
         # placed_coords: {concept_index: (x, y)} — done settle에서 최종값 갱신 후 훅에서 재사용
         # placed_heights: {concept_index: h} — done settle에서 실제 카드 크기 확정
+        # placed_tags: {concept_index: tag} — settle 실패 폴백 시 concepts_meta.tag 복원용
         placed_coords: dict[int, tuple[float, float]] = {}
         placed_heights: dict[int, float] = {}
+        placed_tags: dict[int, str] = {}
         concept_count = 0
-        # 세션 기존 카드(이번 답변 제외) pin — 스트림 시작 전 scroll 1회로 확정.
-        _session_pins = _session_cards_as_existing(session_cards, qvec)
-        # 이번 답변 내 이미 배치한 개념 pin — 같은 답변이라 sim 근사(0.9).
-        _pinned: list[ExistingCard] = []
+        # 스트리밍 배치 상태(이번 답변 개념이 in-place로 합류)
+        _live_cards = list(stream_cards)
+        _live_tags = dict(stream_tag_index)
 
-        def _existing_cards() -> list[ExistingCard]:
-            """솔버 pin 목록 — 세션 기존 카드 + 이번 답변 내 이미 배치한 개념."""
-            return _session_pins + _pinned
-
-        def _next_place_event() -> dict:
-            """다음 @concept의 좌표를 힘 솔버로 계산하고 스트림 상태를 갱신한다.
+        def _next_place_event(tag: str) -> dict:
+            """다음 @concept의 좌표를 태그 앵커 기반으로 계산하고 상태를 갱신한다.
 
             계약(프론트와 공유): concept_index는 "이 답변(노드) 내 0-based
             로컬 인덱스"다 — attachments.canvas.concepts의 `i`와 동일한 의미
             (concept_blocks.parse의 index와도 일치, done 훅에서 대조).
-            스트리밍 중엔 본문 길이를 모르므로 estimate_card_height(2) 기본 크기로
-            배치하고, done settle에서 실제 크기로 최종 안착(is_final=true)한다.
+            같은 분류(tag)는 같은 앵커로 모이고, 스트리밍 중엔 본문 길이를 모르므로
+            estimate_card_height(2) 기본 크기로 배치한다. done settle에서 실제
+            크기로 최종 안착(is_final=true)한다.
             """
             nonlocal concept_count
             idx = concept_count
             concept_count += 1
             base_h = estimate_card_height(2)
-            existing = _existing_cards()
-            x, y = _place_for_new_concept(existing, seed=len(existing), new_h=base_h)
+            x, y = _place_tagged(tag, _live_cards, _live_tags, base_h)
             placed_coords[idx] = (x, y)
-            # 방금 배치한 개념을 이후 개념의 pin 대상에 추가(같은 답변 내 분리).
-            _pinned.append(ExistingCard(x=x, y=y, h=base_h, sim=0.9))
+            placed_heights[idx] = base_h
+            placed_tags[idx] = (tag or "").strip() or "기타"
             return {"concept_index": idx, "x": x, "y": y, "is_final": False}
 
         # 라인 버퍼 (스트리밍 중 @concept: 감지용)
@@ -488,16 +466,22 @@ async def chat_stream(
                         if ch == "\n":
                             line = line_buf.rstrip()
                             line_buf = ""
-                            if _CONCEPT_LINE_RE.match(line):
-                                yield _sse("place", _next_place_event())
+                            m = _CONCEPT_LINE_RE.match(line)
+                            if m:
+                                _p = m.group(1).split("|")
+                                _tag = _p[1].strip() if len(_p) > 1 else ""
+                                yield _sse("place", _next_place_event(_tag))
                         else:
                             line_buf += ch
 
                 # 스트림 종료 flush: 개행 없이 끝난 마지막 라인이 @concept:면
                 # place 1회 방출 — done 훅의 전체 재파싱 인덱스와 어긋나지 않도록.
-                if _CONCEPT_LINE_RE.match(line_buf.rstrip()):
+                _m = _CONCEPT_LINE_RE.match(line_buf.rstrip())
+                if _m:
                     line_buf = ""
-                    yield _sse("place", _next_place_event())
+                    _p = _m.group(1).split("|")
+                    _tag = _p[1].strip() if len(_p) > 1 else ""
+                    yield _sse("place", _next_place_event(_tag))
 
             except Exception:  # noqa: BLE001 - details go to logs, not the client
                 logger.exception("EXAONE streaming failed")
@@ -562,69 +546,54 @@ async def chat_stream(
                 )
 
                 # done settle — 실제 본문 길이로 카드 크기 확정 후 개념별 최종
-                # 좌표를 힘 솔버로 재계산해 place{is_final:true}로 재전송한다.
-                # 세션 기존 카드(이번 답변 제외)만 pin으로 두고, 답변 내 개념은
-                # 확정 순서대로 하나씩 pin에 합류시켜 서로 겹치지 않게 한다.
+                # 좌표를 태그 앵커 기반으로 재계산해 place{is_final:true}로 재전송한다.
+                # 이번 답변 제외 원본(stream_cards/stream_tag_index)에서 시작해,
+                # 답변 내 개념을 분류(tag)별 앵커에 하나씩 합류 → 같은 분류는 한
+                # 앵커로 모이고 다른 분류는 분리되며 서로 겹치지 않는다.
                 # concept_blocks.parse의 index = place SSE의 concept_index(0-based 로컬).
                 #
-                # 자체 격리: settle(parse/솔버)가 실패해도 스트림/저장은 무영향이어야
-                # 한다 — 예외는 warning만, error SSE 방출 금지, 아래 canvas_cards
+                # 자체 격리: settle(parse/배치)가 실패해도 스트림/저장은 무영향이어야
+                # 한다 — 예외는 warning만, error SSE 방출 금지, 아래 attachments
                 # 저장(create_task)은 항상 도달한다. 실패 시 좌표는 스트리밍 단계의
-                # placed_coords로 폴백(이미 채워짐), placed_heights는 기본값으로 보정.
-                # settle 재배치에 쓴 개념별 passage 벡터(저장에서 재사용 → 재임베딩 방지)
-                settle_vecs: dict[int, list[float]] = {}
+                # placed_coords/placed_tags로 폴백해 concepts_meta를 구성한다.
+                concepts_meta: list[dict] = []
                 try:
                     parsed = concept_blocks.parse(answer)
-                    # Part A: 응답 passage 임베딩을 settle에서 선계산(저장과 공유).
-                    texts = [f"{b['title']}\n{b['body']}" for b in parsed]
-                    pvecs = await upstage.embed_passages(texts) if texts else []
-                    placed: list[tuple[float, float, float, list[float]]] = []
-                    for block, pvec in zip(parsed, pvecs):
+                    settle_cards = list(stream_cards)      # 이번 답변 제외 원본
+                    settle_tags = dict(stream_tag_index)
+                    for block in parsed:
                         body_text = block["body"]
                         lines = body_text.count("\n") + 1 if body_text else 0
                         h = estimate_card_height(lines)
-                        # 응답 개념↔개념 대칭 유사도로 위치 보정(질의 임베딩 아님).
-                        existing_i = _existing_for_vec(session_cards, placed, pvec)
-                        x, y = place_new_card(h, existing_i, len(existing_i))
+                        tag = (block.get("cluster") or "").strip() or "기타"
+                        x, y = _place_tagged(tag, settle_cards, settle_tags, h)
                         placed_coords[block["index"]] = (x, y)
                         placed_heights[block["index"]] = h
-                        placed.append((x, y, h, pvec))
-                        settle_vecs[block["index"]] = pvec
+                        concepts_meta.append({"i": block["index"], "x": x, "y": y, "h": h, "tag": tag})
                         yield _sse(
                             "place",
-                            {
-                                "concept_index": block["index"],
-                                "x": x,
-                                "y": y,
-                                "is_final": True,
-                            },
+                            {"concept_index": block["index"], "x": x, "y": y, "is_final": True},
                         )
                 except Exception:  # noqa: BLE001 - settle 실패 = 스트림/저장 무영향
                     logger.warning(
                         "done settle 실패 node=%s — 스트리밍 좌표로 폴백 저장",
-                        node["id"],
-                        exc_info=True,
+                        node["id"], exc_info=True,
                     )
+                    concepts_meta = []
 
-                # settle 실패/부분 실패 대비 — 배치된 개념의 크기 기본값 보정.
-                _fill_missing_heights(placed_coords, placed_heights)
+                # settle 실패/부분 실패 폴백: 스트리밍 좌표+태그로 concepts_meta 보정
+                if not concepts_meta and placed_coords:
+                    for idx, (x, y) in placed_coords.items():
+                        concepts_meta.append({
+                            "i": idx, "x": x, "y": y,
+                            "h": placed_heights.get(idx) or estimate_card_height(2),
+                            "tag": placed_tags.get(idx, "기타"),
+                        })
 
-                # done 훅: canvas_cards 저장 + attachments 병합 (fire-and-forget)
-                # settle에서 확정한 최종 좌표(placed_coords)+크기(placed_heights)를
-                # passage 벡터와 함께 저장. retrieved(ebs/art)도 단일 writer PATCH로 통합.
-                if placed_coords:
+                # attachments.canvas 저장(concepts+tag + ebs/art) — 임베딩·canvas_cards 없음
+                if concepts_meta:
                     asyncio.create_task(
-                        _save_canvas_cards(
-                            client,
-                            user_id=user.id,
-                            session_id=body.session_id,
-                            node_id=node["id"],
-                            answer=answer,
-                            placed_coords=placed_coords,
-                            placed_heights=placed_heights,
-                            retrieved=body.retrieved,
-                            precomputed_vectors=settle_vecs,
-                        )
+                        _patch_canvas_unified(client, node["id"], concepts_meta, body.retrieved)
                     )
 
             except Exception:  # noqa: BLE001 - details to logs, not the client

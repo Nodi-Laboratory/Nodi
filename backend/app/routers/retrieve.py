@@ -69,47 +69,6 @@ def _art_items(hits: list[dict]) -> list[dict]:
     return out
 
 
-async def _compute_near(user_id: str, session_id: str, qvec: list[float]) -> dict:
-    """질의 임베딩 vs 기존 카드 벡터 코사인 → 솔버 초기 추정 좌표.
-
-    항상 좌표 반환(실패 시 캔버스 중앙). score = 최대 유사도(없으면 None).
-    """
-    from ..services.canvas_layout import (
-        CANVAS_W, CANVAS_H, ExistingCard, estimate_card_height, place_new_card,
-    )
-    try:
-        cards = await qdrant_store.scroll_canvas_cards(
-            user_id, session_id, with_vectors=True
-        )
-    except Exception:  # noqa: BLE001 - degraded, 항상 좌표 반환
-        logger.warning("canvas_cards scroll 실패 — near 폴백(중앙)", exc_info=True)
-        return {"x": CANVAS_W / 2.0, "y": CANVAS_H / 2.0, "score": None}
-
-    if not cards:
-        return {"x": CANVAS_W / 2.0, "y": CANVAS_H / 2.0, "score": None}
-
-    existing: list[ExistingCard] = []
-    best = 0.0
-    for c in cards:
-        vec = c.get("vector") or []
-        pl = c.get("payload") or {}
-        sim = _cosine(qvec, vec) if vec else 0.0
-        best = max(best, sim)
-        existing.append(ExistingCard(
-            x=float(pl.get("x", 0.0)), y=float(pl.get("y", 0.0)),
-            h=float(pl.get("size_h", estimate_card_height(2))), sim=sim,
-        ))
-    x, y = place_new_card(estimate_card_height(2), existing, len(existing))
-    return {"x": x, "y": y, "score": best if best > 0 else None}
-
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    na = sum(x * x for x in a) ** 0.5 or 1e-9
-    nb = sum(x * x for x in b) ** 0.5 or 1e-9
-    return max(0.0, dot / (na * nb))
-
-
 @router.post("")
 async def retrieve(
     body: RetrieveBody,
@@ -122,19 +81,17 @@ async def retrieve(
     """
     from ..services.canvas_layout import CANVAS_W, CANVAS_H
 
+    # near: 태그는 답변 전 미지 → 중앙 폴백(첫 place가 태그 앵커로 이동)
+    center = {"x": CANVAS_W / 2.0, "y": CANVAS_H / 2.0, "score": None}
+
     question = body.question.strip()
     if not question:
         # 빈 질문: 폴백 near(캔버스 중앙) + degraded
-        return {
-            "near": {"x": CANVAS_W / 2.0, "y": CANVAS_H / 2.0, "score": None},
-            "ebs": [],
-            "art": [],
-            "degraded": True,
-        }
+        return {"near": center, "ebs": [], "art": [], "degraded": True}
     try:
         vec = await upstage.embed_query(question)
-        # ebs, art, canvas_cards 검색을 병렬 실행
-        ebs_hits, art_hits, near = await asyncio.gather(
+        # ebs, art 검색을 병렬 실행(질의 임베딩) — near는 중앙 상수.
+        ebs_hits, art_hits = await asyncio.gather(
             qdrant_store.search(
                 qdrant_store.COL_EBS,
                 vec,
@@ -147,18 +104,12 @@ async def retrieve(
                 settings.retrieve_art_top_k,
                 score_threshold=settings.retrieve_art_min_score,
             ),
-            _compute_near(user.id, body.session_id, vec),
         )
     except Exception:  # noqa: BLE001 - 검색은 부가 기능, 절대 클라를 깨지 않는다
         logger.exception("retrieve failed — degraded 응답")
-        return {
-            "near": {"x": CANVAS_W / 2.0, "y": CANVAS_H / 2.0, "score": None},
-            "ebs": [],
-            "art": [],
-            "degraded": True,
-        }
+        return {"near": center, "ebs": [], "art": [], "degraded": True}
     return {
-        "near": near,
+        "near": center,
         "ebs": _ebs_items(ebs_hits),
         "art": _art_items(art_hits),
         "degraded": False,

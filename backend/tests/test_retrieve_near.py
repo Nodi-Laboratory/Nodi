@@ -1,7 +1,15 @@
 import math
 import pytest
-from app.routers import retrieve as R
-from app.services.canvas_layout import CANVAS_W, CANVAS_H
+
+# T4: retrieve near가 태그 기반 중앙 폴백으로 전환되며 _compute_near(임베딩 near)가
+# 삭제됨. 이 모듈은 삭제된 함수만 검증하므로 전체 skip(파일 제거는 T5 dead-code 정리).
+pytest.skip(
+    "retrieve._compute_near removed in T4 (tag-based near=center); pruned in T5",
+    allow_module_level=True,
+)
+
+from app.routers import retrieve as R  # noqa: E402
+from app.services.canvas_layout import CANVAS_W, CANVAS_H  # noqa: E402
 
 
 def _cos(a, b):
