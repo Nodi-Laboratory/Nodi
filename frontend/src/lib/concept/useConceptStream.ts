@@ -180,6 +180,8 @@ export interface ConceptStream {
   reply: string;
   busy: boolean;
   loading: boolean;
+  /** 답변당 첫 개념 생성 좌표(top-left). key는 send마다 증가 — 같은 좌표라도 effect 재발화. */
+  focusSignal: { x: number; y: number; key: number } | null;
   send: (question: string) => Promise<void>;
 }
 
@@ -194,6 +196,9 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [focusSignal, setFocusSignal] = useState<
+    { x: number; y: number; key: number } | null
+  >(null);
 
   const conceptsRef = useRef<Concept[]>([]);
   const leafNodesRef = useRef<CanvasLeafNode[]>([]);
@@ -207,6 +212,8 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
   const pendingCoordsRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   // 이번 send에서 생성된 개념의 전역 시작 인덱스(place concept_index → 전역 인덱스 변환).
   const baseConceptIdxRef = useRef<number>(0);
+  // 자동 포커싱 트리거 카운터(Date.now 금지 — 결정론). send마다 ++.
+  const focusKeyRef = useRef(0);
   // 리프 계단식 스폰 타이머(언마운트 시 일괄 취소).
   const spawnTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   useEffect(
@@ -410,6 +417,8 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           pending: true,
         },
       ]);
+      // 자동 포커싱: 이번 답변 첫 개념(플레이스홀더) 생성 지점으로 카메라를 옮기게 신호.
+      setFocusSignal({ x: nearXY.x, y: nearXY.y, key: ++focusKeyRef.current });
 
       // (c) 리프 노드(영상/삽화) — retrieve 성공(ebs/art 있을 때)만 스폰.
       // 09: 격자 계산 대신 잠정 위치(nearXY) 곁 단순 오프셋(개념 오른쪽, 순번마다 아래로).
@@ -675,5 +684,5 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail]);
 
-  return { concepts, groups, leafNodes, reply, busy, loading, send };
+  return { concepts, groups, leafNodes, reply, busy, loading, focusSignal, send };
 }
