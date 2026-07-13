@@ -10,6 +10,7 @@ import { spaceTargetFromId } from "@/lib/api";
 import { useConceptStream } from "@/lib/concept/useConceptStream";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import NoteCanvas, { focusCamera, type Camera } from "./NoteCanvas";
+import MapLoadingIndicator from "./MapLoadingIndicator";
 import ConceptCard from "./ConceptCard";
 import VideoNode from "./VideoNode";
 import ArtNode from "./ArtNode";
@@ -178,9 +179,15 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
             <ArtNode key={n.id} node={n} />
           ),
         )}
+        {/* 맵 앵커 로딩 — 생성 지점 위 버블(맵과 함께 팬/줌). */}
+        {focusSignal && (
+          <MapLoadingIndicator
+            x={focusSignal.x}
+            y={focusSignal.y}
+            visible={loading}
+          />
+        )}
       </NoteCanvas>
-
-      {loading && <LoadingChip />}
 
       <ConceptTreePanel
         open={treeOpen}
@@ -254,53 +261,6 @@ function Welcome() {
       >
         아래 입력창에 궁금한 개념을 물어봐
       </p>
-    </div>
-  );
-}
-
-function LoadingChip() {
-  return (
-    <div
-      data-testid="loading"
-      style={{
-        position: "absolute",
-        left: "50%",
-        top: "50%",
-        transform: "translate(-50%, -50%)",
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "10px 18px",
-        background: "var(--bg)",
-        border: "1px solid rgba(43,38,32,.12)",
-        borderRadius: 999,
-        boxShadow: "0 6px 22px rgba(43,38,32,.14)",
-        zIndex: 5,
-        pointerEvents: "none",
-        userSelect: "none",
-      }}
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src="/nodi-mascot.png"
-        alt=""
-        style={{ height: 32, width: "auto", mixBlendMode: "multiply" }}
-      />
-      {/* 점 3개 바운스 — .nodi-ldot(globals.css .nodi-canvas 스코프) */}
-      <span style={{ display: "inline-flex", alignItems: "center" }}>
-        <i className="nodi-ldot" style={{ animationDelay: "0ms" }} />
-        <i className="nodi-ldot" style={{ animationDelay: "140ms" }} />
-        <i className="nodi-ldot" style={{ animationDelay: "280ms" }} />
-      </span>
-      <span
-        style={{
-          fontFamily: "var(--font-body)",
-          fontSize: 16,
-          color: "var(--ink)",
-        }}
-      >
-        노디가 노트를 쓰는 중…
-      </span>
     </div>
   );
 }
