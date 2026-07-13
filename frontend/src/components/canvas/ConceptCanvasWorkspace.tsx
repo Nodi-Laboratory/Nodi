@@ -41,11 +41,10 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
   const [camera, setCamera] = useState<Camera>(INITIAL_CAMERA);
   const [treeOpen, setTreeOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // 클러스터 클릭은 팬 전용(하이라이트 없음). activeId는 여전히 ConceptCard/미니맵에 전달되나
+  // 현재 세터가 없어 null 유지 — 향후 하이라이트 재도입 시 setter를 다시 추가한다.
+  const [activeId] = useState<string | null>(null);
   const didInitFocus = useRef(false);
-  const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
 
   // Container viewport (canvas fills <main>, which is width minus the icon rail).
   const vp = useCallback(() => {
@@ -56,6 +55,18 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
     }
     return { w: window.innerWidth, h: window.innerHeight };
   }, []);
+
+  // 미니맵 카메라 사각형용 렌더-세이프 뷰포트 크기(ref를 렌더 중 읽지 않도록 상태로 추적).
+  const [vpSize, setVpSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const sync = () => setVpSize(vp());
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [vp]);
 
   // Space entry: clear selection + record active space (mirrors WorkspaceInner).
   useEffect(() => {
@@ -114,8 +125,6 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
     );
   }, [focusSignal, vp]);
 
-  useEffect(() => () => clearTimeout(highlightTimer.current), []);
-
   const zoomBy = useCallback(
     (factor: number) => {
       setCamera((prev) => {
@@ -136,19 +145,6 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
       setCamera(INITIAL_CAMERA);
     }
   }, [concepts, vp]);
-
-  // Concept-tree click: pan the camera to that card + brief highlight.
-  const handleFocus = useCallback(
-    (id: string) => {
-      const c = concepts.find((x) => x.id === id);
-      if (!c) return;
-      setCamera(focusCamera(vp(), { x: c.x + CARD_CX, y: c.y + CARD_CY }, 1));
-      setActiveId(id);
-      clearTimeout(highlightTimer.current);
-      highlightTimer.current = setTimeout(() => setActiveId(null), 1500);
-    },
-    [concepts, vp],
-  );
 
   return (
     <div
@@ -195,7 +191,11 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
         groups={groups}
         concepts={concepts.filter((c) => !c.pending)}
         activeId={activeId}
-        onFocus={handleFocus}
+        camera={camera}
+        viewport={vpSize}
+        onFocus={(target) =>
+          setCamera(focusCamera(vp(), { x: target.x, y: target.y }, 1))
+        }
       />
 
       <BottomBar onSend={send} busy={busy} reply={reply} />
