@@ -11,7 +11,6 @@ import { NextResponse, type NextRequest } from "next/server";
 const PROTECTED_PREFIXES = [
   "/home",
   "/space",
-  "/concepts",
   "/profile",
   "/teacher",
   "/admin",

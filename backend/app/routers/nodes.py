@@ -30,6 +30,15 @@ class PositionBody(BaseModel):
     position_y: float | None = None
 
 
+class CanvasPatchBody(BaseModel):
+    """개념 캔버스 영속화(§8) — 좌표 + 검색 결과. None 필드는 건드리지 않는다."""
+
+    position_x: float | None = None
+    position_y: float | None = None
+    # /retrieve 결과 {"ebs":[...], "art":[...]} — attachments.canvas 키로 병합.
+    attachments_canvas: dict | None = None
+
+
 def _connections(result: object) -> list[str]:
     """Normalize the RPC's uuid[] return into a list of strings."""
     if isinstance(result, list):
@@ -60,6 +69,69 @@ async def delete_node(
         )
     # RLS (nodes_delete_owner) still enforces ownership at the DB layer.
     await client.delete("nodes", {"id": f"eq.{node_id}"})
+
+
+@router.patch("/{node_id}")
+async def patch_node_canvas(
+    node_id: str,
+    body: CanvasPatchBody,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """캔버스 상태 PATCH — 좌표 저장 + attachments.canvas 병합 (소유자 전용, RLS).
+
+    attachments는 read-modify-write로 "canvas" 키만 갱신 — 다른 attachment
+    키(provenance 등)는 보존한다. 프론트는 chat done 후 fire-and-forget 호출.
+    """
+    client = UserClient.from_user(user)
+    rows = await client.select(
+        "nodes",
+        {
+            "id": f"eq.{node_id}",
+            "select": "id,position_x,position_y,attachments",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        # 없는 노드거나 RLS가 숨김(타인 세션) — 동일하게 404.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Node not found or not yours.",
+        )
+    current = rows[0]
+
+    patch: dict = {}
+    if body.position_x is not None:
+        patch["position_x"] = body.position_x
+    if body.position_y is not None:
+        patch["position_y"] = body.position_y
+    if body.attachments_canvas is not None:
+        attachments = current.get("attachments")
+        if not isinstance(attachments, dict):
+            attachments = {}
+        attachments["canvas"] = body.attachments_canvas
+        patch["attachments"] = attachments
+
+    if not patch:
+        return {
+            "id": node_id,
+            "position_x": current.get("position_x"),
+            "position_y": current.get("position_y"),
+            "attachments": current.get("attachments") or {},
+        }
+
+    updated = await client.update("nodes", {"id": f"eq.{node_id}"}, patch)
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Node not found or not yours.",
+        )
+    row = updated[0]
+    return {
+        "id": node_id,
+        "position_x": row.get("position_x"),
+        "position_y": row.get("position_y"),
+        "attachments": row.get("attachments") or {},
+    }
 
 
 @router.patch("/{node_id}/position")

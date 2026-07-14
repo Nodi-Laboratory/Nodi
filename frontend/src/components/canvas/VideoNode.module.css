@@ -1,0 +1,155 @@
+/* VideoNode — EBS 추천 영상 리프 노드(Nodi-figma EbsCard.module.css 이식).
+   .node가 캔버스 절대배치 + 카드 프레임을 겸한다. 오버레이는 body 포털이라
+   .nodi-canvas 밖 — 토큰은 전부 폴백값 포함. */
+.node {
+  position: absolute; /* leaf.x/y (top-left) */
+  width: 340px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--border, #f0e4c2);
+  border-radius: 16px;
+  background: #fff;
+  padding: 12px;
+  box-shadow: 0 6px 18px rgba(120, 90, 0, 0.07);
+}
+
+/* 썸네일 + 텍스트 가로 배치 */
+.body {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* 썸네일 118×70 (radius 10) + 재생버튼 오버레이 */
+.thumb {
+  position: relative;
+  flex: 0 0 118px;
+  width: 118px;
+  height: 70px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #eae3d4;
+}
+.thumbImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.thumbFallback {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, #efe3c6, #f4d8b0);
+}
+/* 재생버튼: 32px 잉크 원 + 옐로 삼각형 */
+.play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--ink, #2b2620);
+  display: grid;
+  place-items: center;
+  padding-left: 2px;
+  transition: transform 0.14s ease;
+}
+.body:hover .play {
+  transform: translate(-50%, -50%) scale(1.1);
+}
+
+/* 텍스트: 라벨 / 제목 / 메타 */
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-top: 2px;
+}
+.label {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: #c77700;
+}
+.title {
+  font-family: var(--font-body, sans-serif);
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--ink, #2b2620);
+}
+.meta {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 12px;
+  color: var(--text-faint, #8a8073);
+}
+
+/* ── 재생 라이트박스 오버레이 (document.body 포털) ── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(43, 38, 32, 0.55);
+  animation: videoLightboxFade 0.18s ease both;
+}
+@keyframes videoLightboxFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.dialog {
+  position: relative;
+  width: min(720px, 92vw);
+}
+.player {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+}
+.iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.close {
+  position: absolute;
+  top: -16px;
+  right: -16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: #fff;
+  color: var(--ink, #2b2620);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  transition: background 0.14s ease, transform 0.12s ease;
+}
+.close:hover {
+  background: #f4f5f7;
+  transform: scale(1.06);
+}

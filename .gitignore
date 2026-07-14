@@ -27,3 +27,6 @@ Thumbs.db
 backend/textbooks/*
 !backend/textbooks/README.md
 !backend/textbooks/manifest.example.json
+
+# Supabase CLI 로컬 상태(link 정보·pooler-url 등 — 커밋 금지)
+supabase/.temp/

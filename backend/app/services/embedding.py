@@ -1,85 +1,44 @@
-"""Gemini embeddings + text chunking (Stage 3b-1).
+"""텍스트 임베딩(Upstage 위임) + 청킹.
 
-Uses gemini-embedding-001 at output_dimensionality=768 (matches the
-file_chunks.embedding vector(768) column). Reduced-dimension outputs are not
-pre-normalized by the model, so we L2-normalize for stable cosine/IP search.
+임베딩은 services/upstage.py가 담당 — 비대칭 4096d 모델(질의=embedding-query,
+문서=embedding-passage), 배치 분할·재시도·L2 정규화 포함. 기존 호출부 호환을
+위해 Gemini식 task_type 파라미터를 유지하고 kind로 매핑한다.
+
+벡터는 더 이상 Supabase에 저장하지 않는다(Qdrant 이전, migration 0028) —
+과거 vector(768) 컬럼 계약 상수(DB_VECTOR_DIM)와 차원 가드는 폐기. 차원
+검증은 upstage.embed_texts(EMBED_DIM=4096)와 Qdrant 컬렉션이 수행한다.
 """
 
 from __future__ import annotations
 
 import logging
-import math
 import re
 
-from google import genai
-from google.genai import types
-
 from ..config import get_settings
-from . import app_settings
-from .gemini import get_client
+from . import upstage
 
 logger = logging.getLogger("nodi.embedding")
 settings = get_settings()
 
-# The file_chunks.embedding column is a FIXED vector(768) (migration 0009). The
-# embedding worker guards against an admin setting embedding_dimension to any
-# other value (it would make insert/search fail or be meaningless) — see
-# embedding_worker. This constant is the contract that guard checks against.
-DB_VECTOR_DIM = 768
 
-
-def _l2_normalize(vec: list[float]) -> list[float]:
-    norm = math.sqrt(sum(v * v for v in vec))
-    if norm == 0:
-        return vec
-    return [v / norm for v in vec]
+def _kind_for(task_type: str) -> str:
+    """Gemini task_type -> Upstage 비대칭 모델 kind 매핑(호출부 호환)."""
+    return "query" if task_type == "RETRIEVAL_QUERY" else "passage"
 
 
 async def embed_texts(
     texts: list[str],
     *,
     task_type: str = "RETRIEVAL_DOCUMENT",
-    model: str | None = None,
-    dimension: int | None = None,
 ) -> list[list[float]]:
-    """Embed a list of texts -> list of L2-normalized vectors.
+    """텍스트 목록 -> L2 정규화된 4096d 벡터 목록 (Upstage).
 
-    Sub-batches by `embedding_request_max_chunks` per embed_content call.
-
-    D62: `model`/`dimension` default to the admin overlay (falling back to
-    config) so model/dimension changes take effect. Callers that have already
-    resolved (and guarded) these values — the embedding worker — pass them
-    explicitly; the query path (rag.search) leaves them None to auto-resolve,
-    keeping query and document embeddings in the SAME space.
+    RETRIEVAL_QUERY -> kind="query", 그 외(RETRIEVAL_DOCUMENT) -> "passage".
+    질의/문서 임베딩이 같은 비대칭 모델 쌍을 쓰므로 검색 공간이 일치한다.
     """
     if not texts:
         return []
-    if model is None or dimension is None:
-        overlay = await app_settings.get_overlay()
-        if model is None:
-            model = app_settings.as_str(
-                overlay, "embedding_model", settings.gemini_embedding_model
-            )
-        if dimension is None:
-            dimension = app_settings.as_int(
-                overlay, "embedding_dimension", settings.embedding_dimension, 1, 10000
-            )
-    client: genai.Client = get_client()
-    out: list[list[float]] = []
-    step = max(1, settings.embedding_request_max_chunks)
-    for i in range(0, len(texts), step):
-        batch = texts[i : i + step]
-        resp = await client.aio.models.embed_content(
-            model=model,
-            contents=batch,
-            config=types.EmbedContentConfig(
-                output_dimensionality=dimension,
-                task_type=task_type,
-            ),
-        )
-        for emb in resp.embeddings:
-            out.append(_l2_normalize(list(emb.values)))
-    return out
+    return await upstage.embed_texts(texts, kind=_kind_for(task_type))
 
 
 # ---------------------------------------------------------------------------

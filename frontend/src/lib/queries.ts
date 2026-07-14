@@ -9,8 +9,6 @@ import {
   getFileSuggestions,
   getFileTags,
   getHomeSummary,
-  getHomeSuggestions,
-  getNavigatorDefaults,
   fetchTeacherOverview,
   getSession,
   listClassMaterials,
@@ -31,9 +29,7 @@ import type {
   FileLink,
   FileRow,
   FileSuggestion,
-  HomeSuggestions,
   HomeSummary,
-  NavigatorDefaults,
   SessionDetail,
   SessionRow,
   TagRow,
@@ -297,27 +293,10 @@ export function prefetchSessionData(qc: QueryClient, sessionId: string) {
   });
 }
 
-/** 홈 요약(공간/최근 세션/상위 개념). */
+/** 홈 요약(공간/최근 세션). */
 export function useHomeSummary() {
   return useQuery<HomeSummary>({
     queryKey: ["home", "summary"],
     queryFn: () => getHomeSummary(),
-  });
-}
-
-/** 홈 질문 추천(3개). */
-export function useHomeSuggestions() {
-  return useQuery<HomeSuggestions>({
-    queryKey: ["home", "suggestions"],
-    queryFn: () => getHomeSuggestions(),
-  });
-}
-
-/** D55b: 네비게이터 유효 기본값(추천 개수·생성 시점·주기). 거의 안 변하므로 staleTime 길게. */
-export function useNavigatorDefaults() {
-  return useQuery<NavigatorDefaults>({
-    queryKey: ["navigator-defaults"],
-    queryFn: () => getNavigatorDefaults(),
-    staleTime: 10 * 60 * 1000,
   });
 }

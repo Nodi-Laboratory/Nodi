@@ -1,16 +1,19 @@
-"""Background embedding worker (Stage 3b-1).
+"""Background embedding worker (Stage 3b-1; Upstage+Qdrant 이전).
 
 apscheduler polls `jobs(status='queued')` and processes them with the
 service-role client (RLS bypass). Disabled when no service-role key.
 
 Job flow (architecture §5, D11 — split then parallel batches):
-  embedding_split:  download file -> extract text (PDF/txt) -> chunk ->
-                    insert file_chunks(pending) + set chunk_total, status=
-                    'embedding' -> create embedding_batch child jobs.
-  embedding_batch:  embed the batch's chunks (Gemini, normalized) -> fill
-                    embeddings + status='embedded', recompute file progress;
-                    when all chunks resolved -> file status 'indexed' (or
-                    'partial' if some failed).
+  embedding_split:  download file -> extract text (PDF/이미지=Upstage Document
+                    Parse, 평문=디코드) -> chunk -> insert file_chunks(pending)
+                    + set chunk_total, status='embedding' -> create
+                    embedding_batch child jobs.
+  embedding_batch:  embed the batch's chunks (Upstage passage, 4096d) ->
+                    벡터는 Qdrant file_chunks 컬렉션에 업서트(Supabase엔
+                    상태만 기록, embedding 컬럼 미사용 — migration 0028) +
+                    status='embedded', recompute file progress; when all
+                    chunks resolved -> file status 'indexed' (or 'partial'
+                    if some failed).
 
 Concurrency: each poll claims up to `embedding_worker_concurrency` queued jobs
 and runs them concurrently. Claiming flips status queued->running conditionally
@@ -20,7 +23,6 @@ so a job is processed once.
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -28,7 +30,7 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ..config import get_settings
-from . import app_settings, embedding, gemini, tagging
+from . import app_settings, embedding, qdrant_store, tagging, upstage
 from .service_client import ServiceClient, get_service_client
 
 logger = logging.getLogger("nodi.embedding_worker")
@@ -43,26 +45,24 @@ def _now_iso() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Text extraction: PDF (pypdf), plain text, and image OCR (Gemini vision).
-# Scanned-PDF page-render OCR is a follow-up (Stage 3b-3 covers image/* only).
+# 텍스트 추출: PDF/이미지는 Upstage Document Parse(markdown, 스캔본 OCR 포함),
+# 그 외는 평문 디코드. 추출 실패 = 빈 텍스트 -> split이 파일을 failed 처리.
 # ---------------------------------------------------------------------------
 async def _extract_text(data: bytes, mime: str | None, storage_path: str) -> str:
     name = (storage_path or "").lower()
     mime = mime or ""
 
-    if mime.startswith("image/") or name.endswith(
+    is_image = mime.startswith("image/") or name.endswith(
         (".png", ".jpg", ".jpeg", ".webp", ".gif")
-    ):
-        return await gemini.ocr_image_bytes(data, mime or "image/png")
-
-    if name.endswith(".pdf") or mime.endswith("pdf"):
+    )
+    is_pdf = name.endswith(".pdf") or mime.endswith("pdf")
+    if is_image or is_pdf:
         try:
-            from pypdf import PdfReader
-
-            reader = PdfReader(io.BytesIO(data))
-            return "\n\n".join((p.extract_text() or "") for p in reader.pages)
-        except Exception:  # noqa: BLE001
-            logger.exception("PDF text extraction failed for %s", storage_path)
+            # 스토리지 경로 규약 "{owner}/{file_id}/{name}" -> 실제 파일명.
+            filename = (storage_path or "").split("/")[-1] or "document"
+            return await upstage.parse_document(data, filename)
+        except Exception:  # noqa: BLE001 - 잡 상태 머신 보존(파일 failed 경로)
+            logger.exception("Document parse failed for %s", storage_path)
             return ""
 
     try:
@@ -71,8 +71,47 @@ async def _extract_text(data: bytes, mime: str | None, storage_path: str) -> str
         return data.decode("utf-8", errors="ignore")
 
 
-def _vector_literal(vec: list[float]) -> str:
-    return "[" + ",".join(f"{v:.7f}" for v in vec) + "]"
+# ---------------------------------------------------------------------------
+# Qdrant 헬퍼 — 컬렉션 보장은 지연 1회, 업서트 실패 시 다음 시도에서 재보장.
+# ---------------------------------------------------------------------------
+_qdrant_ready = False
+
+
+async def _qdrant_upsert(points: list[dict[str, Any]]) -> None:
+    global _qdrant_ready
+    if not _qdrant_ready:
+        await qdrant_store.ensure_collections()
+        _qdrant_ready = True
+    try:
+        await qdrant_store.upsert(qdrant_store.COL_FILE_CHUNKS, points)
+    except Exception:
+        _qdrant_ready = False  # 컬렉션 부재/일시 장애 대비 — 재시도 시 재보장
+        raise
+
+
+async def _qdrant_delete_file_points(file_id: str) -> None:
+    """재분할 전 해당 파일의 기존 Qdrant 포인트 정리 — best-effort.
+
+    스테일 포인트가 남아도 본문 없는 페이로드뿐이고 검색 후 Supabase chunk_id
+    재조회(RLS)에서 걸러지지만, 무한히 쌓이지 않도록 여기서 지운다.
+    """
+    try:
+        from qdrant_client import models
+
+        await qdrant_store.get_client().delete(
+            collection_name=qdrant_store.COL_FILE_CHUNKS,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="file_id", match=models.MatchValue(value=str(file_id))
+                        )
+                    ]
+                )
+            ),
+        )
+    except Exception:  # noqa: BLE001 - 정리는 최적화일 뿐, split을 막지 않는다
+        logger.warning("Qdrant 포인트 정리 실패 file=%s", file_id, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -190,30 +229,8 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         return
     f = files[0]
 
-    # D65 integrity guard: the embedding column is a fixed vector(768). If the
-    # admin set embedding_dimension to anything else, embedding now would write
-    # vectors that don't match the column/index — fail the file as "re-embed
-    # required" WITHOUT inserting anything, rather than corrupt the DB. Fixing
-    # the dimension back to 768 + retry recovers it.
-    overlay = await app_settings.get_overlay()
-    embed_dim = app_settings.as_int(
-        overlay, "embedding_dimension", settings.embedding_dimension, 1, 10000
-    )
-    if embed_dim != embedding.DB_VECTOR_DIM:
-        logger.warning(
-            "embedding_dimension=%s != %s (vector column); failing split "
-            "file=%s (dimension mismatch; re-embed required)",
-            embed_dim,
-            embedding.DB_VECTOR_DIM,
-            file_id,
-        )
-        await svc.update(
-            "files",
-            {"id": f"eq.{file_id}"},
-            {"status": "failed", "error": "dimension mismatch; re-embed required"},
-        )
-        await _fail_job(svc, job["id"], "dimension mismatch; re-embed required")
-        return
+    # (구 D65 차원 가드 폐기 — 벡터는 Qdrant에만 저장하고 차원은 Upstage
+    #  EMBED_DIM=4096 고정. 검증은 upstage.embed_texts + Qdrant 컬렉션이 수행.)
 
     # Idempotency (crash recovery): if batch jobs already exist for this file the
     # split already fanned out — just mark this (re-queued) split done. Otherwise
@@ -230,6 +247,7 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         logger.info("split file=%s already fanned out; marking done", file_id)
         return
     await svc.delete("file_chunks", {"file_id": f"eq.{file_id}"})
+    await _qdrant_delete_file_points(file_id)
 
     await svc.update("files", {"id": f"eq.{file_id}"}, {"status": "splitting"})
 
@@ -237,6 +255,7 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     text = await _extract_text(data, f.get("mime"), f["storage_path"])
     # D65 new-only: chunk size/overlap come from the admin overlay and apply to
     # THIS (new) job; existing chunks are untouched until re-uploaded.
+    overlay = await app_settings.get_overlay()
     chunk_size = app_settings.as_int(
         overlay, "chunk_size_chars", settings.chunk_size_chars, 400, 4000
     )
@@ -315,32 +334,20 @@ async def _handle_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
         },
     )
     if chunks:
-        # D65 integrity guard (also here: config may change between split and
-        # batch). Mismatched dimension -> fail this job WITHOUT writing vectors;
-        # chunks stay pending so a retry after fixing the dimension recovers.
-        overlay = await app_settings.get_overlay()
-        embed_dim = app_settings.as_int(
-            overlay, "embedding_dimension", settings.embedding_dimension, 1, 10000
+        # 페이로드 owner_id는 파일 행에서 파생(스코핑 필터 참고용 —
+        # Qdrant 페이로드는 신뢰 경계가 아니다).
+        files = await svc.select(
+            "files", {"id": f"eq.{file_id}", "select": "id,owner_id", "limit": "1"}
         )
-        embed_model = app_settings.as_str(
-            overlay, "embedding_model", settings.gemini_embedding_model
-        )
-        if embed_dim != embedding.DB_VECTOR_DIM:
-            logger.warning(
-                "embedding_dimension=%s != %s (vector column); failing batch "
-                "file=%s (dimension mismatch; re-embed required)",
-                embed_dim,
-                embedding.DB_VECTOR_DIM,
-                file_id,
-            )
-            await _fail_job(svc, job["id"], "dimension mismatch; re-embed required")
+        if not files:
+            await _fail_job(svc, job["id"], "file row missing")
             return
+        owner_id = files[0].get("owner_id")
+
         try:
             vectors = await embedding.embed_texts(
                 [c["chunk_text"] for c in chunks],
                 task_type="RETRIEVAL_DOCUMENT",
-                model=embed_model,
-                dimension=embed_dim,
             )
         except Exception as exc:  # noqa: BLE001 - mark chunks failed, not crash
             logger.exception("Batch embedding failed file=%s", file_id)
@@ -368,19 +375,44 @@ async def _handle_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
             await _fail_job(svc, job["id"], "embedding count mismatch")
             return
 
+        # 벡터는 Qdrant에만 업서트 — 포인트 id=청크 uuid(재시도 시 덮어쓰기),
+        # 페이로드는 본문 없는 최소 셋 {chunk_id, file_id, owner_id}.
+        points = [
+            {
+                "id": c["id"],
+                "vector": v,
+                "payload": {
+                    "chunk_id": c["id"],
+                    "file_id": str(file_id),
+                    "owner_id": str(owner_id) if owner_id else None,
+                },
+            }
+            for c, v in zip(chunks, vectors, strict=True)
+        ]
+        try:
+            await _qdrant_upsert(points)
+        except Exception as exc:  # noqa: BLE001 - Qdrant 장애도 embed 실패와 동일 처리
+            logger.exception("Qdrant upsert failed file=%s", file_id)
+            for c in chunks:
+                await svc.update(
+                    "file_chunks", {"id": f"eq.{c['id']}"}, {"status": "failed"}
+                )
+            await _finalize_file(svc, file_id)
+            await _fail_job(svc, job["id"], f"qdrant error: {exc}")
+            return
+
+        # Supabase엔 상태만 기록(embedding 컬럼 미사용 — migration 0028).
         sem = asyncio.Semaphore(8)
 
-        async def _store(chunk: dict[str, Any], vec: list[float]) -> None:
+        async def _mark(chunk: dict[str, Any]) -> None:
             async with sem:
                 await svc.update(
                     "file_chunks",
                     {"id": f"eq.{chunk['id']}"},
-                    {"embedding": _vector_literal(vec), "status": "embedded"},
+                    {"status": "embedded"},
                 )
 
-        await asyncio.gather(
-            *(_store(c, v) for c, v in zip(chunks, vectors, strict=True))
-        )
+        await asyncio.gather(*(_mark(c) for c in chunks))
 
     await _finalize_file(svc, file_id)
     await svc.update(

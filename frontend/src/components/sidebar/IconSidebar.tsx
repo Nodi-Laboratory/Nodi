@@ -8,7 +8,6 @@ import {
   Settings,
   Shield,
   School,
-  TreeDeciduous,
   type LucideIcon,
 } from "lucide-react";
 import { useMyClasses, useProfile } from "@/lib/hooks";
@@ -157,15 +156,6 @@ export function IconSidebar() {
               );
             })}
           </div>
-
-          <div className="my-1 h-px w-8 bg-white/10" />
-
-          <NavIcon
-            href="/concepts"
-            label="개념 나무"
-            icon={TreeDeciduous}
-            active={isActive("/concepts")}
-          />
         </>
       )}
 

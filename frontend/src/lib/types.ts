@@ -204,18 +204,7 @@ export interface ChatDoneEvent {
   root_node_id: string | null;
 }
 
-/** Stage 2: done 다음, 네비게이터 게이트 발동 턴에서만 옴. */
-export interface ChatNavigatorEvent {
-  nodes: Array<{
-    id: string;
-    parent_id: string | null;
-    navigator_question: string;
-    /** D40: 생성 시점에 함께 저장된 근거(클릭 팝업용). */
-    navigator_meta?: NavigatorMeta | null;
-  }>;
-}
-
-// ── Stage 4a: 홈 + 총괄 AI(overseer) ─────────────────────────────────
+// ── Stage 4a: 홈 ─────────────────────────────────────────────────────
 
 export interface HomeSpace {
   space_kind: SpaceKind;
@@ -233,42 +222,9 @@ export interface HomeRecentSession {
   updated_at: string;
 }
 
-export interface HomeConcept {
-  id: string;
-  name: string;
-  usage_count: number;
-}
-
 export interface HomeSummary {
   spaces: HomeSpace[];
   recent_sessions: HomeRecentSession[];
-  top_concepts: HomeConcept[];
-}
-
-export interface HomeSuggestion {
-  question: string;
-  seed_question: string;
-  space_kind: "personal";
-  space_ref: string | null;
-}
-
-export interface HomeSuggestions {
-  suggestions: HomeSuggestion[];
-}
-
-/** 총괄 AI done 액션. */
-export type OverseerAction =
-  | {
-      action: "create_session";
-      label: string;
-      space_kind: SpaceKind;
-      space_ref: string | null;
-      seed_question: string;
-    }
-  | { action: "open_session"; label: string; session_id: string };
-
-export interface OverseerDoneEvent {
-  actions: OverseerAction[];
 }
 
 // ── Stage 3b: 파일 / RAG ─────────────────────────────────────────────
@@ -355,13 +311,6 @@ export interface FileGraphNode {
     space_kind?: string | null;
     space_ref?: string | null;
   } | null;
-}
-
-/** D55b: 네비게이터 유효 기본값(config ⊕ admin override 합성, 서버가 숫자로 반환). */
-export interface NavigatorDefaults {
-  question_count: number;
-  gate_k: number;
-  period: number;
 }
 
 // ── Stage 4c: 관리자 ─────────────────────────────────────────────────

@@ -48,19 +48,6 @@ settings = get_settings()
 QUESTION_MAX_CHARS = 8000
 
 
-class NavigatorOverride(BaseModel):
-    """D47 per-request navigator preference (clamped server-side, navigator.py).
-
-    All optional; missing fields fall back to the admin/config default. `enabled`
-    False disables navigator generation for this turn entirely.
-    """
-
-    enabled: bool | None = None
-    count: int | None = None
-    gate_k: int | None = None
-    period: int | None = None
-
-
 class RetrievedEbsItem(BaseModel):
     """프론트가 /retrieve에서 받은 EBS 항목 — snake_case로 서버 전달."""
     video_id: str
@@ -90,9 +77,6 @@ class ChatStreamBody(BaseModel):
     # D15: one-time branch comparison — other nodes to reference for THIS turn
     # only (not persisted, does not touch node.connections).
     reference_node_ids: list[str] | None = Field(default=None, max_length=20)
-    # D47: per-request navigator override (user workspace settings).
-    # 프론트 구계약 호환용 — 수신만 하고 무시한다(네비게이터 생성은 제거됨).
-    navigator: NavigatorOverride | None = None
     # 09 단일 writer: 프론트 retrieve 결과(ebs/art)를 서버에 전달해 done 훅이
     # ebs/art를 attachments.canvas에 저장. null이면 저장하지 않음(첫 질문 전
     # degraded 케이스 등). 카드 좌표는 프론트 소유 — 서버는 저장하지 않음.

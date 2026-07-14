@@ -22,10 +22,12 @@ from .supabase_client import UserClient
 # turn — without it the "참조 브랜치" chips/popup never render (D57). `navigator_meta`
 # (D40/0019) holds the navigator question rationale so the click popup survives a
 # session refetch (otherwise it blanks after reload, D57-보강).
+# `attachments`(0001 jsonb)의 "canvas" 키는 캔버스 리프 노드(EBS 영상/아트 추천)
+# 영속분 — 세션 재수화 때 VideoNode/ArtNode를 복원하려면 함께 내려줘야 한다(C5).
 NODE_SELECT = (
     "id,session_id,parent_id,question,answer,label,is_navigator,"
     "navigator_question,navigator_meta,position_x,position_y,"
-    "connections,rag_sources,reference_sources,created_at"
+    "connections,rag_sources,reference_sources,attachments,created_at"
 )
 # Same, plus the node's concept tags embedded (PostgREST nested select). RLS
 # (node_tags select via can_access_session, tags select via owner) keeps it to

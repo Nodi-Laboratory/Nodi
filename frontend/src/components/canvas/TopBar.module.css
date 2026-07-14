@@ -1,0 +1,127 @@
+/* Top bar (absolute, z-20). Bar ignores pointer events (canvas pans through);
+   only the control groups are interactive. Colors from the scoped theme vars. */
+.bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  z-index: 20;
+  pointer-events: none;
+}
+.left,
+.right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: auto;
+}
+
+/* hamburger — 44x44 white circle */
+.hamburger {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  box-shadow: var(--shadow, 0 2px 10px rgba(60, 45, 0, 0.08));
+  transition: box-shadow 0.14s ease;
+}
+.hamburger:hover {
+  box-shadow: 0 4px 14px rgba(120, 90, 0, 0.18);
+}
+.hamburger span {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ink, #2b2620);
+}
+
+/* zoom pill */
+.zoom {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  background: #fff;
+  border-radius: 22px;
+  padding: 0 4px;
+  box-shadow: var(--shadow, 0 2px 10px rgba(60, 45, 0, 0.08));
+}
+.zoomBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--ink, #2b2620);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.zoomBtn:hover {
+  background: rgba(43, 38, 32, 0.06);
+}
+.zoomLevel {
+  min-width: 52px;
+  border: none;
+  background: transparent;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink, #2b2620);
+  cursor: pointer;
+}
+.zoomLevel:hover {
+  color: var(--orange, #f4a259);
+}
+
+/* nodi. logo */
+.logo {
+  font-family: var(--font-title, "Nanum Pen Script", cursive);
+  font-size: 30px;
+  line-height: 1;
+  color: var(--ink, #2b2620);
+  padding-left: 4px;
+  user-select: none;
+}
+.dot {
+  color: var(--logo-dot, #ffb300);
+}
+
+/* concept-tree toggle — h44 pill, on #FFC526 / off #FFF */
+.treeToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 22px;
+  background: #fff;
+  color: var(--ink, #2b2620);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow, 0 2px 10px rgba(60, 45, 0, 0.08));
+  transition: background 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
+}
+.treeToggle:hover {
+  box-shadow: 0 4px 14px rgba(120, 90, 0, 0.18);
+}
+.active {
+  background: var(--yellow, #ffc526);
+  color: var(--ink, #2b2620);
+}

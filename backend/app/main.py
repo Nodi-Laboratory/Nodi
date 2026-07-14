@@ -14,18 +14,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .routers import (
     admin,
+    art,
     chat,
     files,
     health,
     home,
     me,
     nodes,
-    overseer,
+    retrieve,
     sessions,
     tags,
     teacher,
 )
-from .services import embedding_worker
+from .services import embedding_worker, qdrant_store
 from .services.service_client import aclose_service_http
 from .services.supabase_client import aclose_shared_client
 
@@ -37,6 +38,8 @@ async def lifespan(_app: FastAPI):
     # Startup: embedding worker (no-op if SUPABASE_SERVICE_ROLE_KEY is unset).
     # The shared PostgREST connection pools (D65, user + worker) are created
     # lazily on first use.
+    # Qdrant 컬렉션 보장(멱등, 절대 raise 안 함 — Qdrant 다운이어도 부팅 계속).
+    await qdrant_store.ensure_collections()
     embedding_worker.start(_app)
     yield
     # Shutdown: stop the scheduler + close both shared httpx connection pools.
@@ -67,10 +70,11 @@ app.include_router(tags.router)
 app.include_router(nodes.router)
 app.include_router(chat.router)
 app.include_router(home.router)
-app.include_router(overseer.router)
 app.include_router(admin.router)
 app.include_router(files.router)
 app.include_router(teacher.router)
+app.include_router(art.router)
+app.include_router(retrieve.router)
 
 
 @app.get("/", tags=["health"])

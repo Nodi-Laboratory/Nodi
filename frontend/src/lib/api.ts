@@ -8,7 +8,6 @@ import type {
   AdminUsage,
   AdminUser,
   ChatDoneEvent,
-  ChatNavigatorEvent,
   ChatStartEvent,
   ChunkContext,
   ConnectionResponse,
@@ -18,10 +17,7 @@ import type {
   FileLink,
   FileRow,
   FileSuggestion,
-  HomeSuggestions,
   HomeSummary,
-  NavigatorDefaults,
-  OverseerDoneEvent,
   Profile,
   SessionDetail,
   SessionRow,
@@ -172,16 +168,6 @@ export async function deleteSession(id: string): Promise<void> {
       headers: await authHeaders(),
     }),
   );
-}
-
-/** D55b: 네비게이터 유효 기본값(config ⊕ admin override 합성). 비-admin도 읽기 가능. */
-export async function getNavigatorDefaults(): Promise<NavigatorDefaults> {
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/auth/me/navigator-defaults`, {
-      headers: await authHeaders(),
-    }),
-  );
-  return res.json();
 }
 
 /** 온보딩 1회 완료 표시(D18). */
@@ -592,21 +578,12 @@ export async function removeConnection(
 // ── SSE 스트리밍 채팅 ────────────────────────────────────────────────
 // EventSource는 Authorization 헤더를 못 실으므로 fetch + ReadableStream 파싱.
 
-export interface ChatNavigatorOverride {
-  enabled?: boolean;
-  count?: number;
-  gate_k?: number;
-  period?: number;
-}
-
 export interface ChatStreamBody {
   session_id: string;
   question: string;
   parent_node_id?: string | null;
   /** Wave A(D15): 브랜치 참조 — 이 턴만 참조할 노드들(일회성, 비영속). */
   reference_node_ids?: string[];
-  /** D47: 네비게이터 자동생성 per-request override(서버가 안전범위로 clamp). */
-  navigator?: ChatNavigatorOverride | null;
   /**
    * 09 단일 writer: retrieve 결과(ebs/art)를 서버에 전달해 done 훅이
    * concepts + ebs/art를 한 번의 PATCH로 attachments.canvas에 통합 저장.
@@ -654,7 +631,6 @@ export interface ChatStreamHandlers {
   onStart?: (data: ChatStartEvent) => void;
   onToken?: (delta: string) => void;
   onDone?: (data: ChatDoneEvent) => void;
-  onNavigator?: (data: ChatNavigatorEvent) => void;
   onError?: (detail: string) => void;
 }
 
@@ -769,9 +745,6 @@ export async function streamChat(
           break;
         case "done":
           handlers.onDone?.(ev.data as unknown as ChatDoneEvent);
-          break;
-        case "navigator":
-          handlers.onNavigator?.(ev.data as unknown as ChatNavigatorEvent);
           break;
         case "error":
           handlers.onError?.((ev.data.detail as string) ?? "스트리밍 오류");
@@ -948,47 +921,6 @@ export async function getHomeSummary(
     }),
   );
   return res.json();
-}
-
-export async function getHomeSuggestions(count = 3): Promise<HomeSuggestions> {
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/home/suggestions?count=${count}`, {
-      headers: await authHeaders(),
-    }),
-  );
-  return res.json();
-}
-
-export interface OverseerStreamHandlers {
-  onToken?: (delta: string) => void;
-  onDone?: (data: OverseerDoneEvent) => void;
-  onError?: (detail: string) => void;
-}
-
-export async function streamOverseer(
-  message: string,
-  handlers: OverseerStreamHandlers,
-  signal?: AbortSignal,
-): Promise<void> {
-  await consumeSSE(
-    "/overseer/stream",
-    { message },
-    (ev) => {
-      switch (ev.type) {
-        case "token":
-          handlers.onToken?.((ev.data.delta as string) ?? "");
-          break;
-        case "done":
-          handlers.onDone?.(ev.data as unknown as OverseerDoneEvent);
-          break;
-        case "error":
-          handlers.onError?.((ev.data.detail as string) ?? "스트리밍 오류");
-          break;
-      }
-    },
-    (d) => handlers.onError?.(d),
-    signal,
-  );
 }
 
 // ── 관리자 (Stage 4c, 관리자만) ──────────────────────────────────────

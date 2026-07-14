@@ -1,7 +1,6 @@
-"""Home dashboard + overseer data queries (Stage 4a).
+"""Home dashboard data queries.
 
-Plain, read-only, RLS-scoped queries reused by both the `/home/*` routers and
-the overseer read-skills. No LLM here.
+Plain, read-only, RLS-scoped queries used by the `/home/*` router. No LLM here.
 """
 
 from __future__ import annotations
@@ -62,56 +61,3 @@ async def get_recent_sessions(
     if space_ref:
         params["space_ref"] = f"eq.{space_ref}"
     return await client.select("sessions", params)
-
-
-async def get_top_concepts(
-    client: UserClient,
-    space_kind: str,
-    space_ref: str,
-    limit: int = 8,
-) -> list[dict[str, Any]]:
-    """Most-used concept tags in a space."""
-    return await client.select(
-        "tags",
-        {
-            "space_kind": f"eq.{space_kind}",
-            "space_ref": f"eq.{space_ref}",
-            "select": "id,name,usage_count",
-            "order": "usage_count.desc,name.asc",
-            "limit": str(limit),
-        },
-    )
-
-
-def _ilike(q: str) -> str:
-    # Escape PostgREST wildcards in the user query, then wrap for ILIKE.
-    safe = q.replace("%", "").replace("*", "").replace(",", " ").strip()
-    return f"ilike.*{safe}*"
-
-
-async def find_sessions_by_topic(
-    client: UserClient, query: str, limit: int = 5
-) -> dict[str, Any]:
-    """Find sessions whose title matches, plus concept tags that match."""
-    query = (query or "").strip()
-    if not query:
-        return {"sessions": [], "matched_tags": []}
-    sessions = await client.select(
-        "sessions",
-        {
-            "title": _ilike(query),
-            "select": "id,title,space_kind,space_ref,updated_at",
-            "order": "updated_at.desc",
-            "limit": str(limit),
-        },
-    )
-    matched_tags = await client.select(
-        "tags",
-        {
-            "name": _ilike(query),
-            "select": "id,name,usage_count,space_kind,space_ref",
-            "order": "usage_count.desc",
-            "limit": str(limit),
-        },
-    )
-    return {"sessions": sessions, "matched_tags": matched_tags}
