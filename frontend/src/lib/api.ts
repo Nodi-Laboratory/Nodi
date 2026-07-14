@@ -608,11 +608,6 @@ export interface ChatStreamBody {
   /** D47: 네비게이터 자동생성 per-request override(서버가 안전범위로 clamp). */
   navigator?: ChatNavigatorOverride | null;
   /**
-   * 09: /retrieve의 near 좌표 릴레이 — 서버가 첫 개념(index 0)을 이 셀에 배치.
-   * null이면 서버가 자체 폴백 앵커로 계산.
-   */
-  place_hint?: { x: number; y: number } | null;
-  /**
    * 09 단일 writer: retrieve 결과(ebs/art)를 서버에 전달해 done 훅이
    * concepts + ebs/art를 한 번의 PATCH로 attachments.canvas에 통합 저장.
    * null이면 ebs/art 저장 생략(degraded 등).
@@ -655,23 +650,12 @@ export async function putNodePositions(
   }
 }
 
-/** 09: place SSE 이벤트 페이로드. */
-export interface PlaceEvent {
-  concept_index: number;
-  x: number;
-  y: number;
-  /** 09: 스트리밍 중간값은 false, done settle 재전송은 true. */
-  is_final: boolean;
-}
-
 export interface ChatStreamHandlers {
   onStart?: (data: ChatStartEvent) => void;
   onToken?: (delta: string) => void;
   onDone?: (data: ChatDoneEvent) => void;
   onNavigator?: (data: ChatNavigatorEvent) => void;
   onError?: (detail: string) => void;
-  /** 09: 서버가 개념 배치 좌표를 확정할 때마다 전송하는 place 이벤트. */
-  onPlace?: (data: PlaceEvent) => void;
 }
 
 interface SSEEvent {
@@ -789,10 +773,6 @@ export async function streamChat(
         case "navigator":
           handlers.onNavigator?.(ev.data as unknown as ChatNavigatorEvent);
           break;
-        case "place":
-          // 09: 서버 좌표 확정 이벤트 — concept_index별 x/y 전달
-          handlers.onPlace?.(ev.data as unknown as PlaceEvent);
-          break;
         case "error":
           handlers.onError?.((ev.data.detail as string) ?? "스트리밍 오류");
           break;
@@ -856,28 +836,23 @@ export interface RetrieveArtHit {
 }
 
 export interface RetrieveResult {
-  /**
-   * 09: 서버가 계산한 캔버스 배치 좌표 — 항상 존재(degraded여도 폴백 좌표).
-   * retrieve 자체가 reject/타임아웃이면 프론트 로컬 폴백(아래 degradedRetrieve).
-   */
-  near: { x: number; y: number; score: number | null };
   ebs: RetrieveEbsHit[];
   art: RetrieveArtHit[];
-  /** 백엔드 임베딩/Qdrant 실패 — near는 폴백 좌표로 채워진 채 반환됨(09 계약). */
+  /** 백엔드 임베딩/Qdrant 실패 — 프론트는 여전히 로컬 폴백으로 배치(09 계약). */
   degraded: boolean;
 }
 
 const RETRIEVE_TIMEOUT_MS = 4000;
 
-/** retrieve 자체가 네트워크 실패/타임아웃일 때 — near 좌표는 호출부가 로컬 폴백 계산. */
+/** retrieve 자체가 네트워크 실패/타임아웃일 때 — 좌표는 프론트 sim이 배치. */
 function degradedRetrieve(): RetrieveResult {
-  return { near: { x: 0, y: 0, score: null }, ebs: [], art: [], degraded: true };
+  return { ebs: [], art: [], degraded: true };
 }
 
 /**
- * POST /retrieve (09) — 서버 좌표(near) + EBS/삽화 추천. SSE 선행 호출이므로
- * 절대 reject하지 않고, 타임아웃(4s)·오류 모두 degraded(near={0,0})로 resolve한다.
- * session_id 추가 필수 — 서버가 같은 세션 카드와 kNN 유사도로 좌표를 계산함.
+ * POST /retrieve (09) — EBS/삽화 추천. SSE 선행 호출이므로 절대 reject하지 않고,
+ * 타임아웃(4s)·오류 모두 degraded로 resolve한다. session_id는 서버 kNN 계산용
+ * (좌표는 프론트 d3-force가 소유하므로 near는 무시).
  */
 export async function retrieve(
   question: string,
@@ -896,18 +871,11 @@ export async function retrieve(
     });
     if (!res.ok) return degradedRetrieve();
     const body = (await res.json()) as {
-      near?: { x?: number; y?: number; score?: number | null } | null;
       ebs?: Array<{ video_id?: string; title?: string; thumb?: string; score?: number }>;
       art?: Array<{ slug?: string; url?: string; title?: string; score?: number }>;
       degraded?: boolean;
     };
     return {
-      // near는 서버가 항상 채움 — 없으면 폴백(0,0)으로 안전 처리
-      near: {
-        x: typeof body?.near?.x === "number" ? body.near.x : 0,
-        y: typeof body?.near?.y === "number" ? body.near.y : 0,
-        score: body?.near?.score ?? null,
-      },
       ebs: (body?.ebs ?? [])
         .filter((e) => e?.video_id)
         .map((e) => ({
