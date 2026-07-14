@@ -95,6 +95,11 @@
   실측 — untracked·gitignore 파일은 워크트리에 없음). `CLAUDE.md`·`docs/*.md`가
   untracked인 동안 워크트리 에이전트에게 보이지 않으므로, TASK 착수 전 `[docs]:`
   커밋으로 추적 상태로 만든다.
-- **TASK 1 정리 수위**: 완전 제거 vs 플래그 오프 보존.
+- **TASK 1 정리 수위**: **완전 제거로 결정** (2026-07-14, Manager 자율 결정).
+  근거: ① 완료 기준 "남는 죽은 코드가 없다"와 플래그 오프 보존이 모순,
+  ② 마이그레이션 0029는 원격 DB 미적용·`app_settings` textbook 행 0건 실측
+  → 파일 삭제만으로 무손실, ③ 복원은 git 히스토리 + 보존 스펙 문서로 충분,
+  ④ TASK 2가 동일 기능을 제품 방향에 맞게 대체. 상세:
+  `docs/superpowers/specs/2026-07-14-remove-textbook-rag-design.md`.
 - 병렬 세션이 같은 브랜치에서 작업 중일 수 있음 — 에이전트는 **자기 파일만
   `git add`** (전체 스테이징 금지).
