@@ -1,14 +1,12 @@
 """POST /retrieve — 개념 캔버스용 질의 임베딩 + EBS/아트 노드 검색.
 
 Upstage embedding-query(4096d)로 질의를 임베딩해 Qdrant ebs/art_assets를
-코사인 검색한다(전역 카탈로그). 배치는 태그 앵커 기반이라 near는 항상 캔버스
-중앙 폴백 — 첫 place SSE가 태그 앵커로 카드를 이동시킨다(임베딩 near 제거).
+코사인 검색한다(전역 카탈로그). 카드 배치·카메라는 프론트 소유(d3-force)이므로
+서버는 좌표를 계산·반환하지 않는다.
 
-응답: {near: {x, y, score|null}, ebs[], art[], degraded}
-  - near: 항상 존재 (캔버스 중앙 — 로딩 카드 상시 표시 요구).
-  - embedding 필드: 응답에서 제거 (프론트가 더 이상 사용 안 함).
+응답: {ebs[], art[], degraded}
 
-best-effort: 어떤 실패든 200 + degraded=true (클라는 near 폴백 좌표로 배치).
+best-effort: 어떤 실패든 200 + degraded=true (검색은 부가 기능).
 """
 
 from __future__ import annotations
@@ -74,23 +72,13 @@ async def retrieve(
     body: RetrieveBody,
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """질의 -> {near, ebs[], art[], degraded}. 항상 200.
-
-    near는 항상 존재한다 — degraded여도 폴백 좌표를 반환하므로
-    프론트는 로딩 카드를 항상 표시할 수 있다.
-    """
-    from ..services.canvas_layout import CANVAS_W, CANVAS_H
-
-    # near: 태그는 답변 전 미지 → 중앙 폴백(첫 place가 태그 앵커로 이동)
-    center = {"x": CANVAS_W / 2.0, "y": CANVAS_H / 2.0, "score": None}
-
+    """질의 -> {ebs[], art[], degraded}. 항상 200 (검색은 부가 기능)."""
     question = body.question.strip()
     if not question:
-        # 빈 질문: 폴백 near(캔버스 중앙) + degraded
-        return {"near": center, "ebs": [], "art": [], "degraded": True}
+        return {"ebs": [], "art": [], "degraded": True}
     try:
         vec = await upstage.embed_query(question)
-        # ebs, art 검색을 병렬 실행(질의 임베딩) — near는 중앙 상수.
+        # ebs, art 검색을 병렬 실행(질의 임베딩).
         ebs_hits, art_hits = await asyncio.gather(
             qdrant_store.search(
                 qdrant_store.COL_EBS,
@@ -107,9 +95,8 @@ async def retrieve(
         )
     except Exception:  # noqa: BLE001 - 검색은 부가 기능, 절대 클라를 깨지 않는다
         logger.exception("retrieve failed — degraded 응답")
-        return {"near": center, "ebs": [], "art": [], "degraded": True}
+        return {"ebs": [], "art": [], "degraded": True}
     return {
-        "near": center,
         "ebs": _ebs_items(ebs_hits),
         "art": _art_items(art_hits),
         "degraded": False,

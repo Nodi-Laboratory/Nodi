@@ -3,22 +3,20 @@
 Flow:
   1. Resolve parent (body.parent_node_id or session.current_head_id).
   2. Assemble ancestor-chain context (siblings excluded).
-  3. Stream the EXAONE answer as SSE: start -> token* -> place* -> done (error on failure).
+  3. Stream the EXAONE answer as SSE: start -> token* -> done (error on failure).
      The answer is the structured concept-card format (CHAT:/@concept/…/@end);
-     the frontend parser turns the token stream into cards.
-  4. During streaming, scan line buffer for "@concept:" lines — emit `place` SSE
-     immediately with the tag-anchored (x, y) for that concept_index.
-  5. Persist (question, structured-answer) = 1 node with a NULL label, advance
+     the frontend parser turns the token stream into cards. Card layout + camera
+     are owned by the frontend (d3-force) — the server no longer computes/sends
+     positions.
+  4. Persist (question, structured-answer) = 1 node with a NULL label, advance
      head (set root if first), and report the node in the `done` event.
-  6. After done: settle re-computes final tag-anchored coords per concept, then a
-     fire-and-forget task patches nodes.attachments.canvas.concepts (+ ebs/art in
-     one unified write; best-effort, log only on failure). No embedding/canvas_cards.
+  5. After done: a fire-and-forget task patches nodes.attachments.canvas with the
+     ebs/art search results only (best-effort, log only on failure). No card
+     coordinates, embedding, or canvas_cards.
 
 SSE event schema:
   event: start   data: {"session_id","parent_node_id"}
   event: token   data: {"delta"}
-  event: place   data: {"concept_index": int, "x": float, "y": float,
-                        "is_final": bool}
   event: done    data: {"node":{"id","parent_id","label":null,"tags":[],
                         "reference_sources":[...]},
                         "current_head_id","root_node_id"}
@@ -30,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -39,13 +36,7 @@ from pydantic import BaseModel, Field
 from ..auth.deps import CurrentUser, get_current_user
 from ..services import exaone, gemini, memory, rag
 from ..services import sessions as svc
-from ..services import concept_blocks, upstage
-from ..services.canvas_layout import (
-    ExistingCard,
-    estimate_card_height,
-    place_by_tag,
-    tag_anchor,
-)
+from ..services import upstage
 from ..services.supabase_client import UserClient
 from ..services.turn_log import TurnLog
 from ..config import get_settings
@@ -55,8 +46,6 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 settings = get_settings()
 
 QUESTION_MAX_CHARS = 8000
-
-_CONCEPT_LINE_RE = re.compile(r"^@concept:\s*(.*)$")
 
 
 class NavigatorOverride(BaseModel):
@@ -70,18 +59,6 @@ class NavigatorOverride(BaseModel):
     count: int | None = None
     gate_k: int | None = None
     period: int | None = None
-
-
-class PlaceHint(BaseModel):
-    """프론트가 /retrieve near를 릴레이하는 초기 배치 힌트.
-
-    좌표는 힘 솔버가 계산한 연속 실수(float) — int로 두면 소수점 좌표에서 422가
-    난다. 솔버가 벡터 유사도로 배치하므로 이 값은 현재 참조하지 않지만(프론트
-    구계약 호환), 검증 실패로 요청을 막지 않도록 float로 수용한다.
-    """
-
-    x: float
-    y: float
 
 
 class RetrievedEbsItem(BaseModel):
@@ -116,11 +93,9 @@ class ChatStreamBody(BaseModel):
     # D47: per-request navigator override (user workspace settings).
     # 프론트 구계약 호환용 — 수신만 하고 무시한다(네비게이터 생성은 제거됨).
     navigator: NavigatorOverride | None = None
-    # 서버 권위 좌표 — /retrieve near를 릴레이. null이면 서버가 폴백 계산.
-    place_hint: PlaceHint | None = None
     # 09 단일 writer: 프론트 retrieve 결과(ebs/art)를 서버에 전달해 done 훅이
-    # concepts + ebs/art를 한 번의 PATCH로 attachments.canvas에 통합 저장.
-    # null이면 ebs/art는 저장하지 않음(첫 질문 전 degraded 케이스 등).
+    # ebs/art를 attachments.canvas에 저장. null이면 저장하지 않음(첫 질문 전
+    # degraded 케이스 등). 카드 좌표는 프론트 소유 — 서버는 저장하지 않음.
     retrieved: RetrievedBody | None = None
 
 
@@ -128,82 +103,26 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _tag_state_from_nodes(
-    nodes: list[dict],
-) -> tuple[list[ExistingCard], dict[str, int]]:
-    """세션 노드(created_at.asc)의 attachments.canvas.concepts[]에서
-    기존 카드 rect + 태그 첫등장 순서를 재구성. is_navigator 제외.
-
-    returns (existing_cards, tag_index={tag: k}). 빈 분류는 "기타".
-    """
-    cards: list[ExistingCard] = []
-    tag_index: dict[str, int] = {}
-    for n in nodes:
-        if n.get("is_navigator"):
-            continue
-        canvas = (n.get("attachments") or {}).get("canvas") or {}
-        for c in canvas.get("concepts") or []:
-            tag = (c.get("tag") or "").strip() or "기타"
-            if tag not in tag_index:
-                tag_index[tag] = len(tag_index)
-            x, y = c.get("x"), c.get("y")
-            if isinstance(x, (int, float)) and isinstance(y, (int, float)):
-                h = c.get("h")
-                cards.append(ExistingCard(
-                    x=float(x), y=float(y),
-                    h=float(h) if isinstance(h, (int, float)) else estimate_card_height(2),
-                ))
-    return cards, tag_index
-
-
-def _place_tagged(
-    tag: str, cards: list[ExistingCard], tag_index: dict[str, int], new_h: float
-) -> tuple[float, float]:
-    """태그 tag의 앵커에서 무겹침 배치. cards/tag_index를 in-place 갱신."""
-    t = (tag or "").strip() or "기타"
-    if t not in tag_index:
-        tag_index[t] = len(tag_index)
-    anchor = tag_anchor(tag_index[t])
-    x, y = place_by_tag(anchor, cards, new_h)
-    cards.append(ExistingCard(x=x, y=y, h=new_h))
-    return x, y
-
-
 async def _patch_canvas_unified(
-    client: UserClient,
-    node_id: str,
-    concepts_meta: list[dict],
-    retrieved: RetrievedBody | None = None,
+    client: UserClient, node_id: str, retrieved: RetrievedBody | None = None,
 ) -> None:
-    """nodes.attachments.canvas 단일 writer PATCH.
-
-    concepts 좌표 + ebs/art를 한 번의 PATCH로 저장해 이중 writer RMW 레이스를
-    방지한다. 프론트 patchNodeCanvas(ebs/art)는 더 이상 호출하지 않음(09 계약).
-
-    계약(프론트와 공유): concepts[].i는 "이 답변(노드) 내 0-based 로컬
-    인덱스" — place SSE의 concept_index와 동일한 의미. 프론트 리플레이가
-    이 가정으로 좌표를 매칭한다. 각 항목은 {i, x, y, h} — h는 done settle에서
-    확정한 카드 높이(size_h).
-    """
+    """nodes.attachments.canvas에 ebs/art만 저장(카드 좌표는 프론트 소유 — 저장 안 함)."""
+    if retrieved is None:
+        return
     try:
-        rows = await client.select(
-            "nodes",
-            {"id": f"eq.{node_id}", "select": "id,attachments", "limit": "1"},
-        )
+        rows = await client.select("nodes", {"id": f"eq.{node_id}", "select": "id,attachments", "limit": "1"})
         if not rows:
             return
         attachments = rows[0].get("attachments") or {}
         if not isinstance(attachments, dict):
             attachments = {}
-        canvas: dict = {}
-        canvas["concepts"] = concepts_meta
-        if retrieved is not None:
-            canvas["ebs"] = [e.model_dump() for e in retrieved.ebs]
-            canvas["art"] = [a.model_dump() for a in retrieved.art]
-        attachments["canvas"] = canvas
+        attachments["canvas"] = {
+            "ebs": [e.model_dump() for e in retrieved.ebs],
+            "art": [a.model_dump() for a in retrieved.art],
+        }
         await client.update("nodes", {"id": f"eq.{node_id}"}, {"attachments": attachments})
     except Exception:  # noqa: BLE001
-        logger.warning("attachments.canvas 병합 실패 node=%s", node_id, exc_info=True)
+        logger.warning("attachments.canvas(ebs/art) 저장 실패 node=%s", node_id, exc_info=True)
 
 
 @router.post("/stream")
@@ -238,13 +157,13 @@ async def chat_stream(
         for n in chain
         if not n.get("is_navigator")
     ]
-    # 질의 임베딩 1회 — 교과서 RAG 검색용(배치는 태그 앵커 기반이라 임베딩 불필요).
-    # 실패해도 턴을 죽이지 않는다: 빈 벡터 → 교과서 블록만 생략(배치는 무영향).
+    # 질의 임베딩 1회 — 교과서 RAG 검색용(카드 배치는 프론트 소유라 서버 임베딩 불필요).
+    # 실패해도 턴을 죽이지 않는다: 빈 벡터 → 교과서 블록만 생략.
     try:
         qvec = await upstage.embed_query(body.question)
     except Exception:  # noqa: BLE001
         logger.warning(
-            "질의 임베딩 실패 — 교과서 RAG 생략(배치는 태그 기반이라 무영향) session=%s",
+            "질의 임베딩 실패 — 교과서 RAG 생략 session=%s",
             body.session_id,
             exc_info=True,
         )
@@ -299,53 +218,12 @@ async def chat_stream(
         history_chars=sum(len(q) + len(a) for q, a in history),
     )
 
-    # 스트림 시작 전 세션 상태를 attachments에서 재구성(canvas_cards scroll 대신):
-    # 각 노드의 attachments.canvas.concepts[]에서 기존 카드 rect + 태그 첫등장
-    # 순서(tag_index)를 얻는다. nodes는 위에서 svc.get_session_nodes로 이미 조회됨
-    # (created_at.asc, is_navigator 포함) — 재조회 없이 재사용.
-    stream_cards, stream_tag_index = _tag_state_from_nodes(nodes)
-
     async def event_stream():
         yield _sse(
             "start",
             {"session_id": body.session_id, "parent_node_id": parent_id},
         )
         answer_parts: list[str] = []
-
-        # place 이벤트 계산용 스트림-스코프 상태
-        # placed_coords: {concept_index: (x, y)} — done settle에서 최종값 갱신 후 훅에서 재사용
-        # placed_heights: {concept_index: h} — done settle에서 실제 카드 크기 확정
-        # placed_tags: {concept_index: tag} — settle 실패 폴백 시 concepts_meta.tag 복원용
-        placed_coords: dict[int, tuple[float, float]] = {}
-        placed_heights: dict[int, float] = {}
-        placed_tags: dict[int, str] = {}
-        concept_count = 0
-        # 스트리밍 배치 상태(이번 답변 개념이 in-place로 합류)
-        _live_cards = list(stream_cards)
-        _live_tags = dict(stream_tag_index)
-
-        def _next_place_event(tag: str) -> dict:
-            """다음 @concept의 좌표를 태그 앵커 기반으로 계산하고 상태를 갱신한다.
-
-            계약(프론트와 공유): concept_index는 "이 답변(노드) 내 0-based
-            로컬 인덱스"다 — attachments.canvas.concepts의 `i`와 동일한 의미
-            (concept_blocks.parse의 index와도 일치, done 훅에서 대조).
-            같은 분류(tag)는 같은 앵커로 모이고, 스트리밍 중엔 본문 길이를 모르므로
-            estimate_card_height(2) 기본 크기로 배치한다. done settle에서 실제
-            크기로 최종 안착(is_final=true)한다.
-            """
-            nonlocal concept_count
-            idx = concept_count
-            concept_count += 1
-            base_h = estimate_card_height(2)
-            x, y = _place_tagged(tag, _live_cards, _live_tags, base_h)
-            placed_coords[idx] = (x, y)
-            placed_heights[idx] = base_h
-            placed_tags[idx] = (tag or "").strip() or "기타"
-            return {"concept_index": idx, "x": x, "y": y, "is_final": False}
-
-        # 라인 버퍼 (스트리밍 중 @concept: 감지용)
-        line_buf = ""
 
         try:
             try:
@@ -356,28 +234,6 @@ async def chat_stream(
                 ):
                     answer_parts.append(delta)
                     yield _sse("token", {"delta": delta})
-
-                    # 라인 버퍼에 토큰을 추가하고, 개행마다 @concept: 감지
-                    for ch in delta:
-                        if ch == "\n":
-                            line = line_buf.rstrip()
-                            line_buf = ""
-                            m = _CONCEPT_LINE_RE.match(line)
-                            if m:
-                                _p = m.group(1).split("|")
-                                _tag = _p[1].strip() if len(_p) > 1 else ""
-                                yield _sse("place", _next_place_event(_tag))
-                        else:
-                            line_buf += ch
-
-                # 스트림 종료 flush: 개행 없이 끝난 마지막 라인이 @concept:면
-                # place 1회 방출 — done 훅의 전체 재파싱 인덱스와 어긋나지 않도록.
-                _m = _CONCEPT_LINE_RE.match(line_buf.rstrip())
-                if _m:
-                    line_buf = ""
-                    _p = _m.group(1).split("|")
-                    _tag = _p[1].strip() if len(_p) > 1 else ""
-                    yield _sse("place", _next_place_event(_tag))
 
             except Exception:  # noqa: BLE001 - details go to logs, not the client
                 logger.exception("EXAONE streaming failed")
@@ -441,55 +297,12 @@ async def chat_stream(
                     },
                 )
 
-                # done settle — 실제 본문 길이로 카드 크기 확정 후 개념별 최종
-                # 좌표를 태그 앵커 기반으로 재계산해 place{is_final:true}로 재전송한다.
-                # 이번 답변 제외 원본(stream_cards/stream_tag_index)에서 시작해,
-                # 답변 내 개념을 분류(tag)별 앵커에 하나씩 합류 → 같은 분류는 한
-                # 앵커로 모이고 다른 분류는 분리되며 서로 겹치지 않는다.
-                # concept_blocks.parse의 index = place SSE의 concept_index(0-based 로컬).
-                #
-                # 자체 격리: settle(parse/배치)가 실패해도 스트림/저장은 무영향이어야
-                # 한다 — 예외는 warning만, error SSE 방출 금지, 아래 attachments
-                # 저장(create_task)은 항상 도달한다. 실패 시 좌표는 스트리밍 단계의
-                # placed_coords/placed_tags로 폴백해 concepts_meta를 구성한다.
-                concepts_meta: list[dict] = []
-                try:
-                    parsed = concept_blocks.parse(answer)
-                    settle_cards = list(stream_cards)      # 이번 답변 제외 원본
-                    settle_tags = dict(stream_tag_index)
-                    for block in parsed:
-                        body_text = block["body"]
-                        lines = body_text.count("\n") + 1 if body_text else 0
-                        h = estimate_card_height(lines)
-                        tag = (block.get("cluster") or "").strip() or "기타"
-                        x, y = _place_tagged(tag, settle_cards, settle_tags, h)
-                        placed_coords[block["index"]] = (x, y)
-                        placed_heights[block["index"]] = h
-                        concepts_meta.append({"i": block["index"], "x": x, "y": y, "h": h, "tag": tag})
-                        yield _sse(
-                            "place",
-                            {"concept_index": block["index"], "x": x, "y": y, "is_final": True},
-                        )
-                except Exception:  # noqa: BLE001 - settle 실패 = 스트림/저장 무영향
-                    logger.warning(
-                        "done settle 실패 node=%s — 스트리밍 좌표로 폴백 저장",
-                        node["id"], exc_info=True,
-                    )
-                    concepts_meta = []
-
-                # settle 실패/부분 실패 폴백: 스트리밍 좌표+태그로 concepts_meta 보정
-                if not concepts_meta and placed_coords:
-                    for idx, (x, y) in placed_coords.items():
-                        concepts_meta.append({
-                            "i": idx, "x": x, "y": y,
-                            "h": placed_heights.get(idx) or estimate_card_height(2),
-                            "tag": placed_tags.get(idx, "기타"),
-                        })
-
-                # attachments.canvas 저장(concepts+tag + ebs/art) — 임베딩·canvas_cards 없음
-                if concepts_meta:
+                # attachments.canvas 저장(ebs/art만) — 카드 좌표는 프론트 소유.
+                # 자체 격리: 저장이 실패해도 스트림/저장 완료된 턴은 무영향(warning만).
+                # retrieved 없으면 _patch_canvas_unified가 조기 반환.
+                if body.retrieved is not None:
                     asyncio.create_task(
-                        _patch_canvas_unified(client, node["id"], concepts_meta, body.retrieved)
+                        _patch_canvas_unified(client, node["id"], body.retrieved)
                     )
 
             except Exception:  # noqa: BLE001 - details to logs, not the client

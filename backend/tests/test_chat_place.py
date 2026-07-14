@@ -1,15 +1,13 @@
 import pytest
 
 from app.routers import chat as C
-from app.routers.chat import ChatStreamBody
+from app.routers.chat import ChatStreamBody, RetrievedBody
 
 
 # ---------------------------------------------------------------------------
-# settle 격리(Important 수정) — settle이 예외를 던져도:
-#   (1) error SSE를 방출하지 않고,
-#   (2) canvas_cards 저장(create_task) 경로에 도달하며,
-#   (3) 스트리밍 단계 placed_coords로 폴백해 저장한다.
-# chat_stream generator를 최소 목으로 구동해 검증(과하지 않게).
+# 카드 배치·좌표는 프론트 소유(d3-force) — 서버는 place/settle을 계산·전송하지 않는다.
+# 여기선 done-hook 격리(저장 실패해도 스트림/저장 완료 무영향)와 ebs/art 저장
+# 스케줄링(retrieved 유무)만 검증한다. chat_stream generator를 최소 목으로 구동.
 # ---------------------------------------------------------------------------
 
 
@@ -27,7 +25,6 @@ class _FakeClient:
 
 
 async def _fake_stream_answer(history, question, system_prompt):
-    # @concept 두 개 — 스트리밍 place 두 번(placed_coords 채움).
     for line in (
         "@concept: 첫째\n",
         "- 본문1\n",
@@ -40,9 +37,10 @@ async def _fake_stream_answer(history, question, system_prompt):
 
 
 async def _consume(
-    monkeypatch, *, settle_raises: bool, textbook_result=None, spy: dict | None = None
+    monkeypatch, *, textbook_result=None, spy: dict | None = None, retrieved=None,
+    save_raises: bool = False,
 ):
-    """chat_stream을 최소 목으로 구동해 방출 SSE 이벤트 목록을 반환."""
+    """chat_stream을 최소 목으로 구동해 방출 SSE 이벤트 목록 + 스케줄된 코루틴 반환."""
     import asyncio
 
     monkeypatch.setattr(C.UserClient, "from_user", classmethod(lambda cls, u: _FakeClient()))
@@ -117,13 +115,7 @@ async def _consume(
 
     monkeypatch.setattr(C, "TurnLog", _FakeTurnLog)
 
-    if settle_raises:
-        def boom(answer):
-            raise RuntimeError("parse boom")
-
-        monkeypatch.setattr(C.concept_blocks, "parse", boom)
-
-    # done 훅(create_task)이 실제로 스케줄됐는지 추적 — 실행은 하지 않음.
+    # done-hook(create_task)이 실제로 스케줄됐는지 추적 — 실행은 하지 않음.
     scheduled = []
     real_create_task = asyncio.create_task
 
@@ -138,7 +130,7 @@ async def _consume(
 
     monkeypatch.setattr(C.asyncio, "create_task", spy_create_task)
 
-    body = ChatStreamBody(session_id="s1", question="질문")
+    body = ChatStreamBody(session_id="s1", question="질문", retrieved=retrieved)
     resp = await C.chat_stream(body, user=_FakeUser())
     events = []
     async for chunk in resp.body_iterator:
@@ -156,25 +148,30 @@ def _event_names(events):
 
 
 @pytest.mark.asyncio
-async def test_settle_success_emits_final_places_and_saves(monkeypatch):
-    events, scheduled = await _consume(monkeypatch, settle_raises=False)
+async def test_stream_emits_no_place_event(monkeypatch):
+    """서버는 place/settle을 계산·전송하지 않는다 — token/done만."""
+    events, _ = await _consume(monkeypatch)
     names = _event_names(events)
     assert "error" not in names
     assert "done" in names
-    # 스트리밍 place(is_final:false) + settle place(is_final:true) 모두 존재.
-    assert any('"is_final": true' in e for e in events)
-    assert any('"is_final": false' in e for e in events)
-    assert len(scheduled) == 1  # canvas_cards 저장 스케줄됨.
+    assert "place" not in names
+    assert not any('"is_final"' in e for e in events)
 
 
 @pytest.mark.asyncio
-async def test_settle_failure_is_isolated(monkeypatch):
-    # concept_blocks.parse가 raise → settle 실패. 그래도:
-    events, scheduled = await _consume(monkeypatch, settle_raises=True)
-    names = _event_names(events)
-    assert "error" not in names          # (1) error SSE 미방출
-    assert "done" in names               # done은 정상 방출됨
-    assert len(scheduled) == 1           # (2) canvas_cards 저장 경로 도달(폴백)
+async def test_ebs_art_save_scheduled_only_when_retrieved(monkeypatch):
+    """retrieved가 있으면 attachments.canvas(ebs/art) 저장이 스케줄되고,
+    없으면 스케줄되지 않는다(done-hook은 그래도 정상 완료)."""
+    # retrieved 없음 → 저장 스케줄 없음
+    events, scheduled = await _consume(monkeypatch, retrieved=None)
+    assert "done" in _event_names(events)
+    assert len(scheduled) == 0
+
+    # retrieved 있음 → 저장 1회 스케줄
+    retrieved = RetrievedBody(ebs=[], art=[])
+    events, scheduled = await _consume(monkeypatch, retrieved=retrieved)
+    assert "done" in _event_names(events)
+    assert len(scheduled) == 1
 
 
 @pytest.mark.asyncio
@@ -186,9 +183,7 @@ async def test_textbook_context_wired_qvec_reused_and_composed(monkeypatch):
         "block": "[교과서에서 참고]\n- [중학 과학 2 · p.12] 광합성",
         "sources": [{"name": "중학 과학 2", "page": 12}],
     }
-    events, _ = await _consume(
-        monkeypatch, settle_raises=False, textbook_result=tb, spy=spy
-    )
+    events, _ = await _consume(monkeypatch, textbook_result=tb, spy=spy)
     # qvec 재사용 — fake_embed_query가 준 벡터가 그대로 전달됨
     assert spy["textbook_qvec"] == [0.1] * 10
     assert spy["compose_kwargs"]["textbook_context"] == tb["block"]
@@ -199,6 +194,6 @@ async def test_textbook_context_wired_qvec_reused_and_composed(monkeypatch):
 @pytest.mark.asyncio
 async def test_textbook_none_composes_without_block(monkeypatch):
     spy = {}
-    await _consume(monkeypatch, settle_raises=False, textbook_result=None, spy=spy)
+    await _consume(monkeypatch, textbook_result=None, spy=spy)
     assert spy["compose_kwargs"]["textbook_context"] is None
     assert spy["compose_kwargs"]["textbook_sources"] == []
