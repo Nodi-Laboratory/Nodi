@@ -20,6 +20,8 @@
   Manager 전담이며, 에이전트는 승인된 계획의 브리프만 받아 일한다.
 - 에이전트 디스패치 시 반드시 `model: "opus"`를 명시한다 (누락 시 세션 모델을
   상속해 정책 위반).
+- 코드 읽기·탐색(분해 시 파일 경계 파악, 리뷰 패키지 준비 등)은 serena MCP를
+  우선 사용한다 — 사용법·워크트리 주의사항은 `docs/AGENTS.md` '공통 도구' 참조.
 
 ## 실행 루프
 
@@ -63,13 +65,24 @@ TASKS.md의 미완료 태스크 중 **가장 위의 것 하나**를 잡고 아�
           (워크트리에는 node_modules가 없음). 병렬로 끝난 task들의 리뷰도
           병렬 에이전트로 동시에 돌릴 수 있다.
           **프론트엔드를 변경한 task는 프론트엔드 리뷰어를 추가 게이트로
-          세운다** — UX·UI 기준 + Playwright 실동작 확인(스크린샷 증거).
+          세운다** — UX·UI 기준 + playwright-cli 실동작 확인(스크린샷 증거).
           diff만 보고 프론트 변경을 승인하지 않는다.
 5. 수정   Critical/Important 발견 시 수정 에이전트(opus) 디스패치 → 재리뷰.
           수정은 회수가 끝난 **작업 브랜치(메인 저장소)에서** 수행한다
           (워크트리 불필요 — 같은 파일을 만지는 수정은 순차로). 재리뷰에서
           다시 문제가 나오면 또 수정 → 재리뷰를 반복하며, 루프가 닫힐 때까지
           해당 task는 완료로 표시하지 않는다.
+          **반려 롤백**: 리뷰가 접근 자체를 반려해 수정으로 구제할 수 없으면
+          fix-forward를 중단하고, 회수된 해당 task 커밋을
+          `git revert first^..last`로 되돌린다 (범위 revert는 최신 커밋부터
+          역순으로 적용된다). revert는 새 커밋을 쌓는 비파괴 작업이므로
+          Manager가 스스로 수행한다 — 단 병렬 세션이 같은 브랜치를 공유하므로
+          `reset`·히스토리 재작성은 금지(중단 규칙의 파괴적 작업). revert
+          커밋 메시지는 `[fix]:` + 반려 사유 한 줄, 원장에도 반려 사유를
+          기록한다. 이후 브리프를 반려 근거로 보강해 **새 에이전트·새
+          워크트리로 재디스패치**한다 (안전 규칙 '에이전트 실패 처리'와 동일
+          — 반려된 산출물을 이어받지 않는다). 반려 원인이 스펙·계획 자체의
+          결함이면 재디스패치 대신 중단 규칙에 따라 사용자에게 에스컬레이션.
 6. 기록   TASKS.md 체크박스 갱신 + 원장(.superpowers/sdd/progress.md)에
           한 줄 기록 (커밋 범위·리뷰 결과·미해결 minor).
 ```
@@ -143,14 +156,32 @@ Manager가 사용자에게 묻고 멈추는 경우는 다음뿐이다:
 - 백엔드: `cd backend && uvicorn app.main:app --reload --port 8000` (`GET /health`)
 - 프론트: `cd frontend && npm run dev` → http://localhost:3000
 - 프론트 스모크: `cd frontend && npx tsc --noEmit && npm run build`
-- Playwright 등 브라우저 자동화 도구가 환경에 없으면 착수 전에 확인하고,
-  미가용 시 `run`/`verify` 스킬로 앱 구동 + 수동 확인으로 폴백한다
-  (폴백 사실을 보고서에 명시).
+- 브라우저 자동화는 전역 `playwright-cli` 사용 (2026-07-14 설치 확인 —
+  frontend 의존성이 아니므로 워크트리에서도 CLI 자체는 사용 가능). 착수 전
+  가용성을 재확인하고, 미가용 시 `run`/`verify` 스킬로 앱 구동 + 수동 확인으로
+  폴백한다 (폴백 사실을 보고서에 명시).
 - **포트 충돌 폴백**: 병렬 세션·검증자가 동시에 앱을 띄워 8000/3000이 이미
   사용 중이면 다른 포트로 띄운다 — 백엔드 `--port 8001`, 프론트
   `npm run dev -- --port 3001`. 프론트는 `NEXT_PUBLIC_API_BASE_URL`이
   백엔드 포트를 가리키므로, 백엔드 포트를 바꿨다면 프론트 구동 시
   `NEXT_PUBLIC_API_BASE_URL=http://localhost:8001`을 함께 넘긴다.
+- **검증 계정** (2026-07-14 구축): 로그인은 Google OAuth(Supabase Auth)이며,
+  브라우저 자동화는 역할별 playwright-cli 세션 + 영속 프로필을 쓴다 —
+  프로필에 세션이 저장되어 재로그인 불필요. 역할별로 토큰이 분리된다.
+  - 선생님: `playwright-cli -s=teacher --profile ~/.nodi-e2e/teacher`
+    (bassykd@gmail.com "code dh", `profiles.role='teacher'`)
+  - 학생: `playwright-cli -s=student --profile ~/.nodi-e2e/student`
+    (bassrkd64@gmail.com "김동훈", `profiles.role='student'`)
+  - 무인 자동화 예비 학생 계정: `nodi-e2e-student@example.com` — 비밀번호는
+    `~/.nodi-e2e/.student-pw`(저장소 밖, 커밋 금지). Google 없이
+    `/auth/v1/token?grant_type=password`(anon 키)로 세션 JSON을 받아
+    @supabase/ssr 쿠키 포맷(`sb-<ref>-auth-token`, "base64-"+base64url,
+    3180자 초과 시 `.0/.1` 청킹)으로 주입한다 — 주입은
+    `playwright-cli run-code "async (page) => { await
+    page.context().addCookies([...]); }"` (외부 CDN 코드 로드 금지).
+  - 새 프로필에서 Google 로그인이 필요하면 `--headed`로 띄워 **사용자에게
+    수동 로그인을 요청**한다 — 자동화 브라우저는 격리 프로필이라 OS 크롬의
+    Google 세션·프로필이 없다 (2026-07-14 실측).
 
 ## 안전 규칙 (이 저장소 특수 사정)
 
@@ -159,5 +190,9 @@ Manager가 사용자에게 묻고 멈추는 경우는 다음뿐이다:
 - **미커밋 WIP**: 작업 트리에 이 작업과 무관한 미커밋 변경이 있을 수 있다.
   에이전트 브리프에 "자기 파일만 `git add`"를 항상 포함한다. 자기 파일에
   기존 WIP 훅이 섞여 있으면 보고서에 명시하고 진행한다.
+- **에이전트 실패 처리**: 에이전트가 중도 실패하면(오류로 종료, 완료 기준
+  미달 보고 등) 커밋 안 된 워크트리는 **폐기**하고, 실패 원인을 반영해
+  브리프를 보강한 뒤 **새 에이전트로 재디스패치**한다. 미완 워크트리를
+  이어받지 않는다 (이력 오염 방지).
 - **원장 우선**: 컨텍스트가 요약·유실되면 자기 기억보다 원장과 `git log`를
   믿는다. 원장에 complete로 기록된 태스크는 재디스패치하지 않는다.
