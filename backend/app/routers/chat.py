@@ -36,7 +36,6 @@ from pydantic import BaseModel, Field
 from ..auth.deps import CurrentUser, get_current_user
 from ..services import exaone, gemini, memory, rag
 from ..services import sessions as svc
-from ..services import upstage
 from ..services.supabase_client import UserClient
 from ..services.turn_log import TurnLog
 from ..config import get_settings
@@ -141,43 +140,26 @@ async def chat_stream(
         for n in chain
         if not n.get("is_navigator")
     ]
-    # 질의 임베딩 1회 — 교과서 RAG 검색용(카드 배치는 프론트 소유라 서버 임베딩 불필요).
-    # 실패해도 턴을 죽이지 않는다: 빈 벡터 → 교과서 블록만 생략.
-    try:
-        qvec = await upstage.embed_query(body.question)
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "질의 임베딩 실패 — 교과서 RAG 생략 session=%s",
-            body.session_id,
-            exc_info=True,
-        )
-        qvec = []
-
-    # All four context builders read the same ancestor chain but are otherwise
+    # All three context builders read the same ancestor chain but are otherwise
     # independent, and each is internally best-effort (own try/except, safe
     # defaults on failure). Run them concurrently to cut first-token latency —
     # the RAG builder's question-embedding Gemini call is the heaviest leg (D66).
     #   - reference:  imported other-branch context (node connections, LCA-trimmed, 3a, D35)
     #   - rag:        chunks from files linked to this branch (Stage 3b-2, D32 sources)
     #   - comparison: one-time branch references for THIS turn (D15/D46, LCA-trimmed)
-    #   - textbook:   전역 교과서 코퍼스에서 질문과 유사한 청크 (거리 게이트)
     (
         (reference_context, reference_node_ids),
         rag_result,
         (comparison_context, comparison_node_ids, comparison_sources),
-        textbook_result,
     ) = await asyncio.gather(
         memory.build_reference_context(client, body.session_id, chain, by_id),
         rag.build_rag_context(client, chain, body.question),
         memory.build_comparison_context(
             client, body.reference_node_ids or [], chain, by_id
         ),
-        rag.build_textbook_context(qvec),
     )
     rag_context = rag_result["block"] if rag_result else None
     rag_sources = rag_result["sources"] if rag_result else []
-    textbook_context = textbook_result["block"] if textbook_result else None
-    textbook_sources = textbook_result["sources"] if textbook_result else []
     existing_root = session.get("root_node_id")
 
     # Turn log (D25) + structured prompt composition (D35). compose_system_structured
@@ -187,9 +169,7 @@ async def chat_stream(
         reference_context,
         rag_context,
         comparison_context,
-        textbook_context=textbook_context,
         rag_sources=rag_sources,
-        textbook_sources=textbook_sources,
         reference_node_ids=reference_node_ids,
         comparison_node_ids=comparison_node_ids,
         base_instruction=exaone.CONCEPT_CARD_SYSTEM_PROMPT,
