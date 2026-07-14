@@ -32,10 +32,5 @@ Thumbs.db
 # playwright-cli 세션 상태 (스냅샷·세션 데이터 — 로컬 도구 상태, 커밋 금지)
 .playwright-cli/
 
-# 교과서 원문(저작권·용량) — 폴더 문서·예시 매니페스트만 커밋
-backend/textbooks/*
-!backend/textbooks/README.md
-!backend/textbooks/manifest.example.json
-
 # Supabase CLI 로컬 상태(link 정보·pooler-url 등 — 커밋 금지)
 supabase/.temp/
