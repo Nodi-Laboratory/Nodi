@@ -26,6 +26,16 @@ FILE_SELECT = (
     "position_y,created_at,updated_at"
 )
 
+# D75: 업로드 형식 화이트리스트 — _extract_text(embedding_worker)의 실제 처리
+# 능력과 일치시킨다(Upstage Document Parse: pdf/이미지, UTF-8 디코드: txt/md).
+# 목록 밖은 스토리지 업로드 전에 422로 거절(깨진 청킹·splitting 고착 예방).
+ALLOWED_UPLOAD_EXTENSIONS = frozenset(
+    {"pdf", "png", "jpg", "jpeg", "webp", "gif", "txt", "md"}
+)
+UNSUPPORTED_TYPE_DETAIL = (
+    "지원 형식: PDF, 이미지(PNG/JPG/WEBP/GIF), 텍스트(TXT/MD)"
+)
+
 
 async def _assert_class_member(
     user_client: UserClient, owner_id: str, class_id: str
@@ -99,6 +109,14 @@ async def upload_file(
             await _assert_class_teacher(user_client, ref)
         else:
             await _assert_class_member(user_client, owner_id, ref)
+    # D75: 형식 화이트리스트 — 확장자 기준(대소문자 무관), 저장 전에 거절.
+    name_lower = (filename or "").lower()
+    ext = name_lower.rsplit(".", 1)[-1] if "." in name_lower else ""
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=UNSUPPORTED_TYPE_DETAIL,
+        )
     if not data:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

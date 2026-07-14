@@ -188,16 +188,19 @@ async def _fail_job(svc: ServiceClient, job_id: str, error: str) -> None:
     )
 
 
-async def _fail_file_for_job(svc: ServiceClient, job: dict[str, Any]) -> None:
+async def _fail_file_for_job(
+    svc: ServiceClient, job: dict[str, Any], error: str = "split failed"
+) -> None:
     """Drive the file to a terminal status when a job permanently fails."""
     file_id = job.get("target_id")
     if not file_id:
         return
     if job.get("kind") == "embedding_split":
+        # D76: 실패 사유를 파일 행에 남긴다(교사 자료실 실패 배지의 안내 문구).
         await svc.update(
             "files",
             {"id": f"eq.{file_id}"},
-            {"status": "failed", "error": "split failed"},
+            {"status": "failed", "error": error[:500]},
         )
     else:  # embedding_batch: fail this batch's still-pending chunks, then finalize
         rng = job.get("batch_range") or {}
@@ -565,7 +568,19 @@ async def _process(svc: ServiceClient, job: dict[str, Any]) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.exception("Job %s failed", job.get("id"))
         try:
-            await _fail_job(svc, job["id"], str(exc))
+            # D76: 즉시 예외도 스테일 복구와 동일 정책 — attempts가 남으면
+            # 재큐(다음 폴에서 재시도), 소진 시 잡 failed + 파일 터미널 전환.
+            # 기존에는 잡만 failed 처리해 files.status가 'splitting'에 영구
+            # 고착됐다(G6 — 실패 배지가 안 떠 재시도 동선의 전제가 붕괴).
+            if (job.get("attempts") or 0) < settings.embedding_max_attempts:
+                await svc.update(
+                    "jobs",
+                    {"id": f"eq.{job['id']}"},
+                    {"status": "queued", "updated_at": _now_iso()},
+                )
+            else:
+                await _fail_job(svc, job["id"], str(exc))
+                await _fail_file_for_job(svc, job, str(exc) or "split failed")
         except Exception:  # noqa: BLE001
             logger.exception("Could not mark job failed")
 
