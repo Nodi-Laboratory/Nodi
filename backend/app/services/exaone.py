@@ -76,14 +76,23 @@ CHAT: 지구 속을 층층이 들여다볼까요?
 
 
 def _require_config() -> tuple[str, str, str]:
-    """Resolve (base_url, api_key, model) or raise 503 if unconfigured."""
+    """Resolve (url, model, api_key) or raise 503 if unconfigured.
+
+    EXAONE_ENDPOINT_ID가 설정되면 **전용(dedicated) 엔드포인트**로 요청한다
+    (`/dedicated/v1/chat/completions`, model=endpoint_id — 예약 GPU라 공유 serverless
+    RPM 티어 제한을 받지 않는다). 비어 있으면 기존 **serverless**로 요청한다
+    (`/serverless/v1/chat/completions`, model=exaone_model). 어느 쪽이든 Bearer 인증 동일.
+    """
     if not settings.exaone_api_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="EXAONE_API_KEY is not configured.",
         )
     base = (settings.friendli_base_url or "https://api.friendli.ai").rstrip("/")
-    return base, settings.exaone_api_key, settings.exaone_model
+    endpoint_id = (settings.exaone_endpoint_id or "").strip()
+    if endpoint_id:
+        return f"{base}/dedicated/v1/chat/completions", endpoint_id, settings.exaone_api_key
+    return f"{base}/serverless/v1/chat/completions", settings.exaone_model, settings.exaone_api_key
 
 
 def _build_messages(
@@ -111,7 +120,7 @@ async def stream_answer(
     `system_prompt` = the already-composed system prompt (concept-card base +
     any context blocks) built by gemini.compose_system_structured in the router.
     """
-    base, key, model = _require_config()
+    url, model, key = _require_config()
     payload = {
         "model": model,
         "messages": _build_messages(system_prompt, history, question),
@@ -128,7 +137,6 @@ async def stream_answer(
     }
     # Generous read timeout for long streamed answers; short connect/pool.
     timeout = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
-    url = f"{base}/serverless/v1/chat/completions"
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         async with client.stream("POST", url, headers=headers, json=payload) as resp:

@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # (4096d, Qdrant) — see the Upstage/Qdrant sections below.
     exaone_api_key: str = ""  # Friendli API key (starts with flp_)
     exaone_model: str = "LGAI-EXAONE/K-EXAONE-236B-A23B"  # serverless model id
+    # 전용 엔드포인트 ID. 설정되면 dedicated(/dedicated/v1, model=endpoint_id, 예약 GPU →
+    # 공유 rate limit 없음)로, 비어 있으면 serverless(/serverless/v1, model=exaone_model)로 요청.
+    exaone_endpoint_id: str = ""
     friendli_base_url: str = "https://api.friendli.ai"
     exaone_temperature: float = 0.5
     exaone_max_tokens: int = 2048
