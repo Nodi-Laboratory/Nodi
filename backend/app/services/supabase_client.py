@@ -193,4 +193,8 @@ class UserClient:
         )
         if resp.status_code >= 400:
             self._raise(resp, f"rpc {fn}")
+        # void RPC(예: delete_file_cascade)는 PostgREST가 204/빈 본문을 준다 —
+        # resp.json()이 JSONDecodeError를 던져 500이 되므로 None으로 처리한다.
+        if resp.status_code == 204 or not resp.content:
+            return None
         return resp.json()

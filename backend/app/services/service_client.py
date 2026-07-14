@@ -171,6 +171,10 @@ class ServiceClient:
         )
         if r.status_code >= 400:
             self._raise(r, f"rpc {fn}")
+        # void RPC는 PostgREST가 204/빈 본문을 준다 — UserClient.rpc와 동일하게
+        # r.json()의 JSONDecodeError를 피해 None으로 처리(별개 클래스라 양쪽 수정).
+        if r.status_code == 204 or not r.content:
+            return None
         return r.json()
 
     # --- Storage ---------------------------------------------------------
