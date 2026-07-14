@@ -118,3 +118,32 @@
   gap: 4px;
   padding: 8px 0;
 }
+
+/* ── D74: 출처 칩 푸터 — 턴의 첫 개념 카드 하단, 파일 단위 중복 제거 ── */
+.sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.sourceChip {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--text);
+}
+.sourceMore {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0.6;
+}

@@ -3,6 +3,8 @@
 // the /art/search retrieval layer (`art`), and concepts carry an `embedding` +
 // `groupId` for the semantic-similarity concept tree.
 
+import type { RagSource } from "@/lib/types";
+
 export interface Token {
   ch: string;
   b: boolean; // bold  (**...**)
@@ -34,6 +36,8 @@ export interface Concept {
   art?: ConceptArt | null; // resolved via /art/search on `cend`
   embedding?: number[] | null; // query embedding returned by /art/search
   groupId?: string | null; // semantic-similarity group assignment
+  /** D74: 이 턴(노드)의 RAG 출처 — 턴의 첫 개념에만 부착(출처 칩 푸터). */
+  sources?: RagSource[] | null;
   /** /retrieve 선행 잠정 플레이스홀더 — 첫 cstart에서 승격(제목/좌표 확정). */
   pending?: boolean;
 }

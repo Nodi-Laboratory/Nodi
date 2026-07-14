@@ -159,7 +159,13 @@ function replayNodes(reals: NodeRow[]): {
     });
     parser.push(n.answer || "");
     parser.end();
-    if (built.length > before) firstIdxByNode.set(n.id, before);
+    if (built.length > before) {
+      firstIdxByNode.set(n.id, before);
+      // D74: 노드(턴) 단위 출처는 그 답변의 첫 개념에만 부착(칩 푸터).
+      if (n.rag_sources?.length) {
+        built[before] = { ...built[before], sources: n.rag_sources };
+      }
+    }
   }
   return { concepts: built, firstIdxByNode };
 }
@@ -470,6 +476,16 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
         pendingIdRef.current = null;
         commitConcepts(
           conceptsRef.current.filter((c) => c.id !== placeholderId),
+        );
+      }
+      // (d-2) D74: 이번 턴 RAG 출처를 승격된 첫 개념에 부착 — 승격이 id를
+      // 보존하므로 placeholderId로 찾는다(개념이 안 만들어졌으면 no-op).
+      const ragSources = doneBox.current?.node?.rag_sources;
+      if (ragSources?.length && placeholderId) {
+        commitConcepts(
+          conceptsRef.current.map((c) =>
+            c.id === placeholderId ? { ...c, sources: ragSources } : c,
+          ),
         );
       }
       // 스트림 실패(done 미수신) 시 이번 send의 대표 교체를 되돌린다.

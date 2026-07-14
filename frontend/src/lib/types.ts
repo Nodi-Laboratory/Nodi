@@ -199,6 +199,8 @@ export interface ChatDoneEvent {
     reference_sources?: ReferenceSource[] | null;
     /** D57-보강: 네비게이터 근거(해당되면). */
     navigator_meta?: NavigatorMeta | null;
+    /** D74: 이번 턴 RAG 출처(있으면). 리페치 전에도 첫 개념 카드 출처 칩 즉시 표시. */
+    rag_sources?: RagSource[] | null;
   };
   current_head_id: string | null;
   root_node_id: string | null;
