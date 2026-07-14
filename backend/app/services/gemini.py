@@ -59,11 +59,6 @@ _WRAP_COMPARISON = (
     "아래는 사용자가 이번 질문에서만 비교 목적으로 참조한 다른 분기들의 "
     "내용입니다. 현재 분기와 비교/대조해 답하되, 출처를 구분하세요.\n\n"
 )
-_WRAP_TEXTBOOK = (
-    "아래는 한국 교과서에서 질문과 관련해 검색된 내용입니다. 답변의 근거로 "
-    "우선 활용해 교과 과정에 맞는 정확한 설명을 하고, 교과서에 없는 내용은 "
-    "일반 지식으로 보완하되 출처를 구분하세요.\n\n"
-)
 
 
 def compose_system_structured(
@@ -71,9 +66,7 @@ def compose_system_structured(
     rag_context: str | None = None,
     comparison_context: str | None = None,
     *,
-    textbook_context: str | None = None,
     rag_sources: list[dict] | None = None,
-    textbook_sources: list[dict] | None = None,
     reference_node_ids: list[str] | None = None,
     comparison_node_ids: list[str] | None = None,
     base_instruction: str | None = None,
@@ -85,7 +78,6 @@ def compose_system_structured(
     - `reference_context`: imported other-branch content (Stage 3a memory link).
     - `rag_context`: chunks from files linked to the branch (Stage 3b-2 RAG).
     - `comparison_context`: one-time referenced branches for comparison (D15).
-    - `textbook_context`: 전역 교과서 코퍼스에서 검색된 청크 (교과서 RAG).
 
     Returns ``(system_prompt, blocks)`` where each block's ``prompt_span`` is the
     ``[start, end)`` char range of that part inside ``system_prompt``.
@@ -114,17 +106,6 @@ def compose_system_structured(
                 rag_context,
                 None,
                 rag_sources or [],
-            )
-        )
-    if textbook_context:
-        parts.append(
-            (
-                "textbook_rag",
-                _WRAP_TEXTBOOK + textbook_context,
-                "교과서 참고",
-                textbook_context,
-                None,
-                textbook_sources or [],
             )
         )
     if comparison_context:
