@@ -37,7 +37,7 @@ UI 없음(G3 재현). 테스트 잔존물: 학급 "노디늄 과학 실험반"(�
 
 ## 2. 설계 결정
 
-### D67 — class_material 자동 스코프 주입 (G1)
+### D73 — class_material 자동 스코프 주입 (G1)
 
 세션이 학급 공간(`space_kind='class'`)이면, 그 공간의 class_material 파일
 (`status in (indexed, partial)` — partial도 임베딩된 청크는 검색 가능)을
@@ -69,7 +69,7 @@ UI 없음(G3 재현). 테스트 잔존물: 학급 "노디늄 과학 실험반"(�
 자동 주입되므로 제안이 중복될 수 있으나, 제안 UI 자체가 미배선(소비처 0)이라
 현재 사용자 영향 없음 — 배선 시점에 재검토.
 
-### D68 — 출처 전달·표시 (G2)
+### D74 — 출처 전달·표시 (G2)
 
 - **백엔드**: SSE `done` 이벤트의 `node` 객체에 `rag_sources`(build_sources
   산출물 그대로: `[{file_id, chunk_id, name, seq, page, distance, snippet}]`)를
@@ -84,7 +84,7 @@ UI 없음(G3 재현). 테스트 잔존물: 학급 "노디늄 과학 실험반"(�
   - 렌더: `ConceptCard` 하단에 파일 단위로 중복 제거한 칩("📄 파일명 · p.N",
     최대 3개 + 초과 개수 표기). CSS Modules 기존 컨벤션.
 
-### D69 — 업로드 형식 화이트리스트 (G4, G5)
+### D75 — 업로드 형식 화이트리스트 (G4, G5)
 
 - **서버**(`services/files.py upload_file`): 확장자 화이트리스트 검증 —
   `pdf, png, jpg, jpeg, webp, gif`(Upstage Document Parse 경로) +
@@ -94,7 +94,7 @@ UI 없음(G3 재현). 테스트 잔존물: 학급 "노디늄 과학 실험반"(�
 - **클라**(`MaterialsTab`): 동일 목록으로 선택 직후 사전 검증 → 서버 왕복 없이
   같은 사유 메시지 표시. 서버 422 메시지도 기존 error 배너로 표출.
 
-### D70 — 인제스트 실패의 터미널 전환 보장 (G6)
+### D76 — 인제스트 실패의 터미널 전환 보장 (G6)
 
 `embedding_worker`의 잡 예외 경로에서 재시도(attempts) 소진 시 **파일도 터미널
 상태로 전환**한다 — split 잡 실패 → `files.status='failed'` + `error` 기록,
