@@ -153,7 +153,15 @@ async def chat_stream(
         (comparison_context, comparison_node_ids, comparison_sources),
     ) = await asyncio.gather(
         memory.build_reference_context(client, body.session_id, chain, by_id),
-        rag.build_rag_context(client, chain, body.question),
+        rag.build_rag_context(
+            client,
+            chain,
+            body.question,
+            # D73: 학급 세션이면 class_material 자동 스코프 — 세션 행에 이미
+            # space_kind/space_ref가 있어 추가 조회 없음(SESSION_SELECT).
+            space_kind=session.get("space_kind"),
+            space_ref=session.get("space_ref"),
+        ),
         memory.build_comparison_context(
             client, body.reference_node_ids or [], chain, by_id
         ),
@@ -255,6 +263,8 @@ async def chat_stream(
                             "label": None,
                             "tags": [],
                             "reference_sources": comparison_sources or [],
+                            # D74: 실시간 출처 칩 표시용(영속은 위 PATCH가 담당).
+                            "rag_sources": rag_sources or [],
                         },
                         "current_head_id": node["id"],
                         "root_node_id": existing_root or node["id"],

@@ -111,6 +111,13 @@ class Settings(BaseSettings):
 
     # --- File RAG search + tagging (Stage 3b-2) ---
     rag_top_k: int = 5  # chunks retrieved per query from linked files
+    # --- D73: 학급 자료 자동 RAG 스코프 (TASK 2) ---
+    # 학급 세션이면 그 학급의 class_material(indexed/partial)을 링크 없이도
+    # 검색 후보에 넣는다. enabled는 신규 자동 주입 경로의 킬 스위치(D62 오버레이).
+    class_material_rag_enabled: bool = True
+    # 자동 스코프(비링크) 청크에만 적용하는 거리 게이트 — 링크 청크는 무게이트.
+    # 기존 공유 컷오프 0.50 의미 계승, distance = 1 - score (Qdrant cosine).
+    class_material_rag_max_distance: float = 0.50
     file_tag_max: int = 50  # concept tags per file (denser than node 1..3)
     # Chars of file text sampled for tag extraction.
     file_tag_sample_chars: int = 6000

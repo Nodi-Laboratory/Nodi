@@ -196,20 +196,82 @@ async def _file_names(
     return {r["id"]: _file_basename(r.get("storage_path")) for r in rows}
 
 
+async def class_material_file_ids(
+    client: UserClient, space_ref: str
+) -> list[str]:
+    """학급 자료(class_material) 중 검색 가능한(indexed/partial) 파일 id들 (D73).
+
+    partial도 임베딩된 청크는 검색 가능. USER 스코프 조회 — RLS(0012)가 학급
+    구성원 여부를 재검증한다.
+    """
+    rows = await client.select(
+        "files",
+        {
+            "space_kind": "eq.class",
+            "space_ref": f"eq.{space_ref}",
+            "kind": "eq.class_material",
+            "status": "in.(indexed,partial)",
+            "select": "id",
+        },
+    )
+    return [r["id"] for r in rows if r.get("id")]
+
+
 async def build_rag_context(
-    client: UserClient, chain: list[dict[str, Any]], query: str
+    client: UserClient,
+    chain: list[dict[str, Any]],
+    query: str,
+    *,
+    space_kind: str | None = None,
+    space_ref: str | None = None,
 ) -> dict[str, Any] | None:
     """Best-effort: assemble the linked-file reference block + source metadata.
+
+    D73: 학급 세션(space_kind='class')이면 그 학급의 class_material 파일을
+    링크 파일과 **합집합**으로 검색한다. 자동 스코프(비링크) 청크에만 거리
+    게이트(class_material_rag_max_distance)를 적용해 인사말·무관 질의 턴의
+    프롬프트 오염을 막고, 링크 청크는 기존대로 무게이트(사용자가 명시한 신뢰).
 
     Returns ``{"block": str, "sources": [ {file_id, name, seq, page, distance,
     snippet} ]}`` or ``None`` when there is nothing to inject. Callers use
     ``block`` for the system prompt and ``sources`` for node/log provenance (D32).
     """
     try:
-        file_ids = await linked_file_ids(client, chain)
+        linked = await linked_file_ids(client, chain)
+        linked_set = set(linked)
+        auto_ids: list[str] = []
+        max_dist: float | None = None
+        if space_kind == "class" and space_ref:
+            overlay = await app_settings.get_overlay()
+            if app_settings.as_bool(
+                overlay,
+                "class_material_rag_enabled",
+                settings.class_material_rag_enabled,
+            ):
+                auto_ids = [
+                    f
+                    for f in await class_material_file_ids(client, space_ref)
+                    if f not in linked_set
+                ]
+                max_dist = app_settings.as_float(
+                    overlay,
+                    "class_material_rag_max_distance",
+                    settings.class_material_rag_max_distance,
+                    0.1,
+                    0.9,
+                )
+        file_ids = linked + auto_ids
         if not file_ids:
             return None
         chunks = await search(client, file_ids, query)
+        if auto_ids and max_dist is not None:
+            # D73: 자동 스코프 청크만 거리 게이트(링크 청크는 무게이트).
+            chunks = [
+                c
+                for c in chunks
+                if c.get("file_id") in linked_set
+                or (c.get("distance") is not None and c["distance"] <= max_dist)
+            ]
         if not chunks:
             return None
         hit_ids = list({c.get("file_id") for c in chunks if c.get("file_id")})
@@ -217,6 +279,14 @@ async def build_rag_context(
         block = build_block(chunks, names)
         if not block:
             return None
+        # D76 부수: 주입 관측성 — 마무리 E2E의 주입 증거(기존 RAG 관측성 0).
+        logger.info(
+            "RAG 주입: files=%d(링크 %d·자동 %d) chunks=%d",
+            len(hit_ids),
+            len(linked),
+            len(auto_ids),
+            len(chunks),
+        )
         return {"block": block, "sources": build_sources(chunks, names)}
     except Exception:  # noqa: BLE001 - RAG must never break chat
         logger.exception("RAG retrieval failed")
