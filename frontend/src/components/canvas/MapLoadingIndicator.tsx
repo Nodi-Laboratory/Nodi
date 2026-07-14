@@ -4,8 +4,9 @@
 // 생성 지점(x,y=카드 top-left) 위에 마스코트 + 점 3개 바운스로 "노트를 쓰는 중"을 표시.
 // 화면 중앙 고정 칩(LoadingChip)을 대체한다. pending 스켈레톤 카드는 별도 유지.
 
+import { CARD_CX } from "@/lib/concept/cardMetrics";
+
 const BUBBLE_W = 168;
-const CARD_CX = 210; // 카드 폭 절반(중앙 정렬용) — workspace 상수와 일치
 
 export default function MapLoadingIndicator({
   x,

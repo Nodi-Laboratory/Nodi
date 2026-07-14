@@ -13,6 +13,25 @@ const W = 340;
 const H = 260;
 const PAD = 40;
 
+// 태그 점 반경(px) = clamp(BASE + sqrt(count)*GROWTH, MIN, MAX) — count 클수록 큰 점.
+const DOT_R_MIN = 7;
+const DOT_R_MAX = 24;
+const DOT_R_BASE = 7;
+const DOT_R_GROWTH = 3;
+
+function dotRadius(count: number): number {
+  return Math.max(
+    DOT_R_MIN,
+    Math.min(DOT_R_MAX, DOT_R_BASE + Math.sqrt(count) * DOT_R_GROWTH),
+  );
+}
+
+// 라벨은 최대 이 길이까지만 표시하고 넘치면 말줄임한다.
+const LABEL_MAX = 9;
+function truncateLabel(label: string): string {
+  return label.length > LABEL_MAX ? label.slice(0, LABEL_MAX) + "…" : label;
+}
+
 export default function ConceptMinimap({
   tagNodes,
   onFocus,
@@ -51,7 +70,7 @@ export default function ConceptMinimap({
       {nodes.map((n) => {
         const cx = sx(n.wx);
         const cy = sy(n.wy);
-        const r = Math.max(7, Math.min(24, 7 + Math.sqrt(n.count) * 3));
+        const r = dotRadius(n.count);
         return (
           <g
             key={n.id}
@@ -73,7 +92,7 @@ export default function ConceptMinimap({
               fill="var(--ink, #2b2620)"
               style={{ pointerEvents: "none" }}
             >
-              {n.label.length > 9 ? n.label.slice(0, 9) + "…" : n.label}
+              {truncateLabel(n.label)}
             </text>
             {n.count > 1 && (
               <text x={0} y={4} textAnchor="middle" fontSize={10} fill="#fff" style={{ pointerEvents: "none" }}>

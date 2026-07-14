@@ -64,8 +64,6 @@ async function cachedSearchArt(title: string): Promise<ArtSearchResult> {
 interface PersistedCanvas {
   ebs?: Array<{ video_id?: string; title?: string; thumb?: string; score?: number }>;
   art?: Array<{ slug?: string; url?: string; title?: string; score?: number }>;
-  /** 09: place 이벤트로 확정된 개념별 좌표. i = 답변 내 0-based 로컬 인덱스. h = 카드 높이. */
-  concepts?: Array<{ i?: number; x?: number; y?: number; h?: number; tag?: string }>;
 }
 type NodeRowWithAttachments = NodeRow & {
   attachments?: { canvas?: PersistedCanvas | null } | null;

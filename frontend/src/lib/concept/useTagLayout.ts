@@ -11,8 +11,7 @@ import {
   forceCollide,
   type Simulation,
 } from "d3-force";
-import { CARD_W } from "./tagLayoutCore";
-import { tagAnchor } from "./curriculumTags";
+import { CARD_W, tagAnchor } from "./curriculumTags";
 
 interface LNode {
   id: string;
@@ -30,6 +29,24 @@ type Centroids = Map<string, { x: number; y: number; count: number }>;
 const COHESION = 0.08;  // 태그 고정 앵커 응집 강도
 const CHARGE = -500;    // 클러스터 내 균등 분산(인터-태그 분리는 고정 앵커)
 const COLLIDE_GAP = 28; // 무겹침 여백
+
+// 결정론 시드용 소나선(피보나치 나선) — 새 카드를 자기 태그 앵커 근처의 겹치지 않는
+// 자리에 뿌려 초기 겹침 방지 + 즉시 제자리(sim 재가열 전에도 위치 노출).
+const SEED_RADIUS_STEP = 60;    // 반경 = STEP * sqrt(cardIdx+1)
+const SEED_GOLDEN_ANGLE = 2.399963; // 황금각(rad) — 각 카드 간 각 분산
+
+// 자기 태그 고정 앵커 근처의 결정론 시드 좌표를 계산한다(소나선).
+function seedNear(
+  anchor: { x: number; y: number },
+  cardIdx: number,
+): { x: number; y: number } {
+  const radius = SEED_RADIUS_STEP * Math.sqrt(cardIdx + 1);
+  const angle = (cardIdx + 1) * SEED_GOLDEN_ANGLE;
+  return {
+    x: anchor.x + radius * Math.cos(angle),
+    y: anchor.y + radius * Math.sin(angle),
+  };
+}
 
 // 노드 배열 → 렌더용 좌표/앵커 스냅샷(틱 핸들러·이펙트에서만 호출).
 function snapshot(arr: LNode[]): { positions: Positions; tagCentroids: Centroids } {
@@ -72,10 +89,8 @@ export function useTagLayout(items: Array<{ id: string; tag: string; h: number }
         const cardIdx = tagCountRef.current.get(tag) ?? 0;
         tagCountRef.current.set(tag, cardIdx + 1);
         // 자기 태그 고정 앵커 근처로 시드(결정론 소나선 → 초기 겹침 방지, 즉시 제자리).
-        const a = tagAnchor(tag);
-        const cr = 60 * Math.sqrt(cardIdx + 1);
-        const cang = (cardIdx + 1) * 2.399963; // 황금각(rad)
-        n = { id: it.id, tag, h: it.h, x: a.x + cr * Math.cos(cang), y: a.y + cr * Math.sin(cang) };
+        const seed = seedNear(tagAnchor(tag), cardIdx);
+        n = { id: it.id, tag, h: it.h, x: seed.x, y: seed.y };
         nodes.set(it.id, n);
       } else {
         n.tag = tag;

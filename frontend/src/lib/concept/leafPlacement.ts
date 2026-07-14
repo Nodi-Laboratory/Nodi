@@ -3,6 +3,12 @@
 // 서버 canvas_layout._first_free_position(AABB 나선 탐색) 이식. 캔버스는
 // 무한 팬이므로 경계 클램프는 없다.
 
+import {
+  CARD_H_MAX,
+  CARD_H_MIN,
+  CARD_H_PER_LINE,
+  CARD_H_STREAM_LINES,
+} from "./cardMetrics";
 import type { CanvasLeafNode, Concept } from "./types";
 
 export interface Rect {
@@ -19,12 +25,8 @@ export const LEAF_DIMS: Record<CanvasLeafNode["type"], { w: number; h: number }>
   art: { w: 220, h: 210 },
 };
 
-// 개념 카드 폭/높이 — ConceptCard.cardHeight와 상수 일치(160/560/28).
+// 개념 카드 폭 — 높이 상수(CARD_H_*)는 cardMetrics(SSOT)에서 가져와 ConceptCard와 일치.
 const CARD_W = 420;
-const CARD_H_MIN = 160;
-const CARD_H_MAX = 560;
-const CARD_H_PER_LINE = 28;
-const CARD_H_STREAM_LINES = 2; // pending/스트리밍 기본(estimate_card_height(2))
 
 // 카드 렌더 높이 근사: 서버 저장 concept.h 우선, 없으면 본문 "p" 블록 수(=줄 수)
 // 기반 폴백. ConceptCard와 동일 로직 → 장애물 높이가 실제 렌더 높이와 일치.
@@ -47,6 +49,11 @@ export function leafRect(n: Pick<CanvasLeafNode, "x" | "y" | "type">): Rect {
 
 // 카드/리프 사이 최소 간격(px) — 서버 force_min_gap과 동일.
 const LEAF_GAP = 24;
+
+// 나선 탐색 파라미터 — 선호 위치에서 밖으로 링을 넓혀가며 빈 자리를 찾는다.
+const SPIRAL_STEP = 120; // 링 간 반경 증가(px) — 좁은 틈도 포착
+const SPIRAL_RINGS = 80; // 최대 링 수(사실상 캔버스 전역 커버)
+const SPIRAL_SAMPLES_PER_RING = 8; // ring마다 samples = ring * 이 값 → 각 간격 일정
 
 // gap 포함 AABB 교차 판정.
 function hit(a: Rect, b: Rect, gap: number): boolean {
@@ -71,10 +78,9 @@ export function placeLeafClear(
   const free = (x: number, y: number) =>
     obstacles.every((o) => !hit({ x, y, w, h }, o, gap));
   if (free(px, py)) return { x: px, y: py };
-  const step = 120; // 탐색 간격(px) — 좁은 틈도 포착
-  for (let ring = 1; ring <= 80; ring++) {
-    const r = ring * step;
-    const samples = ring * 8; // 링마다 샘플 수↑ → 각 간격 일정 유지
+  for (let ring = 1; ring <= SPIRAL_RINGS; ring++) {
+    const r = ring * SPIRAL_STEP;
+    const samples = ring * SPIRAL_SAMPLES_PER_RING; // 링마다 샘플 수↑ → 각 간격 일정 유지
     for (let k = 0; k < samples; k++) {
       const ang = (2 * Math.PI * k) / samples;
       const x = px + r * Math.cos(ang);

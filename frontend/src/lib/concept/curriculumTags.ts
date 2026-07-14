@@ -3,6 +3,7 @@
 
 export const CANVAS_W = 3200;
 export const CANVAS_H = 2200;
+export const CARD_W = 420;
 export const CENTER = { x: CANVAS_W / 2, y: CANVAS_H / 2 };
 
 // 순서 = 칠각형 인덱스. 백엔드 CONCEPT_CARD_SYSTEM_PROMPT와 글자까지 동일.

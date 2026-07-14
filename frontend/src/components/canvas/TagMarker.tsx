@@ -2,7 +2,10 @@
 
 // 태그 라벨 마커 — 태그 고정 앵커에 렌더(NoteCanvas 내부, 팬/줌 따라감).
 // 카드 위 레이어(zIndex) + 솔리드 칩 → 카드에 가려지지 않는다. pointerEvents:none로 클릭 방해 없음.
-import { CARD_W } from "@/lib/concept/tagLayoutCore";
+import { CARD_W } from "@/lib/concept/curriculumTags";
+
+// 마커 칩 폭(px) — 카드 중앙 정렬에 절반값을 쓴다.
+const MARKER_W = 220;
 
 export default function TagMarker({
   tag,
@@ -20,9 +23,9 @@ export default function TagMarker({
       data-testid="tag-marker"
       style={{
         position: "absolute",
-        left: x + CARD_W / 2 - 110,
+        left: x + CARD_W / 2 - MARKER_W / 2,
         top: y - 52,
-        width: 220,
+        width: MARKER_W,
         zIndex: 5, // 카드 위
         display: "flex",
         justifyContent: "center",

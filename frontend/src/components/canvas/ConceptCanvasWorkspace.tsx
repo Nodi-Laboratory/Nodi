@@ -7,8 +7,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { spaceTargetFromId } from "@/lib/api";
+import { CARD_CX } from "@/lib/concept/cardMetrics";
 import { useConceptStream } from "@/lib/concept/useConceptStream";
 import { useTagLayout } from "@/lib/concept/useTagLayout";
+import type { CanvasLeafNode, Concept } from "@/lib/concept/types";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import NoteCanvas, { focusCamera, type Camera } from "./NoteCanvas";
 import MapLoadingIndicator from "./MapLoadingIndicator";
@@ -21,10 +23,51 @@ import TopBar from "./TopBar";
 import BottomBar from "./BottomBar";
 import SessionDrawer from "./SessionDrawer";
 
-// Card center offset (card ~420 wide) for focus/centering.
-const CARD_CX = 210;
+// Card center offset for focus/centering (CARD_CX = 카드 폭 절반, cardMetrics SSOT).
 const CARD_CY = 200;
 const INITIAL_CAMERA: Camera = { x: 120, y: 80, scale: 1 };
+// 리프 기본 태그 폴백 높이(레이아웃 아이템 h 미상 시).
+const LEAF_ITEM_H_FALLBACK = 216;
+
+// 미분류 개념의 폴백 태그(useTagLayout 시드/tagAnchor와 일치).
+const DEFAULT_TAG = "기타";
+
+// 리프 노드를 앵커 개념의 sim 좌표로 재앵커한다: 앵커가 스트림 좌표에서 sim 좌표로
+// 이동한 만큼(Δ) 리프도 함께 옮겨 상대 오프셋을 보존한다. 앵커 sim 위치가 없으면
+// 기존 좌표를 그대로 유지(best-effort 오버레이).
+function reanchorLeaf(
+  node: CanvasLeafNode,
+  concepts: Concept[],
+  positions: Map<string, { x: number; y: number }>,
+): CanvasLeafNode {
+  const anchor = node.conceptId
+    ? concepts.find((c) => c.id === node.conceptId)
+    : undefined;
+  const anchorPos = anchor ? positions.get(anchor.id) : undefined;
+  if (!anchor || !anchorPos) return node;
+  return {
+    ...node,
+    x: anchorPos.x + (node.x - anchor.x),
+    y: anchorPos.y + (node.y - anchor.y),
+  };
+}
+
+// 태그 마커의 y = 그 태그에 속한(비-pending) 카드들의 최상단 sim y. 배치된 카드가
+// 없으면 fallback(무게중심 y)을 쓴다.
+function tagMarkerTopY(
+  tag: string,
+  concepts: Concept[],
+  positions: Map<string, { x: number; y: number }>,
+  fallbackY: number,
+): number {
+  let topY = Infinity;
+  for (const con of concepts) {
+    if (con.pending || (con.cluster || DEFAULT_TAG) !== tag) continue;
+    const p = positions.get(con.id);
+    if (p) topY = Math.min(topY, p.y);
+  }
+  return Number.isFinite(topY) ? topY : fallbackY;
+}
 
 export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
   const target = spaceTargetFromId(spaceId);
@@ -44,15 +87,17 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
   // 오버레이하고, tagCentroids로 태그 마커를 무게중심에 렌더한다.
   const layoutItems = concepts
     .filter((c) => !c.pending)
-    .map((c) => ({ id: c.id, tag: c.cluster || "기타", h: c.h ?? 216 }));
+    .map((c) => ({
+      id: c.id,
+      tag: c.cluster || DEFAULT_TAG,
+      h: c.h ?? LEAF_ITEM_H_FALLBACK,
+    }));
   const { positions, tagCentroids } = useTagLayout(layoutItems);
 
   const [camera, setCamera] = useState<Camera>(INITIAL_CAMERA);
   const [treeOpen, setTreeOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  // 클러스터 클릭은 팬 전용(하이라이트 없음). activeId는 여전히 ConceptCard에 전달되나
-  // 현재 세터가 없어 null 유지 — 향후 하이라이트 재도입 시 setter를 다시 추가한다.
-  const [activeId] = useState<string | null>(null);
+  // 클러스터 클릭은 팬 전용(하이라이트 없음).
   const didInitFocus = useRef(false);
 
   // Container viewport (canvas fills <main>, which is width minus the icon rail).
@@ -171,26 +216,13 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
           // sim 좌표 우선, 아직 배치 전이면 기존 좌표 폴백.
           const p = positions.get(c.id);
           const laid = p ? { ...c, x: p.x, y: p.y } : c;
-          return (
-            <ConceptCard
-              key={c.id}
-              concept={laid}
-              highlighted={c.id === activeId}
-            />
-          );
+          return <ConceptCard key={c.id} concept={laid} />;
         })}
         {/* 리프 노드(영상/삽화) — 개념 다음에 렌더(스폰 애니메이션은 .nodi-spawn).
             앵커 개념의 sim 좌표로 리프를 재앵커(anchor의 스트림 좌표 대비 오프셋 유지).
             앵커 sim 위치가 없으면 기존 좌표 유지(best-effort 오버레이). */}
         {leafNodes.map((n) => {
-          const anchor = n.conceptId
-            ? concepts.find((c) => c.id === n.conceptId)
-            : undefined;
-          const ap = anchor ? positions.get(anchor.id) : undefined;
-          const laid =
-            anchor && ap
-              ? { ...n, x: ap.x + (n.x - anchor.x), y: ap.y + (n.y - anchor.y) }
-              : n;
+          const laid = reanchorLeaf(n, concepts, positions);
           return n.type === "video" ? (
             <VideoNode key={n.id} node={laid} />
           ) : (
@@ -199,13 +231,7 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
         })}
         {/* 태그 마커 — 클러스터 위(최상단 카드보다 위)로 띄워 카드와 안 겹침 + zIndex. */}
         {[...tagCentroids.entries()].map(([tag, c]) => {
-          let topY = Infinity;
-          for (const con of concepts) {
-            if (con.pending || (con.cluster || "기타") !== tag) continue;
-            const p = positions.get(con.id);
-            if (p) topY = Math.min(topY, p.y);
-          }
-          const markerY = Number.isFinite(topY) ? topY : c.y;
+          const markerY = tagMarkerTopY(tag, concepts, positions, c.y);
           return <TagMarker key={tag} tag={tag} x={c.x} y={markerY} count={c.count} />;
         })}
         {/* 맵 앵커 로딩 — 생성 지점 버블(추종 카드의 sim 위치, 없으면 near 폴백). */}

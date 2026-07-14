@@ -102,15 +102,13 @@ export interface NodeRow {
   /**
    * 캔버스 리프 노드 영속분(C5). `attachments.canvas`에 이 노드가 생성한
    * EBS 영상/아트 추천 노드를 담아 세션 재수화 때 복원한다. 그 외 attachments
-   * 키(기타 첨부)는 건드리지 않는다.
-   * concepts: 09 — place 이벤트가 확정한 개념별 좌표(재수화 원본).
+   * 키(기타 첨부)는 건드리지 않는다. 카드 좌표는 저장하지 않는다 — 프론트
+   * d3-force(useTagLayout)가 매 세션 배치를 소유한다.
    */
   attachments?: {
     canvas?: {
       ebs?: { video_id: string; title: string; thumb: string; score?: number }[];
       art?: { slug: string; url: string; title: string; score?: number }[];
-      /** 09: place 이벤트가 서버에 저장한 개념별 좌표. i = concept_index(0-based). h = 카드 높이. */
-      concepts?: { i: number; x: number; y: number; h?: number }[];
     } | null;
     [key: string]: unknown;
   } | null;

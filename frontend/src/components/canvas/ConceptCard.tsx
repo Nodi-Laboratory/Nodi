@@ -9,16 +9,16 @@
 
 import { memo, type CSSProperties } from "react";
 import type { Concept, Token } from "@/lib/concept/types";
-import styles from "./ConceptCard.module.css";
-
 // 08: 본문량 기반 동적 높이 — 백엔드 config(card_h_min/max/per_line)와 상수 일치.
 // 서버 estimate_card_height(body_lines) = clamp(H_MIN + lines*PER_LINE, H_MIN, H_MAX)와
 // 동일한 폴백을 프론트에서 재현(서버 저장 concept.h가 있으면 그 값을 신뢰).
-const CARD_H_MIN = 160;
-const CARD_H_MAX = 560;
-const CARD_H_PER_LINE = 28;
-// 스트리밍/pending 기본: 서버가 좌표 예약에 쓰는 estimate_card_height(2) 기준.
-const CARD_H_STREAM_LINES = 2;
+import {
+  CARD_H_MAX,
+  CARD_H_MIN,
+  CARD_H_PER_LINE,
+  CARD_H_STREAM_LINES,
+} from "@/lib/concept/cardMetrics";
+import styles from "./ConceptCard.module.css";
 
 // 카드 높이(px): 우선순위 concept.h(서버 저장값) → 없으면 본문 줄 수 기반 폴백.
 // lines는 본문 "p" 블록 수 근사(서버 body_text.count("\n")+1과 대략 일치).

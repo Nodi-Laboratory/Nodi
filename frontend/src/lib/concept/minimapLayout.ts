@@ -2,9 +2,9 @@
 // 카메라 가시영역→미니맵 사각형. DOM/React 독립(테스트·재사용). d3 미의존(순수 산술);
 // d3.scaleLinear 사용은 렌더 컴포넌트(ConceptMinimap)에서 이 Fit로 구성한다.
 
+import { CARD_CX } from "./cardMetrics";
 import type { Concept, ConceptGroup } from "./types";
 
-const CARD_CX = 210; // 카드 폭 420의 절반
 const CARD_H_FALLBACK = 200; // 높이 미상 시 근사(중심 계산용)
 
 export interface MiniCentroid {
