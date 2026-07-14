@@ -23,6 +23,15 @@ Thumbs.db
 .DS_Store
 .superpowers/
 
+# Serena MCP 로컬 상태 (LSP 캐시·프로젝트 설정 — 로컬 도구 상태, 커밋 금지)
+.serena/
+
+# MCP 서버 설정 (로컬 도구 구성 — 커밋 금지)
+.mcp.json
+
+# playwright-cli 세션 상태 (스냅샷·세션 데이터 — 로컬 도구 상태, 커밋 금지)
+.playwright-cli/
+
 # 교과서 원문(저작권·용량) — 폴더 문서·예시 매니페스트만 커밋
 backend/textbooks/*
 !backend/textbooks/README.md
