@@ -13,7 +13,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/config.py -> parents[0]=app, [1]=backend, [2]=repo root
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ROOT_ENV = REPO_ROOT / ".env"
+# 설정은 backend 폴더 내부의 .env를 읽는다(루트 .env 아님). 전체 설정(Supabase·
+# EXAONE·EXAONE_ENDPOINT_ID·Gemini 등)이 backend/.env에 있다.
+BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 
 class Settings(BaseSettings):
@@ -172,7 +174,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     model_config = SettingsConfigDict(
-        env_file=str(ROOT_ENV),
+        env_file=str(BACKEND_ENV),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
