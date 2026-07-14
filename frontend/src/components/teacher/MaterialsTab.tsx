@@ -8,14 +8,17 @@ import {
   CheckCircle2,
   AlertTriangle,
   Info,
+  RotateCcw,
+  Trash2,
 } from "lucide-react";
-import { ApiError, uploadFile } from "@/lib/api";
+import { ApiError, deleteFile, retryFile, uploadFile } from "@/lib/api";
 import { classMaterialsKey, useClassMaterials } from "@/lib/queries";
 import type { FileRow, FileStatus } from "@/lib/types";
 
 /**
  * 자료 탭: 학급 자료실(class_material) 목록 + 업로드 + 임베딩 진행률.
  * 업로드한 자료는 학생들이 자기 학급 공간에서 RAG로 참고한다.
+ * G3/G5(D75): 실패 파일 재시도·삭제 동선 + 업로드 성공 피드백 + 형식 사전 검증.
  */
 function formatBytes(n: number | null): string {
   if (n == null) return "";
@@ -32,6 +35,14 @@ function fileName(f: FileRow): string {
     f.id
   );
 }
+
+// D75: 서버 화이트리스트(services/files.py ALLOWED_UPLOAD_EXTENSIONS)와 동일
+// 목록 — 선택 직후 사전 검증해 서버 왕복 없이 같은 사유를 보여준다.
+const ALLOWED_EXTENSIONS = new Set([
+  "pdf", "png", "jpg", "jpeg", "webp", "gif", "txt", "md",
+]);
+const UNSUPPORTED_TYPE_MSG =
+  "지원 형식: PDF, 이미지(PNG/JPG/WEBP/GIF), 텍스트(TXT/MD)";
 
 const STATUS_META: Record<
   FileStatus,
@@ -51,11 +62,23 @@ export function MaterialsTab({ classId }: { classId: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // G5: 업로드 성공 인라인 안내 1줄(토스트 라이브러리 신규 도입 금지).
+  const [notice, setNotice] = useState<string | null>(null);
 
   const handleFiles = async (list: FileList | null) => {
     const file = list?.[0];
     if (!file) return;
     setError(null);
+    setNotice(null);
+    // D75: 형식 사전 검증 — 서버와 같은 목록·같은 사유(왕복 없이 즉시 안내).
+    const ext = file.name.includes(".")
+      ? file.name.split(".").pop()!.toLowerCase()
+      : "";
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      setError(UNSUPPORTED_TYPE_MSG);
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
     setUploading(true);
     try {
       await uploadFile(
@@ -66,6 +89,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
       await queryClient.invalidateQueries({
         queryKey: classMaterialsKey(classId),
       });
+      setNotice(`"${file.name}" 업로드 완료 — 인덱싱이 시작됩니다.`);
     } catch (e) {
       if (e instanceof ApiError && e.status === 503) {
         setError("파일 임베딩이 아직 활성화되지 않았습니다(관리자 설정 필요).");
@@ -94,7 +118,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,application/pdf,text/plain,image/*"
+          accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md"
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />
@@ -104,7 +128,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
         <Info size={14} className="mt-0.5 shrink-0" />
         <span>
           업로드한 자료는 임베딩된 뒤 학생들이 자기 학급 공간의 대화에서 RAG로
-          참고할 수 있습니다.
+          참고할 수 있습니다. ({UNSUPPORTED_TYPE_MSG})
         </span>
       </div>
 
@@ -112,6 +136,13 @@ export function MaterialsTab({ classId }: { classId: string }) {
         <div className="flex items-start gap-1.5 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
           <span>{error}</span>
+        </div>
+      )}
+
+      {notice && (
+        <div className="flex items-start gap-1.5 rounded-lg border border-positive/40 bg-positive/10 px-3 py-2 text-sm text-positive">
+          <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+          <span>{notice}</span>
         </div>
       )}
 
@@ -124,7 +155,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
       ) : (
         <ul className="flex flex-col gap-2">
           {materials.map((f) => (
-            <MaterialItem key={f.id} file={f} />
+            <MaterialItem key={f.id} file={f} classId={classId} />
           ))}
         </ul>
       )}
@@ -132,11 +163,48 @@ export function MaterialsTab({ classId }: { classId: string }) {
   );
 }
 
-function MaterialItem({ file }: { file: FileRow }) {
+function MaterialItem({ file, classId }: { file: FileRow; classId: string }) {
+  const queryClient = useQueryClient();
   const meta = STATUS_META[file.status];
   const total = file.chunk_total ?? 0;
   const done = file.chunk_done ?? 0;
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  // G3: 재시도/삭제 요청 중 표시(둘 다 disabled) + 행 단위 오류 안내.
+  const [pendingAction, setPendingAction] = useState<"retry" | "delete" | null>(
+    null,
+  );
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: classMaterialsKey(classId) });
+
+  const handleRetry = async () => {
+    setActionError(null);
+    setPendingAction("retry");
+    try {
+      await retryFile(file.id);
+      await invalidate(); // 폴링(useClassMaterials)이 진행 상태를 이어받는다
+    } catch (e) {
+      setActionError(`재시도 실패: ${(e as Error).message}`);
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm(`"${fileName(file)}" 자료를 삭제할까요?`)) return;
+    setActionError(null);
+    setPendingAction("delete");
+    try {
+      await deleteFile(file.id);
+      await invalidate();
+    } catch (e) {
+      setActionError(`삭제 실패: ${(e as Error).message}`);
+      setPendingAction(null);
+    }
+  };
+
+  const retriable = file.status === "failed" || file.status === "partial";
 
   return (
     <li className="rounded-lg border border-accent-border/30 bg-bg-elevated p-3">
@@ -157,6 +225,28 @@ function MaterialItem({ file }: { file: FileRow }) {
         >
           {meta.label}
         </span>
+        {retriable && (
+          <button
+            type="button"
+            onClick={handleRetry}
+            disabled={pendingAction != null}
+            title="재시도"
+            className="flex shrink-0 items-center gap-1 rounded-md border border-accent-border/50 px-2 py-1 text-[11px] text-fg-muted transition-colors hover:bg-accent/20 hover:text-fg disabled:opacity-50"
+          >
+            <RotateCcw size={12} />
+            {pendingAction === "retry" ? "재시도 중…" : "재시도"}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={pendingAction != null}
+          title="삭제"
+          className="flex shrink-0 items-center gap-1 rounded-md border border-danger/30 px-2 py-1 text-[11px] text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
+        >
+          <Trash2 size={12} />
+          {pendingAction === "delete" ? "삭제 중…" : "삭제"}
+        </button>
       </div>
 
       {meta.progress && (
@@ -177,6 +267,9 @@ function MaterialItem({ file }: { file: FileRow }) {
 
       {(file.status === "failed" || file.status === "partial") && file.error && (
         <p className="mt-1 text-[11px] text-danger">{file.error}</p>
+      )}
+      {actionError && (
+        <p className="mt-1 text-[11px] text-danger">{actionError}</p>
       )}
     </li>
   );
