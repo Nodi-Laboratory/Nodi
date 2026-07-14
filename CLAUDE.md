@@ -34,11 +34,9 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
   용량 제한도 없다.
 - 학생은 워크스페이스 세션 외에 **개인 세션**(`space_kind='personal'`)을 개설해
   자유롭게 질의할 수 있다.
-- ⚠️ **교과서 전역 코퍼스는 폐기된 방향**: admin이 `backend/textbooks/` +
-  `scripts/ingest_textbook.py`로 넣는 전역 교과서 RAG(Qdrant `textbook` 컬렉션,
-  2026-07-13 구축)가 코드에 존재하지만, 제품 방향이 "교과서도 선생님이 워크스페이스에
-  업로드"로 바뀌어 **재검토/제거 대상**이다(`docs/TASKS.md` TASK 1). admin은
-  교과서를 입력하지 않는다.
+- 교과서 전역 코퍼스(admin 인제스트 경로)는 **2026-07-14 완전 제거됨**(TASK 1,
+  스펙 `docs/superpowers/specs/2026-07-14-remove-textbook-rag-design.md`). admin은
+  교과서를 입력하지 않는다 — 교과서는 선생님이 워크스페이스에 업로드한다(TASK 2).
 
 ## 스택
 
@@ -52,8 +50,8 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
   → Upstage Document Parse → 문단 인지 청킹(1,200자/오버랩 150자, admin 튜너블)
   → `embedding_batch` 잡 팬아웃(64청크 단위) → Upstage `embedding-passage` 4096d
   → **벡터는 Qdrant, 청크 본문·상태는 Supabase `file_chunks`**.
-- **채팅 턴** (`routers/chat.py` `chat_stream`): 질의 임베딩(qvec, 1회) →
-  컨텍스트 빌더 병렬(gather): 기억 연결·파일 RAG·비교 참조·교과서 RAG →
+- **채팅 턴** (`routers/chat.py` `chat_stream`):
+  컨텍스트 빌더 병렬(gather): 기억 연결·파일 RAG·비교 참조 →
   `gemini.compose_system_structured`(D35: 프롬프트 문자열 + 블록 span 단일 소스) →
   `exaone.stream_answer` SSE → 개념 카드 파싱·캔버스 배치.
 - **캔버스 배치**: 질의 임베딩으로 유사 카드 근처 잠정 배치 → 응답 도착 후 재조정.
@@ -87,4 +85,4 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
   `[feat]:`/`[fix]:`/`[docs]:`/`[tune]:`/`[chore]:`.
 - 설계 결정은 D-번호(D11, D35, D62 …)로 코드 주석에 남긴다.
 - 스펙: `docs/superpowers/specs/`, 구현 계획: `docs/superpowers/plans/`.
-- 교과서 원문(`backend/textbooks/`)·`.env`·`qdrant_storage/`는 커밋 금지(.gitignore).
+- `.env`·`qdrant_storage/`는 커밋 금지(.gitignore).
