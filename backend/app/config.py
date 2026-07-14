@@ -115,11 +115,6 @@ class Settings(BaseSettings):
     # Chars of file text sampled for tag extraction.
     file_tag_sample_chars: int = 6000
 
-    # --- Textbook RAG (전역 교과서 코퍼스, Qdrant `textbook` 컬렉션) ---
-    textbook_rag_enabled: bool = True  # 교과서 블록 주입 전체 on/off
-    textbook_rag_top_k: int = 4  # 질문당 검색·주입 최대 청크 수
-    textbook_rag_max_distance: float = 0.45  # 거리 게이트(1-score), 초과분 탈락
-
     # --- RAG polish (Stage 3b-3) ---
     # Multimodal model for image OCR (text extraction from images / scans).
     ocr_model: str = "gemini-2.5-flash"
