@@ -38,7 +38,6 @@ async def _fake_stream_answer(history, question, system_prompt):
 
 async def _consume(
     monkeypatch, *, textbook_result=None, spy: dict | None = None, retrieved=None,
-    save_raises: bool = False,
 ):
     """chat_stream을 최소 목으로 구동해 방출 SSE 이벤트 목록 + 스케줄된 코루틴 반환."""
     import asyncio

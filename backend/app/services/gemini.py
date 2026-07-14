@@ -44,26 +44,6 @@ def get_client() -> genai.Client:
     return _client
 
 
-def _build_contents(
-    history: list[tuple[str, str]], question: str
-) -> list[types.Content]:
-    """history = ordered [(question, answer), ...] from root to parent."""
-    contents: list[types.Content] = []
-    for q, a in history:
-        if q:
-            contents.append(
-                types.Content(role="user", parts=[types.Part.from_text(text=q)])
-            )
-        if a:
-            contents.append(
-                types.Content(role="model", parts=[types.Part.from_text(text=a)])
-            )
-    contents.append(
-        types.Content(role="user", parts=[types.Part.from_text(text=question)])
-    )
-    return contents
-
-
 # Per-block instruction wrappers. The wrapper text + its context together form
 # one prompt "part"; parts are joined with "\n\n". Keeping the exact strings in
 # one place lets compose_system_structured() report each part's char span (D35).
@@ -181,50 +161,6 @@ def compose_system_structured(
         blocks.append(block)
         cursor = end + sep
     return system_prompt, blocks
-
-
-# Public alias so callers (e.g. turn logging) can capture the exact system
-# prompt that stream_answer will use.
-def compose_system_instruction(
-    reference_context: str | None,
-    rag_context: str | None = None,
-    comparison_context: str | None = None,
-) -> str:
-    return compose_system_structured(
-        reference_context, rag_context, comparison_context
-    )[0]
-
-
-async def stream_answer(
-    history: list[tuple[str, str]],
-    question: str,
-    reference_context: str | None = None,
-    rag_context: str | None = None,
-    comparison_context: str | None = None,
-) -> AsyncIterator[str]:
-    """Yield answer text deltas for the SSE `token` events.
-
-    `reference_context` = imported other-branch content (Stage 3a).
-    `rag_context` = chunks from files linked to the branch (Stage 3b-2).
-    `comparison_context` = one-time referenced branches for comparison (D15).
-    All are injected separately from the live ancestor chain.
-    """
-    client = get_client()
-    contents = _build_contents(history, question)
-    config = types.GenerateContentConfig(
-        system_instruction=compose_system_instruction(
-            reference_context, rag_context, comparison_context
-        )
-    )
-    overlay = await app_settings.get_overlay()
-    stream = await client.aio.models.generate_content_stream(
-        model=app_settings.as_str(overlay, "chat_model", settings.gemini_chat_model),
-        contents=contents,
-        config=config,
-    )
-    async for chunk in stream:
-        if chunk.text:
-            yield chunk.text
 
 
 _OCR_PROMPT = (

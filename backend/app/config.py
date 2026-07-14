@@ -1,6 +1,6 @@
 """Application settings.
 
-Loads configuration from the repository ROOT `.env` (one level above `backend/`).
+Loads configuration from `backend/.env` (the folder that contains `app/`).
 Secrets are never hardcoded — pydantic-settings reads them from env / .env.
 """
 
