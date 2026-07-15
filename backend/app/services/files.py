@@ -8,6 +8,9 @@ request-time reads and use the caller's RLS-scoped UserClient.
 
 from __future__ import annotations
 
+import logging
+import re
+import unicodedata
 import uuid
 from typing import Any
 
@@ -20,12 +23,35 @@ from .supabase_client import UserClient
 from .upstage import UPSTAGE_PARSE_MAX_BYTES
 
 settings = get_settings()
+logger = logging.getLogger("nodi.files")
 
 FILE_SELECT = (
     "id,owner_id,space_kind,space_ref,uploader_id,kind,storage_path,mime,"
     "size_bytes,status,chunk_total,chunk_done,error,session_id,position_x,"
-    "position_y,created_at,updated_at"
+    "position_y,name,created_at,updated_at"
 )
+
+# D79: 스토리지 키에 허용되는 ASCII 문자 — Supabase Storage는 비ASCII 키를
+# InvalidKey(400)로 거부한다(2026-07-15 라이브 실측: 한글 키는 NFC/NFD 불문 전부
+# 거부, ASCII는 공백·괄호 포함 허용). 이 집합 밖 문자는 키에서 `_`로 치환한다.
+_STORAGE_KEY_DISALLOWED = re.compile(r"[^A-Za-z0-9._()\- ]")
+
+
+def _storage_key_name(filename: str | None, ext: str) -> str:
+    """스토리지 키용 ASCII-only 파일명(D79). 원본 stem에서 허용 문자만 남기고
+    나머지는 `_`로 치환→연속 `_` 축약→앞뒤 공백·`.` strip→100자 cap, 빈 stem은
+    "file"로 대체한 뒤 D75에서 검증된 소문자 `ext`를 붙여 재조립한다. 결과 키는
+    항상 ASCII-only가 되어 Supabase Storage의 InvalidKey(400)를 피한다.
+    (표시용 원본 파일명은 files.name에 별도 보존 — 사용자에겐 원본이 노출된다.)"""
+    raw = filename or ""
+    stem = raw.rsplit(".", 1)[0]  # 확장자 제거(점 없으면 원문 그대로)
+    stem = _STORAGE_KEY_DISALLOWED.sub("_", stem)
+    stem = re.sub(r"_+", "_", stem).strip(" .")
+    if not stem:
+        stem = "file"
+    stem = stem[:100]
+    return f"{stem}.{ext}"
+
 
 # D75: 업로드 형식 화이트리스트 — _extract_text(embedding_worker)의 실제 처리
 # 능력과 일치시킨다(Upstage Document Parse: pdf/이미지, UTF-8 디코드: txt/md).
@@ -157,12 +183,29 @@ async def upload_file(
         )
 
     file_id = str(uuid.uuid4())
-    safe_name = (filename or "upload").replace("/", "_").replace("\\", "_")
+    # D79: 표시명은 NFC 정규화 원본을 보존한다(macOS는 파일명을 NFD로 전송 →
+    # 정규화하지 않으면 자모 분리 상태로 저장됨). files.name에 저장해 UI에 노출.
+    display_name = unicodedata.normalize("NFC", (filename or "upload")).strip()[:200]
+    # 스토리지 키는 ASCII 강제(위 실측 근거). 원본은 위 display_name이 보존한다.
+    safe_name = _storage_key_name(filename, ext)
     storage_path = f"{owner_id}/{file_id}/{safe_name}"
 
-    await service.storage_upload(
-        settings.storage_bucket, storage_path, data, mime or "application/octet-stream"
-    )
+    # storage 오류(httpx 등)를 502로 변환 — 지금은 그대로 500 트레이스로 샌다.
+    try:
+        await service.storage_upload(
+            settings.storage_bucket,
+            storage_path,
+            data,
+            mime or "application/octet-stream",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("스토리지 업로드 실패: path=%s", storage_path)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="저장소 업로드에 실패했습니다.",
+        )
 
     rows = await service.insert(
         "files",
@@ -174,6 +217,7 @@ async def upload_file(
             "uploader_id": owner_id,
             "kind": kind,
             "storage_path": storage_path,
+            "name": display_name,
             "mime": mime,
             "size_bytes": len(data),
             "status": "uploaded",

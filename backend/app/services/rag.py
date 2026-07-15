@@ -183,17 +183,21 @@ def build_sources(
 async def _file_names(
     client: UserClient, file_ids: list[str]
 ) -> dict[str, str]:
-    """Map file_id -> filename (storage_path basename) in one query."""
+    """Map file_id -> 표시명 in one query. D79: files.name(원본 표시명) 우선,
+    구파일(name NULL — 백필 전)은 storage_path basename으로 폴백."""
     if not file_ids:
         return {}
     rows = await client.select(
         "files",
         {
             "id": f"in.({','.join(file_ids)})",
-            "select": "id,storage_path",
+            "select": "id,name,storage_path",
         },
     )
-    return {r["id"]: _file_basename(r.get("storage_path")) for r in rows}
+    return {
+        r["id"]: (r.get("name") or _file_basename(r.get("storage_path")))
+        for r in rows
+    }
 
 
 async def class_material_file_ids(
@@ -452,7 +456,7 @@ async def suggest_files(
                 "space_kind": f"eq.{space_kind}",
                 "space_ref": f"eq.{space_ref}",
                 "status": "eq.indexed",
-                "select": "id,storage_path,mime,kind",
+                "select": "id,storage_path,mime,kind,name",
             },
         )
         if not files:
@@ -507,8 +511,10 @@ async def suggest_files(
                 best[fid] = {
                     "file_id": fid,
                     "distance": dist if dist is not None else 1.0,
-                    # filename from storage_path "{owner}/{file_id}/{name}".
-                    "name": (by_id[fid].get("storage_path") or "").split("/")[-1],
+                    # D79: 표시명은 files.name 우선, 구파일은 storage_path
+                    # "{owner}/{file_id}/{name}" basename으로 폴백(_file_names와 동일).
+                    "name": by_id[fid].get("name")
+                    or _file_basename(by_id[fid].get("storage_path")),
                     "sample": (c.get("chunk_text") or "")[:300],
                     "kind": by_id[fid].get("kind"),
                 }
