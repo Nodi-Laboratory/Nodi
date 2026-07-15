@@ -17,6 +17,7 @@ from ..config import get_settings
 from . import app_settings
 from .service_client import ServiceClient
 from .supabase_client import UserClient
+from .upstage import UPSTAGE_PARSE_MAX_BYTES
 
 settings = get_settings()
 
@@ -35,6 +36,25 @@ ALLOWED_UPLOAD_EXTENSIONS = frozenset(
 UNSUPPORTED_TYPE_DETAIL = (
     "지원 형식: PDF, 이미지(PNG/JPG/WEBP/GIF), 텍스트(TXT/MD)"
 )
+
+# D77: 이미지는 페이지 분할(D78)이 불가능해 파서 하드 리밋을 넘을 수 없다.
+IMAGE_UPLOAD_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "webp", "gif"})
+OVERSIZED_IMAGE_DETAIL = "이미지 파일은 50MB 이하만 업로드할 수 있습니다."
+
+
+def resolve_upload_max_bytes(overlay: dict[str, Any], kind: str) -> int:
+    """D77: kind별 업로드 상한 — class_material(교사 자료)만 대용량 허용."""
+    if kind == "class_material":
+        return app_settings.as_int(
+            overlay,
+            "class_material_max_bytes",
+            settings.class_material_max_bytes,
+            1024 * 1024,
+            512 * 1024 * 1024,
+        )
+    return app_settings.as_int(
+        overlay, "file_max_bytes", settings.file_max_bytes, 1024, 100 * 1024 * 1024
+    )
 
 
 async def _assert_class_member(
@@ -123,13 +143,17 @@ async def upload_file(
             detail="Empty file.",
         )
     overlay = await app_settings.get_overlay()
-    max_bytes = app_settings.as_int(
-        overlay, "file_max_bytes", settings.file_max_bytes, 1024, 100 * 1024 * 1024
-    )
+    max_bytes = resolve_upload_max_bytes(overlay, kind)
     if len(data) > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File exceeds {max_bytes} bytes.",
+        )
+    # D77: 이미지는 분할 파싱(D78) 불가 — 파서 하드 리밋 초과 시 사전 거절.
+    if ext in IMAGE_UPLOAD_EXTENSIONS and len(data) > UPSTAGE_PARSE_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=OVERSIZED_IMAGE_DETAIL,
         )
 
     file_id = str(uuid.uuid4())

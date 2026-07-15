@@ -107,7 +107,11 @@ class Settings(BaseSettings):
     # Supabase Storage bucket for uploaded files.
     storage_bucket: str = "files"
     # Upper bound on a single uploaded file (bytes) — guard before processing.
-    file_max_bytes: int = 25 * 1024 * 1024
+    # D77: 학생·개인 업로드 25→50MB 상향(2026-07-15 사용자 결정).
+    file_max_bytes: int = 50 * 1024 * 1024
+    # D77: 학급 자료(class_material, 교사 전용) 전용 상한 — 대용량 교과서 PDF.
+    # Upstage 파서 하드 리밋(요청당 50MB)은 D78 PDF 분할 파싱으로 우회한다.
+    class_material_max_bytes: int = 500 * 1024 * 1024
 
     # --- File RAG search + tagging (Stage 3b-2) ---
     rag_top_k: int = 5  # chunks retrieved per query from linked files

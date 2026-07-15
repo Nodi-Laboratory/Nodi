@@ -38,6 +38,12 @@ _MAX_RETRIES = 3  # 429/5xx/전송 오류 재시도 상한
 _POLL_SECONDS = 5.0  # async 파싱 폴링 간격
 _POLL_MAX_SECONDS = 900.0  # async 파싱 전체 대기 상한(무한 루프 방지)
 
+# D78: Document Parse 요청당 파일 크기 하드 리밋(공식 문서 50MB). 초과 PDF는
+# 페이지 분할 후 조각별 파싱(이미지는 분할 불가 — 업로드 단계 D77이 거절).
+UPSTAGE_PARSE_MAX_BYTES = 50 * 1024 * 1024
+_SEGMENT_TARGET_BYTES = 48 * 1024 * 1024  # 직렬화 오버헤드 마진
+_SEGMENT_CONCURRENCY = 3  # 조각 파싱 동시성(요청 폭주 방지)
+
 
 def _base() -> str:
     return settings.upstage_base_url.rstrip("/")
@@ -203,7 +209,87 @@ def _parse_form() -> dict:
 async def parse_document(data: bytes, filename: str) -> str:
     """PDF/이미지 바이트 -> markdown 텍스트.
 
-    sync 경로(<=100p) 우선, 페이지 상한 초과 시 async 제출 + 폴링으로 폴백.
+    D78: 50MB 초과 PDF는 페이지-range 조각으로 분할해 조각별로 파싱한 뒤
+    페이지 순으로 연결한다(Upstage 요청당 하드 리밋 우회). 그 외는 단일
+    요청 경로. 파싱 실패는 raise — 호출부(워커)가 잡 실패로 처리한다.
+    """
+    if filename.lower().endswith(".pdf") and len(data) > UPSTAGE_PARSE_MAX_BYTES:
+        return await _parse_large_pdf(data, filename)
+    return await _parse_single(data, filename)
+
+
+def _pdf_segments(
+    data: bytes,
+    target: int = _SEGMENT_TARGET_BYTES,
+    hard: int = UPSTAGE_PARSE_MAX_BYTES,
+) -> list[bytes]:
+    """PDF를 페이지-range 조각(각 직렬화 크기 <= hard)으로 나눈다(순서 보존).
+
+    페이지당 평균 바이트로 1차 그룹(타깃 이하 목표)을 잡고, 직렬화가 hard를
+    넘는 그룹은 이분해 재시도한다(pypdf가 공유 리소스를 조각마다 복사해
+    조각 합이 원본보다 커질 수 있음). 단일 페이지가 hard를 넘으면 분할
+    불가 — raise. CPU 바운드 — 호출부가 asyncio.to_thread로 감싼다.
+    """
+    from io import BytesIO
+
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(BytesIO(data))
+    total_pages = len(reader.pages)
+    if total_pages == 0:
+        return []
+
+    def serialize(start: int, end: int) -> bytes:  # [start, end)
+        writer = PdfWriter()
+        for i in range(start, end):
+            writer.add_page(reader.pages[i])
+        buf = BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
+
+    out: list[bytes] = []
+
+    def emit(start: int, end: int) -> None:
+        seg = serialize(start, end)
+        if len(seg) <= hard:
+            out.append(seg)
+            return
+        if end - start <= 1:
+            raise RuntimeError(
+                f"PDF 페이지 {start + 1}이 단독으로 {hard}B 초과 — 분할 불가"
+            )
+        mid = (start + end) // 2
+        emit(start, mid)
+        emit(mid, end)
+
+    per_page = max(1, len(data) // total_pages)
+    step = max(1, target // per_page)
+    for s in range(0, total_pages, step):
+        emit(s, min(s + step, total_pages))
+    return out
+
+
+async def _parse_large_pdf(data: bytes, filename: str) -> str:
+    """D78: 대용량 PDF — 분할(스레드) 후 조각별 병렬 파싱, 페이지 순 연결."""
+    segments = await asyncio.to_thread(
+        _pdf_segments, data, _SEGMENT_TARGET_BYTES, UPSTAGE_PARSE_MAX_BYTES
+    )
+    logger.info(
+        "D78 분할 파싱: %s %dB -> %d조각", filename, len(data), len(segments)
+    )
+    sem = asyncio.Semaphore(_SEGMENT_CONCURRENCY)
+
+    async def parse_one(idx: int, seg: bytes) -> str:
+        async with sem:
+            return await _parse_single(seg, f"{filename}.part{idx + 1}.pdf")
+
+    parts = await asyncio.gather(*(parse_one(i, s) for i, s in enumerate(segments)))
+    return "\n\n".join(p for p in parts if p)
+
+
+async def _parse_single(data: bytes, filename: str) -> str:
+    """단일 요청 파싱 — sync(<=100p) 우선, 페이지 상한 초과 시 async 폴백.
+
     파싱 실패는 raise — 호출부(워커)가 잡 실패로 처리한다.
     """
     async with httpx.AsyncClient(timeout=_PARSE_TIMEOUT) as client:
