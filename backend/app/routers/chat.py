@@ -34,7 +34,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
-from ..services import exaone, gemini, memory, rag
+from ..services import exaone, gemini, memory, rag, session_context
 from ..services import sessions as svc
 from ..services.supabase_client import UserClient
 from ..services.turn_log import TurnLog
@@ -147,6 +147,7 @@ async def chat_stream(
         (reference_context, reference_node_ids),
         rag_result,
         (comparison_context, comparison_node_ids, comparison_sources),
+        session_file_result,
     ) = await asyncio.gather(
         memory.build_reference_context(client, body.session_id, chain, by_id),
         rag.build_rag_context(
@@ -160,9 +161,13 @@ async def chat_stream(
         memory.build_comparison_context(
             client, body.reference_node_ids or [], chain, by_id
         ),
+        # D83: 세션에 올린 학생 파일 전문(임베딩 없음) — best-effort.
+        session_context.build_session_file_context(client, body.session_id),
     )
     rag_context = rag_result["block"] if rag_result else None
     rag_sources = rag_result["sources"] if rag_result else []
+    session_file_block = session_file_result["block"] if session_file_result else None
+    session_file_sources = session_file_result["files"] if session_file_result else []
     existing_root = session.get("root_node_id")
 
     # Turn log (D25) + structured prompt composition (D35). compose_system_structured
@@ -172,6 +177,8 @@ async def chat_stream(
         reference_context,
         rag_context,
         comparison_context,
+        session_file_context=session_file_block,
+        session_file_sources=session_file_sources,
         rag_sources=rag_sources,
         reference_node_ids=reference_node_ids,
         comparison_node_ids=comparison_node_ids,

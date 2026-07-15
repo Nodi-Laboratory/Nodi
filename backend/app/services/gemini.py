@@ -34,6 +34,11 @@ _WRAP_COMPARISON = (
     "아래는 사용자가 이번 질문에서만 비교 목적으로 참조한 다른 분기들의 "
     "내용입니다. 현재 분기와 비교/대조해 답하되, 출처를 구분하세요.\n\n"
 )
+_WRAP_SESSION_FILES = (
+    "아래는 사용자가 이 세션에 올린 파일의 전문입니다. 질문과 관련된 근거로 "
+    "우선 활용하고, 파일에 없는 내용은 일반 지식으로 보완하되 출처를 "
+    "구분하세요.\n\n"
+)
 
 
 def compose_system_structured(
@@ -41,6 +46,8 @@ def compose_system_structured(
     rag_context: str | None = None,
     comparison_context: str | None = None,
     *,
+    session_file_context: str | None = None,
+    session_file_sources: list[dict] | None = None,
     rag_sources: list[dict] | None = None,
     reference_node_ids: list[str] | None = None,
     comparison_node_ids: list[str] | None = None,
@@ -53,6 +60,7 @@ def compose_system_structured(
     - `reference_context`: imported other-branch content (Stage 3a memory link).
     - `rag_context`: chunks from files linked to the branch (Stage 3b-2 RAG).
     - `comparison_context`: one-time referenced branches for comparison (D15).
+    - session_file_context: 세션에 올린 학생 파일 전문(D83, TASK 3).
 
     Returns ``(system_prompt, blocks)`` where each block's ``prompt_span`` is the
     ``[start, end)`` char range of that part inside ``system_prompt``.
@@ -61,6 +69,20 @@ def compose_system_structured(
     parts: list[tuple[str, str, str | None, str | None, list | None, list | None]] = [
         ("system_base", base_instruction or _SYSTEM_INSTRUCTION, None, None, None, None)
     ]
+    # D85: 세션 파일 전문은 턴 간 불변(파일 추가/삭제 전까지) — system_base
+    # 직후 고정 배치로 Friendli 프리픽스 캐시(입력 단가·TTFT)를 살린다.
+    # 턴마다 변하는 memory/rag/comparison은 뒤에 둔다.
+    if session_file_context:
+        parts.append(
+            (
+                "session_files",
+                _WRAP_SESSION_FILES + session_file_context,
+                "세션에 올린 파일",
+                session_file_context,
+                None,
+                session_file_sources or [],
+            )
+        )
     if reference_context:
         parts.append(
             (
