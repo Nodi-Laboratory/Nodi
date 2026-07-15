@@ -1,0 +1,113 @@
+/* D83 세션 파일 바 — BottomBar(높이 128px, z-20) 위 부착, 가로 스크롤 칩 스트립.
+   BottomBar.module.css의 팔레트(--ink/--border/--shadow/--yellow)·z-index 컨벤션을
+   따른다(새 디자인 토큰·라이브러리 도입 없음). 빈 영역은 BottomBar와 동일하게 캔버스
+   팬을 통과시키고(pointer-events:none), 상호작용 요소만 auto로 되살린다. */
+.bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 128px; /* BottomBar 높이만큼 위 */
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 28px;
+  overflow-x: auto;
+  pointer-events: none;
+}
+.attach {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-family: var(--font-body, "Gaegu", sans-serif);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border, #f0e4c2);
+  background: #fff;
+  color: var(--ink, #2b2620);
+  box-shadow: var(--shadow, 0 2px 10px rgba(60, 45, 0, 0.08));
+  cursor: pointer;
+}
+.attach:hover:not(:disabled) {
+  border-color: var(--yellow, #ffc526);
+}
+.attach:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.hiddenInput {
+  display: none;
+}
+.chip {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  max-width: 340px;
+  font-family: var(--font-body, "Gaegu", sans-serif);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink, #2b2620);
+  border: 1px solid rgba(43, 38, 32, 0.12);
+  box-shadow: var(--shadow, 0 2px 10px rgba(60, 45, 0, 0.08));
+}
+.name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.badge {
+  color: #16a34a;
+  font-weight: 600;
+}
+.ready {
+  border-color: rgba(22, 163, 74, 0.4);
+}
+.failed {
+  border-color: #fca5a5;
+}
+.reason {
+  color: #dc2626;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remove {
+  display: inline-flex;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  padding: 0;
+}
+.remove:hover:not(:disabled) {
+  opacity: 1;
+}
+.remove:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.uploadError {
+  pointer-events: auto;
+  color: #dc2626;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

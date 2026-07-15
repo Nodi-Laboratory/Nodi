@@ -215,6 +215,10 @@ export interface FileRow {
   chunk_total: number | null;
   chunk_done: number | null;
   error?: string | null;
+  /** D83: 세션 컨텍스트로 연결된 세션(user_upload 전용). */
+  session_id?: string | null;
+  /** D84: 파일 전문 문자 수(예산 원장 — 워커 기록). */
+  context_chars?: number | null;
   created_at: string;
   /** 08 F: 낙관 삽입 미확정 — 캔버스가 파일 노드를 반투명 pending으로 렌더. */
   _pending?: boolean;

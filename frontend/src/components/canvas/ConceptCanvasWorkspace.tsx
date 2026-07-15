@@ -21,6 +21,7 @@ import ArtNode from "./ArtNode";
 import ConceptTreePanel from "./ConceptTreePanel";
 import TopBar from "./TopBar";
 import BottomBar from "./BottomBar";
+import SessionFilesBar from "./SessionFilesBar";
 import SessionDrawer from "./SessionDrawer";
 
 // Card center offset for focus/centering (CARD_CX = 카드 폭 절반, cardMetrics SSOT).
@@ -257,6 +258,8 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
           setCamera(focusCamera(vp(), { x: target.x, y: target.y }, 1))
         }
       />
+
+      <SessionFilesBar sessionId={activeSessionId} target={target} />
 
       <BottomBar onSend={send} busy={busy} reply={reply} />
 

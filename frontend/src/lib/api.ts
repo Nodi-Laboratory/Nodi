@@ -197,6 +197,8 @@ export async function uploadFile(
   file: File,
   opts?: {
     kind?: string;
+    /** D83: 세션 컨텍스트로 연결(user_upload 전용). */
+    session_id?: string;
   },
 ): Promise<FileRow> {
   const form = new FormData();
@@ -204,6 +206,7 @@ export async function uploadFile(
   form.append("space_kind", target.space_kind);
   if (target.space_ref) form.append("space_ref", target.space_ref);
   if (opts?.kind) form.append("kind", opts.kind);
+  if (opts?.session_id) form.append("session_id", opts.session_id);
   const res = await ensureOk(
     await fetch(`${API_BASE}/files`, {
       method: "POST",
@@ -217,6 +220,17 @@ export async function uploadFile(
 export async function listFiles(target: SpaceTarget): Promise<FileRow[]> {
   const res = await ensureOk(
     await fetch(`${API_BASE}/files?${spaceParams(target).toString()}`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+/** D83: 세션 컨텍스트 파일 목록(업로드 순 — 주입 순서와 동일). */
+export async function listSessionFiles(sessionId: string): Promise<FileRow[]> {
+  const params = new URLSearchParams({ session_id: sessionId });
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/files?${params.toString()}`, {
       headers: await authHeaders(),
     }),
   );

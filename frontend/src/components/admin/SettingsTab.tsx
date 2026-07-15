@@ -70,6 +70,20 @@ const SETTINGS: Record<string, SettingSpec> = {
     effect: "자동 주입 엄격도",
     wired: "live",
   },
+  session_context_max_chars: {
+    label: "세션 파일 컨텍스트 예산",
+    group: "RAG 주입",
+    widget: "number",
+    min: 10000,
+    max: 300000,
+    step: 10000,
+    unit: "자",
+    description:
+      "학생이 세션에 올린 파일 전문을 프롬프트에 주입할 때 세션당 합산 문자 상한(D84). 초과 파일은 업로드 처리 시 거부됩니다. 이미 저장된 파일에는 소급 거부 없이 주입 시 초과분 파일만 제외됩니다.",
+    effect: "세션 파일 주입 한도",
+    wired: "deferred",
+    risk: "new-only",
+  },
 
   // ── 임베딩 ──
   file_max_bytes: {

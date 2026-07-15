@@ -11,6 +11,7 @@ import {
   listClassMaterials,
   listClassStudents,
   listFiles,
+  listSessionFiles,
   listSessions,
   listStudentClassSessions,
   listTeacherClasses,
@@ -132,6 +133,25 @@ export function useFiles(target: SpaceTarget) {
   return useQuery<FileRow[]>({
     queryKey: filesKey(target),
     queryFn: () => listFiles(target),
+    staleTime: STALE.files,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const active = data?.some((f) => FILE_IN_PROGRESS.has(f.status));
+      return active ? 2500 : false;
+    },
+  });
+}
+
+export function sessionFilesKey(sessionId: string | null) {
+  return ["files", "session", sessionId] as const;
+}
+
+/** D83: 세션 컨텍스트 파일 목록. 처리 중이면 2.5초 폴링(기존 패턴 재사용). */
+export function useSessionFiles(sessionId: string | null) {
+  return useQuery<FileRow[]>({
+    queryKey: sessionFilesKey(sessionId),
+    queryFn: () => listSessionFiles(sessionId as string),
+    enabled: !!sessionId,
     staleTime: STALE.files,
     refetchInterval: (query) => {
       const data = query.state.data;
