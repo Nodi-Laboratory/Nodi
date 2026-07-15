@@ -36,23 +36,7 @@ interface SettingSpec {
   risk?: Risk;
 }
 
-const MODEL_OPTIONS = [
-  { value: "gemini-2.5-flash", label: "2.5 Flash (정확·약간 느림)" },
-  { value: "gemini-2.5-flash-lite", label: "2.5 Flash Lite (빠름·저렴)" },
-];
-
 const SETTINGS: Record<string, SettingSpec> = {
-  // ── 모델 ──
-  chat_model: {
-    label: "대화 모델",
-    group: "모델",
-    widget: "select",
-    options: MODEL_OPTIONS,
-    description: "답변 생성에 쓰는 모델. Lite는 빠르고 저렴, Flash는 더 정확.",
-    effect: "답변 품질·속도·비용",
-    wired: "live",
-  },
-
   // ── RAG 주입 ──
   rag_top_k: {
     label: "RAG 주입 청크 수(top-k)",
@@ -84,56 +68,6 @@ const SETTINGS: Record<string, SettingSpec> = {
     description:
       "검색된 전(全) 청크에 적용하는 거리 컷오프(distance = 1 - score). 낮을수록 엄격 — 인사말·무관 질의 턴의 오염을 막습니다(D82).",
     effect: "자동 주입 엄격도",
-    wired: "live",
-  },
-
-  // ── ReAct ──
-  react_max_steps: {
-    label: "ReAct 최대 스텝",
-    group: "ReAct",
-    widget: "slider",
-    min: 1,
-    max: 10,
-    step: 1,
-    description: "에이전트가 도구를 호출하는 최대 추론 단계 수.",
-    effect: "복잡한 질문 처리력 · 응답 시간",
-    wired: "live",
-  },
-  react_max_tokens: {
-    label: "ReAct 최대 토큰",
-    group: "ReAct",
-    widget: "number",
-    min: 10000,
-    max: 200000,
-    step: 10000,
-    unit: "토큰",
-    description: "한 턴에서 쓰는 최대 토큰 예산.",
-    effect: "맥락 길이 · 비용",
-    wired: "live",
-  },
-
-  // ── 노드 ──
-  max_tags_per_node: {
-    label: "노드당 최대 태그",
-    group: "노드",
-    widget: "slider",
-    min: 1,
-    max: 5,
-    step: 1,
-    description: "한 노드에 붙는 개념 태그 최대 개수.",
-    effect: "태그 밀도",
-    wired: "live",
-  },
-  node_label_max_chars: {
-    label: "노드 라벨 최대 길이",
-    group: "노드",
-    widget: "slider",
-    min: 4,
-    max: 16,
-    step: 1,
-    unit: "자",
-    description: "그래프 노드 아래 라벨의 최대 글자 수.",
-    effect: "그래프 가독성",
     wired: "live",
   },
 
@@ -196,11 +130,8 @@ const SETTINGS: Record<string, SettingSpec> = {
 };
 
 const GROUP_ORDER = [
-  "모델",
   "RAG 주입",
   "임베딩",
-  "ReAct",
-  "노드",
   "기타",
 ];
 
