@@ -41,7 +41,13 @@
 
 ## TASK 2. 선생님 워크스페이스 파일 입력 및 RAG 구축
 
-- [ ] 완료
+- [x] 완료 (2026-07-15 — dev 커밋 68ff9ad..c7ac863 10개(D73~D78), task 리뷰 6건 +
+  UX 게이트 1건 전부 Approved, 통합 E2E PASS(자동 주입·출처 칩 라이브/재수화·거리
+  게이트·삭제 동선 실측 — Important였던 게이트 과보수는 0.60 상향으로 해소), 최종
+  브랜치 리뷰 Approved(Critical/Important 0, Minor 6건 백로그 — 원장 참조).
+  잔여 운영 메모: ① 배포 시 마이그레이션 0029·0030 적용(admin 노브 노출·기본 상향),
+  ② Supabase Storage 전역 파일 상한을 500MB 이상으로 상향해야 D77 실효,
+  ③ uvicorn 로깅에 nodi.* INFO 핸들러 부착 권장(RAG 주입 관측성).)
 
 **범위**: 선생님이 워크스페이스(`space_kind='class'`)에 수업용 교과서·학습 자료를
 업로드하면 청킹 → 임베딩 → Qdrant로 **RAG를 구축**하고, 학생 질의 시 top-K 청크가
@@ -106,3 +112,11 @@
   `docs/superpowers/specs/2026-07-14-remove-textbook-rag-design.md`.
 - 병렬 세션이 같은 브랜치에서 작업 중일 수 있음 — 에이전트는 **자기 파일만
   `git add`** (전체 스테이징 금지).
+- **TASK 2 확장 — 업로드 용량(사용자 결정, 2026-07-15)**: 교사 class_material
+  500MB / 학생 업로드 50MB(D77), 50MB 초과 PDF는 분할 파싱(D78 — Upstage 요청당
+  50MB 하드 리밋 우회). 스펙:
+  `docs/superpowers/specs/2026-07-15-class-material-large-upload-design.md`.
+- **D73 거리 게이트 0.60** (2026-07-15, Manager 자율 결정): 마무리 E2E 실측 —
+  온토픽 질의 거리 0.497~0.561이 기본 0.50에서 3/4 차단되어 출처 없는 환각으로
+  새는 것을 확인, 인사말(0.870)과 마진 0.27을 남기고 0.60으로 상향
+  (config·0029 시드·admin 메타 3자 동기).

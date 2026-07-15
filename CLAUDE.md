@@ -30,8 +30,8 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 - **학생도 워크스페이스에서 파일을 업로드할 수 있다.** 단 이 파일은 RAG로 구축하지
   않고 **해당 세션의 컨텍스트로만 전문(全文) 주입**한다. 파일 용량은 EXAONE 컨텍스트
   크기(256K 토큰)에 맞추어 제한한다.
-  ⚠️ 설계 방향이며 **아직 미구현**: 현재 코드는 모든 파일을 RAG 경로로 처리하고
-  용량 제한도 없다.
+  ⚠️ 설계 방향이며 **아직 미구현**(TASK 3): 현재 코드는 학생 파일도 RAG 경로로
+  처리하며, 용량은 바이트 상한(D77: 학생 50MB)뿐 컨텍스트 예산 제한은 없다.
 - 학생은 워크스페이스 세션 외에 **개인 세션**(`space_kind='personal'`)을 개설해
   자유롭게 질의할 수 있다.
 - 교과서 전역 코퍼스(admin 인제스트 경로)는 **2026-07-14 완전 제거됨**(TASK 1,
@@ -46,8 +46,10 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
 
 ## 핵심 파이프라인
 
-- **파일 인제스트** (`services/embedding_worker.py`): 업로드 → `embedding_split` 잡
-  → Upstage Document Parse → 문단 인지 청킹(1,200자/오버랩 150자, admin 튜너블)
+- **파일 인제스트** (`services/embedding_worker.py`): 업로드(형식 화이트리스트 D75,
+  용량 kind별 D77 — 교사 자료 500MB/학생 50MB) → `embedding_split` 잡
+  → Upstage Document Parse(50MB 초과 PDF는 페이지 분할 파싱, D78)
+  → 문단 인지 청킹(1,200자/오버랩 150자, admin 튜너블)
   → `embedding_batch` 잡 팬아웃(64청크 단위) → Upstage `embedding-passage` 4096d
   → **벡터는 Qdrant, 청크 본문·상태는 Supabase `file_chunks`**.
 - **채팅 턴** (`routers/chat.py` `chat_stream`):
