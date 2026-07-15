@@ -14,7 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # backend/app/config.py -> parents[0]=app, [1]=backend, [2]=repo root
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # 설정은 backend 폴더 내부의 .env를 읽는다(루트 .env 아님). 전체 설정(Supabase·
-# EXAONE·EXAONE_ENDPOINT_ID·Gemini 등)이 backend/.env에 있다.
+# EXAONE·EXAONE_ENDPOINT_ID·Upstage·Qdrant 등)이 backend/.env에 있다.
 BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 
@@ -63,14 +63,8 @@ class Settings(BaseSettings):
 
     # 카드 배치·좌표는 프론트 소유(d3-force) — 서버 위치 계산 상수는 제거됨.
 
-    # --- AI (Gemini) — 비임베딩 LLM 작업만 (chat/label/tag; 임베딩은 Upstage) ---
-    google_gemini_api_key: str = ""
-    # Chat model (streaming). Label model is a lighter/cheaper flash variant.
-    # Runtime override (admin) lands in a later stage; static config for now.
-    gemini_chat_model: str = "gemini-2.5-flash"
-    gemini_label_model: str = "gemini-2.5-flash-lite"
-    # Concept tagging uses the same lightweight tier by default.
-    gemini_tag_model: str = "gemini-2.5-flash-lite"
+    # --- 노드 라벨/태그 캡 (자동 라벨·개념 태그 상한) ---
+    # D80: 생산자(Gemini 라벨/태깅 호출)는 제거됐고 캡 상수만 남는다.
     # Hard cap on auto-generated node labels (design: <= 10 chars).
     node_label_max_chars: int = 10
     # Auto concept tags per node (design: 1..3).
@@ -82,12 +76,8 @@ class Settings(BaseSettings):
     # Truncate each imported answer in the reference block (char budget).
     memory_answer_char_cap: int = 400
 
-    # --- File RAG embeddings (Stage 3b-1; Upstage/Qdrant로 이전) ---
-    # 임베딩은 Upstage embedding-passage/query 4096d + Qdrant로 이전됨.
-    # gemini_embedding_model 키는 이전 완료 전까지 참조하는 코드가 남아 있어
-    # 유지(비활성 예정 — 새 코드는 services/upstage.py를 사용할 것).
-    gemini_embedding_model: str = "gemini-embedding-001"
-    embedding_dimension: int = 4096
+    # 임베딩은 Upstage embedding-passage/query 4096d + Qdrant로 완전 이전됨
+    # (D80: 구 Gemini 임베딩 모델·차원 설정 키 제거).
     # --- SVG art search (concept-card illustrations) ---
     # Cosine distance cutoff for a query->art match (0=identical). Above this, no
     # illustration is shown for the concept.
@@ -113,7 +103,7 @@ class Settings(BaseSettings):
     # Upstage 파서 하드 리밋(요청당 50MB)은 D78 PDF 분할 파싱으로 우회한다.
     class_material_max_bytes: int = 500 * 1024 * 1024
 
-    # --- File RAG search + tagging (Stage 3b-2) ---
+    # --- File RAG search (Stage 3b-2) ---
     rag_top_k: int = 5  # chunks retrieved per query from linked files
     # --- D73: 학급 자료 자동 RAG 스코프 (TASK 2) ---
     # 학급 세션이면 그 학급의 class_material(indexed/partial)을 링크 없이도
@@ -124,13 +114,8 @@ class Settings(BaseSettings):
     # 거리가 0.50~0.56에 분포(E2E 실측)해 기존 0.50이 온토픽을 차단하고 인사말은
     # 0.87이라, 마진을 확보하며 0.50→0.60 상향(2026-07-15).
     class_material_rag_max_distance: float = 0.60
-    file_tag_max: int = 50  # concept tags per file (denser than node 1..3)
-    # Chars of file text sampled for tag extraction.
-    file_tag_sample_chars: int = 6000
 
     # --- RAG polish (Stage 3b-3) ---
-    # Multimodal model for image OCR (text extraction from images / scans).
-    ocr_model: str = "gemini-2.5-flash"
     # File-suggestion ("연결할까요?") tuning.
     # D56: top-N proposed is boostrapped to 1 — suggestions now require a single
     # CONFIDENT top match (was 3, which surfaced borderline extras).

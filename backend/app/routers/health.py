@@ -23,5 +23,4 @@ async def health() -> dict:
         "supabase_configured": bool(settings.supabase_url),
         "jwks_configured": bool(settings.jwks_url),
         "service_role_present": bool(settings.supabase_service_role_key),
-        "gemini_configured": bool(settings.google_gemini_api_key),
     }

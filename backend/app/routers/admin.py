@@ -94,7 +94,7 @@ async def put_setting(
     The value lands in app_settings AND, because every tunable call site now
     reads through the app_settings overlay (services/app_settings.py), takes
     LIVE effect — instantly in this process via bust_cache(), within the TTL
-    elsewhere. (Danger keys like embedding_dimension are guarded at the worker.)
+    elsewhere. (new-only 키는 신규 잡부터 적용된다 — 워커의 청킹 파라미터 등.)
     """
     client = UserClient.from_user(user)
     result = await client.upsert(

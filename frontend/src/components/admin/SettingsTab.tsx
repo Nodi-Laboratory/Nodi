@@ -61,15 +61,6 @@ const SETTINGS: Record<string, SettingSpec> = {
     effect: "라벨 품질·비용",
     wired: "live",
   },
-  tag_model: {
-    label: "태그 모델",
-    group: "모델",
-    widget: "select",
-    options: MODEL_OPTIONS,
-    description: "개념 태그 추출 모델.",
-    effect: "태그 품질·비용",
-    wired: "live",
-  },
   navigator_model: {
     label: "네비게이터 모델",
     group: "모델",
@@ -77,15 +68,6 @@ const SETTINGS: Record<string, SettingSpec> = {
     options: MODEL_OPTIONS,
     description: "추천 질문 생성 모델.",
     effect: "추천 질문 품질·비용",
-    wired: "live",
-  },
-  ocr_model: {
-    label: "OCR 모델",
-    group: "모델",
-    widget: "select",
-    options: MODEL_OPTIONS,
-    description: "이미지/스캔 자료에서 텍스트를 추출하는 모델.",
-    effect: "OCR 정확도·비용",
     wired: "live",
   },
 
@@ -360,32 +342,6 @@ const SETTINGS: Record<string, SettingSpec> = {
     effect: "경계 문맥 보존",
     wired: "deferred",
     risk: "new-only",
-  },
-  embedding_model: {
-    label: "임베딩 모델",
-    group: "임베딩",
-    widget: "select",
-    options: [
-      { value: "gemini-embedding-001", label: "gemini-embedding-001 (기본)" },
-    ],
-    description:
-      "자료/질의를 벡터로 변환하는 임베딩 모델. 모델이 바뀌면 임베딩 공간이 달라져 기존 청크와 비교 불가.",
-    effect: "검색 품질 · 기존 인덱스 호환성",
-    wired: "deferred",
-    risk: "danger",
-  },
-  embedding_dimension: {
-    label: "임베딩 차원",
-    group: "임베딩",
-    widget: "number",
-    min: 768,
-    max: 768,
-    step: 1,
-    description:
-      "임베딩 벡터 차원. DB 컬럼은 vector(768) 고정 — 다른 값은 워커가 잡을 실패 처리(DB 미파손).",
-    effect: "검색 인덱스 호환성",
-    wired: "deferred",
-    risk: "danger",
   },
 };
 

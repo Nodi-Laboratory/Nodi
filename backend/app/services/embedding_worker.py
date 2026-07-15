@@ -30,7 +30,7 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ..config import get_settings
-from . import app_settings, embedding, qdrant_store, tagging, upstage
+from . import app_settings, embedding, qdrant_store, upstage
 from .service_client import ServiceClient, get_service_client
 
 logger = logging.getLogger("nodi.embedding_worker")
@@ -425,12 +425,7 @@ async def _handle_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
 
 
 async def _finalize_file(svc: ServiceClient, file_id: str) -> None:
-    """Recompute progress; mark indexed/partial when no pending chunks remain.
-
-    When the file first transitions to 'indexed', kick off file tagging once
-    (best-effort). A conditional update (status != 'indexed') ensures only the
-    batch that performs the transition triggers tagging.
-    """
+    """Recompute progress; mark indexed/partial when no pending chunks remain."""
     embedded = await svc.count(
         "file_chunks", {"file_id": f"eq.{file_id}", "status": "eq.embedded"}
     )
@@ -450,41 +445,13 @@ async def _finalize_file(svc: ServiceClient, file_id: str) -> None:
             {"chunk_done": embedded, "status": "partial"},
         )
         return
-    # All chunks embedded -> indexed. Conditional so tagging fires exactly once.
-    rows = await svc.update(
+    # 모든 청크 임베딩 완료 -> indexed. 조건부 업데이트(status != 'indexed')로
+    # 동시 배치가 파일을 정확히 1회 종결하게 한다(D80: 파일 태깅 훅 제거).
+    await svc.update(
         "files",
         {"id": f"eq.{file_id}", "status": "neq.indexed"},
         {"chunk_done": embedded, "status": "indexed"},
     )
-    if rows:
-        await _tag_file(svc, file_id)
-
-
-async def _tag_file(svc: ServiceClient, file_id: str) -> None:
-    """Extract up to file_tag_max concepts from the file and link them (50 cap).
-
-    Best-effort: tagging failure never reverts the 'indexed' status.
-    """
-    try:
-        chunks = await svc.select(
-            "file_chunks",
-            {
-                "file_id": f"eq.{file_id}",
-                "status": "eq.embedded",
-                "select": "chunk_text",
-                "order": "seq.asc",
-                "limit": "40",
-            },
-        )
-        text = "\n\n".join(c.get("chunk_text") or "" for c in chunks)
-        names = await tagging.extract_file_concepts(text)
-        if names:
-            await svc.rpc(
-                "upsert_file_tags", {"p_file_id": file_id, "p_names": names}
-            )
-            logger.info("Tagged file=%s with %d concepts", file_id, len(names))
-    except Exception:  # noqa: BLE001 - tagging must not break indexing
-        logger.exception("File tagging failed for %s", file_id)
 
 
 async def requeue_file(svc: ServiceClient, file_id: str) -> str:

@@ -1,23 +1,12 @@
-"""Gemini access (google-genai).
+"""프롬프트 조립 전용(D35 span 단일 소스) — Gemini API 호출 없음(D80 정리).
 
-Stage 1 scope: stream a chat answer over an ancestor-chain context, and produce
-a short (<=10 char intent) label for a finished (question, answer) node.
-No tools / ReAct / RAG here — that is Stage 2+.
+compose_system_structured가 시스템 프롬프트 문자열과 블록별 span 메타데이터를
+한 곳에서 만들어, 저장된 프롬프트와 하이라이트 오프셋이 절대 어긋나지 않게 한다.
+Gemini API 경로(OCR·라벨·태깅)는 배포 환경에 키가 없어 한 번도 동작한 적 없어
+D80에서 제거했다 — 채팅 답변은 EXAONE, 임베딩·문서 파싱은 Upstage가 담당한다.
 """
 
 from __future__ import annotations
-
-import logging
-
-from fastapi import HTTPException, status
-from google import genai
-from google.genai import types
-
-from ..config import get_settings
-from . import app_settings
-
-logger = logging.getLogger("nodi.gemini")
-settings = get_settings()
 
 # A system instruction kept deliberately generic: nodi's AI is a general
 # conversational assistant; the tree is only a UX layer (no topic restriction).
@@ -26,20 +15,6 @@ _SYSTEM_INSTRUCTION = (
     "Answer the user's latest message using the prior conversation as context. "
     "Respond in the user's language."
 )
-
-_client: genai.Client | None = None
-
-
-def get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        if not settings.google_gemini_api_key:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="GOOGLE_GEMINI_API_KEY is not configured.",
-            )
-        _client = genai.Client(api_key=settings.google_gemini_api_key)
-    return _client
 
 
 # Per-block instruction wrappers. The wrapper text + its context together form
@@ -140,66 +115,3 @@ def compose_system_structured(
         blocks.append(block)
         cursor = end + sep
     return system_prompt, blocks
-
-
-_OCR_PROMPT = (
-    "Extract ALL readable text from this image, preserving reading order and "
-    "line/paragraph breaks. Output ONLY the extracted text (no commentary). "
-    "If there is no readable text, output nothing."
-)
-
-
-async def ocr_image_bytes(data: bytes, mime: str) -> str:
-    """OCR an image with the multimodal model. Returns '' on failure/empty."""
-    try:
-        client = get_client()
-        overlay = await app_settings.get_overlay()
-        resp = await client.aio.models.generate_content(
-            model=app_settings.as_str(overlay, "ocr_model", settings.ocr_model),
-            contents=[
-                types.Part.from_bytes(data=data, mime_type=mime),
-                types.Part.from_text(text=_OCR_PROMPT),
-            ],
-            config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            ),
-        )
-        return (resp.text or "").strip()
-    except Exception as exc:  # noqa: BLE001 - OCR failure surfaces as empty text
-        logger.warning("Image OCR failed: %s", exc)
-        return ""
-
-
-async def generate_label(question: str, answer: str) -> str | None:
-    """Short topic label for a node. Best-effort: returns None on failure."""
-    client = get_client()
-    overlay = await app_settings.get_overlay()
-    max_chars = app_settings.as_int(
-        overlay, "node_label_max_chars", settings.node_label_max_chars, 4, 16
-    )
-    prompt = (
-        "LANGUAGE RULE (most important): write the label in the SAME language as "
-        "the QUESTION below. Do NOT translate to any other language.\n"
-        "Summarize the topic of this Q&A as a very short label of at most "
-        f"{max_chars} characters. Output ONLY the label, no quotes, no "
-        "punctuation at the end.\n\n"
-        f"Q: {question}\nA: {answer}"
-    )
-    try:
-        resp = await client.aio.models.generate_content(
-            model=app_settings.as_str(
-                overlay, "label_model", settings.gemini_label_model
-            ),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=20, temperature=0.0
-            ),
-        )
-        text = (resp.text or "").strip().strip('"').strip()
-        if not text:
-            return None
-        # Hard-enforce the length cap (design: <=10 chars).
-        return text[:max_chars]
-    except Exception as exc:  # noqa: BLE001 - labeling must never break chat
-        logger.warning("Label generation failed: %s", exc)
-        return None
