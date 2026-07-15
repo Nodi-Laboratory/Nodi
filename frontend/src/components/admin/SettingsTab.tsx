@@ -179,6 +179,27 @@ const SETTINGS: Record<string, SettingSpec> = {
     effect: "근거 풍부함 · 맥락 길이 · 비용",
     wired: "live",
   },
+  class_material_rag_enabled: {
+    label: "학급 자료 자동 주입",
+    group: "RAG 주입",
+    widget: "toggle",
+    description:
+      "학급 세션에서 링크 없이도 학급 자료(class_material)를 검색 후보에 넣습니다(D73). 끄면 링크된 파일만 검색합니다.",
+    effect: "학급 자료 자동 RAG 여부",
+    wired: "live",
+  },
+  class_material_rag_max_distance: {
+    label: "학급 자료 거리 게이트",
+    group: "RAG 주입",
+    widget: "slider",
+    min: 0.1,
+    max: 0.9,
+    step: 0.05,
+    description:
+      "자동 스코프(비링크) 청크에만 적용하는 거리 컷오프(distance = 1 - score). 낮을수록 엄격 — 링크된 파일 청크는 게이트 없음.",
+    effect: "자동 주입 엄격도",
+    wired: "live",
+  },
 
   // ── 네비게이터 ──
   navigator_enabled: {
@@ -293,8 +314,22 @@ const SETTINGS: Record<string, SettingSpec> = {
     max: 104857600,
     step: 1048576,
     unit: "B",
-    description: "한 파일의 최대 업로드 크기(바이트). 26214400 = 25MB.",
+    description: "학생·개인 업로드 한 파일의 최대 크기(바이트). 52428800 = 50MB(기본).",
     effect: "업로드 허용 크기",
+    wired: "live",
+    risk: "safe",
+  },
+  class_material_max_bytes: {
+    label: "학급 자료 업로드 최대 크기",
+    group: "임베딩",
+    widget: "number",
+    min: 1048576,
+    max: 536870912,
+    step: 10485760,
+    unit: "B",
+    description:
+      "교사 학급 자료(class_material) 한 파일의 최대 크기. 524288000 = 500MB(기본). 50MB 초과 PDF는 분할 파싱(D78)로 처리.",
+    effect: "교사 자료 업로드 크기",
     wired: "live",
     risk: "safe",
   },
