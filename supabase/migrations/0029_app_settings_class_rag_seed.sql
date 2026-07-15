@@ -15,7 +15,8 @@ insert into public.app_settings (key, value) values
     -- 학급 자료 자동 주입 경로 킬 스위치.
     ('class_material_rag_enabled',      'true'::jsonb),
     -- 자동 스코프(비링크) 청크 거리 게이트 (distance = 1 - score, clamp 0.1~0.9).
-    ('class_material_rag_max_distance', '0.50'::jsonb)
+    -- E2E 실측(온토픽 0.50~0.56·인사말 0.87) 근거로 0.60 시드(2026-07-15 상향).
+    ('class_material_rag_max_distance', '0.60'::jsonb)
 on conflict (key) do nothing;
 
 -- End of 0029_app_settings_class_rag_seed.sql

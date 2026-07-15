@@ -7,7 +7,14 @@ build_rag_context가 학급 세션에서 링크 없이도 class_material을 검�
 
 import pytest
 
+from app.config import get_settings
 from app.services import rag as R
+
+
+def test_class_material_rag_max_distance_default_is_0_60():
+    """D73 거리 게이트 기본값 — E2E 실측(온토픽 0.50~0.56 분포·인사말 0.87)
+    근거로 0.50→0.60 상향(2026-07-15). 온토픽 4건 중 3건을 차단하던 회귀 방지."""
+    assert get_settings().class_material_rag_max_distance == 0.60
 
 
 class _FakeClient:

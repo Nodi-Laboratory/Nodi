@@ -120,8 +120,10 @@ class Settings(BaseSettings):
     # 검색 후보에 넣는다. enabled는 신규 자동 주입 경로의 킬 스위치(D62 오버레이).
     class_material_rag_enabled: bool = True
     # 자동 스코프(비링크) 청크에만 적용하는 거리 게이트 — 링크 청크는 무게이트.
-    # 기존 공유 컷오프 0.50 의미 계승, distance = 1 - score (Qdrant cosine).
-    class_material_rag_max_distance: float = 0.50
+    # distance = 1 - score (Qdrant cosine). 한국어 비대칭 임베딩에서 온토픽 질의
+    # 거리가 0.50~0.56에 분포(E2E 실측)해 기존 0.50이 온토픽을 차단하고 인사말은
+    # 0.87이라, 마진을 확보하며 0.50→0.60 상향(2026-07-15).
+    class_material_rag_max_distance: float = 0.60
     file_tag_max: int = 50  # concept tags per file (denser than node 1..3)
     # Chars of file text sampled for tag extraction.
     file_tag_sample_chars: int = 6000
