@@ -105,6 +105,51 @@ Task A/B와 파일이 겹쳐(chat.py·sessions.py·rag.py·types.ts·useConceptS
 - 검증: 전체 스위트 GREEN + grep 0건 + tsc/build PASS. 원격 적용은 0032·0033과
   함께 코드 회수 후 일괄.
 
+## 6. Task D — 파일 링크·배치 기능 삭제 (3차 웨이브, D82 — 2026-07-15 사용자 결정)
+
+근거: `file_node_links`는 읽기(rag.linked_file_ids)만 활성이고 **링크 생성 UI가
+없어**(제안 훅·링크 훅 컴포넌트 소비 0 실측) 사용자가 도달 불가. 카드 묶임은
+EXAONE cluster·임베딩 그룹핑(프론트)이 담당 — 링크와 무관. `file_graph_nodes`는
+읽기·쓰기 모두 컴포넌트 소비 0(완전 휴면). 사용자 결정: 두 기능 전부 삭제.
+
+**의미 변화(명시)**: RAG는 "링크 합집합(무게이트) + 학급 자동 스코프(게이트)"에서
+**학급 자료 자동 스코프 단일 경로(전 청크 거리 게이트)** 로 단순화된다.
+개인 공간 파일 RAG는 공식적으로 소멸(이미 도달 불가였음 — 학생 파일은 TASK 3의
+전문 주입이 대체 예정).
+
+- **DB — `supabase/migrations/0035_drop_file_links_placements.sql`**(파일만,
+  Manager 적용): `file_node_links`·`file_graph_nodes` 테이블 drop cascade +
+  `app_settings`에서 `file_suggestion_*` 시드 행 delete(0022 시드분 — 제안
+  엔진 소멸).
+- **백엔드**:
+  - `services/rag.py`: `linked_file_ids`·`suggest_files`와 그 전용 헬퍼 일체
+    (`_branch_query_text`·`_suggestion_query_text`·`_greeting_only`·스토플리스트·
+    관련 상수) 제거. `build_rag_context`는 학급 자동 스코프 단일 경로로 단순화
+    — `chain` 파라미터 제거(링크 수집에만 쓰였음), 게이트는 전 청크 적용.
+    참고 블록 라벨 "[연결된 자료에서 참고]" → "[학급 자료에서 참고]"로 갱신
+    (링크 소멸로 문구가 부정확해짐).
+  - `services/files.py`: 링크 CRUD(`add_link`·`remove_link`·
+    `list_session_file_links`·`_owned_node_session`·`LINK_SELECT`)와 배치 일체
+    (`add_placement`·`list_placements`·`move_placement`·`remove_placement`·
+    `_owned_session`·`PLACEMENT_SELECT`) 제거.
+  - 라우터: 링크·배치·`/file-suggestions` 엔드포인트 제거(grep으로 전수 특정 —
+    files.py·sessions.py 양쪽 확인).
+  - `config.py`: `file_suggestion_*` 키 전부 제거(참조 소멸 확인 후).
+  - `routers/chat.py`: build_rag_context 호출부 시그니처 동기.
+  - 테스트: test_rag_class_scope의 링크 전제 테스트를 단일 경로 의미로 재작성
+    (자동 스코프 포함·전 청크 게이트·킬 스위치·personal 무주입).
+- **프론트엔드**: `api.ts`·`queries.ts`·`types.ts`에서 링크(`FileLink`·
+  `listSessionFileLinks`·`useSessionFileLinks`)·배치(placement 4함수·
+  `useFileGraphNodes`)·제안(`getFileSuggestions`·`useFileSuggestions`·
+  `FileSuggestion` 타입) 잔재 제거 + 리뷰 백로그였던 FileLink stale 필드 자연
+  해소. `SettingsTab.tsx`의 "자료 제안" 그룹 엔트리 7종 제거(그룹이 비면
+  GROUP_ORDER에서도).
+- **유지**: `useFiles`/`listFiles`(자료실), D73 자동 스코프·튜너블
+  (`class_material_rag_*`·`rag_top_k`), `file_chunks`·Qdrant 검색 경로,
+  `get_chunk_context`(출처 칩 ⋯ 패널용 D41).
+- **검증**: 전체 스위트 GREEN + grep 0건 + tsc/build PASS. 적용 후 실브라우저로
+  학급 세션 질의 → 출처 칩(자동 주입 경로 생존) 확인.
+
 ## 4. 검증 기준
 
 - 백엔드 전체 스위트 GREEN + 제거 심볼 잔존 참조 grep 0건(마이그레이션 SQL·
