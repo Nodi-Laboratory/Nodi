@@ -108,6 +108,13 @@ class Settings(BaseSettings):
     # 0.87이라, 마진을 확보하며 0.50→0.60 상향(2026-07-15).
     class_material_rag_max_distance: float = 0.60
 
+    # --- D84: 학생 세션 파일 전문 주입 예산 (TASK 3) ---
+    # 한 세션에 주입 가능한 파일 전문의 합산 문자 상한. K-EXAONE 256K 토큰
+    # 윈도우에 무트리밍 히스토리·RAG·답변 여유를 남기는 보수 기본값
+    # (150K자 ≈ 한국어 75K~150K 토큰). 판정은 워커 저장 시점(초과 거부) +
+    # 주입 시점 이중 방어. clamp 10_000~300_000 (as_int 호출부와 동기).
+    session_context_max_chars: int = 150_000
+
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).
     jwt_audience: str = "authenticated"

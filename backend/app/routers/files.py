@@ -35,6 +35,7 @@ async def upload(
     space_kind: str = Form("personal"),
     space_ref: str | None = Form(None),
     kind: str = Form("user_upload"),
+    session_id: str | None = Form(None),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Upload a file -> Storage + files row + queued embedding_split job.
@@ -69,22 +70,32 @@ async def upload(
         mime=file.content_type,
         data=data,
         kind=kind,
+        session_id=session_id,
     )
 
 
 @router.get("")
 async def list_files(
-    space_kind: str = Query(..., pattern="^(personal|class)$"),
+    space_kind: str | None = Query(None, pattern="^(personal|class)$"),
     space_ref: str | None = Query(None),
+    session_id: str | None = Query(None),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
+    client = UserClient.from_user(user)
+    # D83: 세션 기준 조회 — 공간 인자 불필요(RLS가 소유자 스코프).
+    if session_id:
+        return await svc.list_session_files(client, session_id)
+    if not space_kind:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="space_kind or session_id is required.",
+        )
     ref = space_ref or (user.id if space_kind == "personal" else None)
     if not ref:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class space requires space_ref (class id).",
         )
-    client = UserClient.from_user(user)
     return await svc.list_files(client, space_kind, ref)
 
 

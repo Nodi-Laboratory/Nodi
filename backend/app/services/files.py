@@ -27,7 +27,8 @@ logger = logging.getLogger("nodi.files")
 
 FILE_SELECT = (
     "id,owner_id,space_kind,space_ref,kind,storage_path,mime,"
-    "size_bytes,status,chunk_total,chunk_done,error,name,created_at,updated_at"
+    "size_bytes,status,chunk_total,chunk_done,error,name,"
+    "session_id,context_chars,created_at,updated_at"
 )
 
 # D79: 스토리지 키에 허용되는 ASCII 문자 — Supabase Storage는 비ASCII 키를
@@ -122,6 +123,7 @@ async def upload_file(
     mime: str | None,
     data: bytes,
     kind: str = "user_upload",
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     if space_kind not in ("personal", "class"):
         raise HTTPException(
@@ -138,6 +140,12 @@ async def upload_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class_material requires space_kind='class'.",
         )
+    # D83: 세션 연결은 user_upload 전용 — 학급 자료는 세션에 귀속되지 않는다.
+    if session_id is not None and kind != "user_upload":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="session_id는 user_upload에만 허용됩니다.",
+        )
     ref = space_ref or (owner_id if space_kind == "personal" else None)
     if space_kind == "class" and not ref:
         raise HTTPException(
@@ -151,6 +159,34 @@ async def upload_file(
             await _assert_class_teacher(user_client, ref)
         else:
             await _assert_class_member(user_client, owner_id, ref)
+    # D83: 세션 소유자 검증. 교사도 학생 세션을 SELECT할 수 있으므로(RLS R2)
+    # 조회 성공만으론 부족 — owner_id를 명시 비교한다. 세션의 공간과 업로드
+    # 폼의 공간이 어긋나면 주입 스코프가 꼬이므로 422.
+    if session_id is not None:
+        srows = await user_client.select(
+            "sessions",
+            {
+                "id": f"eq.{session_id}",
+                "select": "id,owner_id,space_kind,space_ref",
+                "limit": "1",
+            },
+        )
+        if not srows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found or not accessible.",
+            )
+        sess = srows[0]
+        if sess.get("owner_id") != owner_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="자기 세션에만 파일을 연결할 수 있습니다.",
+            )
+        if sess.get("space_kind") != space_kind or sess.get("space_ref") != ref:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="세션의 공간과 업로드 공간이 일치해야 합니다.",
+            )
     # D75: 형식 화이트리스트 — 확장자 기준(대소문자 무관), 저장 전에 거절.
     name_lower = (filename or "").lower()
     ext = name_lower.rsplit(".", 1)[-1] if "." in name_lower else ""
@@ -215,6 +251,7 @@ async def upload_file(
             "name": display_name,
             "mime": mime,
             "size_bytes": len(data),
+            "session_id": session_id,
             "status": "uploaded",
         },
     )
@@ -308,3 +345,18 @@ async def get_file(client: UserClient, file_id: str) -> dict[str, Any]:
             detail="File not found.",
         )
     return rows[0]
+
+
+async def list_session_files(
+    client: UserClient, session_id: str
+) -> list[dict[str, Any]]:
+    """D83: 세션 컨텍스트 파일 목록 — 주입 순서(created_at asc)와 동일하게."""
+    return await client.select(
+        "files",
+        {
+            "session_id": f"eq.{session_id}",
+            "kind": "eq.user_upload",
+            "select": FILE_SELECT,
+            "order": "created_at.asc",
+        },
+    )
