@@ -127,6 +127,13 @@
   pgvector 확장까지 드랍(0032~0034 **원격 적용 완료** — 이 마이그레이션들은 배포
   체크리스트에서 제외). 스펙:
   `docs/superpowers/specs/2026-07-15-legacy-purge-design.md`, 상세는 원장.
+- **TASK 3 스펙 자율 확정** (2026-07-15, Manager 자율 결정 — /goal 자율 수행
+  지시, TASK 1·2 스펙 게이트 선례와 동일 근거): D83 `files.session_id`
+  재도입(0037)·워커 kind 분기(오버랩 0, 임베딩 팬아웃 생략, 'indexed' 재사용)·
+  전문 주입 빌더(session_context.py), D84 예산 `session_context_max_chars`
+  기본 150K자(파싱 후 초과 거부·선착순 합산·context_chars 원장), D85
+  session_files 블록 system_base 직후 고정(Friendli 프리픽스 캐시). 대안
+  비교·근거: `docs/superpowers/specs/2026-07-15-student-session-context-design.md`.
 - **D82 — 파일 링크·배치 기능 삭제** (2026-07-15, 사용자 결정):
   `file_node_links`·`file_graph_nodes` 테이블 + 링크/배치 API + 자료 제안 엔진
   전부 제거(−1,159줄). **RAG는 학급 자료 자동 스코프 단일 경로**(전 청크 거리
