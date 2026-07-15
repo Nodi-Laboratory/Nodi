@@ -230,13 +230,20 @@ async def delete_file(
     The row delete + orphan-tag cleanup run atomically inside the
     `delete_file_cascade` RPC (SECURITY DEFINER, owner-checked) under the
     caller's JWT; shared tags (still used elsewhere) are preserved. Storage
-    object removal stays here on the service client.
+    object removal stays here on the service client. The file's Qdrant points
+    (벡터 저장소 — RPC 밖) are pruned best-effort afterwards to avoid orphan leak.
     """
     file_row = await _assert_file_owner(client, owner_id, file_id)
     storage_path = file_row.get("storage_path")
     if storage_path:
         await service.storage_delete(settings.storage_bucket, storage_path)
     await client.rpc("delete_file_cascade", {"p_file_id": file_id})
+    # 워커의 재분할 정리와 같은 best-effort 헬퍼를 재사용해 오펀 벡터를 지운다
+    # (내부 try/except+warning — 실패해도 삭제는 이미 성공). 워커 순환 임포트를
+    # 피해 지역 임포트(retry_file과 동일 패턴).
+    from . import embedding_worker
+
+    await embedding_worker._qdrant_delete_file_points(file_id)
 
 
 async def retry_file(
