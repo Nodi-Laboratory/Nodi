@@ -19,7 +19,6 @@ import type {
   AdminLog,
   AdminLogDetail,
   AdminLogsResponse,
-  AdminTrace,
   AdminUser,
   LogContextBlock,
   LogContexts,
@@ -353,11 +352,8 @@ function TurnDetailDrawer({
               {/* 3) 컨텍스트 블록 카드 (구조화일 때만) */}
               {hasStructured && <ContextBlocks blocks={blocks} />}
 
-              {/* 4) 파이프라인 / ReAct 타임라인 */}
-              <Timeline
-                skillCalls={log.skill_calls ?? []}
-                traces={data?.traces ?? []}
-              />
+              {/* 4) 파이프라인 (스킬 호출) */}
+              <Timeline skillCalls={log.skill_calls ?? []} />
 
               {/* 5) 오류 */}
               {(log.errors?.length ?? 0) > 0 && (
@@ -572,7 +568,6 @@ function BlockCard({ block }: { block: LogContextBlock }) {
                 <tr className="text-[#9a948a]">
                   <th className="py-1 pr-2 font-medium">파일</th>
                   <th className="py-1 pr-2 font-medium">#seq</th>
-                  <th className="py-1 pr-2 font-medium">page</th>
                   <th className="py-1 pr-2 font-medium">dist</th>
                   <th className="py-1 font-medium">snippet</th>
                 </tr>
@@ -582,7 +577,6 @@ function BlockCard({ block }: { block: LogContextBlock }) {
                   <tr key={`${s.file_id}-${s.seq ?? "x"}-${i}`} className="align-top">
                     <td className="py-1 pr-2 text-[#cfc9bd]">{s.name ?? "—"}</td>
                     <td className="py-1 pr-2 text-[#9a948a]">{s.seq ?? "—"}</td>
-                    <td className="py-1 pr-2 text-[#9a948a]">{s.page ?? "—"}</td>
                     <td className="py-1 pr-2 text-[#9a948a]">
                       {s.distance != null ? s.distance.toFixed(3) : "—"}
                     </td>
@@ -633,73 +627,24 @@ function BlockCard({ block }: { block: LogContextBlock }) {
   );
 }
 
-function Timeline({
-  skillCalls,
-  traces,
-}: {
-  skillCalls: unknown[];
-  traces: AdminTrace[];
-}) {
-  if (skillCalls.length === 0 && traces.length === 0) return null;
+function Timeline({ skillCalls }: { skillCalls: unknown[] }) {
+  if (skillCalls.length === 0) return null;
   return (
     <section className="flex flex-col gap-2">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-[#9a948a]">
-        파이프라인 / ReAct
+        파이프라인 (스킬 호출)
       </h3>
 
-      {skillCalls.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {skillCalls.map((c, i) => (
-            <span
-              key={i}
-              className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-[#cfc9bd]"
-            >
-              {summarizeSkill(c)}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {traces.map((t) => (
-        <div
-          key={t.id}
-          className="rounded-lg border border-white/10 bg-[#221e17] p-2"
-        >
-          <div className="mb-1 flex items-center gap-2 text-[11px] text-[#9a948a]">
-            <span className="rounded bg-[#9a5ea3]/20 px-1.5 py-0.5 font-medium text-[#bd86c4]">
-              {t.kind || "trace"}
-            </span>
-            <span>{new Date(t.created_at).toLocaleTimeString("ko-KR")}</span>
-            <span className="ml-auto">{(t.ai_steps?.length ?? 0)} steps</span>
-          </div>
-          <ol className="flex flex-col gap-1">
-            {(t.ai_steps ?? []).map((s) => (
-              <li
-                key={s.seq}
-                className="rounded bg-[#15120d] px-2 py-1 text-[11px] text-[#cfc9bd]"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[#9a948a]">#{s.seq}</span>
-                  {s.skill && (
-                    <span className="font-medium text-[#fcf58b]">{s.skill}</span>
-                  )}
-                  {s.tokens != null && (
-                    <span className="ml-auto text-[#9a948a]">{s.tokens} tok</span>
-                  )}
-                </div>
-                {s.thought && (
-                  <p className="mt-0.5 line-clamp-2 text-[#9a948a]">{s.thought}</p>
-                )}
-                {s.observation != null && (
-                  <p className="mt-0.5 line-clamp-2 text-[#9a948a]">
-                    → {preview(s.observation, 160)}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ol>
-        </div>
-      ))}
+      <div className="flex flex-wrap gap-1.5">
+        {skillCalls.map((c, i) => (
+          <span
+            key={i}
+            className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-[#cfc9bd]"
+          >
+            {summarizeSkill(c)}
+          </span>
+        ))}
+      </div>
     </section>
   );
 }

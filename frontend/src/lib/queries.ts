@@ -2,29 +2,24 @@
 
 import {
   type QueryClient,
-  useQueries,
   useQuery,
 } from "@tanstack/react-query";
 import {
   getFileSuggestions,
-  getFileTags,
   getHomeSummary,
   fetchTeacherOverview,
   getSession,
   listClassMaterials,
   listClassStudents,
-  listCooccurrence,
   listFileGraphNodes,
   listFiles,
   listSessionFileLinks,
   listSessions,
   listStudentClassSessions,
-  listTags,
   listTeacherClasses,
   type SpaceTarget,
 } from "@/lib/api";
 import type {
-  CooccurrenceRow,
   FileGraphNode,
   FileLink,
   FileRow,
@@ -32,7 +27,6 @@ import type {
   HomeSummary,
   SessionDetail,
   SessionRow,
-  TagRow,
   TeacherClass,
   TeacherClassOverview,
   TeacherStudent,
@@ -56,8 +50,6 @@ export const STALE = {
   fileLinks: 60 * 1000,
   /** 그래프 배치: 드래그/추가/제거 시 invalidate. */
   fileGraphNodes: 30 * 1000,
-  /** 개념 태그·동시출현: 느리게 누적. */
-  tags: 5 * 60 * 1000,
 } as const;
 
 export function sessionsKey(target: SpaceTarget) {
@@ -122,10 +114,6 @@ export function sessionKey(sessionId: string | null) {
   return ["session", sessionId] as const;
 }
 
-export function tagsKey(target: SpaceTarget) {
-  return ["tags", target.space_kind, target.space_ref ?? null] as const;
-}
-
 export function filesKey(target: SpaceTarget) {
   return ["files", target.space_kind, target.space_ref ?? null] as const;
 }
@@ -136,10 +124,6 @@ export function fileLinksKey(sessionId: string | null) {
 
 export function fileGraphNodesKey(sessionId: string | null) {
   return ["file-graph-nodes", sessionId] as const;
-}
-
-export function cooccurrenceKey(target: SpaceTarget) {
-  return ["cooccurrence", target.space_kind, target.space_ref ?? null] as const;
 }
 
 /** 현재 공간의 세션 목록 (updated_at desc, 백엔드 정렬). */
@@ -205,39 +189,6 @@ export function useFileGraphNodes(sessionId: string | null) {
   });
 }
 
-export function fileTagsKey(fileId: string) {
-  return ["file-tags", fileId] as const;
-}
-
-/** 파일 태그(3b-3). indexed 파일만 조회. */
-export function useFileTags(fileId: string, enabled: boolean) {
-  return useQuery<string[]>({
-    queryKey: fileTagsKey(fileId),
-    queryFn: () => getFileTags(fileId),
-    enabled,
-    staleTime: 5 * 60 * 1000,
-  });
-}
-
-/** 여러 파일의 태그를 한 번에(그래프 파일 노드 툴팁용). fileId → 태그배열 맵. */
-export function useFileTagsMap(fileIds: string[]): Record<string, string[]> {
-  return useQueries({
-    queries: fileIds.map((id) => ({
-      queryKey: fileTagsKey(id),
-      queryFn: () => getFileTags(id),
-      staleTime: 5 * 60 * 1000,
-    })),
-    combine: (results) => {
-      const map: Record<string, string[]> = {};
-      fileIds.forEach((id, i) => {
-        const data = results[i]?.data;
-        if (data && data.length > 0) map[id] = data;
-      });
-      return map;
-    },
-  });
-}
-
 /** 현재 분기 미연결 시 파일 제안(3b-3). */
 export function useFileSuggestions(
   sessionId: string | null,
@@ -249,24 +200,6 @@ export function useFileSuggestions(
     queryFn: () => getFileSuggestions(sessionId as string, nodeId as string),
     enabled: enabled && !!sessionId && !!nodeId,
     staleTime: 60 * 1000,
-  });
-}
-
-/** 현재 공간의 개념 태그 (usage_count desc). */
-export function useTags(target: SpaceTarget) {
-  return useQuery<TagRow[]>({
-    queryKey: tagsKey(target),
-    queryFn: () => listTags(target),
-    staleTime: STALE.tags,
-  });
-}
-
-/** 현재 공간의 태그 co-occurrence (count desc). */
-export function useCooccurrence(target: SpaceTarget) {
-  return useQuery<CooccurrenceRow[]>({
-    queryKey: cooccurrenceKey(target),
-    queryFn: () => listCooccurrence(target),
-    staleTime: STALE.tags,
   });
 }
 

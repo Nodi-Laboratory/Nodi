@@ -60,18 +60,6 @@ function Exchange({ node }: { node: NodeRow }) {
           )}
         </div>
       </div>
-      {node.tags && node.tags.length > 0 ? (
-        <div className="flex flex-wrap gap-1 pl-1">
-          {node.tags.map((t) => (
-            <span
-              key={t}
-              className="rounded-full border border-accent-border/50 bg-accent/30 px-2 py-0.5 text-[11px] font-medium text-accent-fg"
-            >
-              #{t}
-            </span>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }

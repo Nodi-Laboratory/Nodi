@@ -39,8 +39,7 @@ function sourceChips(sources: RagSource[]): { chips: string[]; more: number } {
   const byFile = new Map<string, string>();
   for (const s of sources) {
     if (byFile.has(s.file_id)) continue;
-    const page = s.page != null ? ` · p.${s.page}` : "";
-    byFile.set(s.file_id, `${s.name || "자료"}${page}`);
+    byFile.set(s.file_id, s.name || "자료");
   }
   const all = [...byFile.values()];
   return { chips: all.slice(0, 3), more: Math.max(0, all.length - 3) };

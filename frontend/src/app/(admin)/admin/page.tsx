@@ -1,25 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import { Shield, Users, Sliders, BarChart3, ScrollText } from "lucide-react";
+import { Shield, Users, Sliders, ScrollText } from "lucide-react";
 import { useProfile } from "@/lib/hooks";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { AccountMenu } from "@/components/auth/AccountMenu";
 import { UsersTab } from "@/components/admin/UsersTab";
 import { SettingsTab } from "@/components/admin/SettingsTab";
-import { UsageTab } from "@/components/admin/UsageTab";
 import { LogsTab } from "@/components/admin/LogsTab";
 
 /**
  * 관리자 운영 콘솔 (Stage 4c). 다크 운영 톤(일반 cream/노랑과 구분).
- * 관리자 role만 접근(백엔드 403과 이중 가드). 탭: 권한·설정·사용량·로그.
+ * 관리자 role만 접근(백엔드 403과 이중 가드). 탭: 권한·설정·로그.
  */
-type Tab = "users" | "settings" | "usage" | "logs";
+type Tab = "users" | "settings" | "logs";
 
 const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: "users", label: "권한", icon: Users },
   { id: "settings", label: "런타임 설정", icon: Sliders },
-  { id: "usage", label: "사용량", icon: BarChart3 },
   { id: "logs", label: "로그", icon: ScrollText },
 ];
 
@@ -70,7 +68,6 @@ function AdminConsole() {
       <main className="min-h-0 flex-1 overflow-auto p-6">
         {tab === "users" && <UsersTab currentUserId={profile?.id ?? ""} />}
         {tab === "settings" && <SettingsTab />}
-        {tab === "usage" && <UsageTab />}
         {tab === "logs" && <LogsTab />}
       </main>
     </div>

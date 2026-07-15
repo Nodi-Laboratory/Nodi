@@ -4,14 +4,11 @@ import type {
   AdminLogDetail,
   AdminLogsResponse,
   AdminSetting,
-  AdminTracesResponse,
-  AdminUsage,
   AdminUser,
   ChatDoneEvent,
   ChatStartEvent,
   ChunkContext,
   ConnectionResponse,
-  CooccurrenceRow,
   CreatedClass,
   FileGraphNode,
   FileLink,
@@ -22,7 +19,6 @@ import type {
   SessionDetail,
   SessionRow,
   SpaceKind,
-  TagRow,
   TeacherClass,
   TeacherClassOverview,
   TeacherStudent,
@@ -189,33 +185,11 @@ export async function getSession(id: string): Promise<SessionDetail> {
   return res.json();
 }
 
-// ── 개념 태그 (Stage 2) ──────────────────────────────────────────────
-
+// 공간 쿼리 파라미터 헬퍼(listFiles 등 공용).
 function spaceParams(target: SpaceTarget): URLSearchParams {
   const params = new URLSearchParams({ space_kind: target.space_kind });
   if (target.space_ref) params.set("space_ref", target.space_ref);
   return params;
-}
-
-export async function listTags(target: SpaceTarget): Promise<TagRow[]> {
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/tags?${spaceParams(target).toString()}`, {
-      headers: await authHeaders(),
-    }),
-  );
-  return res.json();
-}
-
-export async function listCooccurrence(
-  target: SpaceTarget,
-): Promise<CooccurrenceRow[]> {
-  const res = await ensureOk(
-    await fetch(
-      `${API_BASE}/tags/cooccurrence?${spaceParams(target).toString()}`,
-      { headers: await authHeaders() },
-    ),
-  );
-  return res.json();
 }
 
 /** 네비게이터(is_navigator) 노드 삭제. 204 반환. */
@@ -236,9 +210,6 @@ export async function uploadFile(
   target: SpaceTarget,
   file: File,
   opts?: {
-    sessionId?: string | null;
-    positionX?: number;
-    positionY?: number;
     kind?: string;
   },
 ): Promise<FileRow> {
@@ -247,33 +218,11 @@ export async function uploadFile(
   form.append("space_kind", target.space_kind);
   if (target.space_ref) form.append("space_ref", target.space_ref);
   if (opts?.kind) form.append("kind", opts.kind);
-  if (opts?.sessionId) form.append("session_id", opts.sessionId);
-  if (opts?.positionX != null) form.append("position_x", String(Math.round(opts.positionX)));
-  if (opts?.positionY != null) form.append("position_y", String(Math.round(opts.positionY)));
   const res = await ensureOk(
     await fetch(`${API_BASE}/files`, {
       method: "POST",
       headers: await authHeaders(), // json=false → Content-Type 없음
       body: form,
-    }),
-  );
-  return res.json();
-}
-
-/** 파일 노드 좌표 영속(D20). */
-export async function patchFilePosition(
-  fileId: string,
-  x: number,
-  y: number,
-): Promise<FileRow> {
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/files/${fileId}/position`, {
-      method: "PATCH",
-      headers: await authHeaders(true),
-      body: JSON.stringify({
-        position_x: Math.round(x),
-        position_y: Math.round(y),
-      }),
     }),
   );
   return res.json();
@@ -357,15 +306,6 @@ export async function getFile(id: string): Promise<FileRow> {
     await fetch(`${API_BASE}/files/${id}`, { headers: await authHeaders() }),
   );
   return res.json();
-}
-
-/** 파일 태그 목록(3b-3). indexed 파일이면 이름 배열. */
-export async function getFileTags(id: string): Promise<string[]> {
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/files/${id}/tags`, { headers: await authHeaders() }),
-  );
-  const body = await res.json();
-  return (body?.tags as string[]) ?? [];
 }
 
 /** 파일 삭제(3b-3). 204. service_role 미설정 시 503. */
@@ -967,13 +907,6 @@ export async function putAdminSetting(
   return res.json();
 }
 
-export async function getAdminUsage(): Promise<AdminUsage> {
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/admin/usage`, { headers: await authHeaders() }),
-  );
-  return res.json();
-}
-
 export async function getAdminLogs(opts: {
   userId?: string | null;
   since?: string | null;
@@ -995,30 +928,10 @@ export async function getAdminLogs(opts: {
   return res.json();
 }
 
-/** D34: 턴 상세 — ai_logs 1행(구조화 contexts) + 같은 세션 ReAct 트레이스. */
+/** D34: 턴 상세 — ai_logs 1행(구조화 contexts). */
 export async function getAdminLogDetail(logId: string): Promise<AdminLogDetail> {
   const res = await ensureOk(
     await fetch(`${API_BASE}/admin/logs/${encodeURIComponent(logId)}`, {
-      headers: await authHeaders(),
-    }),
-  );
-  return res.json();
-}
-
-/** D34: ReAct 트레이스 목록(user/session 필터). 턴 상세는 보통 getAdminLogDetail로 충분. */
-export async function getAdminTraces(opts: {
-  userId?: string | null;
-  sessionId?: string | null;
-  limit?: number;
-  offset?: number;
-}): Promise<AdminTracesResponse> {
-  const params = new URLSearchParams();
-  if (opts.userId) params.set("user_id", opts.userId);
-  if (opts.sessionId) params.set("session_id", opts.sessionId);
-  params.set("limit", String(opts.limit ?? 20));
-  params.set("offset", String(opts.offset ?? 0));
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/admin/traces?${params.toString()}`, {
       headers: await authHeaders(),
     }),
   );
