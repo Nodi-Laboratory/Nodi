@@ -66,9 +66,10 @@ async def _consume(monkeypatch):
 
     rag_kwargs = {}
 
-    async def fake_rag(client, chain, query, **kwargs):
+    async def fake_rag(client, query, **kwargs):
+        # D82: build_rag_context 시그니처 단순화(chain 파라미터 제거).
         rag_kwargs.update(kwargs)
-        return {"block": "[연결된 자료에서 참고]\n- x", "sources": SOURCES}
+        return {"block": "[학급 자료에서 참고]\n- x", "sources": SOURCES}
 
     async def fake_comparison(*a, **k):
         return (None, [], [])

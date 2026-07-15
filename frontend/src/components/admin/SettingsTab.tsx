@@ -53,84 +53,6 @@ const SETTINGS: Record<string, SettingSpec> = {
     wired: "live",
   },
 
-  // ── 자료 제안 ──
-  file_suggestion_enabled: {
-    label: "자료 제안 사용",
-    group: "자료 제안",
-    widget: "toggle",
-    description: "전역으로 자료 제안 기능을 켜고 끕니다.",
-    effect: "채팅 자료 제안 노출 여부",
-    wired: "live",
-  },
-  file_suggestion_suggest_max_distance: {
-    label: "자료 제안 엄격도(거리 컷오프)",
-    group: "자료 제안",
-    widget: "slider",
-    min: 0.3,
-    max: 0.5,
-    step: 0.01,
-    description: "작을수록 더 엄격 — 관련성 높은 자료만 제안. 0.38 권장.",
-    effect: '채팅 "연결할까요?" 노출 빈도',
-    wired: "live",
-  },
-  file_suggestion_suggest_margin: {
-    label: "제안 마진(1·2위 거리차)",
-    group: "자료 제안",
-    widget: "slider",
-    min: 0,
-    max: 0.2,
-    step: 0.01,
-    description: "1위와 2위 자료의 거리차가 이보다 작으면 모호하다고 보고 제안 보류.",
-    effect: "모호한 제안 억제",
-    wired: "live",
-  },
-  file_suggestion_top_n: {
-    label: "제안 자료 개수",
-    group: "자료 제안",
-    widget: "number",
-    min: 1,
-    max: 3,
-    step: 1,
-    description: "한 번에 제안할 자료 최대 개수.",
-    effect: "제안 묶음 크기",
-    wired: "live",
-  },
-  file_suggestion_search_k: {
-    label: "제안 후보 검색 수(k)",
-    group: "자료 제안",
-    widget: "number",
-    min: 5,
-    max: 50,
-    step: 1,
-    description: "거리 계산을 위해 우선 가져오는 후보 청크 수.",
-    effect: "제안 정확도·비용",
-    wired: "live",
-  },
-  file_suggestion_suggest_query_chars: {
-    label: "제안 질의 길이 상한",
-    group: "자료 제안",
-    widget: "number",
-    min: 100,
-    max: 1500,
-    step: 50,
-    unit: "자",
-    description: "제안 판단에 쓰는 분기 질의 텍스트의 최대 글자 수.",
-    effect: "제안 포커스·비용",
-    wired: "live",
-  },
-  file_suggestion_min_query_chars: {
-    label: "제안 최소 질문 길이",
-    group: "자료 제안",
-    widget: "number",
-    min: 0,
-    max: 200,
-    step: 5,
-    unit: "자",
-    description: "분기 질문 텍스트가 이보다 짧으면 제안하지 않음(인사·잡담 차단).",
-    effect: "잡담 방의 오탐 제안 차단",
-    wired: "live",
-  },
-
   // ── RAG 주입 ──
   rag_top_k: {
     label: "RAG 주입 청크 수(top-k)",
@@ -148,7 +70,7 @@ const SETTINGS: Record<string, SettingSpec> = {
     group: "RAG 주입",
     widget: "toggle",
     description:
-      "학급 세션에서 링크 없이도 학급 자료(class_material)를 검색 후보에 넣습니다(D73). 끄면 링크된 파일만 검색합니다.",
+      "학급 세션에서 학급 자료(class_material)를 자동으로 검색 후보에 넣습니다(D73/D82). 끄면 자동 주입을 하지 않습니다.",
     effect: "학급 자료 자동 RAG 여부",
     wired: "live",
   },
@@ -160,7 +82,7 @@ const SETTINGS: Record<string, SettingSpec> = {
     max: 0.9,
     step: 0.05,
     description:
-      "자동 스코프(비링크) 청크에만 적용하는 거리 컷오프(distance = 1 - score). 낮을수록 엄격 — 링크된 파일 청크는 게이트 없음.",
+      "검색된 전(全) 청크에 적용하는 거리 컷오프(distance = 1 - score). 낮을수록 엄격 — 인사말·무관 질의 턴의 오염을 막습니다(D82).",
     effect: "자동 주입 엄격도",
     wired: "live",
   },
@@ -275,7 +197,6 @@ const SETTINGS: Record<string, SettingSpec> = {
 
 const GROUP_ORDER = [
   "모델",
-  "자료 제안",
   "RAG 주입",
   "임베딩",
   "ReAct",
@@ -294,9 +215,7 @@ export function SettingsTab() {
   if (isError)
     return <p className="text-sm text-[#e0796a]">설정을 불러오지 못했습니다.</p>;
 
-  // D63: 죽은 키는 SETTINGS에 없으므로, 알 수 없는 서버 키 중 명시 폐기 키는 숨긴다.
-  const HIDDEN_KEYS = new Set(["file_suggestion_max_distance"]);
-  const list = (settings ?? []).filter((s) => !HIDDEN_KEYS.has(s.key));
+  const list = settings ?? [];
 
   // 그룹별 정렬(등록된 키는 그룹, 미등록은 "기타").
   const groups = new Map<string, AdminSetting[]>();

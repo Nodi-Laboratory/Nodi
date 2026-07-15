@@ -9,8 +9,6 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
-from ..services import files as files_svc
-from ..services import rag
 from ..services import sessions as svc
 from ..services.supabase_client import UserClient
 
@@ -35,22 +33,6 @@ class NodePosition(BaseModel):
 
 class NodePositionsBody(BaseModel):
     positions: list[NodePosition] = Field(default_factory=list, max_length=2000)
-
-
-class PlacementBody(BaseModel):
-    """Add/upsert a file placement on this session's graph (D58)."""
-
-    file_id: str
-    position_x: float | None = None
-    position_y: float | None = None
-
-
-class PlacementMoveBody(BaseModel):
-    """Move an existing placement (D58)."""
-
-    file_id: str
-    position_x: float | None = None
-    position_y: float | None = None
 
 
 @router.post("", status_code=201)
@@ -124,95 +106,3 @@ async def set_node_positions(
         client, session_id, [p.model_dump() for p in body.positions]
     )
     return {"updated": n}
-
-
-@router.get("/{session_id}/file-links")
-async def get_session_file_links(
-    session_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> list[dict[str, Any]]:
-    """Files linked to any node in this session (for graph file-nodes + edges)."""
-    client = UserClient.from_user(user)
-    await svc.get_session(client, session_id)  # 404/RLS gate
-    return await files_svc.list_session_file_links(client, session_id)
-
-
-# --- File graph-node placements (D58/D59) — display, decoupled from RAG ----
-@router.get("/{session_id}/file-graph-nodes")
-async def list_file_graph_nodes(
-    session_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> list[dict[str, Any]]:
-    """Files placed as free nodes on this session's graph (with file meta joined).
-
-    This is the DISPLAY source for graph file-nodes (replaces the old
-    files.session_id filter). Independent of RAG links.
-    """
-    client = UserClient.from_user(user)
-    await svc.get_session(client, session_id)  # 404/RLS gate
-    return await files_svc.list_placements(client, session_id)
-
-
-@router.post("/{session_id}/file-graph-nodes", status_code=201)
-async def add_file_graph_node(
-    session_id: str,
-    body: PlacementBody,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, Any]:
-    """Place (or re-place) a file on this session's graph at the given coords.
-
-    Idempotent upsert on (file_id, session_id). Caller must own both the file and
-    the session and they must share a space. Does NOT create a RAG link.
-    """
-    client = UserClient.from_user(user)
-    return await files_svc.add_placement(
-        client, user.id, body.file_id, session_id, body.position_x, body.position_y
-    )
-
-
-@router.patch("/{session_id}/file-graph-nodes")
-async def move_file_graph_node(
-    session_id: str,
-    body: PlacementMoveBody,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, Any]:
-    """Update a placement's coordinates after drag (owner only)."""
-    client = UserClient.from_user(user)
-    return await files_svc.move_placement(
-        client, body.file_id, session_id, body.position_x, body.position_y
-    )
-
-
-@router.delete("/{session_id}/file-graph-nodes/{file_id}", status_code=204)
-async def remove_file_graph_node(
-    session_id: str,
-    file_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> None:
-    """Remove a file from this session's graph (placement only; file is kept)."""
-    client = UserClient.from_user(user)
-    await files_svc.remove_placement(client, file_id, session_id)
-
-
-@router.get("/{session_id}/file-suggestions")
-async def get_file_suggestions(
-    session_id: str,
-    node_id: str | None = Query(None),
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, Any]:
-    """When the current branch has no linked files, propose space files to link
-    (embedding match). Empty if files are already linked or none indexed."""
-    client = UserClient.from_user(user)
-    # Session meta and the node list are independent reads -> fetch concurrently.
-    # Only `head`/`chain` depend on the session (current_head_id), so they stay
-    # after the gather. A 404 from get_session propagates out of gather.
-    session, nodes = await asyncio.gather(
-        svc.get_session(client, session_id),
-        svc.get_session_nodes(client, session_id),
-    )
-    head = node_id or session.get("current_head_id")
-    chain = svc.ancestor_chain_nodes(nodes, head)
-    suggestions = await rag.suggest_files(
-        client, chain, session.get("space_kind"), session.get("space_ref")
-    )
-    return {"suggestions": suggestions}

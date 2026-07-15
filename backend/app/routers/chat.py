@@ -141,7 +141,7 @@ async def chat_stream(
     # defaults on failure). Run them concurrently to cut first-token latency —
     # the RAG builder's question-embedding Gemini call is the heaviest leg (D66).
     #   - reference:  imported other-branch context (node connections, LCA-trimmed, 3a, D35)
-    #   - rag:        chunks from files linked to this branch (Stage 3b-2, D32 sources)
+    #   - rag:        class_material chunks auto-scoped for THIS class session (D73/D82)
     #   - comparison: one-time branch references for THIS turn (D15/D46, LCA-trimmed)
     (
         (reference_context, reference_node_ids),
@@ -151,9 +151,8 @@ async def chat_stream(
         memory.build_reference_context(client, body.session_id, chain, by_id),
         rag.build_rag_context(
             client,
-            chain,
             body.question,
-            # D73: 학급 세션이면 class_material 자동 스코프 — 세션 행에 이미
+            # D73/D82: 학급 세션이면 class_material 자동 스코프 — 세션 행에 이미
             # space_kind/space_ref가 있어 추가 조회 없음(SESSION_SELECT).
             space_kind=session.get("space_kind"),
             space_ref=session.get("space_ref"),

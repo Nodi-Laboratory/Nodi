@@ -216,63 +216,8 @@ export interface FileRow {
   chunk_done: number | null;
   error?: string | null;
   created_at: string;
-  /** 08 F: 낙관 배치(placement) 미확정 — 캔버스가 파일 노드를 반투명 pending으로 렌더. */
+  /** 08 F: 낙관 삽입 미확정 — 캔버스가 파일 노드를 반투명 pending으로 렌더. */
   _pending?: boolean;
-}
-
-/** 시각적 RAG: 파일↔노드 링크 (GET /sessions/{id}/file-links). */
-export interface FileLink {
-  id: string;
-  file_id: string;
-  target_node_id: string;
-  created_at: string;
-  /** D31: 낙관적 삽입 중인 임시 링크(서버 확정 전). 캔버스에서 흐리게 렌더. */
-  _pending?: boolean;
-  files: {
-    id: string;
-    storage_path: string | null;
-    mime: string | null;
-    status: FileStatus;
-    chunk_total: number | null;
-    chunk_done: number | null;
-    session_id?: string | null;
-    position_x?: number | null;
-    position_y?: number | null;
-  } | null;
-}
-
-/** Stage 3b-3: 미연결 분기 파일 제안. */
-export interface FileSuggestion {
-  file_id: string;
-  distance: number;
-  sample: string | null;
-  kind: string | null;
-}
-
-/**
- * D58: 자료 그래프 배치(placement). 파일(공간 소유)을 특정 세션 그래프에 자유 노드로
- * 둔 행. 표시(좌표)는 이 행이 결정하고, RAG 연결(file_node_links)과는 독립이다.
- */
-export interface FileGraphNode {
-  id: string;
-  file_id: string;
-  session_id: string;
-  position_x: number | null;
-  position_y: number | null;
-  created_at: string;
-  /** D58 낙관적 삽입 중인 임시 placement(서버 확정 전). */
-  _provisional?: boolean;
-  files: {
-    id: string;
-    storage_path: string | null;
-    mime: string | null;
-    kind?: string | null;
-    status: FileStatus;
-    chunk_total: number | null;
-    chunk_done: number | null;
-    space_kind?: string | null;
-    space_ref?: string | null;
-  } | null;
 }
 
 // ── Stage 4c: 관리자 ─────────────────────────────────────────────────

@@ -97,49 +97,16 @@ class Settings(BaseSettings):
     class_material_max_bytes: int = 500 * 1024 * 1024
 
     # --- File RAG search (Stage 3b-2) ---
-    rag_top_k: int = 5  # chunks retrieved per query from linked files
-    # --- D73: 학급 자료 자동 RAG 스코프 (TASK 2) ---
-    # 학급 세션이면 그 학급의 class_material(indexed/partial)을 링크 없이도
-    # 검색 후보에 넣는다. enabled는 신규 자동 주입 경로의 킬 스위치(D62 오버레이).
+    rag_top_k: int = 5  # chunks retrieved per query from class_material
+    # --- D73/D82: 학급 자료 자동 RAG 스코프 (단일 경로) ---
+    # 학급 세션이면 그 학급의 class_material(indexed/partial)을 링크 없이 검색
+    # 후보에 넣는다. enabled는 자동 주입 경로의 킬 스위치(D62 오버레이).
     class_material_rag_enabled: bool = True
-    # 자동 스코프(비링크) 청크에만 적용하는 거리 게이트 — 링크 청크는 무게이트.
+    # 전(全) 청크에 적용하는 거리 게이트(D82: 링크 개념 소멸로 무게이트 예외 없음).
     # distance = 1 - score (Qdrant cosine). 한국어 비대칭 임베딩에서 온토픽 질의
     # 거리가 0.50~0.56에 분포(E2E 실측)해 기존 0.50이 온토픽을 차단하고 인사말은
     # 0.87이라, 마진을 확보하며 0.50→0.60 상향(2026-07-15).
     class_material_rag_max_distance: float = 0.60
-
-    # --- RAG polish (Stage 3b-3) ---
-    # File-suggestion ("연결할까요?") tuning.
-    # D56: top-N proposed is boostrapped to 1 — suggestions now require a single
-    # CONFIDENT top match (was 3, which surfaced borderline extras).
-    file_suggestion_top_n: int = 1  # files proposed (1..2)
-    file_suggestion_search_k: int = 20  # chunks scanned before grouping by file
-    file_suggestion_query_chars: int = 1500  # branch text used as the query
-    # D48 content gate (relaxed from D37's 40): a SAFETY FLOOR only — block
-    # empty/whitespace-only branch queries. Greetings/small-talk are now caught
-    # by the conservative stoplist (_greeting_only) and, decisively, by the
-    # distance cutoff + margin below — NOT by a blunt length gate (which used to
-    # false-negative short-but-real questions like "미분이 뭐야?").
-    file_suggestion_min_query_chars: int = 10
-    # DEPRECATED (D63): this key is DEAD — no runtime path reads it. The real
-    # suggestion gate is `file_suggestion_suggest_max_distance` (0.38) below.
-    # Kept only for non-destructive back-compat; do NOT wire it. Not exposed in
-    # the admin console and not seeded by 0022.
-    file_suggestion_max_distance: float = 0.50
-    # Margin gate: only surface a suggestion when the BEST candidate is at least
-    # this much INSIDE the cutoff (best_distance <= cutoff - margin), i.e. only
-    # confident matches — borderline ones are not proposed.
-    file_suggestion_margin: float = 0.05
-    # --- D56: SUGGESTION-ONLY gate (decoupled from RAG injection) ---
-    # The proposal query is now the FOCUS node's question (rag._suggestion_query_text),
-    # not the whole ancestor chain, so unrelated ancestors no longer pollute it. A
-    # STRICTER, suggestion-only cutoff (separate from the 0.50 RAG-injection cutoff)
-    # ensures only genuinely-related files surface. Distances are cosine (0=same).
-    file_suggestion_suggest_max_distance: float = 0.38
-    file_suggestion_suggest_margin: float = 0.05
-    # Char cap for the focus-centred suggestion query (focus question + brief
-    # parent context + short focus-answer head). Small on purpose (~400..500).
-    file_suggestion_suggest_query_chars: int = 450
 
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).

@@ -19,7 +19,6 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel
 
 from ..auth.deps import CurrentUser, get_current_user
 from ..services import app_settings
@@ -28,10 +27,6 @@ from ..services.service_client import get_service_client
 from ..services.supabase_client import UserClient
 
 router = APIRouter(prefix="/files", tags=["files"])
-
-
-class LinkBody(BaseModel):
-    target_node_id: str
 
 
 @router.post("", status_code=201)
@@ -108,7 +103,7 @@ async def delete_file(
     file_id: str,
     user: CurrentUser = Depends(get_current_user),
 ) -> None:
-    """Delete a file (owner only): Storage object + row (cascades chunks/links)."""
+    """Delete a file (owner only): Storage object + row (cascades chunks)."""
     service = get_service_client()
     if service is None:
         raise HTTPException(
@@ -168,29 +163,3 @@ async def get_chunk_context(
             detail="Chunk not found or not accessible.",
         )
     return rows
-
-
-# --- Visual RAG links (Stage 3b-2) ---------------------------------------
-@router.post("/{file_id}/links", status_code=201)
-async def add_link(
-    file_id: str,
-    body: LinkBody,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, Any]:
-    """Link this file to a node ("use this file when answering from this branch").
-
-    Applies to the node and its descendant branch. Caller must own both the file
-    and the node's session. Idempotent.
-    """
-    client = UserClient.from_user(user)
-    return await svc.add_link(client, user.id, file_id, body.target_node_id)
-
-
-@router.delete("/{file_id}/links/{node_id}", status_code=204)
-async def remove_link(
-    file_id: str,
-    node_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> None:
-    client = UserClient.from_user(user)
-    await svc.remove_link(client, file_id, node_id)

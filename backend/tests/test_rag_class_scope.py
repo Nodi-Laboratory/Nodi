@@ -1,7 +1,9 @@
-"""D73 — 학급 자료(class_material) 자동 RAG 스코프 주입 테스트.
+"""D82 — 파일 링크·배치 삭제 후 RAG 학급 자료 자동 스코프 단일 경로 테스트.
 
-build_rag_context가 학급 세션에서 링크 없이도 class_material을 검색 후보에
-넣고, 자동 스코프(비링크) 청크에만 거리 게이트를 적용하는지 검증한다.
+링크·제안 엔진 제거로 build_rag_context는 학급 자료(class_material)
+자동 스코프 단일 경로가 된다. 학급 세션에서 링크 없이도
+class_material을 검색하고, 전 청크에 거리 게이트를 적용하며(무게이트 예외
+소멸), 킬 스위치·비학급 공간에서는 아무것도 주입하지 않는지 검증한다.
 외부 의존(임베딩·Qdrant·app_settings 오버레이)은 전부 monkeypatch.
 """
 
@@ -12,8 +14,8 @@ from app.services import rag as R
 
 
 def test_class_material_rag_max_distance_default_is_0_60():
-    """D73 거리 게이트 기본값 — E2E 실측(온토픽 0.50~0.56 분포·인사말 0.87)
-    근거로 0.50→0.60 상향(2026-07-15). 온토픽 4건 중 3건을 차단하던 회귀 방지."""
+    """거리 게이트 기본값 — E2E 실측(온토픽 0.50~0.56·인사말 0.87) 근거 0.60.
+    온토픽 4건 중 3건을 차단하던 회귀 방지."""
     assert get_settings().class_material_rag_max_distance == 0.60
 
 
@@ -31,17 +33,20 @@ class _FakeClient:
 
 
 def _files_handler(material_rows):
-    """files 테이블 대역 — class_material 조회와 _file_names 조회를 구분."""
+    """files 테이블 대역 — class_material 자동 스코프 조회와 _file_names를 구분."""
 
     def handle(params):
-        if params.get("select") == "id,storage_path":  # _file_names
-            return [
-                {"id": r["id"], "storage_path": f"o/{r['id']}/{r['id']}.pdf"}
-                for r in material_rows
-            ]
         if params.get("kind") == "eq.class_material":  # 자동 스코프 조회
             return material_rows
-        return []
+        # _file_names 재조회(select=id,name,storage_path) — 이름은 storage 폴백.
+        return [
+            {
+                "id": r["id"],
+                "name": None,
+                "storage_path": f"o/{r['id']}/{r['id']}.pdf",
+            }
+            for r in material_rows
+        ]
 
     return handle
 
@@ -50,7 +55,7 @@ def _patch_infra(monkeypatch, hits, overlay=None):
     """임베딩·Qdrant·오버레이를 고정 응답으로 대체.
 
     hits: [{"id": 청크uuid, "score": 유사도, "_file": 파일id}] — _file은
-    파일 스코프 필터 모사용 테스트 전용 키(반환 시 제거).
+    파일 스코프 필터 모사용 테스트 전용 키.
     """
 
     async def fake_embed(texts, task_type):
@@ -85,96 +90,70 @@ def _chunk_rows(hits):
     ]
 
 
-CHAIN = [{"id": "n1"}]
-
-
 @pytest.mark.asyncio
 async def test_class_scope_included_without_links(monkeypatch):
-    """① 링크 0개여도 학급 세션이면 class_material이 검색·주입된다."""
-    hits = [{"id": "ck1", "score": 0.8, "_file": "fm"}]  # distance 0.2 ≤ 0.5
+    """① 학급 세션이면 링크 없이도 class_material이 검색·주입되고, 참고 블록
+    라벨이 '[학급 자료에서 참고]'다(링크 소멸 후 문구 갱신)."""
+    hits = [{"id": "ck1", "score": 0.8, "_file": "fm"}]  # distance 0.2 ≤ 0.6
     _patch_infra(monkeypatch, hits)
     client = _FakeClient(
         {
-            "file_node_links": lambda p: [],
             "files": _files_handler([{"id": "fm"}]),
             "file_chunks": lambda p: _chunk_rows(hits),
         }
     )
     out = await R.build_rag_context(
-        client, CHAIN, "질문", space_kind="class", space_ref="c1"
+        client, "질문", space_kind="class", space_ref="c1"
     )
     assert out is not None
     assert [s["file_id"] for s in out["sources"]] == ["fm"]
     assert "본문 ck1" in out["block"]
+    assert out["block"].startswith("[학급 자료에서 참고]")
 
 
 @pytest.mark.asyncio
-async def test_distance_gate_applies_to_auto_scope_only(monkeypatch):
-    """② 자동 스코프 청크만 거리 게이트 — 링크 청크는 무게이트."""
+async def test_distance_gate_applies_to_all_chunks(monkeypatch):
+    """② 전 청크 거리 게이트 — 게이트 초과 청크는 탈락, 이내 청크만 주입.
+    링크 개념 소멸로 무게이트 예외가 없다."""
     hits = [
-        {"id": "ck-linked", "score": 0.3, "_file": "fl"},  # 링크, dist 0.7 → 유지
-        {"id": "ck-auto-far", "score": 0.3, "_file": "fm"},  # 자동, dist 0.7 → 탈락
-        {"id": "ck-auto-near", "score": 0.8, "_file": "fm"},  # 자동, dist 0.2 → 유지
+        {"id": "ck-far", "score": 0.3, "_file": "fm"},   # dist 0.7 > 0.6 → 탈락
+        {"id": "ck-near", "score": 0.8, "_file": "fm"},  # dist 0.2 ≤ 0.6 → 유지
     ]
     _patch_infra(monkeypatch, hits)
-
-    def files_handle(params):
-        if params.get("select") == "id,storage_path":
-            return [
-                {"id": "fl", "storage_path": "o/fl/linked.pdf"},
-                {"id": "fm", "storage_path": "o/fm/material.pdf"},
-            ]
-        if params.get("kind") == "eq.class_material":
-            return [{"id": "fm"}]
-        return []
-
     client = _FakeClient(
         {
-            "file_node_links": lambda p: [{"file_id": "fl"}],
-            "files": files_handle,
+            "files": _files_handler([{"id": "fm"}]),
             "file_chunks": lambda p: _chunk_rows(hits),
         }
     )
     out = await R.build_rag_context(
-        client, CHAIN, "질문", space_kind="class", space_ref="c1"
+        client, "질문", space_kind="class", space_ref="c1"
     )
     assert out is not None
-    ids = {s["chunk_id"] for s in out["sources"]}
-    assert ids == {"ck-linked", "ck-auto-near"}
+    assert {s["chunk_id"] for s in out["sources"]} == {"ck-near"}
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_off_restores_linked_only(monkeypatch):
-    """③ 킬 스위치 off → class_material 조회 자체가 없고 링크 없으면 None."""
+async def test_kill_switch_off_returns_none(monkeypatch):
+    """③ 킬 스위치 off → class_material 조회 자체가 없고 주입도 없다(None)."""
     _patch_infra(
         monkeypatch, hits=[], overlay={"class_material_rag_enabled": False}
     )
-    client = _FakeClient(
-        {"file_node_links": lambda p: [], "files": _files_handler([{"id": "fm"}])}
-    )
+    client = _FakeClient({"files": _files_handler([{"id": "fm"}])})
     out = await R.build_rag_context(
-        client, CHAIN, "질문", space_kind="class", space_ref="c1"
+        client, "질문", space_kind="class", space_ref="c1"
     )
     assert out is None
     assert all(t != "files" for t, _ in client.calls)  # 자동 스코프 조회 없음
 
 
 @pytest.mark.asyncio
-async def test_personal_space_unchanged(monkeypatch):
-    """④ personal 공간 → 기존 동작 불변(자동 스코프 미조회, 링크 없으면 None)."""
+async def test_personal_space_no_injection(monkeypatch):
+    """④ personal 공간 → 자동 스코프 미조회·무주입(None)."""
     _patch_infra(monkeypatch, hits=[])
-    client = _FakeClient({"file_node_links": lambda p: []})
+    client = _FakeClient({"files": _files_handler([{"id": "fm"}])})
     out = await R.build_rag_context(
-        client, CHAIN, "질문", space_kind="personal", space_ref="u1"
+        client, "질문", space_kind="personal", space_ref="u1"
     )
     assert out is None
     assert all(t != "files" for t, _ in client.calls)
-
-
-@pytest.mark.asyncio
-async def test_signature_backward_compatible(monkeypatch):
-    """kwargs 없이 호출해도 기존 링크-온리 동작(무회귀)."""
-    _patch_infra(monkeypatch, hits=[])
-    client = _FakeClient({"file_node_links": lambda p: []})
-    out = await R.build_rag_context(client, CHAIN, "질문")
-    assert out is None

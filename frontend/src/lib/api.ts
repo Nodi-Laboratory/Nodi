@@ -10,10 +10,7 @@ import type {
   ChunkContext,
   ConnectionResponse,
   CreatedClass,
-  FileGraphNode,
-  FileLink,
   FileRow,
-  FileSuggestion,
   HomeSummary,
   Profile,
   SessionDetail,
@@ -317,53 +314,6 @@ export async function retryFile(id: string): Promise<void> {
   );
 }
 
-/** 현재 분기에 연결 파일이 없을 때 제안(3b-3). */
-export async function getFileSuggestions(
-  sessionId: string,
-  nodeId: string,
-): Promise<FileSuggestion[]> {
-  const params = new URLSearchParams({ node_id: nodeId });
-  const res = await ensureOk(
-    await fetch(
-      `${API_BASE}/sessions/${sessionId}/file-suggestions?${params.toString()}`,
-      { headers: await authHeaders() },
-    ),
-  );
-  const body = await res.json();
-  return (body?.suggestions as FileSuggestion[]) ?? [];
-}
-
-/** 파일을 분기(노드)에 연결 = "이 자료 보고 답해줘"(시각적 RAG, 멱등). */
-export async function addFileLink(
-  fileId: string,
-  targetNodeId: string,
-): Promise<unknown> {
-  assertRealId(fileId, "file_id"); // D63
-  assertRealId(targetNodeId, "target_node_id");
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/files/${fileId}/links`, {
-      method: "POST",
-      headers: await authHeaders(true),
-      body: JSON.stringify({ target_node_id: targetNodeId }),
-    }),
-  );
-  return res.json().catch(() => null);
-}
-
-export async function removeFileLink(
-  fileId: string,
-  nodeId: string,
-): Promise<void> {
-  assertRealId(fileId, "file_id"); // D63
-  assertRealId(nodeId, "node_id");
-  await ensureOk(
-    await fetch(`${API_BASE}/files/${fileId}/links/${nodeId}`, {
-      method: "DELETE",
-      headers: await authHeaders(),
-    }),
-  );
-}
-
 /**
  * D41: RAG 출처 청크의 전문 + 인접 청크(prev/next) + 위치를 조회.
  * 접근 불가/없음이면 404 → ApiError(404).
@@ -380,93 +330,6 @@ export async function getChunkContext(
     ),
   );
   return res.json();
-}
-
-export async function listSessionFileLinks(
-  sessionId: string,
-): Promise<FileLink[]> {
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/sessions/${sessionId}/file-links`, {
-      headers: await authHeaders(),
-    }),
-  );
-  return res.json();
-}
-
-// ── D58/D59: 자료 그래프 배치(placement) ─────────────────────────────
-// 표시 소스. files.session_id 필터를 대체한다(owner-only, user-JWT).
-
-/** 현재 세션 그래프에 배치된 자료 노드 목록(files 메타 조인). */
-export async function listFileGraphNodes(
-  sessionId: string,
-): Promise<FileGraphNode[]> {
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes`, {
-      headers: await authHeaders(),
-    }),
-  );
-  return res.json();
-}
-
-/** 자료를 그래프에 배치(POST). file_id+session_id 멱등 upsert. 좌표 null이면 서버 기본. */
-export async function addFileGraphNode(
-  sessionId: string,
-  fileId: string,
-  x: number | null,
-  y: number | null,
-): Promise<FileGraphNode> {
-  assertRealId(sessionId, "session_id"); // D63
-  assertRealId(fileId, "file_id");
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes`, {
-      method: "POST",
-      headers: await authHeaders(true),
-      body: JSON.stringify({
-        file_id: fileId,
-        position_x: x == null ? null : Math.round(x),
-        position_y: y == null ? null : Math.round(y),
-      }),
-    }),
-  );
-  return res.json();
-}
-
-/** 배치 좌표 갱신(PATCH, 드래그 이동). */
-export async function patchFileGraphNode(
-  sessionId: string,
-  fileId: string,
-  x: number,
-  y: number,
-): Promise<FileGraphNode> {
-  assertRealId(sessionId, "session_id"); // D63
-  assertRealId(fileId, "file_id");
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes`, {
-      method: "PATCH",
-      headers: await authHeaders(true),
-      body: JSON.stringify({
-        file_id: fileId,
-        position_x: Math.round(x),
-        position_y: Math.round(y),
-      }),
-    }),
-  );
-  return res.json();
-}
-
-/** 그래프에서 자료 제거(DELETE). 파일·RAG링크는 유지. */
-export async function removeFileGraphNode(
-  sessionId: string,
-  fileId: string,
-): Promise<void> {
-  assertRealId(sessionId, "session_id"); // D63
-  assertRealId(fileId, "file_id");
-  await ensureOk(
-    await fetch(`${API_BASE}/sessions/${sessionId}/file-graph-nodes/${fileId}`, {
-      method: "DELETE",
-      headers: await authHeaders(),
-    }),
-  );
 }
 
 // ── 노드 기억 연결 (Stage 3a) ────────────────────────────────────────
