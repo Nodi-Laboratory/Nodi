@@ -220,11 +220,79 @@ async def _fail_file_for_job(
 # ---------------------------------------------------------------------------
 # embedding_split
 # ---------------------------------------------------------------------------
+async def _store_session_chunks(
+    svc: ServiceClient, job: dict[str, Any], f: dict[str, Any],
+    chunks: list[str],
+) -> None:
+    """D83: user_upload 청크를 'stored'로 저장만 한다(임베딩 팬아웃 생략).
+
+    D84: session_id가 있으면 세션 합산 예산(문자)을 검사해 초과 시 청크 저장
+    없이 failed + 한국어 사유(프론트 칩이 그대로 노출). 터미널 상태는
+    'indexed'를 재사용한다 — user_upload에선 "세션 컨텍스트 준비 완료" 의미
+    (프론트 FileStatus·폴링·재시도 판별 재사용을 위해 상태값을 늘리지 않음).
+    """
+    file_id = f["id"]
+    total_chars = sum(len(c) for c in chunks)
+    session_id = f.get("session_id")
+    if session_id:
+        overlay = await app_settings.get_overlay()
+        budget = app_settings.as_int(
+            overlay, "session_context_max_chars",
+            settings.session_context_max_chars, 10_000, 300_000,
+        )
+        # 진행 중인 이 파일은 위에서 status='splitting'으로 세팅됐고 아래
+        # status='eq.indexed' 필터가 자기 자신을 이미 배제하므로, 별도 id!=self
+        # 필터는 불필요하다(합산은 세션의 다른 indexed user_upload만 대상).
+        siblings = await svc.select(
+            "files",
+            {"session_id": f"eq.{session_id}", "kind": "eq.user_upload",
+             "status": "eq.indexed", "select": "id,context_chars"},
+        )
+        used = sum(r.get("context_chars") or 0 for r in siblings)
+        if used + total_chars > budget:
+            remaining = max(0, budget - used)
+            await svc.update(
+                "files", {"id": f"eq.{file_id}"},
+                {"status": "failed",
+                 "error": (
+                     f"세션 컨텍스트 예산 초과: 이 파일 약 {total_chars:,}자, "
+                     f"세션 잔여 {remaining:,}자. 파일을 삭제하거나 더 작은 "
+                     "파일로 다시 업로드하세요."
+                 )},
+            )
+            await svc.update(
+                "jobs", {"id": f"eq.{job['id']}"},
+                {"status": "done", "updated_at": _now_iso()},
+            )
+            return
+
+    rows = [
+        {"file_id": file_id, "seq": i, "chunk_text": c, "status": "stored"}
+        for i, c in enumerate(chunks)
+    ]
+    for i in range(0, len(rows), 500):
+        await svc.insert("file_chunks", rows[i : i + 500], returning=False)
+    await svc.update(
+        "files", {"id": f"eq.{file_id}"},
+        {"status": "indexed", "chunk_total": len(chunks),
+         "chunk_done": len(chunks), "context_chars": total_chars},
+    )
+    await svc.update(
+        "jobs", {"id": f"eq.{job['id']}"},
+        {"status": "done", "updated_at": _now_iso()},
+    )
+    logger.info(
+        "세션 파일 저장: file=%s chunks=%d chars=%d (임베딩 생략)",
+        file_id, len(chunks), total_chars,
+    )
+
+
 async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     file_id = job["target_id"]
     files = await svc.select(
         "files",
-        {"id": f"eq.{file_id}", "select": "id,owner_id,storage_path,mime,space_ref",
+        {"id": f"eq.{file_id}",
+         "select": "id,owner_id,storage_path,mime,space_ref,kind,session_id",
          "limit": "1"},
     )
     if not files:
@@ -262,7 +330,9 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     chunk_size = app_settings.as_int(
         overlay, "chunk_size_chars", settings.chunk_size_chars, 400, 4000
     )
-    chunk_overlap = app_settings.as_int(
+    # D83: user_upload는 전문 이어붙이기용 — 오버랩은 중복 텍스트만 만들므로 0.
+    is_session_upload = f.get("kind") == "user_upload"
+    chunk_overlap = 0 if is_session_upload else app_settings.as_int(
         overlay, "chunk_overlap_chars", settings.chunk_overlap_chars, 0, 500
     )
     chunks = embedding.chunk_text(text, chunk_size, chunk_overlap)
@@ -277,6 +347,11 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
             "jobs", {"id": f"eq.{job['id']}"},
             {"status": "done", "updated_at": _now_iso()},
         )
+        return
+
+    # D83: user_upload는 임베딩·Qdrant 없이 저장만 — 세션 전문 주입이 소비한다.
+    if is_session_upload:
+        await _store_session_chunks(svc, job, f, chunks)
         return
 
     # Insert chunk rows (pending) in manageable batches.
