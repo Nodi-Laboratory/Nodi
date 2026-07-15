@@ -531,8 +531,7 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     // replay가 리프를 통째로 대체하므로 잔여 스폰 타이머는 취소(중복 id 방지).
     for (const t of spawnTimersRef.current) clearTimeout(t);
     spawnTimersRef.current.clear();
-    const nodes = detail?.nodes ?? [];
-    const reals = nodes.filter((n) => !n.is_navigator);
+    const reals = detail?.nodes ?? [];
     headRef.current = detail?.session?.current_head_id ?? null;
 
     const { concepts: built, firstIdxByNode } = replayNodes(reals);

@@ -135,11 +135,7 @@ async def chat_stream(
     parent_id = body.parent_node_id or session.get("current_head_id")
     chain = svc.ancestor_chain_nodes(nodes, parent_id)
     by_id = {n["id"]: n for n in nodes}
-    history = [
-        (n.get("question") or "", n.get("answer") or "")
-        for n in chain
-        if not n.get("is_navigator")
-    ]
+    history = [(n.get("question") or "", n.get("answer") or "") for n in chain]
     # All three context builders read the same ancestor chain but are otherwise
     # independent, and each is internally best-effort (own try/except, safe
     # defaults on failure). Run them concurrently to cut first-token latency —
@@ -230,7 +226,7 @@ async def chat_stream(
                 # just the (question, structured-answer) node with a null label.
                 # The frontend parses the answer text into concept cards; concept
                 # grouping + illustrations are resolved client-side via
-                # /art/search. Navigator generation is likewise dropped.
+                # /art/search.
                 node = await svc.append_node(
                     client, body.session_id, parent_id, body.question, answer, None
                 )

@@ -30,7 +30,7 @@ from .supabase_client import UserClient
 logger = logging.getLogger("nodi.memory")
 settings = get_settings()
 
-_IMPORT_SELECT = "id,session_id,parent_id,question,answer,label,is_navigator"
+_IMPORT_SELECT = "id,session_id,parent_id,question,answer,label"
 
 
 def _same_session_segment(
@@ -119,12 +119,8 @@ async def collect_imported_segments(
         else:
             seg = _full_chain(other_by_session.get(src["session_id"], {}), src["id"])
             label = "다른 세션"
-        # Real nodes only; nothing already on the current branch.
-        seg = [
-            n
-            for n in seg
-            if not n.get("is_navigator") and n["id"] not in chain_ids
-        ]
+        # Nothing already on the current branch.
+        seg = [n for n in seg if n["id"] not in chain_ids]
         if not seg:
             continue
         seg = seg[:budget]
@@ -251,12 +247,8 @@ async def build_comparison_context(
                 seg = _full_chain(
                     other_by_session.get(ref["session_id"], {}), ref["id"]
                 )
-            # Real nodes only; nothing already on the current branch.
-            seg = [
-                n
-                for n in seg
-                if not n.get("is_navigator") and n["id"] not in chain_ids
-            ]
+            # Nothing already on the current branch.
+            seg = [n for n in seg if n["id"] not in chain_ids]
             if not seg:
                 continue
             seg = seg[:budget]

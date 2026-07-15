@@ -192,17 +192,6 @@ function spaceParams(target: SpaceTarget): URLSearchParams {
   return params;
 }
 
-/** 네비게이터(is_navigator) 노드 삭제. 204 반환. */
-export async function deleteNode(id: string): Promise<void> {
-  assertRealId(id, "node_id"); // D63: 임시 노드 id는 DB 경계로 못 보냄
-  await ensureOk(
-    await fetch(`${API_BASE}/nodes/${id}`, {
-      method: "DELETE",
-      headers: await authHeaders(),
-    }),
-  );
-}
-
 // ── 파일 / RAG (Stage 3b) ────────────────────────────────────────────
 
 /** 멀티파트 업로드. service_role 미설정 시 백엔드 503. (Content-Type 미지정 — FormData가 boundary 설정) */

@@ -79,8 +79,6 @@ export interface NodeRow {
   question: string;
   answer: string;
   label: string | null;
-  is_navigator: boolean;
-  navigator_question: string | null;
   position_x: number | null;
   position_y: number | null;
   created_at: string;
@@ -93,8 +91,6 @@ export interface NodeRow {
    * 전송 즉시 부모 아래에 반투명·점선으로 띄우고, done 시 실노드로 교체.
    */
   _provisional?: boolean;
-  /** D40: 네비게이터 노드의 근거(클릭 팝업 "이 질문으로 얻을 수 있는 내용"). 구노드엔 없음. */
-  navigator_meta?: NavigatorMeta | null;
   /** D46: 이 답변이 이번 턴에 참조한 브랜치 출처들(구노드엔 없음). */
   reference_sources?: ReferenceSource[] | null;
   /**
@@ -110,11 +106,6 @@ export interface NodeRow {
     } | null;
     [key: string]: unknown;
   } | null;
-}
-
-/** D40: 네비게이터 근거 메타. */
-export interface NavigatorMeta {
-  rationale?: string | null;
 }
 
 /** D46: 답변 노드의 참조 출처(비교참조 브랜치). */
@@ -172,8 +163,6 @@ export interface ChatDoneEvent {
     label: string | null;
     /** D57: 이번 턴 비교참조 출처(있으면). 리페치 전에도 참조 칩 즉시 표시. */
     reference_sources?: ReferenceSource[] | null;
-    /** D57-보강: 네비게이터 근거(해당되면). */
-    navigator_meta?: NavigatorMeta | null;
     /** D74: 이번 턴 RAG 출처(있으면). 리페치 전에도 첫 개념 카드 출처 칩 즉시 표시. */
     rag_sources?: RagSource[] | null;
   };

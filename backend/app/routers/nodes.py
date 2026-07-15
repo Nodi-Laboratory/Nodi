@@ -1,6 +1,7 @@
-"""Node endpoints — navigator cleanup + memory-link connections (Stage 3a).
+"""Node endpoints — canvas persistence + memory-link connections (Stage 3a).
 
-- DELETE /nodes/{id}                       navigator-node cleanup
+- PATCH  /nodes/{id}                       canvas state (coords + attachments)
+- PATCH  /nodes/{id}/position              persist a single node's coordinates
 - POST   /nodes/{id}/connections           link another branch's node in
 - DELETE /nodes/{id}/connections/{src}     unlink it
 
@@ -44,31 +45,6 @@ def _connections(result: object) -> list[str]:
     if isinstance(result, list):
         return [str(x) for x in result]
     return []
-
-
-@router.delete("/{node_id}", status_code=204)
-async def delete_node(
-    node_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> None:
-    client = UserClient.from_user(user)
-    rows = await client.select(
-        "nodes",
-        {"id": f"eq.{node_id}", "select": "id,is_navigator", "limit": "1"},
-    )
-    if not rows:
-        # Either it does not exist or RLS hid it (not the caller's session).
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Node not found.",
-        )
-    if not rows[0].get("is_navigator"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only navigator nodes can be deleted via this endpoint.",
-        )
-    # RLS (nodes_delete_owner) still enforces ownership at the DB layer.
-    await client.delete("nodes", {"id": f"eq.{node_id}"})
 
 
 @router.patch("/{node_id}")

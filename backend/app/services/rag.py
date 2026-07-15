@@ -295,8 +295,6 @@ def _branch_query_text(chain: list[dict[str, Any]]) -> str:
     """
     parts: list[str] = []
     for n in reversed(chain):
-        if n.get("is_navigator"):
-            continue
         q = (n.get("question") or "").strip()
         a = (n.get("answer") or "").strip()
         if q or a:
@@ -327,17 +325,16 @@ def _suggestion_query_text(
     dropped, so the query reflects "what's being asked right now", not an average
     of the whole branch.
     """
-    reals = [n for n in chain if not n.get("is_navigator")]
-    if not reals:
+    if not chain:
         return ""
-    focus = reals[-1]
+    focus = chain[-1]
     parts: list[str] = [
         (focus.get("question") or "").strip(),
         (focus.get("answer") or "").strip()[:200],
     ]
-    if len(reals) >= 2:
+    if len(chain) >= 2:
         # Weak parent context (question only) ahead of the focus signal.
-        parts.insert(0, (reals[-2].get("question") or "").strip())
+        parts.insert(0, (chain[-2].get("question") or "").strip())
     text = "\n".join(p for p in parts if p)
     return text[:cap]
 
@@ -391,8 +388,8 @@ def _is_greeting_token(tok: str) -> bool:
 def _greeting_only(chain: list[dict[str, Any]]) -> bool:
     """True when the branch's user QUESTIONS are greetings/small-talk only (D48).
 
-    Tokenizes ONLY the question text of non-navigator real nodes (answers are
-    ignored), drops the conservative greeting stoplist, and returns True when NO
+    Tokenizes ONLY the question text of the branch's nodes (answers are ignored),
+    drops the conservative greeting stoplist, and returns True when NO
     substantive token remains. Belt-and-suspenders for greetings whose long
     answer would otherwise slip past the length floor. Ambiguous cases — any
     unknown token, or no question text at all — return False so the suggestion
@@ -400,8 +397,6 @@ def _greeting_only(chain: list[dict[str, Any]]) -> bool:
     """
     saw_token = False
     for n in chain:
-        if n.get("is_navigator"):
-            continue
         q = (n.get("question") or "").strip()
         if not q:
             continue
