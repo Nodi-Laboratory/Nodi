@@ -34,27 +34,18 @@ class LinkBody(BaseModel):
     target_node_id: str
 
 
-class FilePositionBody(BaseModel):
-    position_x: float | None = None
-    position_y: float | None = None
-
-
 @router.post("", status_code=201)
 async def upload(
     file: UploadFile = File(...),
     space_kind: str = Form("personal"),
     space_ref: str | None = Form(None),
-    session_id: str | None = Form(None),
-    position_x: float | None = Form(None),
-    position_y: float | None = Form(None),
     kind: str = Form("user_upload"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Upload a file -> Storage + files row + queued embedding_split job.
 
-    Optional `session_id` + `position_x/y` place the file as a node in a session
-    graph (D13). `kind='class_material'` (teacher only, space_kind='class') makes
-    the file readable + RAG-searchable by all class members (Stage 4b).
+    `kind='class_material'` (teacher only, space_kind='class') makes the file
+    readable + RAG-searchable by all class members (Stage 4b).
     """
     service = get_service_client()
     if service is None:
@@ -82,9 +73,6 @@ async def upload(
         filename=file.filename or "upload",
         mime=file.content_type,
         data=data,
-        session_id=session_id,
-        position_x=position_x,
-        position_y=position_y,
         kind=kind,
     )
 
@@ -115,22 +103,12 @@ async def get_file(
     return await svc.get_file(client, file_id)
 
 
-@router.get("/{file_id}/tags")
-async def get_file_tags(
-    file_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, Any]:
-    """Tag names of a file the caller can access (own or class material)."""
-    client = UserClient.from_user(user)
-    return {"file_id": file_id, "tags": await svc.get_file_tags(client, file_id)}
-
-
 @router.delete("/{file_id}", status_code=204)
 async def delete_file(
     file_id: str,
     user: CurrentUser = Depends(get_current_user),
 ) -> None:
-    """Delete a file (owner only): Storage object + row (cascades chunks/links/tags)."""
+    """Delete a file (owner only): Storage object + row (cascades chunks/links)."""
     service = get_service_client()
     if service is None:
         raise HTTPException(
@@ -158,19 +136,6 @@ async def retry_file(
     return {"file_id": file_id, "action": action}
 
 
-@router.patch("/{file_id}/position")
-async def set_file_position(
-    file_id: str,
-    body: FilePositionBody,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, Any]:
-    """Persist a file-node's coordinates after drag (D13). Owner only."""
-    client = UserClient.from_user(user)
-    return await svc.set_file_position(
-        client, file_id, body.position_x, body.position_y
-    )
-
-
 # --- RAG source detail (D41) ---------------------------------------------
 @router.get("/chunks/{chunk_id}/context")
 async def get_chunk_context(
@@ -183,7 +148,7 @@ async def get_chunk_context(
     Calls the get_chunk_context RPC under the caller's JWT; visibility (own file
     or class_material the caller belongs to) is enforced inside the RPC, so a
     chunk the caller cannot access yields 0 rows -> 404. Returns
-    ``{file_id, name, seq, page, chunk_text, prev_text, next_text}``.
+    ``{file_id, name, seq, chunk_text, prev_text, next_text}``.
     """
     client = UserClient.from_user(user)
     rows = await client.rpc(

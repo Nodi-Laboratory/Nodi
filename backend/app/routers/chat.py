@@ -17,8 +17,8 @@ Flow:
 SSE event schema:
   event: start   data: {"session_id","parent_node_id"}
   event: token   data: {"delta"}
-  event: done    data: {"node":{"id","parent_id","label":null,"tags":[],
-                        "reference_sources":[...]},
+  event: done    data: {"node":{"id","parent_id","label":null,
+                        "reference_sources":[...],"rag_sources":[...]},
                         "current_head_id","root_node_id"}
   event: error   data: {"detail"}
 """
@@ -261,7 +261,6 @@ async def chat_stream(
                             "id": node["id"],
                             "parent_id": node.get("parent_id"),
                             "label": None,
-                            "tags": [],
                             "reference_sources": comparison_sources or [],
                             # D74: 실시간 출처 칩 표시용(영속은 위 PATCH가 담당).
                             "rag_sources": rag_sources or [],

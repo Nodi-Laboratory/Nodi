@@ -87,11 +87,11 @@ async def test_user_rpc_empty_body_200_returns_none(monkeypatch):
 @pytest.mark.asyncio
 async def test_user_rpc_json_body_returned(monkeypatch):
     """정상 케이스(회귀): JSON 본문을 반환하는 RPC는 파싱값을 그대로 돌려준다."""
-    payload = [{"tag": "물"}]
+    payload = [{"seq": 1}]
     client, _ = _user_client(
         monkeypatch, _FakeResponse(200, json.dumps(payload).encode())
     )
-    assert await client.rpc("get_file_tags", {"p_file_id": "f1"}) == payload
+    assert await client.rpc("get_chunk_context", {"p_chunk_id": "c1"}) == payload
 
 
 # --- ServiceClient.rpc ------------------------------------------------------
@@ -105,9 +105,9 @@ async def test_service_rpc_void_204_returns_none(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_service_rpc_json_body_returned(monkeypatch):
-    """정상 케이스(회귀): upsert_file_tags류(text[] 반환)는 파싱값을 그대로."""
+    """정상 케이스(회귀): JSON 본문(예: text[])을 반환하는 서비스롤 RPC는 파싱값 그대로."""
     payload = ["물", "공기"]
     client, _ = _service_client(
         monkeypatch, _FakeResponse(200, json.dumps(payload).encode())
     )
-    assert await client.rpc("upsert_file_tags", {"p_file_id": "f1"}) == payload
+    assert await client.rpc("some_json_fn", {"p_id": "f1"}) == payload

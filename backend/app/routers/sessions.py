@@ -82,12 +82,11 @@ async def get_session(
     """Session metadata + all of its nodes, for client-side tree reconstruction."""
     client = UserClient.from_user(user)
     # Session meta and the node list are independent reads -> fetch concurrently
-    # (same pattern as chat.py). Return shape/fields are unchanged (with_tags=True
-    # keeps the NODE_SELECT_WITH_TAGS contract). A 404 from get_session still
-    # propagates out of gather as a plain HTTP error.
+    # (same pattern as chat.py). A 404 from get_session still propagates out of
+    # gather as a plain HTTP error.
     session, nodes = await asyncio.gather(
         svc.get_session(client, session_id),
-        svc.get_session_nodes(client, session_id, with_tags=True),
+        svc.get_session_nodes(client, session_id),
     )
     return {"session": session, "nodes": nodes}
 

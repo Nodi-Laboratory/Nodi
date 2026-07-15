@@ -80,7 +80,6 @@ def _chunk_rows(hits):
             "file_id": h["_file"],
             "seq": i,
             "chunk_text": f"본문 {h['id']}",
-            "meta": {},
         }
         for i, h in enumerate(hits)
     ]

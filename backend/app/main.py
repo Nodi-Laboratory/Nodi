@@ -23,7 +23,6 @@ from .routers import (
     nodes,
     retrieve,
     sessions,
-    tags,
     teacher,
 )
 from .services import embedding_worker, qdrant_store
@@ -66,7 +65,6 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(me.router)
 app.include_router(sessions.router)
-app.include_router(tags.router)
 app.include_router(nodes.router)
 app.include_router(chat.router)
 app.include_router(home.router)

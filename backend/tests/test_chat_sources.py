@@ -33,7 +33,6 @@ SOURCES = [
         "chunk_id": "ck1",
         "name": "교과서.pdf",
         "seq": 3,
-        "page": 12,
         "distance": 0.21,
         "snippet": "지구과학 본문…",
     }

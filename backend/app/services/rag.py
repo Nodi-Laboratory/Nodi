@@ -60,8 +60,7 @@ async def search(
 ) -> list[dict[str, Any]]:
     """Qdrant 코사인 top-K -> Supabase 본문 재조회(RLS) -> 구 RPC 호환 rows.
 
-    반환 shape은 폐기된 search_file_chunks RPC와 동일:
-    {file_id, chunk_id, seq, chunk_text, distance, meta}.
+    반환 shape: {file_id, chunk_id, seq, chunk_text, distance}.
     Qdrant는 유사도(score, 높을수록 유사)를 주므로 distance = 1 - score로
     변환해 기존 거리 임계값(0.38/0.50 등) 의미를 그대로 유지한다.
     """
@@ -85,14 +84,14 @@ async def search(
         return []
     # 유사도 -> 거리 변환. 포인트 id == 청크 uuid(워커 업서트 규약).
     distances = {h["id"]: 1.0 - float(h["score"]) for h in hits}
-    # 본문/메타는 USER 스코프 클라이언트로 재조회 — RLS가 소유/클래스 자료
-    # 접근을 재검증한다(Qdrant 페이로드의 본문 없음 + 신뢰 경계 아님).
+    # 본문은 USER 스코프 클라이언트로 재조회 — RLS가 소유/클래스 자료 접근을
+    # 재검증한다(Qdrant 페이로드의 본문 없음 + 신뢰 경계 아님).
     rows = await client.select(
         "file_chunks",
         {
             "id": f"in.({','.join(distances)})",
             "status": "eq.embedded",
-            "select": "id,file_id,seq,chunk_text,meta",
+            "select": "id,file_id,seq,chunk_text",
         },
     )
     by_id = {str(r["id"]): r for r in rows}
@@ -108,7 +107,6 @@ async def search(
                 "seq": r.get("seq"),
                 "chunk_text": r.get("chunk_text"),
                 "distance": distances[h["id"]],
-                "meta": r.get("meta"),
             }
         )
     return out
@@ -117,15 +115,13 @@ async def search(
 SNIPPET_CHARS = 300
 
 
-def _source_label(name: str, seq: Any, page: Any) -> str:
-    """Inline provenance label for a chunk, e.g. "note.pdf · #12" (+ page)."""
+def _source_label(name: str, seq: Any) -> str:
+    """Inline provenance label for a chunk, e.g. "note.pdf · #12"."""
     parts: list[str] = []
     if name:
         parts.append(name)
     if seq is not None:
         parts.append(f"#{seq}")
-    if page is not None:
-        parts.append(f"p.{page}")
     return " · ".join(parts)
 
 
@@ -142,12 +138,7 @@ def build_block(chunks: list[dict[str, Any]], names: dict[str, str]) -> str:
         text = (c.get("chunk_text") or "").strip()
         if not text:
             continue
-        meta = c.get("meta") if isinstance(c.get("meta"), dict) else {}
-        label = _source_label(
-            names.get(c.get("file_id"), ""),
-            c.get("seq"),
-            (meta or {}).get("page"),
-        )
+        label = _source_label(names.get(c.get("file_id"), ""), c.get("seq"))
         prefix = f"[{label}] " if label else ""
         lines.append(f"- {prefix}{text}")
     return "\n".join(lines) if len(lines) > 1 else ""
@@ -156,13 +147,12 @@ def build_block(chunks: list[dict[str, Any]], names: dict[str, str]) -> str:
 def build_sources(
     chunks: list[dict[str, Any]], names: dict[str, str]
 ) -> list[dict[str, Any]]:
-    """Per-chunk provenance metadata (D32/D35): file·#seq·page·distance·snippet."""
+    """Per-chunk provenance metadata (D32/D35): file·#seq·distance·snippet."""
     sources: list[dict[str, Any]] = []
     for c in chunks:
         fid = c.get("file_id")
         if not fid:
             continue
-        meta = c.get("meta") if isinstance(c.get("meta"), dict) else {}
         sources.append(
             {
                 "file_id": fid,
@@ -172,7 +162,6 @@ def build_sources(
                 "chunk_id": c.get("chunk_id"),
                 "name": names.get(fid, ""),
                 "seq": c.get("seq"),
-                "page": (meta or {}).get("page"),
                 "distance": c.get("distance"),
                 "snippet": (c.get("chunk_text") or "")[:SNIPPET_CHARS],
             }
@@ -236,7 +225,7 @@ async def build_rag_context(
     게이트(class_material_rag_max_distance)를 적용해 인사말·무관 질의 턴의
     프롬프트 오염을 막고, 링크 청크는 기존대로 무게이트(사용자가 명시한 신뢰).
 
-    Returns ``{"block": str, "sources": [ {file_id, name, seq, page, distance,
+    Returns ``{"block": str, "sources": [ {file_id, name, seq, distance,
     snippet} ]}`` or ``None`` when there is nothing to inject. Callers use
     ``block`` for the system prompt and ``sources`` for node/log provenance (D32).
     """

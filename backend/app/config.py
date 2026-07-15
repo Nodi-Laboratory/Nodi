@@ -63,13 +63,6 @@ class Settings(BaseSettings):
 
     # 카드 배치·좌표는 프론트 소유(d3-force) — 서버 위치 계산 상수는 제거됨.
 
-    # --- 노드 라벨/태그 캡 (자동 라벨·개념 태그 상한) ---
-    # D80: 생산자(Gemini 라벨/태깅 호출)는 제거됐고 캡 상수만 남는다.
-    # Hard cap on auto-generated node labels (design: <= 10 chars).
-    node_label_max_chars: int = 10
-    # Auto concept tags per node (design: 1..3).
-    max_tags_per_node: int = 3
-
     # --- Memory linking (Stage 3a) ---
     # Cap imported (other-branch) nodes injected as reference context per turn.
     memory_max_imported_nodes: int = 12

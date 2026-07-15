@@ -26,9 +26,8 @@ settings = get_settings()
 logger = logging.getLogger("nodi.files")
 
 FILE_SELECT = (
-    "id,owner_id,space_kind,space_ref,uploader_id,kind,storage_path,mime,"
-    "size_bytes,status,chunk_total,chunk_done,error,session_id,position_x,"
-    "position_y,name,created_at,updated_at"
+    "id,owner_id,space_kind,space_ref,kind,storage_path,mime,"
+    "size_bytes,status,chunk_total,chunk_done,error,name,created_at,updated_at"
 )
 
 # D79: 스토리지 키에 허용되는 ASCII 문자 — Supabase Storage는 비ASCII 키를
@@ -122,9 +121,6 @@ async def upload_file(
     filename: str,
     mime: str | None,
     data: bytes,
-    session_id: str | None = None,
-    position_x: float | None = None,
-    position_y: float | None = None,
     kind: str = "user_upload",
 ) -> dict[str, Any]:
     if space_kind not in ("personal", "class"):
@@ -214,16 +210,12 @@ async def upload_file(
             "owner_id": owner_id,
             "space_kind": space_kind,
             "space_ref": ref,
-            "uploader_id": owner_id,
             "kind": kind,
             "storage_path": storage_path,
             "name": display_name,
             "mime": mime,
             "size_bytes": len(data),
             "status": "uploaded",
-            "session_id": session_id,
-            "position_x": position_x,
-            "position_y": position_y,
         },
     )
     file_row = rows[0]
@@ -243,14 +235,6 @@ async def upload_file(
     return file_row
 
 
-async def get_file_tags(client: UserClient, file_id: str) -> list[str]:
-    """Tag names of a file the caller can access (own or class material)."""
-    result = await client.rpc("get_file_tags", {"p_file_id": file_id})
-    if isinstance(result, list):
-        return [str(x) for x in result]
-    return []
-
-
 async def _assert_file_owner(
     client: UserClient, owner_id: str, file_id: str
 ) -> dict[str, Any]:
@@ -268,14 +252,13 @@ async def _assert_file_owner(
 async def delete_file(
     service: ServiceClient, client: UserClient, owner_id: str, file_id: str
 ) -> None:
-    """Delete a file (owner only): Storage object + files row (cascades chunks/
-    links/file_tags), then prune any concept tags that became ORPHANS (D29).
+    """Delete a file (owner only): Storage object + files row (cascades
+    chunks/links).
 
-    The row delete + orphan-tag cleanup run atomically inside the
-    `delete_file_cascade` RPC (SECURITY DEFINER, owner-checked) under the
-    caller's JWT; shared tags (still used elsewhere) are preserved. Storage
-    object removal stays here on the service client. The file's Qdrant points
-    (벡터 저장소 — RPC 밖) are pruned best-effort afterwards to avoid orphan leak.
+    The row delete runs inside the `delete_file_cascade` RPC (SECURITY DEFINER,
+    owner-checked) under the caller's JWT. Storage object removal stays here on
+    the service client. The file's Qdrant points (벡터 저장소 — RPC 밖) are pruned
+    best-effort afterwards to avoid orphan leak.
     """
     file_row = await _assert_file_owner(client, owner_id, file_id)
     storage_path = file_row.get("storage_path")
@@ -427,29 +410,11 @@ async def list_session_file_links(
             "target_node_id": f"in.({','.join(node_ids)})",
             "select": (
                 "id,file_id,target_node_id,created_at,"
-                "files(id,storage_path,mime,status,chunk_total,chunk_done,"
-                "session_id,position_x,position_y)"
+                "files(id,storage_path,mime,status,chunk_total,chunk_done)"
             ),
             "order": "created_at.desc",
         },
     )
-
-
-async def set_file_position(
-    client: UserClient, file_id: str, position_x: float | None, position_y: float | None
-) -> dict[str, Any]:
-    """Persist a file-node's coordinates (D13). Owner only (RLS files_update_own)."""
-    rows = await client.update(
-        "files",
-        {"id": f"eq.{file_id}"},
-        {"position_x": position_x, "position_y": position_y},
-    )
-    if not rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found or not yours.",
-        )
-    return rows[0]
 
 
 # ---------------------------------------------------------------------------
