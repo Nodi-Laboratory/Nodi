@@ -67,9 +67,12 @@
 
 ## 2. 유지 (범위 밖 — 건드리지 않는다)
 
-- `nodes`의 `is_navigator`·`navigator_question`·`navigator_meta`·`label`·
-  `connections`·`reference_sources` — **활성 소비자 존재**(세션 재수화 필터·
-  트리 UI). 네비게이터 노드 데이터 잔존 가능성 때문에 필터는 살아 있어야 함.
+- ~~`nodes`의 navigator 컬럼 3종~~ → **삭제로 결정 변경** (2026-07-15 사용자
+  지적 + 실측: navigator 노드 0행·navigator_question 전부 null·navigator_meta
+  기본값 {}뿐 — "활성 소비자"는 과거 데이터 방어 필터일 뿐, 데이터 손실 허용
+  환경에서 전제 소멸). §5 Task C로 2차 웨이브 수행.
+- `nodes`의 `label`·`connections`·`reference_sources` — 활성(기억 연결·비교
+  참조 칩).
 - `file_graph_nodes`(D58 배치), `turn_logs`(D25 관측성), `jobs` — 활성.
 - `files.updated_at`·`mime` — 활성/표준.
 - pgvector extension 자체 — 드랍하지 않음(안전).
@@ -81,6 +84,23 @@
    역순이면 실행 중인 서버가 즉시 깨진다. (적용 전까지 신규 코드는 삭제된
    컬럼을 참조하지 않으므로 DDL 미적용 상태에서도 동작.)
 2. 적용 후 전체 스위트 + 스모크 재확인.
+
+## 5. Task C — navigator 컬럼 퍼지 (2차 웨이브, Task A/B 회수 후 순차)
+
+Task A/B와 파일이 겹쳐(chat.py·sessions.py·rag.py·types.ts·useConceptStream 등)
+**회수 후 별도 에이전트**로 수행한다.
+
+- DB — `supabase/migrations/0034_drop_navigator.sql`(파일만, Manager 적용):
+  `alter table public.nodes drop column if exists is_navigator, drop column if
+  exists navigator_question, drop column if exists navigator_meta;`
+  (navigator 행 0 실측 — delete 불요.)
+- 백엔드: `sessions.py` NODE_SELECT에서 3컬럼 제거·append_node의 관련 키 제거,
+  `chat.py`/`memory.py`/`rag.py`의 `is_navigator` 필터 제거(체인은 이제 전부
+  실노드), `nodes.py`의 navigator 참조 제거(grep으로 특정).
+- 프론트: `types.ts` NodeRow 3필드·NavigatorMeta 제거, `useConceptStream.ts`
+  `reals` 필터 제거, `api.ts`·기타 navigator 참조 grep 전수 제거.
+- 검증: 전체 스위트 GREEN + grep 0건 + tsc/build PASS. 원격 적용은 0032·0033과
+  함께 코드 회수 후 일괄.
 
 ## 4. 검증 기준
 
