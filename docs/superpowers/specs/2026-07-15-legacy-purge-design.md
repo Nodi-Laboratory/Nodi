@@ -75,7 +75,10 @@
   참조 칩).
 - `file_graph_nodes`(D58 배치), `turn_logs`(D25 관측성), `jobs` — 활성.
 - `files.updated_at`·`mime` — 활성/표준.
-- pgvector extension 자체 — 드랍하지 않음(안전).
+- ~~pgvector extension 자체 — 드랍하지 않음~~ → **드랍으로 결정 변경**
+  (2026-07-15 사용자 지시. 안전 근거: 0033이 마지막 vector 컬럼 2개를
+  드랍·vector 인자 함수는 0028에서 기드랍 → 종속 객체 0 실측, 0034에서
+  cascade 없는 plain drop — §5 참조).
 
 ## 3. 적용 순서 (필수 — 어기면 라이브 장애)
 
@@ -90,10 +93,10 @@
 Task A/B와 파일이 겹쳐(chat.py·sessions.py·rag.py·types.ts·useConceptStream 등)
 **회수 후 별도 에이전트**로 수행한다.
 
-- DB — `supabase/migrations/0034_drop_navigator.sql`(파일만, Manager 적용):
-  `alter table public.nodes drop column if exists is_navigator, drop column if
-  exists navigator_question, drop column if exists navigator_meta;`
-  (navigator 행 0 실측 — delete 불요.)
+- DB — `supabase/migrations/0034_drop_navigator_pgvector.sql`(파일만, Manager 적용):
+  nodes의 `is_navigator`·`navigator_question`·`navigator_meta` 3컬럼 드랍
+  (navigator 행 0 실측 — delete 불요) + **pgvector 확장 드랍**(사용자 지시,
+  0033 적용 이후 — 종속 객체 0).
 - 백엔드: `sessions.py` NODE_SELECT에서 3컬럼 제거·append_node의 관련 키 제거,
   `chat.py`/`memory.py`/`rag.py`의 `is_navigator` 필터 제거(체인은 이제 전부
   실노드), `nodes.py`의 navigator 참조 제거(grep으로 특정).
