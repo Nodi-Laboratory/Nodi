@@ -662,17 +662,23 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       void getFigure(figureId)
         .then((fresh) => {
           if (!fresh.url) throw new Error("빈 URL");
+          // D87: in-flight 중 send()가 다른 figure로 map-figure 슬롯을 교체할 수
+          // 있으므로 figureId가 일치하는 슬롯만 갱신 — 스테일 응답은 무시(no-op).
           commitLeafNodes(
             leafNodesRef.current.map((n) =>
-              n.id === "map-figure" && n.figure
+              n.id === "map-figure" && n.figure?.figureId === figureId
                 ? { ...n, figure: { ...n.figure, url: fresh.url } }
                 : n,
             ),
           );
         })
         .catch(() => {
+          // D87: 스테일 실패가 슬롯을 차지한 라이브 figure를 지우지 않도록 동일
+          // figureId일 때만 제거.
           commitLeafNodes(
-            leafNodesRef.current.filter((n) => n.id !== "map-figure"),
+            leafNodesRef.current.filter(
+              (n) => !(n.id === "map-figure" && n.figure?.figureId === figureId),
+            ),
           );
         });
     } else {
