@@ -23,6 +23,9 @@ export interface Rect {
 export const LEAF_DIMS: Record<CanvasLeafNode["type"], { w: number; h: number }> = {
   video: { w: 340, h: 132 },
   art: { w: 220, h: 210 },
+  // D87: FigureNode 이미지+캡션 근사(260폭). 실제 렌더보다 약간 크게 잡아
+  // 겹침을 배제(과대추정이 겹침보다 안전).
+  figure: { w: 260, h: 240 },
 };
 
 // 개념 카드 폭 — 높이 상수(CARD_H_*)는 cardMetrics(SSOT)에서 가져와 ConceptCard와 일치.

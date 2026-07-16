@@ -48,12 +48,15 @@ export interface Concept {
  */
 export interface CanvasLeafNode {
   id: string;
-  type: "video" | "art";
+  type: "video" | "art" | "figure";
   x: number;
   y: number;
   conceptId?: string; // 곁에 배치된 개념 id (near 앵커)
   video?: { videoId: string; title: string; thumb: string };
   art?: { slug: string; url: string; title: string };
+  // D87: 교과서 figure 리프. url은 signed(만료 有) — 재수화 시 url=""로 먼저
+  // 배치하고 getFigure로 비동기 재발급, FigureNode의 onError도 1회 재발급.
+  figure?: { figureId: string; url: string; caption: string; page?: number };
 }
 
 export interface ConceptGroup {

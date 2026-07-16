@@ -1,0 +1,160 @@
+/* FigureNode — 교과서 figure 리프 노드(VideoNode.module.css 이식·수직 레이아웃).
+   .node가 캔버스 절대배치 + 카드 프레임을 겸한다. 라이트박스는 body 포털이라
+   .nodi-canvas 밖 — 토큰은 전부 폴백값 포함. */
+.node {
+  position: absolute; /* leaf.x/y (top-left) */
+  width: 260px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--border, #f0e4c2);
+  border-radius: 16px;
+  background: #fff;
+  padding: 12px;
+  box-shadow: 0 6px 18px rgba(120, 90, 0, 0.07);
+}
+
+/* 라벨 / 이미지 / 캡션 수직 배치 */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.label {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: #b06a00;
+}
+
+/* 이미지 컨테이너: contain(도판 잘림 방지) + 스켈레톤 배경 */
+.thumb {
+  position: relative;
+  width: 100%;
+  height: 150px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #eae3d4;
+}
+.img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+/* 로딩/재발급 대기(url==="") 스켈레톤 — 부드러운 셔틀 그라디언트 */
+.skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, #ece5d6 30%, #f4efe3 50%, #ece5d6 70%);
+  background-size: 200% 100%;
+  animation: figureSkeleton 1.3s ease-in-out infinite;
+}
+@keyframes figureSkeleton {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* 캡션 푸터: p.N 태그 + 2줄 클램프 */
+.caption {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.page {
+  flex: 0 0 auto;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  color: #b06a00;
+}
+.captionText {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-body, sans-serif);
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink, #2b2620);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── 라이트박스 오버레이 (document.body 포털) ── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(43, 38, 32, 0.55);
+  animation: figureLightboxFade 0.18s ease both;
+}
+@keyframes figureLightboxFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min(820px, 92vw);
+  max-height: 90vh;
+}
+.lightboxImg {
+  max-width: 100%;
+  max-height: 74vh;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+}
+.lightboxCaption {
+  margin: 0;
+  max-width: 720px;
+  font-family: var(--font-body, sans-serif);
+  font-size: 14px;
+  line-height: 1.5;
+  color: #fff;
+  text-align: center;
+}
+.close {
+  position: absolute;
+  top: -16px;
+  right: -16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: #fff;
+  color: var(--ink, #2b2620);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  transition: background 0.14s ease, transform 0.12s ease;
+}
+.close:hover {
+  background: #f4f5f7;
+  transform: scale(1.06);
+}

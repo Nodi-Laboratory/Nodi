@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   createSession,
+  getFigure,
   retrieve,
   searchArt,
   streamChat,
@@ -64,6 +65,14 @@ async function cachedSearchArt(title: string): Promise<ArtSearchResult> {
 interface PersistedCanvas {
   ebs?: Array<{ video_id?: string; title?: string; thumb?: string; score?: number }>;
   art?: Array<{ slug?: string; url?: string; title?: string; score?: number }>;
+  // D87: figure는 url 제외 영속 — 재수화 시 getFigure로 fresh signed URL 재발급.
+  figures?: Array<{
+    figure_id?: string;
+    file_id?: string;
+    page?: number;
+    caption?: string;
+    score?: number;
+  }>;
 }
 type NodeRowWithAttachments = NodeRow & {
   attachments?: { canvas?: PersistedCanvas | null } | null;
@@ -202,10 +211,11 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
 
   const conceptsRef = useRef<Concept[]>([]);
   const leafNodesRef = useRef<CanvasLeafNode[]>([]);
-  // Part B: 맵당 영상 1·삽화 1 — 현재 대표의 최고 스코어(교체 판정 기준선).
+  // Part B: 맵당 영상 1·삽화 1·figure 1 — 현재 대표의 최고 스코어(교체 판정 기준선).
   // 세션 동안 유지, 재수화 시 로드된 대표 스코어로 재설정.
   const mapVideoScoreRef = useRef<number>(-Infinity);
   const mapArtScoreRef = useRef<number>(-Infinity);
+  const mapFigureScoreRef = useRef<number>(-Infinity); // D87
   const headRef = useRef<string | null>(null);
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -397,9 +407,10 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       const scoreSnapshot = {
         v: mapVideoScoreRef.current,
         a: mapArtScoreRef.current,
+        f: mapFigureScoreRef.current,
       };
       const placeRep = (
-        id: "map-video" | "map-art",
+        id: "map-video" | "map-art" | "map-figure",
         type: CanvasLeafNode["type"],
         extra: Partial<CanvasLeafNode>,
       ) => {
@@ -432,6 +443,19 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           art: { slug: repArt.slug, url: repArt.url, title: repArt.title },
         });
       }
+      // D87: 교과서 figure — 맵당 1개, 최고 스코어 후보만 대표로 유지/교체.
+      const repFigure = r.figures[0];
+      if (repFigure && typeof repFigure.score === "number" && repFigure.score > mapFigureScoreRef.current) {
+        mapFigureScoreRef.current = repFigure.score;
+        placeRep("map-figure", "figure", {
+          figure: {
+            figureId: repFigure.figureId,
+            url: repFigure.url,
+            caption: repFigure.caption,
+            page: repFigure.page,
+          },
+        });
+      }
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -444,8 +468,8 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           session_id: sid,
           question: q,
           parent_node_id: headRef.current ?? undefined,
-          // 09 단일 writer: ebs/art를 서버에 전달해 done 훅이 단일 PATCH로 통합 저장.
-          retrieved: (r.ebs.length > 0 || r.art.length > 0) ? {
+          // 09 단일 writer: ebs/art/figures를 서버에 전달해 done 훅이 단일 PATCH로 통합 저장.
+          retrieved: (r.ebs.length > 0 || r.art.length > 0 || r.figures.length > 0) ? {
             ebs: r.ebs.map((e) => ({
               video_id: e.videoId,
               title: e.title,
@@ -457,6 +481,14 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
               url: a.url,
               title: a.title,
               score: a.score,
+            })),
+            // D87: figure는 url 제외(signed·만료) — 재수화 시 getFigure로 재발급.
+            figures: r.figures.map((f) => ({
+              figure_id: f.figureId,
+              file_id: f.fileId,
+              page: f.page,
+              caption: f.caption,
+              score: f.score,
             })),
           } : null,
         },
@@ -496,6 +528,7 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
         commitLeafNodes(leafSnapshot);
         mapVideoScoreRef.current = scoreSnapshot.v;
         mapArtScoreRef.current = scoreSnapshot.a;
+        mapFigureScoreRef.current = scoreSnapshot.f;
       }
 
       // (f) done: sessionsKey invalidate(제목 갱신). ebs/art 영속은 서버 done
@@ -548,6 +581,7 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     // Part B: 전 노드 후보 중 최고 스코어로 영상 1·삽화 1 결정(argmax, 동점=첫 노드).
     let bestVideo: { score: number; nodeId: string; e: NonNullable<PersistedCanvas["ebs"]>[number] } | null = null;
     let bestArt: { score: number; nodeId: string; a: NonNullable<PersistedCanvas["art"]>[number] } | null = null;
+    let bestFigure: { score: number; nodeId: string; f: NonNullable<PersistedCanvas["figures"]>[number] } | null = null;
     for (const n of reals) {
       const canvas = (n as NodeRowWithAttachments).attachments?.canvas;
       if (!canvas) continue;
@@ -558,6 +592,11 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       for (const a of canvas.art ?? []) {
         if (!a?.slug || typeof a.score !== "number") continue;
         if (!bestArt || a.score > bestArt.score) bestArt = { score: a.score, nodeId: n.id, a };
+      }
+      // D87: figure argmax(ebs/art와 대칭, 구 노드엔 figures 없음 — 방어 파싱).
+      for (const f of canvas.figures ?? []) {
+        if (!f?.figure_id || typeof f.score !== "number") continue;
+        if (!bestFigure || f.score > bestFigure.score) bestFigure = { score: f.score, nodeId: n.id, f };
       }
     }
     const leaves: CanvasLeafNode[] = [];
@@ -600,6 +639,44 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       mapArtScoreRef.current = bestArt.score;
     } else {
       mapArtScoreRef.current = -Infinity;
+    }
+    // D87: figure는 url 비영속 — 좌표(장애물)만 먼저 확정해 url=""(스켈레톤)로
+    // 배치하고, getFigure로 fresh signed URL을 비동기 재발급해 리프를 갱신한다
+    // (resolveArt의 비동기 후처리 패턴과 동형). 실패 시 리프 제거(best-effort).
+    if (bestFigure) {
+      const base = anchorXY(bestFigure.nodeId);
+      const d = LEAF_DIMS.figure;
+      const { x, y } = placeLeafClear(base.x + LEAF_OFFSET_X, base.y, d.w, d.h, obstacles);
+      obstacles.push({ x, y, w: d.w, h: d.h });
+      const figureId = String(bestFigure.f.figure_id);
+      leaves.push({
+        id: "map-figure", type: "figure", x, y, conceptId: base.id,
+        figure: {
+          figureId,
+          url: "", // getFigure로 재발급(아래) 전까지 스켈레톤.
+          caption: bestFigure.f.caption ?? "",
+          page: typeof bestFigure.f.page === "number" ? bestFigure.f.page : undefined,
+        },
+      });
+      mapFigureScoreRef.current = bestFigure.score;
+      void getFigure(figureId)
+        .then((fresh) => {
+          if (!fresh.url) throw new Error("빈 URL");
+          commitLeafNodes(
+            leafNodesRef.current.map((n) =>
+              n.id === "map-figure" && n.figure
+                ? { ...n, figure: { ...n.figure, url: fresh.url } }
+                : n,
+            ),
+          );
+        })
+        .catch(() => {
+          commitLeafNodes(
+            leafNodesRef.current.filter((n) => n.id !== "map-figure"),
+          );
+        });
+    } else {
+      mapFigureScoreRef.current = -Infinity;
     }
 
     commitConcepts(built);

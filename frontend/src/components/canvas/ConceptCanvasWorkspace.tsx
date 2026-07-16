@@ -20,6 +20,7 @@ import ConceptCard from "./ConceptCard";
 import TagMarker from "./TagMarker";
 import VideoNode from "./VideoNode";
 import ArtNode from "./ArtNode";
+import FigureNode from "./FigureNode";
 import ConceptTreePanel from "./ConceptTreePanel";
 import TopBar from "./TopBar";
 import BottomBar from "./BottomBar";
@@ -248,8 +249,10 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
           const laid = reanchorLeaf(n, concepts, positions);
           return n.type === "video" ? (
             <VideoNode key={n.id} node={laid} />
-          ) : (
+          ) : n.type === "art" ? (
             <ArtNode key={n.id} node={laid} />
+          ) : (
+            <FigureNode key={n.id} node={laid} />
           );
         })}
         {/* 태그 마커 — 클러스터 위(최상단 카드보다 위)로 띄워 카드와 안 겹침 + zIndex. */}

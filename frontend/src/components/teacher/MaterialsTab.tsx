@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Upload,
+  BookOpen,
   FileText,
   CheckCircle2,
   AlertTriangle,
@@ -60,21 +61,43 @@ export function MaterialsTab({ classId }: { classId: string }) {
   const queryClient = useQueryClient();
   const { data: materials, isLoading } = useClassMaterials(classId);
   const inputRef = useRef<HTMLInputElement>(null);
+  // 클릭한 버튼의 kind 기억 — hidden input 1개를 두 업로드 버튼이 공유한다.
+  const pendingKindRef = useRef<"class_material" | "textbook">("class_material");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // G5: 업로드 성공 인라인 안내 1줄(토스트 라이브러리 신규 도입 금지).
   const [notice, setNotice] = useState<string | null>(null);
 
+  // 버튼 kind에 맞춰 accept를 전환한 뒤 공유 파일 선택기를 연다.
+  // 교과서는 PDF 전용(백엔드 kind="textbook"), 자료는 기존 화이트리스트 유지.
+  const openPicker = (kind: "class_material" | "textbook") => {
+    pendingKindRef.current = kind;
+    const input = inputRef.current;
+    if (!input) return;
+    input.accept =
+      kind === "textbook" ? ".pdf" : ".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md";
+    input.click();
+  };
+
   const handleFiles = async (list: FileList | null) => {
     const file = list?.[0];
     if (!file) return;
+    const kind = pendingKindRef.current;
     setError(null);
     setNotice(null);
-    // D75: 형식 사전 검증 — 서버와 같은 목록·같은 사유(왕복 없이 즉시 안내).
+    // 형식 사전 검증 — 서버와 같은 사유(왕복 없이 즉시 안내).
     const ext = file.name.includes(".")
       ? file.name.split(".").pop()!.toLowerCase()
       : "";
-    if (!ALLOWED_EXTENSIONS.has(ext)) {
+    if (kind === "textbook") {
+      // 교과서는 PDF 전용(백엔드 계약).
+      if (ext !== "pdf") {
+        setError("교과서는 PDF 파일만 업로드할 수 있습니다.");
+        if (inputRef.current) inputRef.current.value = "";
+        return;
+      }
+    } else if (!ALLOWED_EXTENSIONS.has(ext)) {
+      // D75: 자료는 서버 화이트리스트(ALLOWED_UPLOAD_EXTENSIONS)와 같은 목록.
       setError(UNSUPPORTED_TYPE_MSG);
       if (inputRef.current) inputRef.current.value = "";
       return;
@@ -84,12 +107,16 @@ export function MaterialsTab({ classId }: { classId: string }) {
       await uploadFile(
         { space_kind: "class", space_ref: classId },
         file,
-        { kind: "class_material" },
+        { kind },
       );
       await queryClient.invalidateQueries({
         queryKey: classMaterialsKey(classId),
       });
-      setNotice(`"${file.name}" 업로드 완료 — 인덱싱이 시작됩니다.`);
+      setNotice(
+        kind === "textbook"
+          ? `"${file.name}" 교과서 업로드 완료 — 인덱싱이 시작됩니다.`
+          : `"${file.name}" 업로드 완료 — 인덱싱이 시작됩니다.`,
+      );
     } catch (e) {
       if (e instanceof ApiError && e.status === 503) {
         setError("파일 임베딩이 아직 활성화되지 않았습니다(관리자 설정 필요).");
@@ -106,15 +133,26 @@ export function MaterialsTab({ classId }: { classId: string }) {
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-fg">학급 자료실</h2>
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          disabled={uploading}
-          className="flex items-center gap-1 rounded-lg border border-accent-border bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white disabled:opacity-60"
-        >
-          <Upload size={14} />
-          {uploading ? "업로드 중…" : "자료 업로드"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => openPicker("textbook")}
+            disabled={uploading}
+            className="flex items-center gap-1 rounded-lg border border-accent-border bg-bg-elevated px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent disabled:opacity-60"
+          >
+            <BookOpen size={14} />
+            교과서 업로드
+          </button>
+          <button
+            type="button"
+            onClick={() => openPicker("class_material")}
+            disabled={uploading}
+            className="flex items-center gap-1 rounded-lg border border-accent-border bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white disabled:opacity-60"
+          >
+            <Upload size={14} />
+            {uploading ? "업로드 중…" : "자료 업로드"}
+          </button>
+        </div>
         <input
           ref={inputRef}
           type="file"
@@ -220,6 +258,11 @@ function MaterialItem({ file, classId }: { file: FileRow; classId: string }) {
         <span className="shrink-0 text-xs text-fg-muted">
           {formatBytes(file.size_bytes)}
         </span>
+        {file.kind === "textbook" && (
+          <span className="shrink-0 rounded-full bg-accent/40 px-2 py-0.5 text-[11px] font-medium text-accent-fg">
+            교과서
+          </span>
+        )}
         <span
           className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${meta.cls}`}
         >
