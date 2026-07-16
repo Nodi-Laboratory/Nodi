@@ -24,6 +24,10 @@ COL_FILE_CHUNKS = "file_chunks"
 COL_ART = "art_assets"
 COL_EBS = "ebs"
 COL_CANVAS_CARDS = "canvas_cards"
+# 교과서 figure 임베딩 컬렉션(TASK 4, D86). file_chunks와 동형(4096d/Cosine) —
+# figure 캡션·description 임베딩을 저장하고, file_id 페이로드 필터로 스코핑한다.
+# 청크 본문과 마찬가지로 페이로드엔 식별자만(본문 없음), 히트 후 RLS 재조회.
+COL_TEXTBOOK_FIGURES = "textbook_figures"
 
 _client: AsyncQdrantClient | None = None
 
@@ -62,7 +66,13 @@ async def ensure_collections() -> None:
     """
     try:
         client = get_client()
-        for name in (COL_FILE_CHUNKS, COL_ART, COL_EBS, COL_CANVAS_CARDS):
+        for name in (
+            COL_FILE_CHUNKS,
+            COL_ART,
+            COL_EBS,
+            COL_CANVAS_CARDS,
+            COL_TEXTBOOK_FIGURES,
+        ):
             if not await client.collection_exists(name):
                 await client.create_collection(
                     collection_name=name,
@@ -80,6 +90,15 @@ async def ensure_collections() -> None:
             )
         except Exception:  # noqa: BLE001 - 인덱스는 최적화일 뿐, 실패해도 동작함
             logger.debug("file_id 페이로드 인덱스 생성 생략(이미 존재하거나 실패)")
+        # textbook_figures.file_id KEYWORD 인덱스 (figure 스코프 필터 성능, D86).
+        try:
+            await client.create_payload_index(
+                collection_name=COL_TEXTBOOK_FIGURES,
+                field_name="file_id",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("textbook_figures file_id 인덱스 생성 생략")
         # canvas_cards.session_id KEYWORD 인덱스 (세션 필터 성능).
         try:
             await client.create_payload_index(

@@ -115,6 +115,20 @@ class Settings(BaseSettings):
     # 주입 시점 이중 방어. clamp 10_000~300_000 (as_int 호출부와 동기).
     session_context_max_chars: int = 150_000
 
+    # --- 교과서 figure 파이프라인 (TASK 4, D86~D88) ---
+    # 이 task(0038)는 스키마·설정·컬렉션만 추가하고 런타임은 무변경 — 아래 노브는
+    # 후속 task의 인제스트·retrieve 경로가 소비한다. D62: admin 오버레이 > 기본값.
+    figure_pipeline_enabled: bool = True          # 킬 스위치(enhanced 과금·장애 대응)
+    figure_retrieve_max_distance: float = 0.60    # distance=1-score 규약(D73 게이트와 동일 스케일)
+    figure_judge_concurrency: int = 4             # TTA 프록시 미실측 — 보수 기본
+    figure_retrieve_top_k: int = 1                # retrieve_ebs_top_k 동형(config 전용)
+    figure_batch_size: int = 8                    # figure_batch 잡 팬아웃 단위
+    figure_signed_url_ttl_seconds: int = 21600    # 6h — 수업 시간 내 만료 실질 배제(D87)
+    # --- figure 캡션 판정(EXAONE 비전, 플러그형 D88) — env: JUDGE_BASE_URL/JUDGE_MODEL/JUDGE_API_KEY ---
+    judge_base_url: str = "http://proxy.tta-gpu.gov-nhncloud.com:30099/v1"
+    judge_model: str = "EXAONE-4.5-33B"
+    judge_api_key: str = ""                       # 미설정 → 판정 생략(위치기반 캡션 유지)
+
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).
     jwt_audience: str = "authenticated"
