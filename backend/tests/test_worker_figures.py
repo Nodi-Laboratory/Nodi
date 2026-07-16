@@ -1,0 +1,574 @@
+"""TASK 4 (D86/D88) — 워커 textbook 분기 + figure_batch 핸들러 + 삭제 확장 테스트.
+
+textbook split: 구조화 파싱(parse_document_full) → figure 추출·팬아웃(figure_batch)
+과 텍스트 청킹·embedding_batch 팬아웃을 병행한다. figure 실패는 텍스트 인덱싱을
+절대 막지 않는다(D88). figure_batch: 위치기반 후보를 비전 판정으로 개선(게이트
+아님) → embed_text 확정 → Upstage 임베딩 → Qdrant(textbook_figures) 적재.
+delete_file(textbook): 크롭 Storage + 두 Qdrant 컬렉션을 함께 정리한다.
+
+외부 의존(upstage/qdrant/storage/judge)은 전부 mock — 기존 워커 테스트의 패턴.
+"""
+
+import re
+
+import pytest
+
+from app.services import embedding_worker as W
+from app.services import files as F
+from app.services import qdrant_store
+
+
+# ---------------------------------------------------------------------------
+# 인메모리 FakeService — file_chunks/textbook_figures/jobs 테이블을 흉내내
+# 멱등·재큐 경로(insert/update/delete/count/select)를 실제처럼 검증한다.
+# ---------------------------------------------------------------------------
+def _match(row, filters):
+    for key, cond in filters.items():
+        if key in ("select", "limit", "order"):
+            continue
+        if key == "and":
+            for op, val in re.findall(r"seq\.(gte|lt)\.(\d+)", cond):
+                if op == "gte" and row.get("seq", 0) < int(val):
+                    return False
+                if op == "lt" and row.get("seq", 0) >= int(val):
+                    return False
+            continue
+        if isinstance(cond, str) and cond.startswith("eq."):
+            if str(row.get(key)) != cond[3:]:
+                return False
+    return True
+
+
+class _FakeService:
+    def __init__(self, file_row, figures=None, chunks=None, jobs=None):
+        self.file_row = dict(file_row)
+        self.tables = {
+            "file_chunks": [dict(c) for c in (chunks or [])],
+            "textbook_figures": [dict(r) for r in (figures or [])],
+            "jobs": [dict(j) for j in (jobs or [])],
+        }
+        self.inserts = []
+        self.updates = []
+        self.deletes = []
+        self.storage_uploads = []
+        self.storage_downloads = []
+
+    async def select(self, table, params):
+        if table == "files":
+            return [dict(self.file_row)]
+        rows = self.tables.get(table, [])
+        out = []
+        want_status = None
+        if params.get("status", "").startswith("eq."):
+            want_status = params["status"][3:]
+        lo = hi = None
+        if "and" in params:
+            for op, val in re.findall(r"seq\.(gte|lt)\.(\d+)", params["and"]):
+                if op == "gte":
+                    lo = int(val)
+                if op == "lt":
+                    hi = int(val)
+        for r in rows:
+            if want_status is not None and r.get("status") != want_status:
+                continue
+            if lo is not None and r.get("seq", 0) < lo:
+                continue
+            if hi is not None and r.get("seq", 0) >= hi:
+                continue
+            out.append(dict(r))
+        return out
+
+    async def count(self, table, params):
+        rows = self.tables.get(table, [])
+
+        def ok(r):
+            for key in ("target_id", "file_id", "kind"):
+                cond = params.get(key)
+                if cond and cond.startswith("eq.") and str(r.get(key)) != cond[3:]:
+                    return False
+            s = params.get("status")
+            if s and s.startswith("eq.") and r.get("status") != s[3:]:
+                return False
+            if s and s.startswith("in.("):
+                if r.get("status") not in s[4:-1].split(","):
+                    return False
+            return True
+
+        return sum(1 for r in rows if ok(r))
+
+    async def insert(self, table, rows, returning=True):
+        self.inserts.append((table, rows))
+        rlist = [rows] if isinstance(rows, dict) else rows
+        store = self.tables.get(table)
+        if store is not None:
+            for r in rlist:
+                store.append(dict(r))
+        return [dict(r) for r in rlist] if returning else []
+
+    async def update(self, table, filters, patch):
+        self.updates.append((table, filters, patch))
+        store = self.tables.get(table)
+        if store is not None:
+            for r in store:
+                if _match(r, filters):
+                    r.update(patch)
+        return [patch]
+
+    async def delete(self, table, filters):
+        self.deletes.append((table, filters))
+        store = self.tables.get(table)
+        if store is not None:
+            self.tables[table] = [r for r in store if not _match(r, filters)]
+        return []
+
+    async def storage_download(self, bucket, path):
+        self.storage_downloads.append((bucket, path))
+        return b"\xff\xd8crop"
+
+    async def storage_upload(self, bucket, path, data, content_type):
+        self.storage_uploads.append((bucket, path, data, content_type))
+
+    async def storage_delete(self, bucket, path):
+        self.deletes.append(("storage", (bucket, path)))
+
+
+async def _overlay_default():
+    return {}
+
+
+def _tb_file():
+    return {
+        "id": "f1", "owner_id": "u1", "storage_path": "u1/f1/book.pdf",
+        "mime": "application/pdf", "space_ref": "c1",
+        "kind": "textbook", "session_id": None,
+    }
+
+
+def _split_job():
+    return {"id": "j1", "kind": "embedding_split", "target_id": "f1"}
+
+
+def _fig_record(page, eid, ext="png", candidates=None):
+    """figure_extract.extract_figures 레코드 shape 모사(image_bytes/ext 포함)."""
+    return {
+        "page": page, "element_id": eid, "bbox": [0.1, 0.2, 0.5, 0.6],
+        "caption": f"caption {eid}", "alt": f"alt {eid}", "description": "",
+        "figure_type": "", "heading": f"heading {page}",
+        "candidates": candidates if candidates is not None else [f"cand {eid}"],
+        "embed_text": f"caption {eid} alt {eid}", "match_kind": "caption",
+        "image_bytes": b"\xff\xd8jpeg" if ext == "jpg" else b"\x89PNGdata",
+        "ext": ext,
+    }
+
+
+class _NoopQdrant:
+    """split 정리 경로가 실제 Qdrant에 접속하지 않게 하는 무해한 대역."""
+
+    async def delete(self, collection_name, points_selector):
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _patches(monkeypatch):
+    # _qdrant_delete_file_points(실함수)가 네트워크 없이 돌게 get_client만 대역.
+    # delete_file 테스트는 자체 recording fake로 이 setattr을 덮어써 호출을 검증한다.
+    monkeypatch.setattr(qdrant_store, "get_client", lambda: _NoopQdrant())
+    monkeypatch.setattr(W.app_settings, "get_overlay", _overlay_default)
+
+
+# ===========================================================================
+# split — textbook 분기(figure 팬아웃 + 텍스트 병행)
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_textbook_split_fans_out_figures_and_text(monkeypatch):
+    """① textbook split: figure 행 N개 + figure_batch 잡 + 텍스트 청크·embedding_batch 병행."""
+    async def fake_parse(data, filename):
+        return ("전체 마크다운", [{"page": 1}])
+
+    monkeypatch.setattr(W.upstage, "parse_document_full", fake_parse)
+    monkeypatch.setattr(
+        W.figure_extract, "text_from_elements",
+        lambda els: "문단 하나입니다.\n\n문단 둘입니다.",
+    )
+    monkeypatch.setattr(
+        W.figure_extract, "extract_figures",
+        lambda els: [_fig_record(1, 10), _fig_record(2, 20, ext="jpg")],
+    )
+
+    svc = _FakeService(_tb_file())
+    await W._handle_split(svc, _split_job())
+
+    # figure 행 2개 — status=pending, seq 0-base, image_bytes/ext는 행에 없음.
+    fig_inserts = [r for t, r in svc.inserts if t == "textbook_figures"]
+    assert fig_inserts, "textbook_figures 행이 삽입되어야 한다"
+    rows = fig_inserts[0]
+    assert len(rows) == 2
+    assert [r["seq"] for r in rows] == [0, 1]
+    assert all(r["status"] == "pending" for r in rows)
+    assert all("image_bytes" not in r and "ext" not in r for r in rows)
+    assert rows[0]["image_path"] == "u1/f1/figures/p1_e10.png"
+    assert rows[1]["image_path"] == "u1/f1/figures/p2_e20.jpg"
+
+    # 크롭 업로드(경로·content-type)
+    assert any(p == "u1/f1/figures/p1_e10.png" and c == "image/png"
+               for _, p, _, c in svc.storage_uploads)
+    assert any(p == "u1/f1/figures/p2_e20.jpg" and c == "image/jpeg"
+               for _, p, _, c in svc.storage_uploads)
+
+    # figure_batch 잡 + embedding_batch 잡 병행 생성
+    job_inserts = [r for t, r in svc.inserts if t == "jobs"]
+    kinds = [row["kind"] for rows in job_inserts for row in
+             ([rows] if isinstance(rows, dict) else rows)]
+    assert "figure_batch" in kinds
+    assert "embedding_batch" in kinds
+
+    # 텍스트 청크(pending) 병행
+    chunk_rows = [row for t, rows in svc.inserts if t == "file_chunks"
+                  for row in rows]
+    assert chunk_rows and all(r["status"] == "pending" for r in chunk_rows)
+
+
+@pytest.mark.asyncio
+async def test_extract_exception_isolates_text_pipeline(monkeypatch):
+    """② extract 예외 → 텍스트 파이프라인 정상 계속 + figure 행 0(격리 D88)."""
+    async def fake_parse(data, filename):
+        return ("md", [{"page": 1}])
+
+    def boom(els):
+        raise RuntimeError("extract 폭발")
+
+    monkeypatch.setattr(W.upstage, "parse_document_full", fake_parse)
+    monkeypatch.setattr(W.figure_extract, "text_from_elements",
+                        lambda els: "본문 텍스트입니다.")
+    monkeypatch.setattr(W.figure_extract, "extract_figures", boom)
+
+    svc = _FakeService(_tb_file())
+    await W._handle_split(svc, _split_job())
+
+    assert all(t != "textbook_figures" for t, _ in svc.inserts)
+    chunk_rows = [row for t, rows in svc.inserts if t == "file_chunks"
+                  for row in rows]
+    assert chunk_rows, "텍스트 청크는 정상 생성되어야 한다(figure 실패 무영향)"
+    job_kinds = [row["kind"] for t, rows in svc.inserts if t == "jobs"
+                 for row in ([rows] if isinstance(rows, dict) else rows)]
+    assert "embedding_batch" in job_kinds
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_off_skips_figures(monkeypatch):
+    """③ 킬 스위치 off → figure 행 0 + 텍스트 정상."""
+    async def overlay_off():
+        return {"figure_pipeline_enabled": False}
+
+    async def fake_parse(data, filename):
+        return ("md", [{"page": 1}])
+
+    monkeypatch.setattr(W.app_settings, "get_overlay", overlay_off)
+    monkeypatch.setattr(W.upstage, "parse_document_full", fake_parse)
+    monkeypatch.setattr(W.figure_extract, "text_from_elements",
+                        lambda els: "본문입니다.")
+    monkeypatch.setattr(
+        W.figure_extract, "extract_figures",
+        lambda els: (_ for _ in ()).throw(AssertionError("킬스위치 off인데 호출됨")),
+    )
+
+    svc = _FakeService(_tb_file())
+    await W._handle_split(svc, _split_job())
+
+    assert all(t != "textbook_figures" for t, _ in svc.inserts)
+    assert not svc.storage_uploads
+    job_kinds = [row["kind"] for t, rows in svc.inserts if t == "jobs"
+                 for row in ([rows] if isinstance(rows, dict) else rows)]
+    assert "figure_batch" not in job_kinds
+    assert "embedding_batch" in job_kinds
+
+
+@pytest.mark.asyncio
+async def test_split_idempotent_no_duplicate_figures(monkeypatch):
+    """⑥ split 2회 실행 → figure 행 수 불변 + figure_batch 잡 중복 없음."""
+    async def fake_parse(data, filename):
+        return ("md", [{"page": 1}])
+
+    monkeypatch.setattr(W.upstage, "parse_document_full", fake_parse)
+    monkeypatch.setattr(W.figure_extract, "text_from_elements",
+                        lambda els: "본문입니다.")
+    monkeypatch.setattr(
+        W.figure_extract, "extract_figures",
+        lambda els: [_fig_record(1, 10), _fig_record(1, 11)],
+    )
+
+    svc = _FakeService(_tb_file())
+    await W._handle_split(svc, _split_job())
+    figs_after_1 = len(svc.tables["textbook_figures"])
+    figbatch_after_1 = await svc.count(
+        "jobs", {"target_id": "eq.f1", "kind": "eq.figure_batch"}
+    )
+
+    await W._handle_split(svc, _split_job())
+    assert len(svc.tables["textbook_figures"]) == figs_after_1
+    figbatch_after_2 = await svc.count(
+        "jobs", {"target_id": "eq.f1", "kind": "eq.figure_batch"}
+    )
+    assert figbatch_after_2 == figbatch_after_1, "figure_batch 잡이 중복 생성되면 안 된다"
+
+
+# ===========================================================================
+# figure_batch 핸들러
+# ===========================================================================
+def _fig_row(rid, seq, ext="png", candidates=None, status="pending"):
+    return {
+        "id": rid, "seq": seq, "file_id": "f1",
+        "caption": f"위치캡션 {seq}", "alt": f"alt {seq}", "description": "",
+        "heading": f"heading {seq}",
+        "candidates": candidates if candidates is not None else [f"후보 {seq}"],
+        "embed_text": f"위치캡션 {seq}", "match_kind": "caption",
+        "image_path": f"u1/f1/figures/p1_e{seq}.{ext}", "status": status,
+    }
+
+
+def _fig_batch_job():
+    return {"id": "fj1", "kind": "figure_batch", "target_id": "f1",
+            "attempts": 1, "batch_range": {"from_seq": 0, "to_seq": 8}}
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_judge_none_is_judge_error_but_embeds(monkeypatch):
+    """④ 판정 None → match_kind='judge-error' + status='embedded'(임베딩 진행)."""
+    captured = {}
+
+    async def fake_judge_all(items, *, concurrency):
+        return [None for _ in items]  # 전부 판정 실패
+
+    async def fake_embed(texts):
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
+        captured["points"] = points
+        captured["collection"] = collection
+
+    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+
+    svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0), _fig_row("r1", 1)])
+    await W._handle_figure_batch(svc, _fig_batch_job())
+
+    fig_updates = [(fil, patch) for t, fil, patch in svc.updates
+                   if t == "textbook_figures"]
+    embedded = [patch for _, patch in fig_updates if patch.get("status") == "embedded"]
+    assert len(embedded) == 2
+    assert all(p["match_kind"] == "judge-error" for p in embedded)
+    assert all(p["selected_index"] is None for p in embedded)
+
+    # 불변식: Qdrant 컬렉션은 textbook_figures, 페이로드에 캡션/경로/본문 없음.
+    assert captured["collection"] == qdrant_store.COL_TEXTBOOK_FIGURES
+    for pt in captured["points"]:
+        assert set(pt["payload"].keys()) == {"figure_id", "file_id", "owner_id"}
+        assert "caption" not in pt["payload"]
+        assert "image_path" not in pt["payload"]
+        assert "embed_text" not in pt["payload"]
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_unconfigured_uses_position_based(monkeypatch):
+    """⑤ 판정 미설정 → 위치기반 embed_text로 임베딩(judge_all 미호출)."""
+    called = {"judge": False}
+    captured = {}
+
+    async def fake_judge_all(items, *, concurrency):
+        called["judge"] = True
+        return [None for _ in items]
+
+    async def fake_embed(texts):
+        captured["texts"] = list(texts)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
+        captured["points"] = points
+
+    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: False)
+    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+
+    svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0)])
+    await W._handle_figure_batch(svc, _fig_batch_job())
+
+    assert called["judge"] is False, "미설정이면 판정을 호출하지 않는다"
+    # 위치기반 캡션이 embed_text에 반영(판정 미개입)
+    assert "위치캡션 0" in captured["texts"][0]
+    embedded = [patch for t, _, patch in svc.updates
+                if t == "textbook_figures" and patch.get("status") == "embedded"]
+    assert len(embedded) == 1
+    assert embedded[0]["match_kind"] == "caption"  # 위치기반 유지
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_judge_selects_candidate(monkeypatch):
+    """판정 성공(index>=0) → match_kind='judge' + 선택 후보가 embed_text에 반영."""
+    captured = {}
+
+    async def fake_judge_all(items, *, concurrency):
+        return [{"selected_index": 0, "reason": "가장 잘 설명"} for _ in items]
+
+    async def fake_embed(texts):
+        captured["texts"] = list(texts)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
+        pass
+
+    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+
+    svc = _FakeService(
+        _tb_file(),
+        figures=[_fig_row("r0", 0, candidates=["정답 후보", "오답"])],
+    )
+    await W._handle_figure_batch(svc, _fig_batch_job())
+
+    assert "정답 후보" in captured["texts"][0]
+    embedded = [patch for t, _, patch in svc.updates
+                if t == "textbook_figures" and patch.get("status") == "embedded"]
+    assert embedded[0]["match_kind"] == "judge"
+    assert embedded[0]["selected_index"] == 0
+    assert embedded[0]["judge_reason"] == "가장 잘 설명"
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_embed_failure_fails_rows_and_job(monkeypatch):
+    """임베딩 실패 → 해당 행 failed + 잡 failed(파일 status 무변경 — D88)."""
+    async def boom_embed(texts):
+        raise RuntimeError("upstage 500")
+
+    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: False)
+    monkeypatch.setattr(W.upstage, "embed_passages", boom_embed)
+
+    svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0)])
+    await W._handle_figure_batch(svc, _fig_batch_job())
+
+    fig_failed = [patch for t, _, patch in svc.updates
+                  if t == "textbook_figures" and patch.get("status") == "failed"]
+    assert fig_failed, "임베딩 실패 시 행이 failed로 전환되어야 한다"
+    job_failed = [patch for t, _, patch in svc.updates
+                  if t == "jobs" and patch.get("status") == "failed"]
+    assert job_failed
+    # 파일 status는 건드리지 않는다(figure는 files.status와 무관).
+    assert all(t != "files" for t, _, _ in svc.updates)
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_no_pending_marks_done(monkeypatch):
+    """재시도 시 이미 embedded면 스킵 — 잡만 done(행 단위 멱등)."""
+    svc = _FakeService(
+        _tb_file(),
+        figures=[_fig_row("r0", 0, status="embedded")],
+    )
+    await W._handle_figure_batch(svc, _fig_batch_job())
+    job_done = [patch for t, _, patch in svc.updates
+                if t == "jobs" and patch.get("status") == "done"]
+    assert job_done
+    assert all(t != "textbook_figures" for t, _, _ in svc.updates)
+
+
+# ===========================================================================
+# 배선 — _fail_file_for_job(figure_batch), requeue_file(textbook)
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_fail_file_for_figure_batch_no_file_status(monkeypatch):
+    """figure_batch 소진 → 범위 내 pending 행만 failed, 파일 status 무변경."""
+    svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0)])
+    job = {"id": "fj1", "kind": "figure_batch", "target_id": "f1",
+           "batch_range": {"from_seq": 0, "to_seq": 8}}
+    await W._fail_file_for_job(svc, job, "boom")
+
+    fig_failed = [patch for t, _, patch in svc.updates
+                  if t == "textbook_figures" and patch.get("status") == "failed"]
+    assert fig_failed
+    assert all(t != "files" for t, _, _ in svc.updates)
+
+
+@pytest.mark.asyncio
+async def test_requeue_textbook_resets_failed_figures(monkeypatch):
+    """⑦ requeue: failed figure 행 → pending 리셋 + figure_batch 재팬아웃."""
+    svc = _FakeService(
+        _tb_file(),
+        figures=[_fig_row("r0", 0, status="failed")],
+        chunks=[{"file_id": "f1", "seq": 0, "status": "embedded"}],
+    )
+    action = await W.requeue_file(svc, "f1")
+
+    assert "figures_requeued" in action
+    # failed 행이 pending으로
+    assert svc.tables["textbook_figures"][0]["status"] == "pending"
+    # figure_batch 잡 재팬아웃
+    fig_jobs = [row for t, rows in svc.inserts if t == "jobs"
+                for row in ([rows] if isinstance(rows, dict) else rows)
+                if row["kind"] == "figure_batch"]
+    assert fig_jobs
+
+
+# ===========================================================================
+# delete_file(textbook) — 두 컬렉션 purge + 크롭 storage_delete
+# ===========================================================================
+class _FakeUserClientTB:
+    def __init__(self, file_row):
+        self._file_row = file_row
+        self.rpc_calls = []
+
+    async def select(self, table, params):
+        return [self._file_row]
+
+    async def rpc(self, name, params):
+        self.rpc_calls.append((name, params))
+        return None
+
+
+class _FakeServiceTB:
+    def __init__(self, image_paths):
+        self._image_paths = image_paths
+        self.storage_deletes = []
+
+    async def select(self, table, params):
+        if table == "textbook_figures":
+            return [{"image_path": p} for p in self._image_paths]
+        return []
+
+    async def storage_delete(self, bucket, path):
+        self.storage_deletes.append((bucket, path))
+
+
+class _FakeQdrantTB:
+    def __init__(self):
+        self.deletes = []
+
+    async def delete(self, collection_name, points_selector):
+        self.deletes.append(collection_name)
+
+
+@pytest.mark.asyncio
+async def test_delete_textbook_purges_both_collections(monkeypatch):
+    """⑧ delete_file(textbook): 크롭 storage_delete + 두 컬렉션 Qdrant purge."""
+    fake_q = _FakeQdrantTB()
+    monkeypatch.setattr(qdrant_store, "get_client", lambda: fake_q)
+    file_row = {
+        "owner_id": "u1", "kind": "textbook",
+        "storage_path": "u1/f1/book.pdf",
+    }
+    client = _FakeUserClientTB(file_row)
+    service = _FakeServiceTB(["u1/f1/figures/p1_e10.png", "u1/f1/figures/p2_e20.jpg"])
+
+    await F.delete_file(service, client, "u1", "f1")
+
+    # 크롭 2개 + 원본 1개 삭제
+    deleted_paths = [p for _, p in service.storage_deletes]
+    assert "u1/f1/figures/p1_e10.png" in deleted_paths
+    assert "u1/f1/figures/p2_e20.jpg" in deleted_paths
+    assert "u1/f1/book.pdf" in deleted_paths
+    # 두 Qdrant 컬렉션 purge
+    assert qdrant_store.COL_FILE_CHUNKS in fake_q.deletes
+    assert qdrant_store.COL_TEXTBOOK_FIGURES in fake_q.deletes
+    assert ("delete_file_cascade", {"p_file_id": "f1"}) in client.rpc_calls

@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from ..config import get_settings
-from . import app_settings
+from . import app_settings, qdrant_store
 from .service_client import ServiceClient
 from .supabase_client import UserClient
 from .upstage import UPSTAGE_PARSE_MAX_BYTES
@@ -314,6 +314,31 @@ async def delete_file(
     """
     file_row = await _assert_file_owner(client, owner_id, file_id)
     storage_path = file_row.get("storage_path")
+    is_textbook = file_row.get("kind") == "textbook"
+    # D86: textbook은 figure 크롭(Storage)도 함께 지운다. 경로 목록은
+    # delete_file_cascade가 textbook_figures 행을 FK cascade로 지우기 "전에"
+    # 수집해야 한다. best-effort — 조회·삭제 실패는 warning만(행 삭제는 cascade가
+    # 담당하고, 오펀 Storage 객체가 남아도 치명적이지 않다).
+    if is_textbook:
+        try:
+            figs = await service.select(
+                "textbook_figures",
+                {"file_id": f"eq.{file_id}", "select": "image_path"},
+            )
+        except Exception:  # noqa: BLE001 - 크롭 정리는 최적화일 뿐, 삭제를 막지 않는다
+            logger.warning(
+                "textbook_figures 조회 실패 — 크롭 정리 생략 file=%s",
+                file_id, exc_info=True,
+            )
+            figs = []
+        for fig in figs:
+            path = fig.get("image_path")
+            if not path:
+                continue
+            try:
+                await service.storage_delete(settings.storage_bucket, path)
+            except Exception:  # noqa: BLE001 - 개별 크롭 삭제 실패는 무시하고 계속
+                logger.warning("figure 크롭 삭제 실패(무시) path=%s", path, exc_info=True)
     if storage_path:
         await service.storage_delete(settings.storage_bucket, storage_path)
     await client.rpc("delete_file_cascade", {"p_file_id": file_id})
@@ -323,6 +348,11 @@ async def delete_file(
     from . import embedding_worker
 
     await embedding_worker._qdrant_delete_file_points(file_id)
+    # D86: textbook figure 임베딩 포인트도 정리(별도 Qdrant 컬렉션).
+    if is_textbook:
+        await embedding_worker._qdrant_delete_file_points(
+            file_id, collection=qdrant_store.COL_TEXTBOOK_FIGURES
+        )
 
 
 async def retry_file(

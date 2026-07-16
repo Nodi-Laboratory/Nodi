@@ -30,7 +30,14 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ..config import get_settings
-from . import app_settings, embedding, qdrant_store, upstage
+from . import (
+    app_settings,
+    embedding,
+    figure_extract,
+    figure_judge,
+    qdrant_store,
+    upstage,
+)
 from .service_client import ServiceClient, get_service_client
 
 logger = logging.getLogger("nodi.embedding_worker")
@@ -77,29 +84,38 @@ async def _extract_text(data: bytes, mime: str | None, storage_path: str) -> str
 _qdrant_ready = False
 
 
-async def _qdrant_upsert(points: list[dict[str, Any]]) -> None:
+async def _qdrant_upsert(
+    points: list[dict[str, Any]],
+    collection: str = qdrant_store.COL_FILE_CHUNKS,
+) -> None:
     global _qdrant_ready
     if not _qdrant_ready:
         await qdrant_store.ensure_collections()
         _qdrant_ready = True
     try:
-        await qdrant_store.upsert(qdrant_store.COL_FILE_CHUNKS, points)
+        # D86: collection 기본값은 file_chunks(기존 호출부 하위호환), textbook
+        # figure 경로만 COL_TEXTBOOK_FIGURES를 명시한다.
+        await qdrant_store.upsert(collection, points)
     except Exception:
         _qdrant_ready = False  # 컬렉션 부재/일시 장애 대비 — 재시도 시 재보장
         raise
 
 
-async def _qdrant_delete_file_points(file_id: str) -> None:
-    """재분할 전 해당 파일의 기존 Qdrant 포인트 정리 — best-effort.
+async def _qdrant_delete_file_points(
+    file_id: str, collection: str = qdrant_store.COL_FILE_CHUNKS
+) -> None:
+    """재분할·삭제 전 해당 파일의 기존 Qdrant 포인트 정리 — best-effort.
 
-    스테일 포인트가 남아도 본문 없는 페이로드뿐이고 검색 후 Supabase chunk_id
-    재조회(RLS)에서 걸러지지만, 무한히 쌓이지 않도록 여기서 지운다.
+    스테일 포인트가 남아도 본문 없는 페이로드뿐이고 검색 후 Supabase 재조회
+    (RLS)에서 걸러지지만, 무한히 쌓이지 않도록 여기서 지운다. collection 기본값은
+    file_chunks(기존 호출부·테스트 하위호환) — textbook figure 경로는
+    COL_TEXTBOOK_FIGURES를 넘겨 figure 임베딩 포인트를 정리한다(D86).
     """
     try:
         from qdrant_client import models
 
         await qdrant_store.get_client().delete(
-            collection_name=qdrant_store.COL_FILE_CHUNKS,
+            collection_name=collection,
             points_selector=models.FilterSelector(
                 filter=models.Filter(
                     must=[
@@ -110,8 +126,11 @@ async def _qdrant_delete_file_points(file_id: str) -> None:
                 )
             ),
         )
-    except Exception:  # noqa: BLE001 - 정리는 최적화일 뿐, split을 막지 않는다
-        logger.warning("Qdrant 포인트 정리 실패 file=%s", file_id, exc_info=True)
+    except Exception:  # noqa: BLE001 - 정리는 최적화일 뿐, split/삭제를 막지 않는다
+        logger.warning(
+            "Qdrant 포인트 정리 실패 file=%s collection=%s",
+            file_id, collection, exc_info=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -195,13 +214,29 @@ async def _fail_file_for_job(
     file_id = job.get("target_id")
     if not file_id:
         return
-    if job.get("kind") == "embedding_split":
+    kind = job.get("kind")
+    if kind == "embedding_split":
         # D76: 실패 사유를 파일 행에 남긴다(교사 자료실 실패 배지의 안내 문구).
         await svc.update(
             "files",
             {"id": f"eq.{file_id}"},
             {"status": "failed", "error": error[:500]},
         )
+    elif kind == "figure_batch":
+        # D88: figure_batch 영구 실패는 파일 status를 바꾸지 않는다(figure는
+        # files.status와 무관). 범위 내 pending figure 행만 failed로 두고,
+        # _finalize_file은 호출하지 않는다(텍스트 인덱싱 진행과 독립).
+        rng = job.get("batch_range") or {}
+        if "from_seq" in rng and "to_seq" in rng:
+            await svc.update(
+                "textbook_figures",
+                {
+                    "file_id": f"eq.{file_id}",
+                    "and": f"(seq.gte.{int(rng['from_seq'])},seq.lt.{int(rng['to_seq'])})",
+                    "status": "eq.pending",
+                },
+                {"status": "failed"},
+            )
     else:  # embedding_batch: fail this batch's still-pending chunks, then finalize
         rng = job.get("batch_range") or {}
         if "from_seq" in rng and "to_seq" in rng:
@@ -287,6 +322,83 @@ async def _store_session_chunks(
     )
 
 
+async def _fanout_figures(
+    svc: ServiceClient,
+    job: dict[str, Any],
+    f: dict[str, Any],
+    elements: list[dict[str, Any]],
+    overlay: dict[str, Any],
+) -> None:
+    """D86: textbook figure 추출 → 크롭 업로드 → textbook_figures insert → figure_batch 팬아웃.
+
+    호출부(_handle_split)가 try/except로 감싸므로 여기서의 예외는 텍스트 인덱싱을
+    막지 않는다(D88). 킬 스위치(figure_pipeline_enabled)가 off면 즉시 생략.
+    """
+    file_id = f["id"]
+    if not app_settings.as_bool(
+        overlay, "figure_pipeline_enabled", settings.figure_pipeline_enabled
+    ):
+        logger.info("figure 파이프라인 kill switch off — figure 생략 file=%s", file_id)
+        return
+
+    records = figure_extract.extract_figures(elements)
+    if not records:
+        return
+    owner_id = f.get("owner_id")
+
+    # 레코드별 크롭 업로드(경로 결정적 pN_eM.ext, upsert) + textbook_figures 행.
+    # seq는 0-base 열거 순서(figure_batch batch_range 팬아웃 기준). image_bytes/ext는
+    # Storage가 원본이므로 행에 넣지 않는다.
+    rows: list[dict[str, Any]] = []
+    for seq, r in enumerate(records):
+        ext = r["ext"]
+        image_path = (
+            f"{owner_id}/{file_id}/figures/p{r['page']}_e{r['element_id']}.{ext}"
+        )
+        content_type = "image/jpeg" if ext == "jpg" else "image/png"
+        await svc.storage_upload(
+            settings.storage_bucket, image_path, r["image_bytes"], content_type
+        )
+        rows.append({
+            "file_id": file_id,
+            "seq": seq,
+            "page": r["page"],
+            "element_id": r["element_id"],
+            "bbox": r["bbox"],
+            "caption": r["caption"],
+            "alt": r["alt"],
+            "description": r["description"],
+            "figure_type": r["figure_type"],
+            "heading": r["heading"],
+            "candidates": r["candidates"],
+            "embed_text": r["embed_text"],
+            "match_kind": r["match_kind"],
+            "image_path": image_path,
+            "status": "pending",
+        })
+    await svc.insert("textbook_figures", rows, returning=False)
+
+    # figure_batch 잡 팬아웃 — seq 범위(embedding_batch 팬아웃과 동형).
+    bsize = max(1, settings.figure_batch_size)
+    n = len(rows)
+    child_jobs = [
+        {
+            "owner_id": owner_id,
+            "kind": "figure_batch",
+            "target_id": file_id,
+            "parent_job_id": job["id"],
+            "batch_range": {"from_seq": start, "to_seq": min(start + bsize, n)},
+            "status": "queued",
+            "space_ref": f.get("space_ref"),
+        }
+        for start in range(0, n, bsize)
+    ]
+    await svc.insert("jobs", child_jobs, returning=False)
+    logger.info(
+        "figure 팬아웃 file=%s -> %d figures, %d batches", file_id, n, len(child_jobs)
+    )
+
+
 async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     file_id = job["target_id"]
     files = await svc.select(
@@ -299,6 +411,7 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         await _fail_job(svc, job["id"], "file row missing")
         return
     f = files[0]
+    is_textbook = f.get("kind") == "textbook"
 
     # (구 D65 차원 가드 폐기 — 벡터는 Qdrant에만 저장하고 차원은 Upstage
     #  EMBED_DIM=4096 고정. 검증은 upstage.embed_texts + Qdrant 컬렉션이 수행.)
@@ -320,13 +433,55 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     await svc.delete("file_chunks", {"file_id": f"eq.{file_id}"})
     await _qdrant_delete_file_points(file_id)
 
+    # D86: textbook figure 멱등 정리 + 중복 팬아웃 가드(embedding_batch 조기 done
+    # 가드와 동형). 잔여 figure_batch queued/running 잡이 있으면 이미 팬아웃됐으므로
+    # figure 행·Qdrant를 그대로 두고 재팬아웃만 건너뛴다(그 잡들이 소비할 상태).
+    # 없으면 이전 크래시의 부분 figure 상태를 정리하고 재추출한다. 크롭 Storage
+    # 객체는 경로가 결정적(pN_eM)이고 storage_upload가 upsert라 재실행 시 덮어써지므로
+    # 별도 삭제가 불필요하다.
+    skip_figure_fanout = False
+    if is_textbook:
+        existing_fig_batches = await svc.count(
+            "jobs",
+            {"target_id": f"eq.{file_id}", "kind": "eq.figure_batch",
+             "status": "in.(queued,running)"},
+        )
+        if existing_fig_batches > 0:
+            skip_figure_fanout = True
+        else:
+            await svc.delete("textbook_figures", {"file_id": f"eq.{file_id}"})
+            await _qdrant_delete_file_points(
+                file_id, collection=qdrant_store.COL_TEXTBOOK_FIGURES
+            )
+
     await svc.update("files", {"id": f"eq.{file_id}"}, {"status": "splitting"})
 
     data = await svc.storage_download(settings.storage_bucket, f["storage_path"])
-    text = await _extract_text(data, f.get("mime"), f["storage_path"])
+    # D86: textbook은 enhanced 구조화 파싱(markdown+elements 1회 공유) — 텍스트
+    # 청킹 입력은 figure를 제외한 요소 텍스트(빈 결과면 전체 markdown 폴백 계약).
+    # 그 외 kind는 기존 _extract_text 경로 그대로.
+    elements: list[dict[str, Any]] = []
+    if is_textbook:
+        filename = (f.get("storage_path") or "").split("/")[-1] or "document"
+        markdown, elements = await upstage.parse_document_full(data, filename)
+        text = figure_extract.text_from_elements(elements) or markdown
+    else:
+        text = await _extract_text(data, f.get("mime"), f["storage_path"])
     # D65 new-only: chunk size/overlap come from the admin overlay and apply to
     # THIS (new) job; existing chunks are untouched until re-uploaded.
     overlay = await app_settings.get_overlay()
+
+    # D88 figure 팬아웃 — 텍스트 청킹·embedding_batch 팬아웃 이전에, 독립 try/except로.
+    # 순서 근거: 텍스트가 "no extractable text"로 파일을 failed시켜도 figure는 이미
+    # 팬아웃됨(이미지 위주 교과서 대응). figure 실패는 텍스트 인덱싱을 절대 막지 않는다.
+    if is_textbook and not skip_figure_fanout:
+        try:
+            await _fanout_figures(svc, job, f, elements, overlay)
+        except Exception:  # noqa: BLE001 - D88: figure 실패 격리(텍스트 인덱싱 무영향)
+            logger.exception(
+                "figure 팬아웃 실패 — 텍스트 인덱싱은 계속 file=%s", file_id
+            )
+
     chunk_size = app_settings.as_int(
         overlay, "chunk_size_chars", settings.chunk_size_chars, 400, 4000
     )
@@ -499,6 +654,183 @@ async def _handle_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# figure_batch (D86/D88 — textbook figure 판정·임베딩·Qdrant 적재)
+# ---------------------------------------------------------------------------
+async def _handle_figure_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
+    """textbook_figures seq 범위의 pending 행을 판정(선택)→임베딩→Qdrant 적재.
+
+    _handle_batch를 본떴다. 판정은 게이트가 아니다(D88): 실패/미설정이어도 위치기반
+    캡션으로 임베딩을 진행하고, 어떤 경우에도 행을 판정 사유로 failed시키지 않는다.
+    임베딩/Qdrant 실패만 행 failed + 잡 failed(attempts 재시도 규약 상속). 파일
+    status·chunk_done·_finalize_file은 건드리지 않는다 — figure는 files.status와 무관.
+    """
+    file_id = job["target_id"]
+    rng = job.get("batch_range") or {}
+    from_seq = int(rng.get("from_seq", 0))
+    to_seq = int(rng.get("to_seq", 0))
+
+    figures = await svc.select(
+        "textbook_figures",
+        {
+            "file_id": f"eq.{file_id}",
+            "and": f"(seq.gte.{from_seq},seq.lt.{to_seq})",
+            "status": "eq.pending",
+            "select": (
+                "id,seq,caption,alt,description,heading,candidates,"
+                "embed_text,image_path,match_kind"
+            ),
+            "order": "seq.asc",
+        },
+    )
+    if not figures:
+        # 재시도 시 이미 embedded면 select가 비어 스킵(행 단위 멱등) — 잡만 마감.
+        await svc.update(
+            "jobs", {"id": f"eq.{job['id']}"},
+            {"status": "done", "updated_at": _now_iso()},
+        )
+        return
+
+    files = await svc.select(
+        "files", {"id": f"eq.{file_id}", "select": "id,owner_id", "limit": "1"}
+    )
+    if not files:
+        await _fail_job(svc, job["id"], "file row missing")
+        return
+    owner_id = files[0].get("owner_id")
+
+    # ── 판정(D88: 게이트 아님) — is_configured면 크롭을 내려받아 비전 판정한다.
+    #    준비/실행 중 예외는 위치기반으로 강등(판정 생략)해 임베딩을 계속한다.
+    overlay = await app_settings.get_overlay()
+    judgments: list[dict[str, Any] | None] = [None] * len(figures)
+    judged = False
+    if figure_judge.is_configured():
+        try:
+            items = []
+            for row in figures:
+                ext = (row["image_path"].rsplit(".", 1)[-1] or "png").lower()
+                img = await svc.storage_download(
+                    settings.storage_bucket, row["image_path"]
+                )
+                items.append({
+                    "candidates": row.get("candidates") or [],
+                    "image_bytes": img,
+                    "ext": ext,
+                })
+            concurrency = app_settings.as_int(
+                overlay, "figure_judge_concurrency",
+                settings.figure_judge_concurrency, 1, 32,
+            )
+            judgments = await figure_judge.judge_all(items, concurrency=concurrency)
+            judged = True
+        except Exception:  # noqa: BLE001 - 판정은 게이트가 아님 → 위치기반으로 진행
+            logger.exception("figure 판정 실패 — 위치기반으로 진행 file=%s", file_id)
+            judgments = [None] * len(figures)
+            judged = False
+
+    # ── 각 행의 판정 반영 + embed_text 확정 ──
+    patches: list[dict[str, Any]] = []
+    embed_texts: list[str] = []
+    for i, row in enumerate(figures):
+        selected_index: int | None = None
+        judge_reason: str | None = None
+        match_kind = row.get("match_kind") or ""
+        if judged:
+            j = judgments[i]
+            if j is None:
+                # 판정 실패 강등(D88) — selected_index는 null 유지.
+                match_kind = "judge-error"
+            else:
+                selected_index = j["selected_index"]
+                judge_reason = j.get("reason")
+                match_kind = "judge" if selected_index >= 0 else "judge-none"
+        # 미판정/미설정이면 위치기반 match_kind·캡션을 그대로 유지한다.
+        et = figure_judge.final_embed_text(
+            row, selected_index if selected_index is not None else -1
+        )
+        embed_texts.append(et)
+        patches.append({
+            "id": row["id"],
+            "selected_index": selected_index,
+            "judge_reason": judge_reason,
+            "match_kind": match_kind,
+            "embed_text": et,
+        })
+
+    # ── 임베딩(embedding-passage) — 실패 = 배치 실패(attempts 재시도 상속) ──
+    try:
+        vectors = await upstage.embed_passages(embed_texts)
+    except Exception as exc:  # noqa: BLE001 - 행 failed 처리 후 잡 failed
+        logger.exception("figure 임베딩 실패 file=%s", file_id)
+        for row in figures:
+            await svc.update(
+                "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
+            )
+        await _fail_job(svc, job["id"], f"figure embed error: {exc}")
+        return
+    if len(vectors) != len(figures):
+        logger.error(
+            "figure 임베딩 수 불일치 file=%s: %d vectors for %d figures",
+            file_id, len(vectors), len(figures),
+        )
+        for row in figures:
+            await svc.update(
+                "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
+            )
+        await _fail_job(svc, job["id"], "figure embedding count mismatch")
+        return
+
+    # 벡터는 Qdrant textbook_figures 컬렉션에만 — 포인트 id=행 uuid(재시도 덮어쓰기),
+    # 페이로드는 식별자만(캡션·경로·본문 금지 — Qdrant 신뢰 경계 아님 불변식).
+    points = [
+        {
+            "id": row["id"],
+            "vector": v,
+            "payload": {
+                "figure_id": row["id"],
+                "file_id": str(file_id),
+                "owner_id": str(owner_id) if owner_id else None,
+            },
+        }
+        for row, v in zip(figures, vectors, strict=True)
+    ]
+    try:
+        await _qdrant_upsert(points, collection=qdrant_store.COL_TEXTBOOK_FIGURES)
+    except Exception as exc:  # noqa: BLE001 - Qdrant 장애도 embed 실패와 동일 처리
+        logger.exception("figure Qdrant 업서트 실패 file=%s", file_id)
+        for row in figures:
+            await svc.update(
+                "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
+            )
+        await _fail_job(svc, job["id"], f"figure qdrant error: {exc}")
+        return
+
+    # ── 성공 행 update: status='embedded' + 판정 메타 + embed_text ──
+    sem = asyncio.Semaphore(8)
+
+    async def _mark(patch: dict[str, Any]) -> None:
+        async with sem:
+            await svc.update(
+                "textbook_figures",
+                {"id": f"eq.{patch['id']}"},
+                {
+                    "status": "embedded",
+                    "selected_index": patch["selected_index"],
+                    "judge_reason": patch["judge_reason"],
+                    "match_kind": patch["match_kind"],
+                    "embed_text": patch["embed_text"],
+                },
+            )
+
+    await asyncio.gather(*(_mark(p) for p in patches))
+
+    # D88: 파일 status·chunk_done·_finalize_file 호출 금지(figure는 files.status와 무관).
+    await svc.update(
+        "jobs", {"id": f"eq.{job['id']}"},
+        {"status": "done", "updated_at": _now_iso()},
+    )
+
+
 async def _finalize_file(svc: ServiceClient, file_id: str) -> None:
     """Recompute progress; mark indexed/partial when no pending chunks remain."""
     embedded = await svc.count(
@@ -529,6 +861,53 @@ async def _finalize_file(svc: ServiceClient, file_id: str) -> None:
     )
 
 
+async def _requeue_figures(
+    svc: ServiceClient, f: dict[str, Any], file_id: str
+) -> str | None:
+    """D86: textbook 실패 figure 행을 pending으로 리셋하고 figure_batch 재팬아웃.
+
+    중복 잡 가드는 split과 동일 — 잔여 figure_batch queued/running 잡이 있으면
+    재팬아웃을 생략한다(리셋만). failed 행이 없으면 아무 것도 하지 않고 None.
+    재팬아웃은 seq 전 범위로 하되, figure_batch 핸들러가 이미 embedded 행을
+    자동 스킵하므로 pending(=리셋된 실패분)만 재처리된다(행 단위 멱등).
+    반환: 관측용 액션 문자열(없으면 None).
+    """
+    failed = await svc.count(
+        "textbook_figures", {"file_id": f"eq.{file_id}", "status": "eq.failed"}
+    )
+    if failed == 0:
+        return None
+    await svc.update(
+        "textbook_figures",
+        {"file_id": f"eq.{file_id}", "status": "eq.failed"},
+        {"status": "pending"},
+    )
+    existing = await svc.count(
+        "jobs",
+        {"target_id": f"eq.{file_id}", "kind": "eq.figure_batch",
+         "status": "in.(queued,running)"},
+    )
+    if existing > 0:
+        return "figures_reset"
+    total_figures = await svc.count(
+        "textbook_figures", {"file_id": f"eq.{file_id}"}
+    )
+    bsize = max(1, settings.figure_batch_size)
+    child_jobs = [
+        {
+            "owner_id": f.get("owner_id"),
+            "kind": "figure_batch",
+            "target_id": file_id,
+            "batch_range": {"from_seq": start, "to_seq": min(start + bsize, total_figures)},
+            "status": "queued",
+            "space_ref": f.get("space_ref"),
+        }
+        for start in range(0, total_figures, bsize)
+    ]
+    await svc.insert("jobs", child_jobs, returning=False)
+    return "figures_requeued"
+
+
 async def requeue_file(svc: ServiceClient, file_id: str) -> str:
     """Re-process a failed/partial/stuck file (idempotent). service_role.
 
@@ -536,14 +915,19 @@ async def requeue_file(svc: ServiceClient, file_id: str) -> str:
     - has chunks -> reset failed chunks to pending and fan out fresh
       embedding_batch jobs over the file's seq range (the batch handler skips
       already-embedded chunks). Returns the action taken.
+
+    D86: textbook은 여기에 더해 실패 figure 행도 pending으로 리셋·재팬아웃하고,
+    그 사실을 액션 문자열에 합류시킨다(관측성). 청크가 아예 없어 fresh split을
+    거는 경로는 그 split이 figure까지 다시 팬아웃하므로 별도 처리하지 않는다.
     """
     rows = await svc.select(
         "files",
-        {"id": f"eq.{file_id}", "select": "id,owner_id,space_ref", "limit": "1"},
+        {"id": f"eq.{file_id}", "select": "id,owner_id,space_ref,kind", "limit": "1"},
     )
     if not rows:
         return "missing"
     f = rows[0]
+    is_textbook = f.get("kind") == "textbook"
 
     total = await svc.count("file_chunks", {"file_id": f"eq.{file_id}"})
     if total == 0:
@@ -575,25 +959,31 @@ async def requeue_file(svc: ServiceClient, file_id: str) -> str:
     )
     if pending == 0:
         await _finalize_file(svc, file_id)
-        return "already_complete"
+        action = "already_complete"
+    else:
+        await svc.update(
+            "files", {"id": f"eq.{file_id}"}, {"status": "embedding", "error": None}
+        )
+        bsize = max(1, settings.embedding_batch_size)
+        child_jobs = [
+            {
+                "owner_id": f.get("owner_id"),
+                "kind": "embedding_batch",
+                "target_id": file_id,
+                "batch_range": {"from_seq": start, "to_seq": min(start + bsize, total)},
+                "status": "queued",
+                "space_ref": f.get("space_ref"),
+            }
+            for start in range(0, total, bsize)
+        ]
+        await svc.insert("jobs", child_jobs, returning=False)
+        action = "batches_requeued"
 
-    await svc.update(
-        "files", {"id": f"eq.{file_id}"}, {"status": "embedding", "error": None}
-    )
-    bsize = max(1, settings.embedding_batch_size)
-    child_jobs = [
-        {
-            "owner_id": f.get("owner_id"),
-            "kind": "embedding_batch",
-            "target_id": file_id,
-            "batch_range": {"from_seq": start, "to_seq": min(start + bsize, total)},
-            "status": "queued",
-            "space_ref": f.get("space_ref"),
-        }
-        for start in range(0, total, bsize)
-    ]
-    await svc.insert("jobs", child_jobs, returning=False)
-    return "batches_requeued"
+    if is_textbook:
+        figure_action = await _requeue_figures(svc, f, file_id)
+        if figure_action:
+            action = f"{action}+{figure_action}"
+    return action
 
 
 # ---------------------------------------------------------------------------
@@ -605,6 +995,8 @@ async def _process(svc: ServiceClient, job: dict[str, Any]) -> None:
             await _handle_split(svc, job)
         elif job["kind"] == "embedding_batch":
             await _handle_batch(svc, job)
+        elif job["kind"] == "figure_batch":
+            await _handle_figure_batch(svc, job)
         else:
             await _fail_job(svc, job["id"], f"unknown kind {job['kind']}")
     except Exception as exc:  # noqa: BLE001
