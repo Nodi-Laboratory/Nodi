@@ -140,8 +140,43 @@
   background: #fff;
   border: 1.5px solid var(--border, #f0e4c2);
   border-radius: 22px;
-  padding: 6px 6px 6px 20px;
+  padding: 6px 6px 6px 8px;
   box-shadow: var(--shadow, 0 2px 10px rgba(60, 45, 0, 0.08));
+}
+
+/* D83 부속: 입력줄 왼쪽 클립 버튼 — send와 대칭인 ghost 원형(노랑 대신 투명). */
+.attach {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--ink, #2b2620);
+  opacity: 0.75;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+.attach:hover:not(:disabled) {
+  opacity: 1;
+  background: rgba(43, 38, 32, 0.06);
+}
+.attach:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.attachSpin {
+  animation: attachSpin 1s linear infinite;
+}
+@keyframes attachSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.hiddenInput {
+  display: none;
 }
 .input {
   flex: 1;

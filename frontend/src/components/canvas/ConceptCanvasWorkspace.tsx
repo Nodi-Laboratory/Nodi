@@ -6,11 +6,13 @@
 // to Nodi's session/space lifecycle (mirrors WorkspaceInner).
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { spaceTargetFromId } from "@/lib/api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { spaceTargetFromId, uploadFile } from "@/lib/api";
 import { CARD_CX } from "@/lib/concept/cardMetrics";
 import { useConceptStream } from "@/lib/concept/useConceptStream";
 import { useTagLayout } from "@/lib/concept/useTagLayout";
 import type { CanvasLeafNode, Concept } from "@/lib/concept/types";
+import { sessionFilesKey } from "@/lib/queries";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import NoteCanvas, { focusCamera, type Camera } from "./NoteCanvas";
 import MapLoadingIndicator from "./MapLoadingIndicator";
@@ -81,8 +83,28 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
   const pendingSession = useWorkspaceStore((s) => s.pendingSession);
   const setPendingSession = useWorkspaceStore((s) => s.setPendingSession);
 
-  const { concepts, leafNodes, reply, busy, loading, focusSignal, send } =
+  const { concepts, leafNodes, reply, busy, loading, focusSignal, send, ensureSession } =
     useConceptStream(target);
+
+  // D83 부속: 프롬프트 창(BottomBar) 첨부 소유 — 세션이 없으면 먼저 만들고(첫
+  // 질문과 동일 흐름) 그 세션의 컨텍스트로 업로드한다. RAG 미구축은 백엔드 워커가
+  // 보장. 오류는 SessionFilesBar에 사유로 표시(화면을 깨뜨리지 않음).
+  const queryClient = useQueryClient();
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const attach = useMutation({
+    mutationFn: async (file: File) => {
+      const sid = await ensureSession();
+      if (!sid) throw new Error("세션을 만들지 못했습니다.");
+      return uploadFile(target, file, { session_id: sid });
+    },
+    onSuccess: (row) => {
+      setUploadError(null);
+      queryClient.invalidateQueries({
+        queryKey: sessionFilesKey(row.session_id ?? null),
+      });
+    },
+    onError: (e: Error) => setUploadError(e.message),
+  });
 
   // 태그 클러스터 d3-force 레이아웃(비-pending 개념만). positions로 카드/리프 좌표를
   // 오버레이하고, tagCentroids로 태그 마커를 무게중심에 렌더한다.
@@ -259,9 +281,15 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
         }
       />
 
-      <SessionFilesBar sessionId={activeSessionId} target={target} />
+      <SessionFilesBar sessionId={activeSessionId} uploadError={uploadError} />
 
-      <BottomBar onSend={send} busy={busy} reply={reply} />
+      <BottomBar
+        onSend={send}
+        busy={busy}
+        reply={reply}
+        onAttach={(file) => attach.mutate(file)}
+        attachBusy={attach.isPending}
+      />
 
       <SessionDrawer
         open={drawerOpen}

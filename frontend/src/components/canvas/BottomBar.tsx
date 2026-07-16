@@ -3,7 +3,8 @@
 // Bottom bar: Nodi avatar (radar ping while streaming) + streaming speech bubble
 // + input. Ported from Nodi-figma/components/BottomBar.js. No voice UI.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { Loader2, Paperclip } from "lucide-react";
 import styles from "./BottomBar.module.css";
 
 const IDLE = "궁금한 개념을 말하거나, 입력해보세요.";
@@ -12,13 +13,25 @@ export default function BottomBar({
   onSend,
   busy,
   reply,
+  onAttach,
+  attachBusy,
 }: {
   onSend: (q: string) => void;
   busy: boolean;
   reply: string;
+  // D83 부속: 프롬프트 창 첨부. 미제공 시 클립 버튼을 렌더하지 않는다(하위 호환).
+  onAttach?: (file: File) => void;
+  attachBusy?: boolean;
 }) {
   const [text, setText] = useState("");
   const [imgBroken, setImgBroken] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 같은 파일 재선택 허용
+    if (file) onAttach?.(file);
+  };
 
   const submit = () => {
     const q = text.trim();
@@ -86,6 +99,32 @@ export default function BottomBar({
           )}
         </div>
         <div className={styles.inputBar}>
+          {onAttach && (
+            <>
+              <button
+                className={styles.attach}
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={attachBusy}
+                aria-label="파일 첨부"
+                title="이 세션의 컨텍스트로 파일 첨부"
+                data-no-pan
+              >
+                {attachBusy ? (
+                  <Loader2 size={18} className={styles.attachSpin} />
+                ) : (
+                  <Paperclip size={18} />
+                )}
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md"
+                className={styles.hiddenInput}
+                onChange={onPick}
+              />
+            </>
+          )}
           <input
             className={styles.input}
             data-testid="chat-input"

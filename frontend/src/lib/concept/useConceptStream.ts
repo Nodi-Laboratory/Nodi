@@ -180,6 +180,9 @@ export interface ConceptStream {
   /** 답변당 첫 개념. id로 그 개념의 sim 위치를 추적(카메라 추종). key는 send마다 증가. */
   focusSignal: { x: number; y: number; key: number; id: string } | null;
   send: (question: string) => Promise<void>;
+  /** D83 부속: 활성 세션이 없으면 createSession 후 store에 set하고 세션 id 반환.
+   *  프롬프트 창 첨부가 신규 진입(세션 0개)에서 세션을 자동 생성할 때 재사용. */
+  ensureSession: () => Promise<string | null>;
 }
 
 export function useConceptStream(target: SpaceTarget): ConceptStream {
@@ -610,5 +613,15 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail]);
 
-  return { concepts, groups, leafNodes, reply, busy, loading, focusSignal, send };
+  return {
+    concepts,
+    groups,
+    leafNodes,
+    reply,
+    busy,
+    loading,
+    focusSignal,
+    send,
+    ensureSession,
+  };
 }

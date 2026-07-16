@@ -16,32 +16,6 @@
   overflow-x: auto;
   pointer-events: none;
 }
-.attach {
-  pointer-events: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  font-family: var(--font-body, "Gaegu", sans-serif);
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1.5px solid var(--border, #f0e4c2);
-  background: #fff;
-  color: var(--ink, #2b2620);
-  box-shadow: var(--shadow, 0 2px 10px rgba(60, 45, 0, 0.08));
-  cursor: pointer;
-}
-.attach:hover:not(:disabled) {
-  border-color: var(--yellow, #ffc526);
-}
-.attach:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.hiddenInput {
-  display: none;
-}
 .chip {
   pointer-events: auto;
   display: inline-flex;
