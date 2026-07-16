@@ -63,10 +63,25 @@ class RetrievedArtItem(BaseModel):
     score: float
 
 
+class RetrievedFigureItem(BaseModel):
+    """프론트가 /retrieve에서 받은 교과서 figure 항목.
+
+    D87: **url 필드 없음** — signed URL은 만료되므로 영속하지 않는다(만료 URL
+    화석화 방지). 재수화는 figure_id로 GET /files/figures/{id}에서 재발급한다.
+    프론트가 url을 실어 보내도 extra 무시(기본 모델 설정)로 저장되지 않는다.
+    """
+    figure_id: str
+    file_id: str
+    page: int | None = None
+    caption: str = ""
+    score: float
+
+
 class RetrievedBody(BaseModel):
-    """done 훅에서 attachments.canvas에 통합 저장할 ebs/art 검색 결과."""
+    """done 훅에서 attachments.canvas에 통합 저장할 ebs/art/figures 검색 결과."""
     ebs: list[RetrievedEbsItem] = Field(default_factory=list)
     art: list[RetrievedArtItem] = Field(default_factory=list)
+    figures: list[RetrievedFigureItem] = Field(default_factory=list)
 
 
 class ChatStreamBody(BaseModel):
@@ -89,7 +104,11 @@ def _sse(event: str, data: dict) -> str:
 async def _patch_canvas_unified(
     client: UserClient, node_id: str, retrieved: RetrievedBody | None = None,
 ) -> None:
-    """nodes.attachments.canvas에 ebs/art만 저장(카드 좌표는 프론트 소유 — 저장 안 함)."""
+    """nodes.attachments.canvas에 ebs/art/figures만 저장(카드 좌표는 프론트 소유 — 저장 안 함).
+
+    D87: figures는 figure_id/file_id 등 재수화 가능한 식별자만 저장하고 signed URL은
+    실지 않는다(RetrievedFigureItem에 url 필드 없음). ebs/art와 대칭 — retrieved가
+    있으면 세 키를 항상 기록(빈 리스트여도 키 유지, 기존 규칙 동일)."""
     if retrieved is None:
         return
     try:
@@ -102,10 +121,11 @@ async def _patch_canvas_unified(
         attachments["canvas"] = {
             "ebs": [e.model_dump() for e in retrieved.ebs],
             "art": [a.model_dump() for a in retrieved.art],
+            "figures": [f.model_dump() for f in retrieved.figures],
         }
         await client.update("nodes", {"id": f"eq.{node_id}"}, {"attachments": attachments})
     except Exception:  # noqa: BLE001
-        logger.warning("attachments.canvas(ebs/art) 저장 실패 node=%s", node_id, exc_info=True)
+        logger.warning("attachments.canvas(ebs/art/figures) 저장 실패 node=%s", node_id, exc_info=True)
 
 
 @router.post("/stream")
