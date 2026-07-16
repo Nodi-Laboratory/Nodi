@@ -99,6 +99,17 @@ export default function BottomBar({
           )}
         </div>
         <div className={styles.inputBar}>
+          <input
+            className={styles.input}
+            data-testid="chat-input"
+            type="text"
+            value={text}
+            placeholder="노디에게 궁금한 개념을 물어보세요…"
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            disabled={busy}
+            data-no-pan
+          />
           {onAttach && (
             <>
               <button
@@ -125,17 +136,6 @@ export default function BottomBar({
               />
             </>
           )}
-          <input
-            className={styles.input}
-            data-testid="chat-input"
-            type="text"
-            value={text}
-            placeholder="노디에게 궁금한 개념을 물어보세요…"
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={onKeyDown}
-            disabled={busy}
-            data-no-pan
-          />
           <button
             className={styles.send}
             type="button"
