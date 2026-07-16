@@ -222,6 +222,34 @@ class ServiceClient:
         if r.status_code >= 400 and r.status_code != 404:
             self._raise(r, f"storage delete {bucket}/{path}")
 
+    async def storage_sign(self, bucket: str, path: str, expires_in: int) -> str:
+        """Storage 객체 signed URL 발급(D87). POST /storage/v1/object/sign/{bucket}/{path}
+        {"expiresIn": n} → 응답 {"signedURL": "/object/sign/..."} 상대경로를
+        절대 URL로 조립해 반환. 실패는 raise — 호출부(retrieve/figures)가
+        best-effort로 처리한다.
+
+        figure 경로는 ASCII 결정적(`{owner}/{file_id}/figures/pN_eM.ext`)이라
+        다른 storage 메서드와 같이 path를 그대로 경로에 넣는다.
+        """
+        headers = {
+            "apikey": self._key,
+            "Authorization": f"Bearer {self._key}",
+            "Content-Type": "application/json",
+        }
+        c = _get_http()
+        r = await c.post(
+            f"{self._storage}/object/sign/{bucket}/{path}",
+            json={"expiresIn": expires_in},
+            headers=headers,
+            timeout=30.0,
+        )
+        if r.status_code >= 400:
+            self._raise(r, f"storage sign {bucket}/{path}")
+        # signedURL은 `/object/sign/...?token=...` 상대경로 — storage 베이스에 붙여
+        # 절대 URL로 조립한다(토큰 쿼리스트링 포함).
+        signed = r.json().get("signedURL", "")
+        return f"{self._storage}{signed}"
+
 
 _client: ServiceClient | None = None
 _checked = False

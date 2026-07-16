@@ -67,10 +67,18 @@ UNSUPPORTED_TYPE_DETAIL = (
 IMAGE_UPLOAD_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "webp", "gif"})
 OVERSIZED_IMAGE_DETAIL = "이미지 파일은 50MB 이하만 업로드할 수 있습니다."
 
+# D86: 교과서 figure 파이프라인은 PDF 페이지 좌표를 전제한다 — 이미지·평문 입력은
+# 페이지 구조가 없어 좌표 기반 figure 추출이 불가하므로 업로드 단계에서 차단한다.
+TEXTBOOK_PDF_ONLY_DETAIL = "교과서는 PDF만 업로드할 수 있습니다."
+
 
 def resolve_upload_max_bytes(overlay: dict[str, Any], kind: str) -> int:
-    """D77: kind별 업로드 상한 — class_material(교사 자료)만 대용량 허용."""
-    if kind == "class_material":
+    """D77: kind별 업로드 상한 — class_material(교사 자료)만 대용량 허용.
+
+    D86: textbook(교과서)도 같은 500MB 노브를 공유한다 — 둘 다 교사가 올리는
+    대용량 학습 자료라 상한 근거가 동일하고, 신규 노브 증식을 막는다.
+    """
+    if kind in ("class_material", "textbook"):
         return app_settings.as_int(
             overlay,
             "class_material_max_bytes",
@@ -130,15 +138,16 @@ async def upload_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="space_kind must be 'personal' or 'class'.",
         )
-    if kind not in ("user_upload", "class_material"):
+    # D86: textbook(교과서)는 class_material과 동형 — class 공간·교사 전용.
+    if kind not in ("user_upload", "class_material", "textbook"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="kind must be 'user_upload' or 'class_material'.",
+            detail="kind must be 'user_upload', 'class_material', or 'textbook'.",
         )
-    if kind == "class_material" and space_kind != "class":
+    if kind in ("class_material", "textbook") and space_kind != "class":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="class_material requires space_kind='class'.",
+            detail="class_material/textbook requires space_kind='class'.",
         )
     # D83: 세션 연결은 user_upload 전용 — 학급 자료는 세션에 귀속되지 않는다.
     if session_id is not None and kind != "user_upload":
@@ -152,10 +161,10 @@ async def upload_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class files require space_ref (class id).",
         )
-    # Defense: class_material requires teacher of that class; other class
-    # uploads only require membership.
+    # Defense: class_material/textbook require teacher of that class (D86);
+    # other class uploads only require membership.
     if space_kind == "class":
-        if kind == "class_material":
+        if kind in ("class_material", "textbook"):
             await _assert_class_teacher(user_client, ref)
         else:
             await _assert_class_member(user_client, owner_id, ref)
@@ -194,6 +203,13 @@ async def upload_file(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=UNSUPPORTED_TYPE_DETAIL,
+        )
+    # D86: 교과서는 PDF 전용 — figure 추출이 페이지 좌표를 전제하므로 화이트리스트
+    # 통과분(이미지·텍스트)이라도 PDF가 아니면 거절한다.
+    if kind == "textbook" and ext != "pdf":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=TEXTBOOK_PDF_ONLY_DETAIL,
         )
     if not data:
         raise HTTPException(
