@@ -104,6 +104,31 @@
 
 ---
 
+## TASK 4. 교과서 figure 파이프라인 (labs 이식)
+
+- [ ] 진행 중 (2026-07-16 착수 — 스펙·계획 사용자 승인 완료)
+
+**범위**: labs(`~/Desktop/ai-rookie/labs`)에서 검증한 교과서 figure 파이프라인을
+제품에 통합한다. 교사 자료실에 **"교과서" 업로드 버튼(신규 `kind='textbook'`,
+PDF 전용)**을 기존 "수업자료" 버튼과 분리해 추가하고, 교과서 업로드 시:
+① 기존 텍스트 RAG 인제스트를 그대로 수행(사용자 확정) + ② Document Parse
+enhanced 1회 공유 호출로 figure를 추출, 위치기반 캡션 후보 매칭 후 EXAONE
+**비전 판정**(플러그형 JUDGE_* env, 사용자 확정)으로 캡션을 확정, embed_text를
+`embedding-passage`로 임베딩해 Qdrant `textbook_figures`에 적재한다. 학생 질의
+시 `/retrieve`가 학급 스코프로 figure를 검색해(RLS 재조회 재검증 + signed URL)
+캔버스에 FigureNode 리프로 표시한다. 수업자료(class_material) 경로는 동작 불변.
+
+**설계 결정**: D86(textbook kind + 파싱 1회 공유 + figure_batch 잡),
+D87(백엔드 signed URL 서빙·URL 영속 금지), D88(figure 실패 격리·판정 -1 강등).
+계획: `docs/superpowers/plans/2026-07-16-textbook-figures-plan.md`.
+
+**완료 기준**: 교사가 교과서 PDF를 올리면 텍스트 인덱싱과 figure 적재가 모두
+일어나고, 학급 학생 질의에 유사 figure가 캔버스에 표시되며(타 학급 차단),
+기존 스위트(class_material 회귀 게이트) 무수정 그린 + 신규 테스트 그린.
+마이그레이션 0038은 DRAFT(원격 적용은 사용자 승인 후).
+
+---
+
 ## 전제 · 미해결 결정
 
 미해결 결정은 Manager가 착수 시점에 스스로 결정하고 근거를 여기에 기록한 뒤
