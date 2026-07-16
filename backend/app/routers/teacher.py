@@ -136,7 +136,11 @@ async def list_materials(
     user: CurrentUser = Depends(get_current_user),
     _: Profile = Depends(require_teacher),
 ) -> list[dict[str, Any]]:
-    """Class-material files for the class + their embedding status."""
+    """Class-material + textbook files for the class + their embedding status.
+
+    TASK 4(0038): 교사가 올린 교과서(kind=textbook)도 자료 목록에 합류한다.
+    FILE_SELECT에 kind가 포함되므로 프론트가 배지로 구분할 수 있다.
+    """
     client = UserClient.from_user(user)
     await _assert_teaches(client, class_id)
     return await client.select(
@@ -144,7 +148,7 @@ async def list_materials(
         {
             "space_kind": "eq.class",
             "space_ref": f"eq.{class_id}",
-            "kind": "eq.class_material",
+            "kind": "in.(class_material,textbook)",
             "select": files_svc.FILE_SELECT,
             "order": "created_at.desc",
         },

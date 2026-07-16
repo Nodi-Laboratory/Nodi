@@ -21,7 +21,7 @@ from fastapi import (
 )
 
 from ..auth.deps import CurrentUser, get_current_user
-from ..services import app_settings
+from ..services import app_settings, figures
 from ..services import files as svc
 from ..services.service_client import get_service_client
 from ..services.supabase_client import UserClient
@@ -140,6 +140,52 @@ async def retry_file(
     client = UserClient.from_user(user)
     action = await svc.retry_file(service, client, user.id, file_id)
     return {"file_id": file_id, "action": action}
+
+
+# --- Figure 재수화 (D87: signed URL 비영속 → 재발급 창구) ------------------
+@router.get("/figures/{figure_id}")
+async def get_figure(
+    figure_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """단건 figure signed URL 재발급(D87). URL은 영속하지 않으므로(만료) 프론트가
+    노드 재수화 시 이 창구로 새 signed URL을 받는다.
+
+    UserClient로 textbook_figures 1행 조회 — RLS(0038)가 소유자/학급 구성원 접근을
+    재검증(없거나 접근 불가면 404). 서명은 service-role 필요 — 미설정·발급 실패 시
+    404로 뭉개지 않고 503(서비스 미구성, 기존 라우터의 서비스롤 부재 관례).
+    `/figures/{id}`는 2세그먼트라 1세그먼트 `/{file_id}`에 삼켜지지 않는다.
+    반환: {figure_id, url, caption, page}.
+    """
+    client = UserClient.from_user(user)
+    rows = await client.select(
+        "textbook_figures",
+        {
+            "id": f"eq.{figure_id}",
+            "select": (
+                "id,file_id,page,caption,alt,candidates,selected_index,image_path"
+            ),
+            "limit": "1",
+        },
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Figure not found or not accessible.",
+        )
+    row = rows[0]
+    url = await figures.sign_figure_url(row)
+    if not url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Figure URL signing is unavailable (service-role key not configured).",
+        )
+    return {
+        "figure_id": row.get("id"),
+        "url": url,
+        "caption": figures.display_caption(row),
+        "page": row.get("page"),
+    }
 
 
 # --- RAG source detail (D41) ---------------------------------------------

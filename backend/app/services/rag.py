@@ -169,18 +169,41 @@ async def _file_names(
 async def class_material_file_ids(
     client: UserClient, space_ref: str
 ) -> list[str]:
-    """학급 자료(class_material) 중 검색 가능한(indexed/partial) 파일 id들 (D73).
+    """학급 자료 중 검색 가능한(indexed/partial) 파일 id들 (D73).
 
-    partial도 임베딩된 청크는 검색 가능. USER 스코프 조회 — RLS(0012)가 학급
-    구성원 여부를 재검증한다.
+    교과서 텍스트 포함(0038, TASK 4): kind in (class_material, textbook) —
+    교사가 올린 교과서(kind=textbook)의 텍스트 청크도 자동으로
+    [학급 자료에서 참고] 후보에 합류한다. partial도 임베딩된 청크는 검색 가능.
+    USER 스코프 조회 — RLS(0012/0038)가 학급 구성원 여부를 재검증한다.
     """
     rows = await client.select(
         "files",
         {
             "space_kind": "eq.class",
             "space_ref": f"eq.{space_ref}",
-            "kind": "eq.class_material",
+            "kind": "in.(class_material,textbook)",
             "status": "in.(indexed,partial)",
+            "select": "id",
+        },
+    )
+    return [r["id"] for r in rows if r.get("id")]
+
+
+async def textbook_file_ids(client: UserClient, space_ref: str) -> list[str]:
+    """학급 교과서(kind=textbook) 파일 id들 — figure 스코프 필터용 (TASK 4, D88).
+
+    class_material_file_ids와 동형이되 kind=textbook, **status 필터 없음**:
+    figure 가용성은 텍스트 청크 status와 독립이다 — Qdrant textbook_figures엔
+    embedded figure 포인트만 존재하므로 텍스트가 아직 partial/미완이어도 figure는
+    검색 가능해야 한다. USER 스코프 조회 — RLS(0038)가 학급 구성원 여부를
+    재검증하고, 검색 히트 후 textbook_figures RLS 재조회가 최종 안전망이다.
+    """
+    rows = await client.select(
+        "files",
+        {
+            "space_kind": "eq.class",
+            "space_ref": f"eq.{space_ref}",
+            "kind": "eq.textbook",
             "select": "id",
         },
     )
