@@ -252,6 +252,7 @@ export type LogBlockKind =
   | "memory_link"
   | "rag"
   | "comparison"
+  | "tag_guide" // D90: 자유 태그 분류 가이드 블록(백엔드 task5-1)
   | string;
 
 export interface LogContextBlock {

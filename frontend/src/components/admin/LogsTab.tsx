@@ -263,6 +263,7 @@ const BLOCK_STYLE: Record<
   memory_link: { label: "기억 연결", color: "#d98a3d", bg: "rgba(194,112,42,0.28)" },
   rag: { label: "자료 (RAG)", color: "#3fb0aa", bg: "rgba(42,125,122,0.30)" },
   comparison: { label: "비교 참조", color: "#bd86c4", bg: "rgba(154,94,163,0.30)" },
+  tag_guide: { label: "분류 태그", color: "#8fb37a", bg: "rgba(108,140,80,0.28)" }, // D90 자유 태그 가이드
 };
 function blockStyle(kind: string) {
   return (
