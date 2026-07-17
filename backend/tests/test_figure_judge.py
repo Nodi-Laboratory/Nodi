@@ -83,7 +83,15 @@ def test_final_embed_text_uses_selected_candidate():
     """선택 index>=0이면 해당 후보를 캡션으로 채택한다."""
     text = FJ.final_embed_text(_record(), 1)
     assert text.startswith("후보1 ")
-    assert "그림 설명" in text and "단원 제목" in text
+    assert "단원 제목" in text
+
+
+def test_final_embed_text_excludes_description():
+    """enhanced 영어 description은 임베딩 텍스트에서 제외한다(D91 — 한국어
+    질의 벡터 희석 방지, 사용자 결정). 행 저장은 유지되므로 조립만 검증."""
+    text = FJ.final_embed_text(_record(), -1)
+    assert "그림 설명" not in text
+    assert text == "위치기반 캡션 단원 제목"
 
 
 def test_final_embed_text_minus_one_keeps_positional_caption():

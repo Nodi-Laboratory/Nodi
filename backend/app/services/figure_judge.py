@@ -117,18 +117,22 @@ def parse_judgment(content: str, n_candidates: int) -> dict:
 
 
 def final_embed_text(record: dict, selected_index: int) -> str:
-    """선택 캡션 + 이미지 설명 + heading → 임베딩 텍스트.
+    """선택 캡션 + heading → 임베딩 텍스트.
 
     selected_index=-1(해당 없음)이면 위치기반 캡션(없으면 alt)을 유지한다 —
     judge의 보수적 판정이 위치기반으로 맞게 붙은 캡션을 지워 회귀를 만들면 안
     된다(labs 규칙). record는 figure_extract 레코드 shape(caption/alt/
     description/heading/candidates).
+
+    D91(사용자 결정 2026-07-17): enhanced 영어 description은 임베딩에서 제외 —
+    질의가 한국어라 영어 설명이 벡터를 희석한다. description은 행에 계속 저장
+    (표시·디버그용), 임베딩 근거는 한국어 캡션+인접 헤딩만.
     """
     if selected_index >= 0:
         caption = record["candidates"][selected_index]
     else:
         caption = record.get("caption") or record.get("alt", "")
-    parts = [caption, record.get("description", ""), record.get("heading", "")]
+    parts = [caption, record.get("heading", "")]
     return " ".join(p for p in parts if p).strip()[:8000]
 
 
