@@ -53,6 +53,26 @@ def test_extract_strips_and_drops_empty_category():
     assert extract_used_tags(nodes) == []
 
 
+def test_extract_empty_category_does_not_swallow_next_line():
+    """분류가 빈 @concept 줄이 다음 줄(본문·@end)을 태그로 삼키지 않는다.
+
+    구 정규식(\\s*)은 개행을 넘어 "- 본문"/"@end"를 캡처했다 — 줄 단위 처리
+    하드닝의 회귀 방어(task5-1 최종 리뷰 Minor).
+    """
+    nodes = [
+        _node("@concept: 제목 |\n- 본문 줄\n@end"),
+        _node("@concept: 제목2 |\n@end"),
+    ]
+    assert extract_used_tags(nodes) == []
+
+
+def test_extract_title_pipe_matches_frontend_parser():
+    """제목에 '|'가 섞이면 프론트 파서(parts[1])와 동일하게 두 번째 조각만 태그."""
+    nodes = [_node("@concept: a|b | 분류\n@end")]
+    # conceptParser.ts: split("|")[1].trim() == "b" — 캔버스 그룹핑 값과 일치.
+    assert extract_used_tags(nodes) == ["b"]
+
+
 def test_extract_cap_truncates_to_first_tags():
     """cap 초과분은 버리고 첫 등장 cap개만 남긴다."""
     answer = "\n".join(f"@concept: t{i} | 태그{i}\n@end" for i in range(10))

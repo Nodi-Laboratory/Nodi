@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import AsyncIterator
 
 import httpx
@@ -80,14 +79,16 @@ CHAT: 가야 사람들의 손끝에서 태어난 토기를 만나 볼까요?
 # D89 — 세션 노드 answer에서 개념 카드 분류 태그를 수집. 개념 카드 줄 형식의
 # 소유자가 이 모듈(CONCEPT_CARD_SYSTEM_PROMPT)이므로 태그 파싱도 여기 둔다.
 # `@concept: 제목 | 분류` 줄의 "분류"만 캡처 — `|` 없는 줄(분류 누락)은 미매치.
-_TAG_LINE_RE = re.compile(r"^@concept:\s*[^|\n]*\|\s*(.+?)\s*$", re.MULTILINE)
-
-
 def extract_used_tags(nodes: list[dict], cap: int = 40) -> list[str]:
     """세션 노드 answer들에서 개념 카드 분류 태그를 첫 등장 순서로 수집(D89).
 
     nodes는 created_at.asc 정렬 전제(svc.get_session_nodes). 중복 제거(첫 등장
     유지), cap 초과분 버림. answer가 없거나 형식 밖 줄은 무시 — best-effort.
+
+    추출 규약은 프론트 파서(conceptParser.ts)와 동일하게 "|" split의 두 번째
+    조각(parts[1])이다 — 정규식(\\s*)이 개행을 넘어 다음 줄을 태그로 오캡처하던
+    문제를 줄 단위 처리로 원천 차단하고, 제목에 "|"가 섞여도 캔버스가 실제로
+    그룹핑하는 값과 항상 일치한다(task5-1 최종 리뷰 Minor 하드닝).
     """
     seen: list[str] = []
     seen_set: set[str] = set()
@@ -95,8 +96,14 @@ def extract_used_tags(nodes: list[dict], cap: int = 40) -> list[str]:
         answer = node.get("answer")
         if not answer:
             continue
-        for m in _TAG_LINE_RE.finditer(answer):
-            tag = m.group(1).strip()
+        for line in answer.splitlines():
+            line = line.strip()
+            if not line.startswith("@concept:"):
+                continue
+            parts = line[len("@concept:") :].split("|")
+            if len(parts) < 2:
+                continue
+            tag = parts[1].strip()
             if not tag or tag in seen_set:
                 continue
             seen_set.add(tag)
