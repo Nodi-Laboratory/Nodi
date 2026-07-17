@@ -39,6 +39,12 @@ _WRAP_SESSION_FILES = (
     "우선 활용하고, 파일에 없는 내용은 일반 지식으로 보완하되 출처를 "
     "구분하세요.\n\n"
 )
+_WRAP_TAGS = (
+    "[지금까지 사용한 분류]\n"
+    "아래는 이 학습 지도에서 이미 사용된 개념 카드 분류 태그 목록입니다. 새 "
+    "개념이 아래 태그 중 하나와 같은 주제면 그 태그를 글자 그대로 재사용하고, "
+    "없을 때만 새 태그를 만드세요.\n\n"
+)
 
 
 def compose_system_structured(
@@ -48,6 +54,7 @@ def compose_system_structured(
     *,
     session_file_context: str | None = None,
     session_file_sources: list[dict] | None = None,
+    tag_context: str | None = None,
     rag_sources: list[dict] | None = None,
     reference_node_ids: list[str] | None = None,
     comparison_node_ids: list[str] | None = None,
@@ -61,6 +68,7 @@ def compose_system_structured(
     - `rag_context`: chunks from files linked to the branch (Stage 3b-2 RAG).
     - `comparison_context`: one-time referenced branches for comparison (D15).
     - session_file_context: 세션에 올린 학생 파일 전문(D83, TASK 3).
+    - tag_context: 이 세션에서 이미 쓰인 분류 태그 목록 문자열(D89, TASK 5).
 
     Returns ``(system_prompt, blocks)`` where each block's ``prompt_span`` is the
     ``[start, end)`` char range of that part inside ``system_prompt``.
@@ -81,6 +89,20 @@ def compose_system_structured(
                 session_file_context,
                 None,
                 session_file_sources or [],
+            )
+        )
+    # D89: 태그 연속성 블록. D85 프리픽스 캐시는 system_base+session_files의 턴 간
+    # 불변 프리픽스로 성립하는데, tag_guide는 세션 태그가 쌓일수록 턴마다 변하므로
+    # 그 프리픽스 뒤, 턴 가변 블록들(memory/rag/comparison)의 선두에 둔다.
+    if tag_context:
+        parts.append(
+            (
+                "tag_guide",
+                _WRAP_TAGS + tag_context,
+                "분류 태그 연속성",
+                tag_context,
+                None,
+                None,
             )
         )
     if reference_context:

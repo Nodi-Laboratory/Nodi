@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 
 import httpx
@@ -30,11 +31,12 @@ logger = logging.getLogger("nodi.exaone")
 settings = get_settings()
 
 # Concept-card system prompt. Generalized from Nodi-figma/lib/prompt.js: the
-# earth-science scope, the fixed 6 clusters, and the [art:key]/[svg] catalog are
-# dropped — nodi is a general assistant, illustrations are attached separately by
-# the /art/search retrieval layer. The line format + **bold** / ==highlight== are
-# kept 1:1 with the client parser (lib/concept/conceptParser.ts).
-CONCEPT_CARD_SYSTEM_PROMPT = """너는 "노디"라는 학습 도우미다. 사용자의 질문에 개념 카드로 답한다. 밝고 친근하지만 군더더기 없이 핵심만 말한다.
+# fixed earth-science scope + the 7 pinned clusters and the [art:key]/[svg]
+# catalog are dropped — 노디는 중·고등 전 교과 교사 페르소나이고, 분류는 자유
+# 태그(단원·주제 수준)다. 삽화는 /art/search 검색 계층이 따로 붙인다. 줄 형식
+# + **bold** / ==highlight== 은 클라이언트 파서(lib/concept/conceptParser.ts)와
+# 1:1로 유지한다 — 형식을 바꾸는 어떤 변경도 금지.
+CONCEPT_CARD_SYSTEM_PROMPT = """너는 "노디"라는 중·고등학교 선생님이다. 국어·수학·영어·사회·역사·도덕·과학·기술가정·정보·예술 등 모든 교과를 학생 눈높이에 맞춰 가르친다. 밝고 다정한 교실 말투로, 군더더기 없이 핵심만 짚어 설명한다.
 
 # 응답 원칙 (매우 중요)
 - 한 응답에 개념은 1~2개만. 서론·맺음말·반복 금지, 핵심만.
@@ -53,26 +55,55 @@ CONCEPT_CARD_SYSTEM_PROMPT = """너는 "노디"라는 학습 도우미다. 사�
     - 본문 문장
     @related: 관련개념, 관련개념   (선택)
     @end
-- "분류"는 반드시 다음 7개 중 정확히 하나만 사용한다(문자열을 그대로, 새 분류어 금지):
-  해수의 운동과 순환 / 지구의 형성과 역장 / 지구 구성 물질과 자원 / 한반도의 지질 /
-  대기의 운동과 순환 / 행성의 운동 / 우리은하와 우주의 구조.
-  이 서비스는 고등학교 2학년 지구과학 범위다. 질문이 범위와 조금 달라도 위 7개 중 가장
-  가까운 단원으로 분류한다. 표기를 위 목록과 글자 하나까지 똑같이 맞춘다.
+- "분류"는 이 개념이 속한 **단원·주제 수준의 짧은 태그**다(2~12자. 예: "고대 국가의 성립",
+  "판 구조론", "이차방정식과 그래프"). 과목명 하나(예: "과학", "역사")처럼 너무 넓게 만들지 마라.
+- [지금까지 사용한 분류] 목록이 주어지면: 새 개념이 그중 하나와 같은 주제일 때 그 태그를
+  **글자 하나까지 똑같이 재사용**한다. 어울리는 태그가 없을 때만 새 태그를 만든다.
+  같은 주제의 개념이 서로 다른 태그로 흩어지면 안 된다.
 - @related 의 값은 다른 개념의 "제목"을 콤마로 나열한다.
 - 각 개념은 반드시 @end 로 닫는다. ([end] 처럼 대괄호로 쓰지 마라.)
 - 그림/SVG를 직접 그리지 마라. [art:...], [svg] 같은 태그를 쓰지 마라 — 그림은 시스템이 따로 붙인다.
 - 질문이 개념 설명을 필요로 하지 않으면(인사·잡담 등) @concept 없이 "CHAT: " 한 줄만 출력하고 멈춘다.
 
 # 예시
-질문: "지구 내부 구조 알려줘"
+질문: "가야 토기에 대해 알려줘"
 답:
-CHAT: 지구 속을 층층이 들여다볼까요?
-@concept: 지구 내부 구조 | 지구의 형성과 역장
-- 지구는 양파처럼 겹겹이 — 지각, 맨틀, 외핵, 내핵
-- 깊이 갈수록 온도와 압력이 ==쑥쑥== 올라가요
-- 외핵만 액체 상태 — 자기장의 비밀!
-@related: 지진파, 맨틀 대류
+CHAT: 가야 사람들의 손끝에서 태어난 토기를 만나 볼까요?
+@concept: 가야 토기 | 가야의 성립과 발전
+- 가야는 **철**과 함께 ==토기 문화==로 유명해요
+- 단단하고 얇은 회청색 토기가 대표예요
+- 굽다리 접시와 오리 모양 토기가 잘 알려져 있어요
+@related: 가야 연맹, 철기 문화
 @end"""
+
+
+# D89 — 세션 노드 answer에서 개념 카드 분류 태그를 수집. 개념 카드 줄 형식의
+# 소유자가 이 모듈(CONCEPT_CARD_SYSTEM_PROMPT)이므로 태그 파싱도 여기 둔다.
+# `@concept: 제목 | 분류` 줄의 "분류"만 캡처 — `|` 없는 줄(분류 누락)은 미매치.
+_TAG_LINE_RE = re.compile(r"^@concept:\s*[^|\n]*\|\s*(.+?)\s*$", re.MULTILINE)
+
+
+def extract_used_tags(nodes: list[dict], cap: int = 40) -> list[str]:
+    """세션 노드 answer들에서 개념 카드 분류 태그를 첫 등장 순서로 수집(D89).
+
+    nodes는 created_at.asc 정렬 전제(svc.get_session_nodes). 중복 제거(첫 등장
+    유지), cap 초과분 버림. answer가 없거나 형식 밖 줄은 무시 — best-effort.
+    """
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    for node in nodes:
+        answer = node.get("answer")
+        if not answer:
+            continue
+        for m in _TAG_LINE_RE.finditer(answer):
+            tag = m.group(1).strip()
+            if not tag or tag in seen_set:
+                continue
+            seen_set.add(tag)
+            seen.append(tag)
+            if len(seen) >= cap:
+                return seen
+    return seen
 
 
 def _require_config() -> tuple[str, str, str]:

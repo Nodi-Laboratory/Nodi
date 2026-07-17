@@ -190,6 +190,16 @@ async def chat_stream(
     session_file_sources = session_file_result["files"] if session_file_result else []
     existing_root = session.get("root_node_id")
 
+    # D89: 이 세션에서 이미 쓰인 분류 태그를 tag_guide 블록으로 주입해 같은 주제
+    # 새 개념이 기존 태그를 재사용하게 한다. 이미 로드된 nodes(created_at.asc)를
+    # 재사용 — 추가 DB 조회 없음. 순수 함수라 예외 여지가 거의 없지만 컨텍스트
+    # 빌더 best-effort 불변식에 맞춰 방어적으로 None 폴백.
+    try:
+        used_tags = exaone.extract_used_tags(nodes)
+        tag_context = ", ".join(used_tags) if used_tags else None
+    except Exception:
+        tag_context = None
+
     # Turn log (D25) + structured prompt composition (D35). compose_system_structured
     # is the SINGLE source of truth for both the system prompt string AND each
     # block's char span, so the saved prompt and the admin highlight never drift.
@@ -199,6 +209,7 @@ async def chat_stream(
         comparison_context,
         session_file_context=session_file_block,
         session_file_sources=session_file_sources,
+        tag_context=tag_context,
         rag_sources=rag_sources,
         reference_node_ids=reference_node_ids,
         comparison_node_ids=comparison_node_ids,
