@@ -197,3 +197,15 @@ async def test_storage_sign_raises_on_error(monkeypatch):
     client, _ = _service_client(monkeypatch, _FakeResponse(404, {"error": "not found"}))
     with pytest.raises(Exception):
         await client.storage_sign("files", "t1/f1/figures/p1_e1.png", 3600)
+
+
+@pytest.mark.asyncio
+async def test_storage_sign_raises_on_missing_signed_url(monkeypatch):
+    """2xx이나 signedURL 키 부재 → 예외(정크 URL 반환 금지, D87 가드 무력화 방지).
+
+    베이스 URL만 조립하면 비어 있지 않은 정크가 되어 호출부 `if not url` 가드가
+    뚫린다 — 예외로 강등해 sign_figure_url이 None으로 처리하게 한다.
+    """
+    client, _ = _service_client(monkeypatch, _FakeResponse(200, {"noSignedURL": "x"}))
+    with pytest.raises(Exception):
+        await client.storage_sign("files", "t1/f1/figures/p1_e1.png", 3600)

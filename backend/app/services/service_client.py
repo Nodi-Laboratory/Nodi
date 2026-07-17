@@ -248,6 +248,18 @@ class ServiceClient:
         # signedURL은 `/object/sign/...?token=...` 상대경로 — storage 베이스에 붙여
         # 절대 URL로 조립한다(토큰 쿼리스트링 포함).
         signed = r.json().get("signedURL", "")
+        # 2xx이나 signedURL 키 부재 → 그대로 조립하면 storage 베이스 URL이라는
+        # 비어 있지 않은 정크가 반환돼 호출부의 `if not url` 가드(retrieve.py)와
+        # get_figure 503 분기가 뚫린다(D87). 예외로 강등해 best-effort 처리에
+        # 합류시킨다 — figures.sign_figure_url이 이를 잡아 None을 반환한다.
+        if not signed:
+            logger.error(
+                "Service storage sign %s/%s: 2xx이나 signedURL 부재 (%s)",
+                bucket,
+                path,
+                r.text,
+            )
+            raise ValueError(f"storage sign {bucket}/{path}: signedURL missing")
         return f"{self._storage}{signed}"
 
 
