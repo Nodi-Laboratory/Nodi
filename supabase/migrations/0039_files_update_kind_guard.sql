@@ -2,9 +2,10 @@
 -- nodi — migration 0039 (files update kind 승급 가드; TASK 4 리뷰 후속, D86~D88)
 -- 계획: docs/superpowers/plans/2026-07-16-textbook-figures-plan.md
 --
--- DRAFT — 원격 적용 금지(사용자 승인 게이트, 0037/0038 관례). 미적용 상태에서도
--- 런타임은 정상 동작하나(FastAPI 계층이 kind를 서버에서 지정), 데이터 계층
--- 방어선(defense-in-depth)은 이 파일 적용 후에야 선다. Apply AFTER 0001..0038.
+-- 2026-07-17 원격 적용 완료(사용자 승인, Supabase MCP apply_migration) —
+-- pg_policies 실측으로 with check의 kind 가드 반영 확인. 적용 전 원격 정책이
+-- 이 파일의 전제(owner만 검사, roles=public)와 일치함을 사전 확인 후 적용.
+-- Apply AFTER 0001..0038.
 -- 멱등: drop policy if exists → create(0038 §6 insert 가드와 동형).
 --
 -- 배경(왜 update에도 가드가 필요한가):
