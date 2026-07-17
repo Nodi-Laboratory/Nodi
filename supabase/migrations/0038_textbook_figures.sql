@@ -2,10 +2,14 @@
 -- nodi — migration 0038 (textbook figures; TASK 4, D86~D88)
 -- 계획: docs/superpowers/plans/2026-07-16-textbook-figures-plan.md
 --
--- DRAFT — 원격 적용은 배포 시(파일만 추가). 이 마이그레이션은 스키마·정책·시드만
--- 추가하며 런타임 동작을 바꾸지 않는다(이 task만 배포돼도 안전). 미적용 상태에서도
--- 런타임은 config.py 기본값으로 동작한다(D62 오버레이 폴백).
+-- 2026-07-17 원격 적용 완료(사용자 승인, Supabase MCP apply_migration).
 -- 멱등: 모든 문에 if not exists / drop ... if exists.
+--
+-- 원격 드리프트 실측(적용 중 발견): 원격 file_chunks에는 meta 컬럼이 없고
+-- get_chunk_context 반환 테이블에도 page가 없다 — 로컬 0020 파일(meta→page
+-- 추출 버전)과 불일치하는 **선재 드리프트**(TASK 4 범위 밖). 따라서 §7 함수는
+-- 원격 실제 형태(page 없음)를 유지한 채 kind 조건만 확장해 적용했고, 이 파일도
+-- 적용본과 동일하게 수정했다. page 복원은 meta 컬럼 정합부터 별도 과제.
 --
 -- 0009/0012/0013/0020/0024/0037의 관례(자동명 check 제약, 정책명,
 -- (select auth.uid()) initplan 패턴)를 따른다. Apply AFTER 0001..0037.
@@ -128,8 +132,10 @@ create policy files_insert_own on public.files
 
 -- ---------------------------------------------------------------------------
 -- 7) get_chunk_context(0020) 가시성 확장 — 청크가 textbook 파일 소속이어도
---    학급 구성원이 원문 패널을 볼 수 있게. 0020 원문을 그대로 복사하고
---    kind = 'class_material' 조건만 kind in ('class_material','textbook')로 수정.
+--    학급 구성원이 원문 패널을 볼 수 있게. **원격 실제 함수 형태를 유지**하고
+--    kind = 'class_material' 조건만 in ('class_material','textbook')로 확장
+--    (헤더의 드리프트 메모 참조 — 로컬 0020 파일의 meta/page 버전은 원격에
+--    존재하지 않는 컬럼을 참조해 적용 불가였다. 반환 타입 불변이라 replace 가능).
 -- ---------------------------------------------------------------------------
 create or replace function public.get_chunk_context(
     p_chunk_id  uuid,
@@ -139,7 +145,6 @@ returns table (
     file_id    uuid,
     name       text,
     seq        int,
-    page       int,
     chunk_text text,
     prev_text  text,
     next_text  text
@@ -150,7 +155,7 @@ security definer
 set search_path = public
 as $$
     with target as (
-        select fc.id, fc.file_id, fc.seq, fc.chunk_text, fc.meta
+        select fc.id, fc.file_id, fc.seq, fc.chunk_text
           from public.file_chunks fc
           join public.files f on f.id = fc.file_id
          where fc.id = p_chunk_id
@@ -166,11 +171,6 @@ as $$
                array_length(string_to_array(f.storage_path, '/'), 1)
            ) as name,
            t.seq,
-           -- null-safe page: only cast a clean integer string, else NULL.
-           case
-               when t.meta->>'page' ~ '^[0-9]+$' then (t.meta->>'page')::int
-               else null
-           end as page,
            t.chunk_text,
            (select c.chunk_text from public.file_chunks c
               where c.file_id = t.file_id and c.seq = t.seq - p_neighbors) as prev_text,
