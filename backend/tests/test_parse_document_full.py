@@ -1,7 +1,7 @@
 """D86/D78 — 교과서 구조화 파싱 `parse_document_full` 테스트 (실제 Upstage 호출 없음).
 
-enhanced 1회 공유 파싱: 한 응답에서 텍스트(markdown)와 figure(elements)를 함께
-얻는다(페이지당 과금 enhanced를 1회로). PDF는 조각당 ≤48MB·≤100페이지로 사전
+1회 공유 파싱(D92 표준 모드): 한 응답에서 텍스트(markdown)와 figure(elements)를
+함께 얻는다(페이지당 과금 1회). PDF는 조각당 ≤48MB·≤100페이지로 사전
 분할해 전 조각이 sync 단일 요청만 타고, 조각 elements의 page(전역 1-base)·id를
 결정론적으로 오프셋 보정한다.
 """
@@ -37,10 +37,11 @@ def test_parse_form_default_equals_figures_false():
     }
 
 
-def test_parse_form_figures_true_enhanced():
-    """figures=True: enhanced + coordinates + markdown/html + figure base64."""
+def test_parse_form_figures_true_standard_mode():
+    """figures=True: 표준 모드(D92 — mode 미지정) + coordinates + markdown/html
+    + figure base64. enhanced 산출물은 D91로 소비처가 없어 표준으로 다운시프트."""
     form = U._parse_form(figures=True)
-    assert form["mode"] == "enhanced"
+    assert "mode" not in form
     assert form["coordinates"] == "true"
     assert form["output_formats"] == json.dumps(["markdown", "html"])
     assert form["base64_encoding"] == json.dumps(["figure"])
@@ -49,7 +50,7 @@ def test_parse_form_figures_true_enhanced():
     assert form["ocr"] == "auto"
 
 
-async def test_parse_single_payload_sends_enhanced_form_and_returns_payload(monkeypatch):
+async def test_parse_single_payload_sends_figures_form_and_returns_payload(monkeypatch):
     """_parse_single_payload는 figures 폼으로 실제 요청을 보내고 payload dict 반환."""
     monkeypatch.setattr(
         U,
@@ -75,7 +76,7 @@ async def test_parse_single_payload_sends_enhanced_form_and_returns_payload(monk
     assert payload == {"content": {"markdown": "ok"}, "elements": []}
     assert captured["url"].endswith("/document-digitization")
     body = captured["content"]
-    assert b'name="mode"' in body and b"enhanced" in body
+    assert b'name="mode"' not in body  # D92: 표준 모드(enhanced 제거)
     assert b'name="coordinates"' in body
     assert b'name="base64_encoding"' in body
 
@@ -141,7 +142,7 @@ async def test_full_pdf_merges_segments_with_page_and_id_offsets(monkeypatch):
     assert markdown == "S1MD\n\nS2MD"
     assert [el["page"] for el in elements] == [1, 2, 4, 4, 5]
     assert [el["id"] for el in elements] == [0, 1, 2, 3, 4]
-    assert all(figures_seen)  # 교과서 경로는 항상 enhanced 폼
+    assert all(figures_seen)  # 교과서 경로는 항상 figures 폼(coordinates+base64, D92 표준 모드)
 
 
 async def test_full_pdf_enforces_100_page_cap(monkeypatch):

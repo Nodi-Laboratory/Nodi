@@ -205,12 +205,16 @@ def _parse_form(figures: bool = False) -> dict:
     """Document Parse 폼 데이터.
 
     figures=False: class_material 경로용 — markdown만(기존 dict 불변).
-    figures=True(D86): 교과서 구조화 파싱 — mode=enhanced로 figure마다 영어
-    설명(figure-description/figure-type)을 figcaption에 생성하고, coordinates로
-    위치기반 캡션 매칭의 전제(좌표)를 확보하며, markdown(텍스트 청킹용)과
-    html/elements(figure용)를 **한 응답에서** 함께 받고, base64_encoding으로
-    figure 크롭 이미지를 받는다. enhanced는 페이지당 과금 — 텍스트·figure를
-    2회로 나눠 요청하면 항상 더 비싸므로 한 응답을 공유한다(D86 근거).
+    figures=True(D86): 교과서 구조화 파싱 — coordinates로 위치기반 캡션 매칭의
+    전제(좌표)를 확보하고, markdown(텍스트 청킹용)과 html/elements(figure용)를
+    **한 응답에서** 함께 받고, base64_encoding으로 figure 크롭 이미지를 받는다.
+    텍스트·figure를 2회로 나눠 요청하면 항상 더 비싸므로 한 응답을 공유한다(D86).
+
+    D92(사용자 결정 2026-07-18): mode=enhanced 제거 — enhanced 산출물(영어
+    figure-description/figure-type)은 D91로 임베딩에서 빠져 소비처가 없고,
+    표준 모드도 figure 요소·크롭·좌표를 동일하게 반환함을 동일 PDF 실측으로
+    확인(figure 8/8, base64·coordinates 전부 존재). 판정(EXAONE 비전)은
+    크롭+후보만 쓰므로 무영향. 표준 단가로 페이지당 과금 절감.
     """
     form = {
         "model": settings.upstage_document_parse_model,
@@ -218,7 +222,6 @@ def _parse_form(figures: bool = False) -> dict:
         "ocr": "auto",
     }
     if figures:
-        form["mode"] = "enhanced"
         form["coordinates"] = "true"
         form["output_formats"] = json.dumps(["markdown", "html"])
         form["base64_encoding"] = json.dumps(["figure"])

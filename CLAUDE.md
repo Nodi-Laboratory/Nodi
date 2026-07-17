@@ -28,7 +28,8 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 - 선생님은 별도 버튼으로 **교과서**(`kind='textbook'`, PDF 전용)도 업로드한다
   (TASK 4, D86~D88 — 0038·0039 원격 적용 완료, E2E PASS 2026-07-17). 텍스트는
   class_material과 동일하게 RAG 구축 + 추가로 figure를 추출·임베딩(텍스트 프록시:
-  캡션+영어설명+헤딩)해 Qdrant `textbook_figures`에 적재(D86). 학생 질의와 유사한
+  **캡션+인접 헤딩**, D91 — enhanced 영어 설명은 미사용)해 Qdrant
+  `textbook_figures`에 적재(D86). 학생 질의와 유사한
   figure(거리 게이트 0.60)는 캔버스 FigureNode로 표시 — 이미지는 백엔드 signed
   URL로만 서빙, **URL 영속 금지**(재수화·만료 시 `GET /files/figures/{id}` 재발급,
   D87). figure 실패는 텍스트 인덱싱과 격리(`files.status` 불가침, 판정은 JUDGE_*
@@ -62,9 +63,10 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
   → 문단 인지 청킹(1,200자/오버랩 150자, admin 튜너블)
   → `embedding_batch` 잡 팬아웃(64청크 단위) → Upstage `embedding-passage` 4096d
   → **벡터는 Qdrant, 청크 본문·상태는 Supabase `file_chunks`**.
-  교과서는 `upstage.parse_document_full`(enhanced, 조각 ≤48MB·≤100p 사전 분할)로
-  텍스트·elements를 한 번에 얻고 figure 팬아웃(`figure_batch` 잡, 배치 8): 크롭
-  Storage 업로드 → (선택) 비전 판정 → `embedding-passage` → Qdrant
+  교과서는 `upstage.parse_document_full`(표준 모드+coordinates+figure base64 —
+  D92로 enhanced 제거, 조각 ≤48MB·≤100p 사전 분할)로 텍스트·elements를 한 번에
+  얻고 figure 팬아웃(`figure_batch` 잡, 배치 8): 크롭 Storage 업로드 → (선택)
+  비전 판정 → embed_text=**캡션+인접 헤딩**(D91) `embedding-passage` → Qdrant
   `textbook_figures`(**페이로드는 `{figure_id, file_id, owner_id}`만**). 행 상태는
   `textbook_figures.status`로만 추적(D86/D88).
 - **채팅 턴** (`routers/chat.py` `chat_stream`):
