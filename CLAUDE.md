@@ -25,6 +25,14 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 - **선생님**은 워크스페이스(= `space_kind='class'` 학급)를 개설하고, 수업에 사용할
   **교과서·학습 자료**를 업로드한다. 이 파일(`kind='class_material'`)은
   청킹 → 임베딩(Qdrant)으로 **RAG로 구축**되어, 질의 시 top-K 청크가 근거로 주입된다.
+- 선생님은 별도 버튼으로 **교과서**(`kind='textbook'`, PDF 전용)도 업로드한다
+  (TASK 4, D86~D88 — 0038·0039 원격 적용 완료, E2E PASS 2026-07-17). 텍스트는
+  class_material과 동일하게 RAG 구축 + 추가로 figure를 추출·임베딩(텍스트 프록시:
+  캡션+영어설명+헤딩)해 Qdrant `textbook_figures`에 적재(D86). 학생 질의와 유사한
+  figure(거리 게이트 0.60)는 캔버스 FigureNode로 표시 — 이미지는 백엔드 signed
+  URL로만 서빙, **URL 영속 금지**(재수화·만료 시 `GET /files/figures/{id}` 재발급,
+  D87). figure 실패는 텍스트 인덱싱과 격리(`files.status` 불가침, 판정은 JUDGE_*
+  env 미설정 시 생략 → 위치기반 캡션, D88).
 - **학생**은 워크스페이스에 참여해(학급 코드 가입) 세션을 열고, 선생님이 올린
   교과서·자료를 근거로 질의한다. RLS가 학급 자료 접근을 통제한다.
 - **학생도 워크스페이스 세션에 파일을 업로드할 수 있다** (TASK 3, D83~D85 구현
@@ -54,14 +62,24 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
   → 문단 인지 청킹(1,200자/오버랩 150자, admin 튜너블)
   → `embedding_batch` 잡 팬아웃(64청크 단위) → Upstage `embedding-passage` 4096d
   → **벡터는 Qdrant, 청크 본문·상태는 Supabase `file_chunks`**.
+  교과서는 `upstage.parse_document_full`(enhanced, 조각 ≤48MB·≤100p 사전 분할)로
+  텍스트·elements를 한 번에 얻고 figure 팬아웃(`figure_batch` 잡, 배치 8): 크롭
+  Storage 업로드 → (선택) 비전 판정 → `embedding-passage` → Qdrant
+  `textbook_figures`(**페이로드는 `{figure_id, file_id, owner_id}`만**). 행 상태는
+  `textbook_figures.status`로만 추적(D86/D88).
 - **채팅 턴** (`routers/chat.py` `chat_stream`):
   컨텍스트 빌더 병렬(gather): 기억 연결·파일 RAG·비교 참조·세션 파일 전문
   (D83, `session_context.py` — session_files 블록은 system_base 직후 고정,
   D85 Friendli 프리픽스 캐시) →
-  `gemini.compose_system_structured`(D35: 프롬프트 문자열 + 블록 span 단일 소스) →
-  `exaone.stream_answer` SSE → 개념 카드 파싱·캔버스 배치.
-- **캔버스 배치**: 질의 임베딩으로 유사 카드 근처 잠정 배치 → 응답 도착 후 재조정.
-  EBS 영상·SVG 아트 추천 노드는 `routers/retrieve.py`가 별도 검색.
+  `gemini.compose_system_structured`(D35: 프롬프트 문자열 + 블록 span 단일 소스.
+  세션 기사용 분류 태그를 tag_guide 블록으로 주입해 태그 재사용 유도 — D89,
+  session_files 뒤 배치로 캐시 프리픽스 보존) →
+  `exaone.stream_answer` SSE → 개념 카드 파싱·캔버스 배치. 시스템 프롬프트는
+  **중·고등 전 교과 교사 페르소나 + 자유 분류 태그**(D89, `exaone.py`).
+- **캔버스 배치**: 개념 카드는 EXAONE 자유 태그로 클러스터링 — 태그 첫 등장
+  순서로 황금각 슬롯 앵커를 영구 부여(D90, `useTagLayout`/`curriculumTags.ts`),
+  "기타"는 중앙. EBS 영상·SVG 아트·교과서 figure 추천 노드는
+  `routers/retrieve.py`가 별도 검색.
 
 ## 불변식 (반드시 유지)
 
