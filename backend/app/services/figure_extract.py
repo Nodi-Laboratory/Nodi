@@ -1,20 +1,19 @@
-"""교과서 figure 위치기반 캡션 매칭·후보 랭킹(D86) — labs extract.py 이식.
+"""교과서 figure 후보 랭킹(D86·D93) — labs extract.py 이식.
 
-labs에서 실PDF로 검증된 순수 로직을 Nodi 서비스 계층으로 1:1 이식한다.
-좌표는 페이지 기준 0~1 정규화. 캡션 매칭 규칙(스펙):
-  1) 같은 페이지 caption 중 수평 겹침>0, 수직거리<=0.05, 아래쪽 우선
-  2) 폴백: 같은 조건의 paragraph
-  3) 폴백: figure의 img alt 텍스트만
-heading = figure보다 위 최근접 heading1, 없으면 페이지 첫 heading1.
+좌표는 페이지 기준 0~1 정규화. D93(사용자 결정 2026-07-18): 위치기반 캡션
+매칭(수평 겹침·수직거리·아래쪽 우선)을 제거하고, 같은 페이지에서 bbox 중심
+유클리드 절대거리 top-K 후보만 뽑는다 — 캡션 확정은 비전 판정(figure_judge)이
+전담한다(판정 필수, 임베딩은 선택 캡션만). heading(figure 위쪽 최근접
+heading1, 없으면 페이지 첫 heading1)은 표시·디버그용으로만 수집한다.
 
-실측 근거(labs): enhanced 파싱 모드는 caption 카테고리를 paragraph로 흡수하고
-img alt를 항상 생성하지는 않으므로 위치기반 매칭이 필요하다. figure 요소의
-텍스트(content)는 파서가 생성한 영어 설명이라 캡션 후보가 아니다 — 후보군에서
-figure 카테고리를 제외한다.
+실측 근거(labs): 파싱이 caption 카테고리를 paragraph로 흡수하고 img alt를
+항상 생성하지는 않는다. figure 요소의 텍스트(content)는 파서가 생성한 영어
+설명이라 캡션 후보가 아니다 — 후보군에서 figure 카테고리를 제외한다.
 
 DB·워커 계약: extract_figures가 반환하는 레코드 shape(키 목록)에 task4-6의
-워커가 의존한다 — 키를 임의로 바꾸지 않는다. RAG 텍스트 청크는
-text_from_elements가 figure 설명을 배제해 오염을 막는다.
+워커가 의존한다 — 키를 임의로 바꾸지 않는다. caption·embed_text·match_kind는
+판정 전이므로 빈 값이다(워커 figure_batch가 판정 후 확정, D93). RAG 텍스트
+청크는 text_from_elements가 figure 설명을 배제해 오염을 막는다.
 """
 from __future__ import annotations
 
@@ -27,8 +26,6 @@ from collections import defaultdict
 
 logger = logging.getLogger("nodi.figure_extract")
 
-# 캡션 매칭 수직거리 상한(정규화 좌표). labs 실측값 — 변경 금지.
-MAX_GAP = 0.05
 # 후보군에서 제외할 카테고리(생성된 영어 설명이라 캡션 후보가 아님).
 FIGURE_CATEGORIES = {"figure"}
 
@@ -43,43 +40,6 @@ def bbox(coords: list[dict]) -> tuple[float, float, float, float]:
     xs = [p["x"] for p in coords]
     ys = [p["y"] for p in coords]
     return (min(xs), min(ys), max(xs), max(ys))
-
-
-def _h_overlap(a, b) -> float:
-    return min(a[2], b[2]) - max(a[0], b[0])
-
-
-def _v_gap(a, b) -> float:
-    if b[1] >= a[3]:
-        return b[1] - a[3]
-    if a[1] >= b[3]:
-        return a[1] - b[3]
-    return 0.0
-
-
-def _is_below(fig, cand) -> bool:
-    return cand[1] >= fig[3]
-
-
-def match_description(fig_box, candidates, max_gap: float = MAX_GAP) -> str | None:
-    """candidates: [(box, text)] -> 규칙에 맞는 최적 텍스트 (없으면 None).
-
-    수평 겹침>0 · 수직거리<=max_gap 후보 중 아래쪽 우선(키
-    `(0 if below else 1, gap)` 최솟값). 빈 텍스트는 후보에서 제외.
-    """
-    best_key, best_text = None, None
-    for cand_box, text in candidates:
-        if not text:
-            continue
-        if _h_overlap(fig_box, cand_box) <= 0:
-            continue
-        gap = _v_gap(fig_box, cand_box)
-        if gap > max_gap:
-            continue
-        key = (0 if _is_below(fig_box, cand_box) else 1, gap)
-        if best_key is None or key < best_key:
-            best_key, best_text = key, text
-    return best_text
 
 
 def _center(b) -> tuple[float, float]:
@@ -144,12 +104,13 @@ def _nearest_heading(fig_box, headings) -> str:
 
 
 def extract_figures(elements: list[dict], top_k: int = 3) -> list[dict]:
-    """Upstage 파싱 elements → figure 레코드 목록(위치기반 캡션 매칭).
+    """Upstage 파싱 elements → figure 레코드 목록(절대거리 top-K 후보, D93).
 
     elements는 전역 page/id 보정이 끝난 상태로 들어온다(task4-2
-    parse_document_full 공급). labs main()의 페이지별 처리 로직을 함수화 —
-    페이지별로 그룹핑해 같은 페이지 후보군(caption·paragraph·heading1·전체)만
-    매칭에 쓴다(다른 페이지 텍스트는 후보가 아니다).
+    parse_document_full 공급). 페이지별로 그룹핑해 같은 페이지 텍스트만
+    후보로 쓴다(다른 페이지 텍스트는 후보가 아니다). 캡션은 여기서 확정하지
+    않는다 — candidates(bbox 중심 절대거리 top-K)를 비전 판정(figure_judge)이
+    선택해 워커가 caption·embed_text를 확정한다(D93 판정 필수).
 
     figure 카테고리 + coordinates + base64_encoding을 모두 갖춘 요소만
     처리한다. base64가 없으면 스킵하고 warning 로그를 남긴다. 반환 레코드
@@ -172,8 +133,6 @@ def extract_figures(elements: list[dict], top_k: int = 3) -> list[dict]:
                 and (categories is None or el.get("category") in categories)
             ]
 
-        captions = cands({"caption"})
-        paragraphs = cands({"paragraph"})
         headings = cands({"heading1"})
         all_texts = cands()
 
@@ -194,29 +153,23 @@ def extract_figures(elements: list[dict], top_k: int = 3) -> list[dict]:
             alt = alt_text(fig_html)
             description = figure_description(fig_html)
             fig_type = figure_type(fig_html)
-            caption = match_description(fig_box, captions)
-            match_kind = "caption"
-            if caption is None:
-                caption = match_description(fig_box, paragraphs)
-                match_kind = "paragraph" if caption else "alt-only"
             heading = _nearest_heading(fig_box, headings)
             candidates = rank_candidates(fig_box, all_texts, k=top_k)
 
-            embed_text = " ".join(
-                t for t in [caption or "", alt, heading] if t
-            ).strip()[:8000]
+            # D93: caption·embed_text·match_kind는 판정 후 워커가 확정 —
+            # 추출 시점엔 빈 값(키는 워커·DB 계약이므로 유지).
             records.append({
                 "page": page,
                 "element_id": el["id"],
                 "bbox": list(fig_box),
-                "caption": caption or "",
+                "caption": "",
                 "alt": alt,
                 "description": description,
                 "figure_type": fig_type,
                 "heading": heading,
                 "candidates": candidates,
-                "embed_text": embed_text,
-                "match_kind": match_kind,
+                "embed_text": "",
+                "match_kind": "",
                 "image_bytes": raw,
                 "ext": ext,
             })

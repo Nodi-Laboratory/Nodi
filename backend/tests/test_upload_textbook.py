@@ -56,10 +56,43 @@ async def _fake_overlay():
     return {}
 
 
+@pytest.fixture(autouse=True)
+def _judge_configured(monkeypatch):
+    """D93: 교과서 업로드는 figure 판정(VLM) 설정이 필수 — 기본 테스트는 설정된
+    상태로 두고, 미설정 거부는 전용 테스트가 개별적으로 덮어쓴다."""
+    monkeypatch.setattr(F.figure_judge, "is_configured", lambda: True)
+
+
 async def _upload(svc, user, name, *, space_kind="class", space_ref="c1", mime=None):
     return await F.upload_file(
         svc, user, "t1", space_kind, space_ref, name, mime, b"data", kind="textbook"
     )
+
+
+@pytest.mark.asyncio
+async def test_textbook_judge_unconfigured_rejected_503(monkeypatch):
+    """D93: JUDGE_API_KEY 미설정 → 교과서 업로드 503(저장·DB 쓰기 전 조기 거절)."""
+    monkeypatch.setattr(F.app_settings, "get_overlay", _fake_overlay)
+    monkeypatch.setattr(F.figure_judge, "is_configured", lambda: False)
+    svc = _FakeService()
+    with pytest.raises(HTTPException) as ei:
+        await _upload(svc, _FakeUserClient(is_teacher=True), "book.pdf")
+    assert ei.value.status_code == 503
+    assert "JUDGE_API_KEY" in ei.value.detail
+    assert svc.storage == [] and svc.inserted == []
+
+
+@pytest.mark.asyncio
+async def test_judge_unconfigured_other_kinds_unaffected(monkeypatch):
+    """D93 게이트는 textbook 전용 — class_material 업로드는 판정 미설정과 무관."""
+    monkeypatch.setattr(F.app_settings, "get_overlay", _fake_overlay)
+    monkeypatch.setattr(F.figure_judge, "is_configured", lambda: False)
+    svc = _FakeService()
+    row = await F.upload_file(
+        svc, _FakeUserClient(is_teacher=True), "t1", "class", "c1",
+        "notes.pdf", None, b"data", kind="class_material",
+    )
+    assert row["status"] == "uploaded"
 
 
 @pytest.mark.asyncio

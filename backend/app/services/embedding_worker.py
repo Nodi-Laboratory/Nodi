@@ -658,11 +658,14 @@ async def _handle_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
 # figure_batch (D86/D88 — textbook figure 판정·임베딩·Qdrant 적재)
 # ---------------------------------------------------------------------------
 async def _handle_figure_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
-    """textbook_figures seq 범위의 pending 행을 판정(선택)→임베딩→Qdrant 적재.
+    """textbook_figures seq 범위의 pending 행을 판정→임베딩→Qdrant 적재.
 
-    _handle_batch를 본떴다. 판정은 게이트가 아니다(D88): 실패/미설정이어도 위치기반
-    캡션으로 임베딩을 진행하고, 어떤 경우에도 행을 판정 사유로 failed시키지 않는다.
-    임베딩/Qdrant 실패만 행 failed + 잡 failed(attempts 재시도 규약 상속). 파일
+    _handle_batch를 본떴다. D93(사용자 결정): 판정이 캡션을 확정하는 **게이트**다
+    — 미설정이면 배치 전체 failed(업로드 게이트가 1차 방어, 여기는 업로드 후
+    env가 제거된 엣지 방어), 판정 실패(judge-error)·해당없음(judge-none) 행은
+    임베딩할 캡션이 없으므로 임베딩 없이 failed로 확정한다(캡션 없는 figure는
+    검색에 노출하지 않는다 — failed라 retry 경로가 재판정할 수 있다).
+    임베딩/Qdrant 실패는 행 failed + 잡 failed(attempts 재시도 규약 상속). 파일
     status·chunk_done·_finalize_file은 건드리지 않는다 — figure는 files.status와 무관.
     """
     file_id = job["target_id"]
@@ -699,83 +702,109 @@ async def _handle_figure_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
         return
     owner_id = files[0].get("owner_id")
 
-    # ── 판정(D88: 게이트 아님) — is_configured면 크롭을 내려받아 비전 판정한다.
-    #    준비/실행 중 예외는 위치기반으로 강등(판정 생략)해 임베딩을 계속한다.
-    overlay = await app_settings.get_overlay()
-    judgments: list[dict[str, Any] | None] = [None] * len(figures)
-    judged = False
-    if figure_judge.is_configured():
-        try:
-            items = []
-            for row in figures:
-                ext = (row["image_path"].rsplit(".", 1)[-1] or "png").lower()
-                img = await svc.storage_download(
-                    settings.storage_bucket, row["image_path"]
-                )
-                items.append({
-                    "candidates": row.get("candidates") or [],
-                    "image_bytes": img,
-                    "ext": ext,
-                })
-            concurrency = app_settings.as_int(
-                overlay, "figure_judge_concurrency",
-                settings.figure_judge_concurrency, 1, 32,
+    # ── 판정(D93: 게이트) — 미설정이면 배치 전체 failed. 캡션은 판정이 확정하므로
+    #    판정 없이는 임베딩할 텍스트가 없다(업로드 게이트 files.py가 1차 방어).
+    if not figure_judge.is_configured():
+        for row in figures:
+            await svc.update(
+                "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
             )
-            judgments = await figure_judge.judge_all(items, concurrency=concurrency)
-            judged = True
-        except Exception:  # noqa: BLE001 - 판정은 게이트가 아님 → 위치기반으로 진행
-            logger.exception("figure 판정 실패 — 위치기반으로 진행 file=%s", file_id)
-            judgments = [None] * len(figures)
-            judged = False
-
-    # ── 각 행의 판정 반영 + embed_text 확정 ──
-    patches: list[dict[str, Any]] = []
-    embed_texts: list[str] = []
-    for i, row in enumerate(figures):
-        selected_index: int | None = None
-        judge_reason: str | None = None
-        match_kind = row.get("match_kind") or ""
-        if judged:
-            j = judgments[i]
-            if j is None:
-                # 판정 실패 강등(D88) — selected_index는 null 유지.
-                match_kind = "judge-error"
-            else:
-                selected_index = j["selected_index"]
-                judge_reason = j.get("reason")
-                match_kind = "judge" if selected_index >= 0 else "judge-none"
-        # 미판정/미설정이면 위치기반 match_kind·캡션을 그대로 유지한다.
-        et = figure_judge.final_embed_text(
-            row, selected_index if selected_index is not None else -1
+        await _fail_job(
+            svc, job["id"], "judge 미설정 — 교과서 figure는 판정 필수(D93)"
         )
-        embed_texts.append(et)
-        patches.append({
-            "id": row["id"],
-            "selected_index": selected_index,
-            "judge_reason": judge_reason,
-            "match_kind": match_kind,
-            "embed_text": et,
+        return
+
+    overlay = await app_settings.get_overlay()
+    try:
+        items = []
+        for row in figures:
+            ext = (row["image_path"].rsplit(".", 1)[-1] or "png").lower()
+            img = await svc.storage_download(
+                settings.storage_bucket, row["image_path"]
+            )
+            items.append({
+                "candidates": row.get("candidates") or [],
+                "image_bytes": img,
+                "ext": ext,
+            })
+        concurrency = app_settings.as_int(
+            overlay, "figure_judge_concurrency",
+            settings.figure_judge_concurrency, 1, 32,
+        )
+        judgments = await figure_judge.judge_all(items, concurrency=concurrency)
+    except Exception as exc:  # noqa: BLE001 - D93: 판정 준비 실패 = 배치 실패(재시도 상속)
+        logger.exception("figure 판정 실패 file=%s", file_id)
+        for row in figures:
+            await svc.update(
+                "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
+            )
+        await _fail_job(svc, job["id"], f"figure judge error: {exc}")
+        return
+
+    # ── 판정 반영(D93): 선택된 행만 임베딩 대상. judge-error(개별 실패·회로차단)
+    #    ·judge-none(-1 해당없음)은 캡션이 없으므로 임베딩 없이 failed 확정 —
+    #    판정 메타는 남겨 재판정·디버그 근거로 쓴다.
+    to_embed: list[dict[str, Any]] = []  # {"row", "text", "patch"}
+    for i, row in enumerate(figures):
+        j = judgments[i]
+        if j is None:
+            await svc.update(
+                "textbook_figures", {"id": f"eq.{row['id']}"},
+                {"status": "failed", "selected_index": None,
+                 "judge_reason": None, "match_kind": "judge-error"},
+            )
+            continue
+        idx = j["selected_index"]
+        et = figure_judge.final_embed_text(row, idx)
+        if not et:
+            await svc.update(
+                "textbook_figures", {"id": f"eq.{row['id']}"},
+                {"status": "failed", "selected_index": -1,
+                 "judge_reason": j.get("reason"), "match_kind": "judge-none"},
+            )
+            continue
+        to_embed.append({
+            "row": row,
+            "text": et,
+            "patch": {
+                "id": row["id"],
+                "selected_index": idx,
+                "judge_reason": j.get("reason"),
+                "match_kind": "judge",
+                "embed_text": et,
+            },
         })
 
+    if not to_embed:
+        # 판정은 정상 수행됐고 임베딩할 캡션이 없을 뿐 — 잡은 마감(done).
+        await svc.update(
+            "jobs", {"id": f"eq.{job['id']}"},
+            {"status": "done", "updated_at": _now_iso()},
+        )
+        return
+
     # ── 임베딩(embedding-passage) — 실패 = 배치 실패(attempts 재시도 상속) ──
+    embed_texts = [e["text"] for e in to_embed]
     try:
         vectors = await upstage.embed_passages(embed_texts)
     except Exception as exc:  # noqa: BLE001 - 행 failed 처리 후 잡 failed
         logger.exception("figure 임베딩 실패 file=%s", file_id)
-        for row in figures:
+        for e in to_embed:
             await svc.update(
-                "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
+                "textbook_figures", {"id": f"eq.{e['row']['id']}"},
+                {"status": "failed"},
             )
         await _fail_job(svc, job["id"], f"figure embed error: {exc}")
         return
-    if len(vectors) != len(figures):
+    if len(vectors) != len(to_embed):
         logger.error(
             "figure 임베딩 수 불일치 file=%s: %d vectors for %d figures",
-            file_id, len(vectors), len(figures),
+            file_id, len(vectors), len(to_embed),
         )
-        for row in figures:
+        for e in to_embed:
             await svc.update(
-                "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
+                "textbook_figures", {"id": f"eq.{e['row']['id']}"},
+                {"status": "failed"},
             )
         await _fail_job(svc, job["id"], "figure embedding count mismatch")
         return
@@ -784,23 +813,24 @@ async def _handle_figure_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
     # 페이로드는 식별자만(캡션·경로·본문 금지 — Qdrant 신뢰 경계 아님 불변식).
     points = [
         {
-            "id": row["id"],
+            "id": e["row"]["id"],
             "vector": v,
             "payload": {
-                "figure_id": row["id"],
+                "figure_id": e["row"]["id"],
                 "file_id": str(file_id),
                 "owner_id": str(owner_id) if owner_id else None,
             },
         }
-        for row, v in zip(figures, vectors, strict=True)
+        for e, v in zip(to_embed, vectors, strict=True)
     ]
     try:
         await _qdrant_upsert(points, collection=qdrant_store.COL_TEXTBOOK_FIGURES)
     except Exception as exc:  # noqa: BLE001 - Qdrant 장애도 embed 실패와 동일 처리
         logger.exception("figure Qdrant 업서트 실패 file=%s", file_id)
-        for row in figures:
+        for e in to_embed:
             await svc.update(
-                "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
+                "textbook_figures", {"id": f"eq.{e['row']['id']}"},
+                {"status": "failed"},
             )
         await _fail_job(svc, job["id"], f"figure qdrant error: {exc}")
         return
@@ -822,7 +852,7 @@ async def _handle_figure_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
                 },
             )
 
-    await asyncio.gather(*(_mark(p) for p in patches))
+    await asyncio.gather(*(_mark(e["patch"]) for e in to_embed))
 
     # D88: 파일 status·chunk_done·_finalize_file 호출 금지(figure는 files.status와 무관).
     await svc.update(

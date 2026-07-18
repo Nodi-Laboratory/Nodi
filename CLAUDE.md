@@ -27,13 +27,16 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
   청킹 → 임베딩(Qdrant)으로 **RAG로 구축**되어, 질의 시 top-K 청크가 근거로 주입된다.
 - 선생님은 별도 버튼으로 **교과서**(`kind='textbook'`, PDF 전용)도 업로드한다
   (TASK 4, D86~D88 — 0038·0039 원격 적용 완료, E2E PASS 2026-07-17). 텍스트는
-  class_material과 동일하게 RAG 구축 + 추가로 figure를 추출·임베딩(텍스트 프록시:
-  **캡션+인접 헤딩**, D91 — enhanced 영어 설명은 미사용)해 Qdrant
-  `textbook_figures`에 적재(D86). 학생 질의와 유사한
+  class_material과 동일하게 RAG 구축 + 추가로 figure를 추출·임베딩해 Qdrant
+  `textbook_figures`에 적재(D86). **figure 캡션은 비전 판정이 확정한다**(D93,
+  사용자 결정 2026-07-18): 후보는 bbox 중심 절대거리 top-3(위치기반 매칭 제거),
+  판정이 고른 후보 **캡션 단독**이 임베딩 텍스트(heading·alt·enhanced 설명 제외
+  — D91 대체). 판정은 필수 게이트 — `JUDGE_API_KEY` 미설정이면 교과서 업로드
+  자체를 503 거부하고, 판정 실패(-1 포함) figure는 임베딩 없이 failed(검색
+  미노출, retry로 재판정 가능). 학생 질의와 유사한
   figure(거리 게이트 0.60)는 캔버스 FigureNode로 표시 — 이미지는 백엔드 signed
   URL로만 서빙, **URL 영속 금지**(재수화·만료 시 `GET /files/figures/{id}` 재발급,
-  D87). figure 실패는 텍스트 인덱싱과 격리(`files.status` 불가침, 판정은 JUDGE_*
-  env 미설정 시 생략 → 위치기반 캡션, D88).
+  D87). figure 실패는 텍스트 인덱싱과 격리(`files.status` 불가침, D88).
 - **학생**은 워크스페이스에 참여해(학급 코드 가입) 세션을 열고, 선생님이 올린
   교과서·자료를 근거로 질의한다. RLS가 학급 자료 접근을 통제한다.
 - **학생도 워크스페이스 세션에 파일을 업로드할 수 있다** (TASK 3, D83~D85 구현
@@ -65,8 +68,9 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
   → **벡터는 Qdrant, 청크 본문·상태는 Supabase `file_chunks`**.
   교과서는 `upstage.parse_document_full`(표준 모드+coordinates+figure base64 —
   D92로 enhanced 제거, 조각 ≤48MB·≤100p 사전 분할)로 텍스트·elements를 한 번에
-  얻고 figure 팬아웃(`figure_batch` 잡, 배치 8): 크롭 Storage 업로드 → (선택)
-  비전 판정 → embed_text=**캡션+인접 헤딩**(D91) `embedding-passage` → Qdrant
+  얻고 figure 팬아웃(`figure_batch` 잡, 배치 8): 크롭 Storage 업로드 → 비전
+  판정(필수, D93 — 절대거리 top-3 후보 중 선택, 미선택 행은 failed) →
+  embed_text=**판정 선택 캡션 단독**(D93) `embedding-passage` → Qdrant
   `textbook_figures`(**페이로드는 `{figure_id, file_id, owner_id}`만**). 행 상태는
   `textbook_figures.status`로만 추적(D86/D88).
 - **채팅 턴** (`routers/chat.py` `chat_stream`):

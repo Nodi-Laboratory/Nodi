@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from ..config import get_settings
-from . import app_settings, qdrant_store
+from . import app_settings, figure_judge, qdrant_store
 from .service_client import ServiceClient
 from .supabase_client import UserClient
 from .upstage import UPSTAGE_PARSE_MAX_BYTES
@@ -148,6 +148,17 @@ async def upload_file(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class_material/textbook requires space_kind='class'.",
+        )
+    # D93: 교과서 figure 캡션은 비전 판정이 확정한다(판정 필수 — 위치기반 매칭
+    # 제거). JUDGE_API_KEY 미설정이면 figure가 전부 임베딩 불가로 실패하므로
+    # 업로드 자체를 막는다(저장·DB 쓰기 전에 조기 거절).
+    if kind == "textbook" and not figure_judge.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "교과서 업로드가 비활성화되어 있습니다 — figure 판정(VLM) 설정"
+                "(JUDGE_API_KEY)이 필요합니다."
+            ),
         )
     # D83: 세션 연결은 user_upload 전용 — 학급 자료는 세션에 귀속되지 않는다.
     if session_id is not None and kind != "user_upload":

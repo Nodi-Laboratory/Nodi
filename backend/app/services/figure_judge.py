@@ -1,17 +1,20 @@
-"""교과서 figure 캡션 판정(D88) — labs judge.py async 이식.
+"""교과서 figure 캡션 판정(D88·D93) — labs judge.py async 이식.
 
-잘라낸 figure 이미지(base64)와 위치기반 후보 캡션을 OpenAI 호환 비전
+잘라낸 figure 이미지(base64)와 절대거리 top-K 후보를 OpenAI 호환 비전
 엔드포인트(EXAONE-4.5-33B)에 보내 ``{"selected_index", "reason"}`` JSON을 받는다.
 selected_index=-1은 "해당 없음".
 
 판정 모델은 플러그형: config의 judge_base_url / judge_model / judge_api_key로
 교체 가능(기본값 TTA GPU 프록시의 EXAONE-4.5-33B). judge_api_key 미설정이면
-is_configured()가 False — 워커는 판정을 생략하고 위치기반 캡션을 유지한다.
+is_configured()가 False.
 
-D88 규약: 판정은 품질 개선일 뿐 게이트가 아니다. 개별 실패는 raise하지 않고
-None으로 강등하고(호출부가 match_kind='judge-error'로 처리), 연속 실패가
-누적되면 회로차단해 잔여 판정을 생략한다(죽은 엔드포인트에서 connect 대기가
-쌓여 잡이 길어지는 사고 방지).
+D93(사용자 결정 2026-07-18): 판정은 **게이트다** — 캡션은 판정이 확정하며
+(위치기반 매칭 제거), 미설정이면 교과서 업로드 자체가 거부되고(files.py),
+판정 실패·해당없음(-1) figure는 임베딩 없이 failed로 남는다(캡션 없는 figure는
+검색에 노출하지 않는다). 개별 실패는 여전히 raise하지 않고 None으로
+반환하며(호출부 워커가 failed 처리), 연속 실패가 누적되면 회로차단해 잔여
+판정을 생략한다(죽은 엔드포인트에서 connect 대기가 쌓여 잡이 길어지는 사고
+방지).
 
 프롬프트 문안·요청 파라미터·salvage 규칙은 labs 실측으로 확정된 값 — 변경 금지.
 labs의 judgments.json 파일 캐시는 이식하지 않는다(행 단위 멱등이 대체 — CLI
@@ -117,23 +120,19 @@ def parse_judgment(content: str, n_candidates: int) -> dict:
 
 
 def final_embed_text(record: dict, selected_index: int) -> str:
-    """선택 캡션 + heading → 임베딩 텍스트.
+    """판정이 선택한 캡션 → 임베딩 텍스트(D93: 오직 캡션만).
 
-    selected_index=-1(해당 없음)이면 위치기반 캡션(없으면 alt)을 유지한다 —
-    judge의 보수적 판정이 위치기반으로 맞게 붙은 캡션을 지워 회귀를 만들면 안
-    된다(labs 규칙). record는 figure_extract 레코드 shape(caption/alt/
-    description/heading/candidates).
-
-    D91(사용자 결정 2026-07-17): enhanced 영어 description은 임베딩에서 제외 —
-    질의가 한국어라 영어 설명이 벡터를 희석한다. description은 행에 계속 저장
-    (표시·디버그용), 임베딩 근거는 한국어 캡션+인접 헤딩만.
+    D93(사용자 결정 2026-07-18): heading·alt·description은 전부 제외하고
+    선택된 후보(candidates[selected_index]) 텍스트만 임베딩한다 — 질의는
+    캡션 내용과 매칭되므로 다른 텍스트는 벡터를 희석한다(행 저장은 유지 —
+    표시·디버그용). selected_index가 -1(해당 없음)·범위 밖이면 임베딩할
+    캡션이 없다는 뜻으로 ''를 반환한다 — 워커가 해당 행을 failed 처리해
+    검색에 노출하지 않는다.
     """
-    if selected_index >= 0:
-        caption = record["candidates"][selected_index]
-    else:
-        caption = record.get("caption") or record.get("alt", "")
-    parts = [caption, record.get("heading", "")]
-    return " ".join(p for p in parts if p).strip()[:8000]
+    candidates = record.get("candidates") or []
+    if selected_index is None or not (0 <= selected_index < len(candidates)):
+        return ""
+    return str(candidates[selected_index]).strip()[:8000]
 
 
 def is_configured() -> bool:
@@ -195,10 +194,10 @@ async def judge_all(items: list[dict], *, concurrency: int) -> list[dict | None]
     생략"}. 나머지는 asyncio.Semaphore(concurrency)로 동시 호출을 제한한다.
 
     개별 실패(재시도 포함 최종 예외)는 raise하지 않고 None을 반환한다 — 호출부
-    (워커)가 match_kind='judge-error'로 강등한다(D88: 판정은 품질 개선일 뿐
-    게이트가 아님). 연속 CIRCUIT_BREAK_THRESHOLD회 실패 시 잔여 항목 판정을
-    생략하고 전부 None으로 둔다(회로차단) — 죽은 엔드포인트에서 connect 대기가
-    누적돼 잡이 길어지는 사고를 막는다.
+    (워커)가 해당 행을 match_kind='judge-error'로 failed 처리한다(D93: 판정이
+    캡션을 확정하는 게이트). 연속 CIRCUIT_BREAK_THRESHOLD회 실패 시 잔여 항목
+    판정을 생략하고 전부 None으로 둔다(회로차단) — 죽은 엔드포인트에서 connect
+    대기가 누적돼 잡이 길어지는 사고를 막는다.
     """
     results: list[dict | None] = [None] * len(items)
     pending: list[int] = []

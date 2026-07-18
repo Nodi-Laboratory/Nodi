@@ -1,8 +1,9 @@
-"""figure_extract 이식 검증(D86) — labs 위치기반 캡션 매칭·후보 랭킹.
+"""figure_extract 검증(D86·D93) — 절대거리 top-K 후보 랭킹.
 
-labs `extract.py`에서 실PDF로 검증된 규칙을 1:1 이식한 순수 로직이므로,
-수치·우선순위(수직거리 0.05, 아래쪽 우선, 8000자 절단, 매직바이트 jpg/png)를
-합성 elements로 고정한다. 외부 호출(Upstage·Qdrant·DB) 없음.
+D93(사용자 결정 2026-07-18): 위치기반 캡션 매칭(수평겹침·수직거리·아래쪽 우선)
+제거 — 후보는 bbox 중심 유클리드 절대거리 top-K만, 캡션 확정은 비전 판정
+(figure_judge)이 전담한다. caption·embed_text·match_kind는 추출 시점 빈 값.
+매직바이트 jpg/png·heading 규칙은 유지. 외부 호출(Upstage·Qdrant·DB) 없음.
 """
 
 import base64
@@ -56,33 +57,6 @@ _PNG = b"\x89PNG\r\n\x1a\n\x00\x00"  # 그 외 → png
 def test_bbox_from_corners():
     coords = _coords(0.2, 0.3, 0.8, 0.7)
     assert F.bbox(coords) == (0.2, 0.3, 0.8, 0.7)
-
-
-# ── match_description ──────────────────────────────────────────────────
-def test_match_prefers_below_even_with_larger_gap():
-    # 아래쪽 우선: 위 0.02 vs 아래 0.04 → 아래 선택(방향이 거리보다 우선).
-    fig = (0.1, 0.40, 0.5, 0.60)
-    above = ((0.1, 0.36, 0.5, 0.38), "above")  # gap 0.02, 위
-    below = ((0.1, 0.64, 0.5, 0.66), "below")  # gap 0.04, 아래
-    assert F.match_description(fig, [above, below]) == "below"
-
-
-def test_match_rejects_gap_over_max():
-    fig = (0.1, 0.40, 0.5, 0.60)
-    far = ((0.1, 0.66, 0.5, 0.68), "far")  # gap 0.06 > 0.05
-    assert F.match_description(fig, [far]) is None
-
-
-def test_match_rejects_no_horizontal_overlap():
-    fig = (0.1, 0.40, 0.5, 0.60)
-    side = ((0.6, 0.62, 0.9, 0.64), "side")  # 수평 겹침 0
-    assert F.match_description(fig, [side]) is None
-
-
-def test_match_skips_empty_text():
-    fig = (0.1, 0.40, 0.5, 0.60)
-    empty = ((0.1, 0.62, 0.5, 0.64), "")
-    assert F.match_description(fig, [empty]) is None
 
 
 # ── rank_candidates ────────────────────────────────────────────────────
@@ -156,14 +130,16 @@ def test_extract_figures_full_record():
     assert r["page"] == 1
     assert r["element_id"] == 10
     assert r["bbox"] == [0.1, 0.40, 0.5, 0.60]
-    assert r["caption"] == "그림 1 고구려의 전성기"
+    # D93: caption·embed_text·match_kind는 판정 전이므로 빈 값 — 확정은 워커.
+    assert r["caption"] == ""
+    assert r["embed_text"] == ""
+    assert r["match_kind"] == ""
     assert r["alt"] == "고구려 지도"
     assert r["description"] == "A map of Goguryeo"
     assert r["figure_type"] == "map"
     assert r["heading"] == "1. 고대 국가"
+    # 후보는 절대거리 순(D93) — 캡션(0.13) < 헤딩(0.18).
     assert r["candidates"] == ["그림 1 고구려의 전성기", "1. 고대 국가"]
-    assert r["embed_text"] == "그림 1 고구려의 전성기 고구려 지도 1. 고대 국가"
-    assert r["match_kind"] == "caption"
     assert r["image_bytes"] == _JPG
     assert r["ext"] == "jpg"
     # 계약 키 전체 존재(task4-6이 이 shape에 의존).
@@ -189,17 +165,18 @@ def test_extract_figures_skips_missing_base64(caplog):
     assert any("base64" in m for m in caplog.messages)
 
 
-def test_extract_figures_fallback_to_paragraph():
-    # caption 후보 없음 → paragraph 폴백.
+def test_extract_figures_candidates_by_absolute_distance():
+    """D93: 후보는 방향(아래쪽) 우선 없이 bbox 중심 절대거리 순이다."""
     fig = _fig_el(1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode())
-    para = _text_el(2, "paragraph", (0.1, 0.62, 0.5, 0.64), "본문 문단")
-    recs = F.extract_figures([fig, para])
-    assert recs[0]["caption"] == "본문 문단"
-    assert recs[0]["match_kind"] == "paragraph"
+    # 위쪽이 더 가깝다: above 중심거리 0.13 < below 중심거리 0.17.
+    above = _text_el(2, "paragraph", (0.1, 0.34, 0.5, 0.40), "위 텍스트")
+    below = _text_el(3, "caption", (0.1, 0.64, 0.5, 0.70), "아래 캡션")
+    recs = F.extract_figures([fig, above, below])
+    assert recs[0]["candidates"] == ["위 텍스트", "아래 캡션"]
 
 
-def test_extract_figures_fallback_to_alt_only():
-    # caption·paragraph 모두 없음 → alt-only(caption "").
+def test_extract_figures_no_candidates_leaves_empty():
+    """같은 페이지에 텍스트가 없으면 candidates는 빈 목록(판정이 -1 처리)."""
     fig = _fig_el(
         1,
         (0.1, 0.40, 0.5, 0.60),
@@ -207,28 +184,20 @@ def test_extract_figures_fallback_to_alt_only():
         html='<img alt="지도만 있음">',
     )
     recs = F.extract_figures([fig])
+    assert recs[0]["candidates"] == []
     assert recs[0]["caption"] == ""
-    assert recs[0]["match_kind"] == "alt-only"
+    assert recs[0]["match_kind"] == ""
     assert recs[0]["alt"] == "지도만 있음"
 
 
-def test_extract_figures_embed_text_truncated_to_8000():
-    long_caption = "가" * 9000
-    fig = _fig_el(1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode())
-    cap = _text_el(2, "caption", (0.1, 0.62, 0.5, 0.64), long_caption)
-    recs = F.extract_figures([fig, cap])
-    assert len(recs[0]["embed_text"]) == 8000
-
-
-def test_extract_figures_caption_scoped_to_same_page():
-    # 다른 페이지 caption은 매칭 후보가 아니다(페이지별 그룹핑).
+def test_extract_figures_candidates_scoped_to_same_page():
+    # 다른 페이지 텍스트는 후보가 아니다(페이지별 그룹핑).
     fig = _fig_el(
         1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode(), page=1,
     )
     other = _text_el(2, "caption", (0.1, 0.62, 0.5, 0.64), "다른 페이지", page=2)
     recs = F.extract_figures([fig, other])
-    assert recs[0]["match_kind"] == "alt-only"
-    assert recs[0]["caption"] == ""
+    assert recs[0]["candidates"] == []
 
 
 def test_extract_figures_top_k_passthrough():

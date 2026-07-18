@@ -1,10 +1,11 @@
-"""TASK 4 (D86/D88) — 워커 textbook 분기 + figure_batch 핸들러 + 삭제 확장 테스트.
+"""TASK 4 (D86/D88/D93) — 워커 textbook 분기 + figure_batch 핸들러 + 삭제 확장 테스트.
 
 textbook split: 구조화 파싱(parse_document_full) → figure 추출·팬아웃(figure_batch)
 과 텍스트 청킹·embedding_batch 팬아웃을 병행한다. figure 실패는 텍스트 인덱싱을
-절대 막지 않는다(D88). figure_batch: 위치기반 후보를 비전 판정으로 개선(게이트
-아님) → embed_text 확정 → Upstage 임베딩 → Qdrant(textbook_figures) 적재.
-delete_file(textbook): 크롭 Storage + 두 Qdrant 컬렉션을 함께 정리한다.
+절대 막지 않는다(D88). figure_batch(D93): 판정이 캡션을 확정하는 **게이트** —
+미설정이면 배치 전체 failed, 판정 실패·해당없음(-1) 행은 임베딩 없이 failed,
+선택된 행만 선택 캡션 단독 텍스트로 Upstage 임베딩 → Qdrant(textbook_figures)
+적재. delete_file(textbook): 크롭 Storage + 두 Qdrant 컬렉션을 함께 정리한다.
 
 외부 의존(upstage/qdrant/storage/judge)은 전부 mock — 기존 워커 테스트의 패턴.
 """
@@ -332,81 +333,64 @@ def _fig_batch_job():
 
 
 @pytest.mark.asyncio
-async def test_figure_batch_judge_none_is_judge_error_but_embeds(monkeypatch):
-    """④ 판정 None → match_kind='judge-error' + status='embedded'(임베딩 진행)."""
-    captured = {}
-
+async def test_figure_batch_judge_none_fails_rows_without_embedding(monkeypatch):
+    """④ 판정 None(개별 실패·회로차단) → 행 failed(judge-error), 임베딩 미호출(D93)."""
     async def fake_judge_all(items, *, concurrency):
         return [None for _ in items]  # 전부 판정 실패
 
-    async def fake_embed(texts):
-        return [[0.1, 0.2, 0.3] for _ in texts]
-
-    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
-        captured["points"] = points
-        captured["collection"] = collection
+    async def boom_embed(texts):
+        raise AssertionError("판정 실패 행은 임베딩하지 않는다(D93)")
 
     monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
     monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
-    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
-    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+    monkeypatch.setattr(W.upstage, "embed_passages", boom_embed)
 
     svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0), _fig_row("r1", 1)])
     await W._handle_figure_batch(svc, _fig_batch_job())
 
-    fig_updates = [(fil, patch) for t, fil, patch in svc.updates
-                   if t == "textbook_figures"]
-    embedded = [patch for _, patch in fig_updates if patch.get("status") == "embedded"]
-    assert len(embedded) == 2
-    assert all(p["match_kind"] == "judge-error" for p in embedded)
-    assert all(p["selected_index"] is None for p in embedded)
-
-    # 불변식: Qdrant 컬렉션은 textbook_figures, 페이로드에 캡션/경로/본문 없음.
-    assert captured["collection"] == qdrant_store.COL_TEXTBOOK_FIGURES
-    for pt in captured["points"]:
-        assert set(pt["payload"].keys()) == {"figure_id", "file_id", "owner_id"}
-        assert "caption" not in pt["payload"]
-        assert "image_path" not in pt["payload"]
-        assert "embed_text" not in pt["payload"]
+    failed = [patch for t, _, patch in svc.updates
+              if t == "textbook_figures" and patch.get("status") == "failed"]
+    assert len(failed) == 2
+    assert all(p["match_kind"] == "judge-error" for p in failed)
+    assert all(p["selected_index"] is None for p in failed)
+    # 판정은 정상 수행됐으므로 잡은 done으로 마감(임베딩할 캡션이 없을 뿐).
+    job_done = [patch for t, _, patch in svc.updates
+                if t == "jobs" and patch.get("status") == "done"]
+    assert job_done
 
 
 @pytest.mark.asyncio
-async def test_figure_batch_unconfigured_uses_position_based(monkeypatch):
-    """⑤ 판정 미설정 → 위치기반 embed_text로 임베딩(judge_all 미호출)."""
+async def test_figure_batch_unconfigured_fails_batch(monkeypatch):
+    """⑤ 판정 미설정 → 행 전부 failed + 잡 failed(D93 게이트 — judge_all 미호출)."""
     called = {"judge": False}
-    captured = {}
 
     async def fake_judge_all(items, *, concurrency):
         called["judge"] = True
         return [None for _ in items]
 
-    async def fake_embed(texts):
-        captured["texts"] = list(texts)
-        return [[0.1, 0.2, 0.3] for _ in texts]
-
-    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
-        captured["points"] = points
+    async def boom_embed(texts):
+        raise AssertionError("미설정이면 임베딩까지 가지 않는다(D93)")
 
     monkeypatch.setattr(W.figure_judge, "is_configured", lambda: False)
     monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
-    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
-    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+    monkeypatch.setattr(W.upstage, "embed_passages", boom_embed)
 
     svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0)])
     await W._handle_figure_batch(svc, _fig_batch_job())
 
     assert called["judge"] is False, "미설정이면 판정을 호출하지 않는다"
-    # 위치기반 캡션이 embed_text에 반영(판정 미개입)
-    assert "위치캡션 0" in captured["texts"][0]
-    embedded = [patch for t, _, patch in svc.updates
-                if t == "textbook_figures" and patch.get("status") == "embedded"]
-    assert len(embedded) == 1
-    assert embedded[0]["match_kind"] == "caption"  # 위치기반 유지
+    failed = [patch for t, _, patch in svc.updates
+              if t == "textbook_figures" and patch.get("status") == "failed"]
+    assert len(failed) == 1
+    job_failed = [patch for t, _, patch in svc.updates
+                  if t == "jobs" and patch.get("status") == "failed"]
+    assert job_failed
+    assert all(t != "files" for t, _, _ in svc.updates)
 
 
 @pytest.mark.asyncio
 async def test_figure_batch_judge_selects_candidate(monkeypatch):
-    """판정 성공(index>=0) → match_kind='judge' + 선택 후보가 embed_text에 반영."""
+    """판정 성공(index>=0) → match_kind='judge' + 선택 후보 **단독** 임베딩(D93)."""
     captured = {}
 
     async def fake_judge_all(items, *, concurrency):
@@ -417,7 +401,8 @@ async def test_figure_batch_judge_selects_candidate(monkeypatch):
         return [[0.1, 0.2, 0.3] for _ in texts]
 
     async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
-        pass
+        captured["points"] = points
+        captured["collection"] = collection
 
     monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
     monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
@@ -430,21 +415,78 @@ async def test_figure_batch_judge_selects_candidate(monkeypatch):
     )
     await W._handle_figure_batch(svc, _fig_batch_job())
 
-    assert "정답 후보" in captured["texts"][0]
+    # D93: 선택 캡션만 — heading·alt·위치캡션 미포함.
+    assert captured["texts"] == ["정답 후보"]
     embedded = [patch for t, _, patch in svc.updates
                 if t == "textbook_figures" and patch.get("status") == "embedded"]
     assert embedded[0]["match_kind"] == "judge"
     assert embedded[0]["selected_index"] == 0
     assert embedded[0]["judge_reason"] == "가장 잘 설명"
+    assert embedded[0]["embed_text"] == "정답 후보"
+
+    # 불변식: Qdrant 컬렉션은 textbook_figures, 페이로드에 캡션/경로/본문 없음.
+    assert captured["collection"] == qdrant_store.COL_TEXTBOOK_FIGURES
+    for pt in captured["points"]:
+        assert set(pt["payload"].keys()) == {"figure_id", "file_id", "owner_id"}
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_minus_one_fails_row_others_embed(monkeypatch):
+    """판정 -1(해당 없음) 행은 failed(judge-none), 선택된 행만 임베딩된다(D93)."""
+    captured = {}
+
+    async def fake_judge_all(items, *, concurrency):
+        return [
+            {"selected_index": -1, "reason": "설명하는 후보 없음"},
+            {"selected_index": 1, "reason": "둘째가 정답"},
+        ]
+
+    async def fake_embed(texts):
+        captured["texts"] = list(texts)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
+        captured["points"] = points
+
+    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+
+    svc = _FakeService(
+        _tb_file(),
+        figures=[
+            _fig_row("r0", 0, candidates=["무관 텍스트"]),
+            _fig_row("r1", 1, candidates=["오답", "정답 후보"]),
+        ],
+    )
+    await W._handle_figure_batch(svc, _fig_batch_job())
+
+    assert captured["texts"] == ["정답 후보"]
+    assert [pt["id"] for pt in captured["points"]] == ["r1"]
+    failed = [patch for t, _, patch in svc.updates
+              if t == "textbook_figures" and patch.get("status") == "failed"]
+    assert len(failed) == 1
+    assert failed[0]["match_kind"] == "judge-none"
+    assert failed[0]["selected_index"] == -1
+    assert failed[0]["judge_reason"] == "설명하는 후보 없음"
+    embedded = [patch for t, _, patch in svc.updates
+                if t == "textbook_figures" and patch.get("status") == "embedded"]
+    assert len(embedded) == 1
+    assert embedded[0]["embed_text"] == "정답 후보"
 
 
 @pytest.mark.asyncio
 async def test_figure_batch_embed_failure_fails_rows_and_job(monkeypatch):
     """임베딩 실패 → 해당 행 failed + 잡 failed(파일 status 무변경 — D88)."""
+    async def fake_judge_all(items, *, concurrency):
+        return [{"selected_index": 0, "reason": "ok"} for _ in items]
+
     async def boom_embed(texts):
         raise RuntimeError("upstage 500")
 
-    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: False)
+    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
     monkeypatch.setattr(W.upstage, "embed_passages", boom_embed)
 
     svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0)])

@@ -79,38 +79,30 @@ def _record(**over) -> dict:
     return base
 
 
-def test_final_embed_text_uses_selected_candidate():
-    """선택 index>=0이면 해당 후보를 캡션으로 채택한다."""
+def test_final_embed_text_uses_selected_candidate_only():
+    """D93: 선택 후보 텍스트만 임베딩 — heading·alt·description 전부 제외."""
     text = FJ.final_embed_text(_record(), 1)
-    assert text.startswith("후보1 ")
-    assert "단원 제목" in text
-
-
-def test_final_embed_text_excludes_description():
-    """enhanced 영어 description은 임베딩 텍스트에서 제외한다(D91 — 한국어
-    질의 벡터 희석 방지, 사용자 결정). 행 저장은 유지되므로 조립만 검증."""
-    text = FJ.final_embed_text(_record(), -1)
+    assert text == "후보1"
+    assert "단원 제목" not in text
+    assert "대체텍스트" not in text
     assert "그림 설명" not in text
-    assert text == "위치기반 캡션 단원 제목"
 
 
-def test_final_embed_text_minus_one_keeps_positional_caption():
-    """-1이면 위치기반 caption을 유지(judge 보수 판정이 정답을 지우는 회귀 금지)."""
-    text = FJ.final_embed_text(_record(), -1)
-    assert text.startswith("위치기반 캡션 ")
+def test_final_embed_text_minus_one_returns_empty():
+    """-1(해당 없음)이면 '' — 워커가 해당 행을 failed 처리한다(D93 게이트)."""
+    assert FJ.final_embed_text(_record(), -1) == ""
 
 
-def test_final_embed_text_minus_one_falls_back_to_alt():
-    """-1이고 caption이 비면 alt로 폴백한다."""
-    text = FJ.final_embed_text(_record(caption=""), -1)
-    assert text.startswith("대체텍스트 ")
+def test_final_embed_text_out_of_range_returns_empty():
+    """후보 범위 밖 index·None도 ''(방어 — 임베딩 불가 신호)."""
+    assert FJ.final_embed_text(_record(), 9) == ""
+    assert FJ.final_embed_text(_record(candidates=[]), 0) == ""
+    assert FJ.final_embed_text(_record(), None) == ""
 
 
 def test_final_embed_text_truncates_at_8000():
-    """공백 join 후 8000자로 절단한다."""
-    text = FJ.final_embed_text(
-        _record(caption="가" * 10000, description="", heading=""), -1
-    )
+    """선택 후보를 8000자로 절단한다."""
+    text = FJ.final_embed_text(_record(candidates=["가" * 10000]), 0)
     assert len(text) == 8000
 
 
