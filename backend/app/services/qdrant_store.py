@@ -3,8 +3,9 @@
 Qdrant에는 RLS가 없다 — 신뢰 경계가 아니다. file_chunks 페이로드는
 {chunk_id, file_id, owner_id}만 저장(본문 없음)하고, 청크 텍스트는 검색 후
 USER 스코프 Supabase 클라이언트로 다시 조회해 RLS가 접근을 재검증한다.
-스코핑은 호출부가 file_ids 페이로드 필터로 강제한다. art/ebs는 전역
-카탈로그(유저 데이터 아님)라 필터 없음.
+스코핑은 호출부가 file_ids 페이로드 필터로 강제한다.
+(ebs/art_assets 전역 카탈로그 컬렉션은 D94로 제거 — 기존 로컬 인스턴스의
+잔존 컬렉션은 무해하며, 정리는 수동 DELETE /collections/{name}.)
 """
 
 from __future__ import annotations
@@ -21,8 +22,6 @@ logger = logging.getLogger("nodi.qdrant")
 settings = get_settings()
 
 COL_FILE_CHUNKS = "file_chunks"
-COL_ART = "art_assets"
-COL_EBS = "ebs"
 COL_CANVAS_CARDS = "canvas_cards"
 # 교과서 figure 임베딩 컬렉션(TASK 4, D86). file_chunks와 동형(4096d/Cosine) —
 # figure 캡션·description 임베딩을 저장하고, file_id 페이로드 필터로 스코핑한다.
@@ -41,18 +40,9 @@ def get_client() -> AsyncQdrantClient:
 
 
 # ---------------------------------------------------------------------------
-# 포인트 ID 규약: 행 uuid가 있으면 그대로(청크 id / art_assets id), 없으면
-# uuid5(NAMESPACE_URL, "ebs:{video_id}" | "art:{slug}")로 결정론적 생성
-# (재실행 ingest가 중복 대신 덮어쓰도록).
+# 포인트 ID 규약: 행 uuid가 있으면 그대로(청크 id), 없으면 uuid5로 결정론적
+# 생성(재실행이 중복 대신 덮어쓰도록).
 # ---------------------------------------------------------------------------
-def ebs_point_id(video_id: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"ebs:{video_id}"))
-
-
-def art_point_id(slug: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"art:{slug}"))
-
-
 def canvas_card_point_id(node_id: str, concept_index: int) -> str:
     """canvas_cards 포인트 id — 멱등 upsert를 위한 결정론 uuid5."""
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"card:{node_id}:{concept_index}"))
@@ -68,8 +58,6 @@ async def ensure_collections() -> None:
         client = get_client()
         for name in (
             COL_FILE_CHUNKS,
-            COL_ART,
-            COL_EBS,
             COL_CANVAS_CARDS,
             COL_TEXTBOOK_FIGURES,
         ):

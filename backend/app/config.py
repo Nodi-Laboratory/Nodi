@@ -51,16 +51,11 @@ class Settings(BaseSettings):
     upstage_document_parse_model: str = "document-parse"
 
     # --- Qdrant (벡터 저장소 — pgvector 대체) ---
-    # 컬렉션: file_chunks / art_assets / ebs (전부 4096d, Cosine).
+    # 컬렉션: file_chunks / canvas_cards / textbook_figures (전부 4096d, Cosine).
     # Qdrant엔 RLS가 없다 — 스코핑은 백엔드 페이로드 필터로 강제(qdrant_store).
     qdrant_url: str = "http://localhost:6333"
 
-    # --- /retrieve (개념 캔버스: 질의 임베딩 + EBS/아트 노드 검색) ---
-    retrieve_ebs_top_k: int = 1
-    retrieve_art_top_k: int = 1
-    retrieve_ebs_min_score: float = 0.35
-    retrieve_art_min_score: float = 0.35
-
+    # /retrieve의 EBS·아트 검색 노브는 D94(기능 제거)로 삭제됨.
     # 카드 배치·좌표는 프론트 소유(d3-force) — 서버 위치 계산 상수는 제거됨.
 
     # --- Memory linking (Stage 3a) ---
@@ -71,10 +66,6 @@ class Settings(BaseSettings):
 
     # 임베딩은 Upstage embedding-passage/query 4096d + Qdrant로 완전 이전됨
     # (D80: 구 Gemini 임베딩 모델·차원 설정 키 제거).
-    # --- SVG art search (concept-card illustrations) ---
-    # Cosine distance cutoff for a query->art match (0=identical). Above this, no
-    # illustration is shown for the concept.
-    art_match_max_distance: float = 0.42
     # Chunks per embedding_batch child job; sub-batched per embed request.
     embedding_batch_size: int = 64
     embedding_request_max_chunks: int = 32  # per embed_content call
@@ -121,7 +112,7 @@ class Settings(BaseSettings):
     figure_pipeline_enabled: bool = True          # 킬 스위치(enhanced 과금·장애 대응)
     figure_retrieve_max_distance: float = 0.60    # distance=1-score 규약(D73 게이트와 동일 스케일)
     figure_judge_concurrency: int = 4             # TTA 프록시 미실측 — 보수 기본
-    figure_retrieve_top_k: int = 1                # retrieve_ebs_top_k 동형(config 전용)
+    figure_retrieve_top_k: int = 1                # config 전용(admin 오버레이 없음)
     figure_batch_size: int = 8                    # figure_batch 잡 팬아웃 단위
     figure_signed_url_ttl_seconds: int = 21600    # 6h — 수업 시간 내 만료 실질 배제(D87)
     # --- figure 캡션 판정(EXAONE 비전, 플러그형 D88) — env: JUDGE_BASE_URL/JUDGE_MODEL/JUDGE_API_KEY ---

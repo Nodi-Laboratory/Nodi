@@ -14,7 +14,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .routers import (
     admin,
-    art,
     chat,
     files,
     health,
@@ -71,7 +70,6 @@ app.include_router(home.router)
 app.include_router(admin.router)
 app.include_router(files.router)
 app.include_router(teacher.router)
-app.include_router(art.router)
 app.include_router(retrieve.router)
 
 

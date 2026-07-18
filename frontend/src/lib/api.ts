@@ -391,13 +391,11 @@ export interface ChatStreamBody {
   /** Wave A(D15): 브랜치 참조 — 이 턴만 참조할 노드들(일회성, 비영속). */
   reference_node_ids?: string[];
   /**
-   * 09 단일 writer: retrieve 결과(ebs/art/figures)를 서버에 전달해 done 훅이
-   * concepts + ebs/art/figures를 한 번의 PATCH로 attachments.canvas에 통합 저장.
-   * null이면 저장 생략(degraded 등).
+   * 09 단일 writer: retrieve 결과(figures)를 서버에 전달해 done 훅이 한 번의
+   * PATCH로 attachments.canvas에 저장. null이면 저장 생략(degraded 등).
+   * D94: ebs/art 제거.
    */
   retrieved?: {
-    ebs: Array<{ video_id: string; title: string; thumb: string; score: number }>;
-    art: Array<{ slug: string; url: string; title: string; score: number }>;
     // D87: figure는 url 제외(signed·만료). 서버가 재수화 시 getFigure로 재발급.
     figures?: Array<{
       figure_id: string;
@@ -570,57 +568,7 @@ export async function streamChat(
   );
 }
 
-// ── SVG 삽화 검색 (Claude 사전생성 라이브러리 · pgvector) ──────────────
-
-export interface ArtHit {
-  slug: string;
-  url: string;
-  title: string | null;
-  tags: string[] | null;
-  distance: number;
-}
-
-export interface ArtSearchResult {
-  /** 임계값 이내 매치가 있으면 삽화, 없으면 null. */
-  art: ArtHit | null;
-  /** 질의 임베딩(4096d) — 개념 유사도 그룹핑에 재사용(호출 1회로 삽화+그룹핑). */
-  embedding: number[] | null;
-}
-
-/** 개념 제목으로 유사 SVG를 검색한다. 실패/무매치 시 art=null. */
-export async function searchArt(
-  q: string,
-  k = 1,
-): Promise<ArtSearchResult> {
-  const query = q.trim();
-  if (!query) return { art: null, embedding: null };
-  const params = new URLSearchParams({ q: query, k: String(k) });
-  try {
-    const res = await fetch(`${API_BASE}/art/search?${params.toString()}`, {
-      headers: await authHeaders(),
-    });
-    if (!res.ok) return { art: null, embedding: null };
-    return (await res.json()) as ArtSearchResult;
-  } catch {
-    return { art: null, embedding: null };
-  }
-}
-
 // ── 임베딩 검색 + 캔버스 영속 (Upstage /retrieve · PATCH /nodes, C4/C5) ──
-
-export interface RetrieveEbsHit {
-  videoId: string;
-  title: string;
-  thumb: string;
-  score: number;
-}
-
-export interface RetrieveArtHit {
-  slug: string;
-  url: string;
-  title: string;
-  score: number;
-}
 
 /** D87: 교과서 figure 히트. url은 signed(만료 有) — 라이브 배치엔 쓰되 서버로는
  *  전달하지 않고(ChatStreamBody figures는 url 제외), 재수화 시 getFigure로 재발급. */
@@ -634,8 +582,6 @@ export interface RetrieveFigureHit {
 }
 
 export interface RetrieveResult {
-  ebs: RetrieveEbsHit[];
-  art: RetrieveArtHit[];
   figures: RetrieveFigureHit[];
   /** 백엔드 임베딩/Qdrant 실패 — 프론트는 여전히 로컬 폴백으로 배치(09 계약). */
   degraded: boolean;
@@ -645,13 +591,13 @@ const RETRIEVE_TIMEOUT_MS = 4000;
 
 /** retrieve 자체가 네트워크 실패/타임아웃일 때 — 좌표는 프론트 sim이 배치. */
 function degradedRetrieve(): RetrieveResult {
-  return { ebs: [], art: [], figures: [], degraded: true };
+  return { figures: [], degraded: true };
 }
 
 /**
- * POST /retrieve (09) — EBS/삽화 추천. SSE 선행 호출이므로 절대 reject하지 않고,
- * 타임아웃(4s)·오류 모두 degraded로 resolve한다. session_id는 서버 kNN 계산용
- * (좌표는 프론트 d3-force가 소유하므로 near는 무시).
+ * POST /retrieve (09) — 교과서 figure 추천(D94: EBS/아트 제거). SSE 선행
+ * 호출이므로 절대 reject하지 않고, 타임아웃(4s)·오류 모두 degraded로 resolve
+ * 한다. session_id는 서버 kNN 계산용.
  */
 export async function retrieve(
   question: string,
@@ -670,8 +616,6 @@ export async function retrieve(
     });
     if (!res.ok) return degradedRetrieve();
     const body = (await res.json()) as {
-      ebs?: Array<{ video_id?: string; title?: string; thumb?: string; score?: number }>;
-      art?: Array<{ slug?: string; url?: string; title?: string; score?: number }>;
       figures?: Array<{
         figure_id?: string;
         file_id?: string;
@@ -683,23 +627,7 @@ export async function retrieve(
       degraded?: boolean;
     };
     return {
-      ebs: (body?.ebs ?? [])
-        .filter((e) => e?.video_id)
-        .map((e) => ({
-          videoId: String(e.video_id),
-          title: e.title ?? "",
-          thumb: e.thumb ?? `https://i.ytimg.com/vi/${e.video_id}/hqdefault.jpg`,
-          score: e.score ?? 0,
-        })),
-      art: (body?.art ?? [])
-        .filter((a) => a?.slug)
-        .map((a) => ({
-          slug: String(a.slug),
-          url: a.url ?? `/art/${a.slug}.svg`,
-          title: a.title ?? "",
-          score: a.score ?? 0,
-        })),
-      // D87: ebs/art와 동형(방어적: figure_id/url 없으면 drop, snake→camel).
+      // D87: 방어적 파싱(figure_id/url 없으면 drop, snake→camel).
       figures: (body?.figures ?? [])
         .filter((f) => f?.figure_id && f?.url)
         .map((f) => ({
@@ -719,11 +647,10 @@ export async function retrieve(
   }
 }
 
-/** C5/09: nodes.attachments.canvas에 병합 저장되는 형태(ebs/art/figures — snake_case).
- *  D87: figures는 url 제외 영속 — 재수화 시 getFigure로 fresh signed URL 재발급. */
+/** C5/09: nodes.attachments.canvas에 병합 저장되는 형태(figures — snake_case).
+ *  D87: figures는 url 제외 영속 — 재수화 시 getFigure로 fresh signed URL 재발급.
+ *  D94: ebs/art 제거(구 노드의 잔존 키는 무시하고 읽지 않는다). */
 export interface NodeCanvasAttachment {
-  ebs: Array<{ video_id: string; title: string; thumb: string; score: number }>;
-  art: Array<{ slug: string; url: string; title: string; score: number }>;
   figures?: Array<{
     figure_id: string;
     file_id: string;
@@ -761,7 +688,7 @@ export async function getFigure(
 }
 
 /**
- * PATCH /nodes/{id} (C5) — retrieve 결과(ebs/art) 영속.
+ * PATCH /nodes/{id} (C5) — retrieve 결과(figures) 영속.
  * 09: 좌표 저장은 서버 done 훅이 담당 → positionX/Y 전달 제거.
  * done 이후 fire-and-forget: 실패는 삼킨다(캔버스는 replay만으로도 재구성 가능).
  */

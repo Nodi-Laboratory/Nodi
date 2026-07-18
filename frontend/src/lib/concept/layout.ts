@@ -7,7 +7,7 @@
 const CARD_W = 420;
 const MARGIN = 40;
 
-// FNV-1a string hash (deterministic). ArtNode 미세 회전 시드 등에 재사용.
+// FNV-1a string hash (deterministic). 미세 회전 시드 등에 재사용.
 export function hashStr(s: string): number {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < s.length; i++) {

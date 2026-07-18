@@ -1,4 +1,4 @@
-// 리프 노드(영상/삽화) 무겹침 배치 — 개념 카드/다른 리프와 절대 겹치지 않게
+// 리프 노드(교과서 figure) 무겹침 배치 — 개념 카드/다른 리프와 절대 겹치지 않게
 // 선호 위치에서 나선으로 확장하며 가장 가까운 빈 자리를 찾는다(결정론).
 // 서버 canvas_layout._first_free_position(AABB 나선 탐색) 이식. 캔버스는
 // 무한 팬이므로 경계 클램프는 없다.
@@ -18,13 +18,10 @@ export interface Rect {
   h: number;
 }
 
-// 리프 실측 근사 크기(px). VideoNode .node=340폭, ArtNode=220폭. 충돌 회피는
-// 과대추정이 안전(여백↑) — 실제 렌더보다 약간 크게 잡아 시각적 겹침을 배제한다.
+// 리프 실측 근사 크기(px). 충돌 회피는 과대추정이 안전(여백↑) — 실제 렌더보다
+// 약간 크게 잡아 시각적 겹침을 배제한다. (D94: video/art 리프 제거)
 export const LEAF_DIMS: Record<CanvasLeafNode["type"], { w: number; h: number }> = {
-  video: { w: 340, h: 132 },
-  art: { w: 220, h: 210 },
-  // D87: FigureNode 이미지+캡션 근사(260폭). 실제 렌더보다 약간 크게 잡아
-  // 겹침을 배제(과대추정이 겹침보다 안전).
+  // D87: FigureNode 이미지+캡션 근사(260폭).
   figure: { w: 260, h: 240 },
 };
 

@@ -1,11 +1,12 @@
 """채팅 figures 영속 — attachments.canvas.figures (D87).
 
 프론트가 /retrieve figure 추천을 채팅 턴에 되돌려주면 done 훅이
-attachments.canvas에 ebs/art와 대칭으로 저장한다. **signed URL은 절대
-저장하지 않는다**(D87 — 만료 URL 화석화 방지, 재수화는 figure_id 재발급).
+attachments.canvas에 저장한다. **signed URL은 절대 저장하지 않는다**(D87 —
+만료 URL 화석화 방지, 재수화는 figure_id 재발급). D94: ebs/art 제거 —
+canvas에는 figures 키만 남고, 구버전 프론트의 ebs/art 키는 extra 무시로 버려진다.
 
-여기선 (1) RetrievedBody의 figures 파싱·url 부재, (2) _patch_canvas_unified가
-figures를 ebs/art와 함께 기록, (3) retrieved=None 회귀만 함수 단위로 검증한다.
+여기선 (1) RetrievedBody의 figures 파싱·url 부재, (2) _patch_canvas_unified의
+figures 기록, (3) retrieved=None 회귀만 함수 단위로 검증한다.
 """
 
 import pytest
@@ -27,6 +28,7 @@ def test_retrieved_body_parses_figures():
     """figures 항목이 파싱되고 model_dump 라운드트립이 값을 보존한다."""
     body = RetrievedBody.model_validate(
         {
+            # 구버전 프론트 호환: ebs/art 키가 와도 extra 무시로 버려진다(D94).
             "ebs": [],
             "art": [],
             "figures": [
@@ -77,13 +79,13 @@ def test_retrieved_figure_item_has_no_url_field():
 
 
 def test_retrieved_body_defaults_empty_figures():
-    """figures 생략 시 빈 리스트 기본값(기존 ebs/art 스타일 동일)."""
-    body = RetrievedBody(ebs=[], art=[])
+    """figures 생략 시 빈 리스트 기본값."""
+    body = RetrievedBody()
     assert body.figures == []
 
 
 # ---------------------------------------------------------------------------
-# _patch_canvas_unified — figures를 ebs/art와 함께 기록
+# _patch_canvas_unified — figures 기록
 # ---------------------------------------------------------------------------
 
 
@@ -105,12 +107,10 @@ class _CaptureClient:
 
 
 @pytest.mark.asyncio
-async def test_patch_canvas_writes_figures_with_ebs_art():
-    """figures가 ebs/art와 대칭으로 attachments.canvas에 기록된다(url 없음)."""
+async def test_patch_canvas_writes_figures():
+    """figures가 attachments.canvas에 기록된다(url 없음, D94: figures 키만)."""
     client = _CaptureClient(existing_attachments={})
     retrieved = RetrievedBody(
-        ebs=[C.RetrievedEbsItem(video_id="v", title="t", thumb="th", score=0.7)],
-        art=[C.RetrievedArtItem(slug="s", url="u", title="t", score=0.6)],
         figures=[
             RetrievedFigureItem(
                 figure_id="fig-1", file_id="file-1", page=2, caption="c", score=0.8
@@ -129,22 +129,19 @@ async def test_patch_canvas_writes_figures_with_ebs_art():
             "score": 0.8,
         }
     ]
-    # ebs/art도 그대로 대칭 저장(회귀 방지)
-    assert canvas["ebs"][0]["video_id"] == "v"
-    assert canvas["art"][0]["slug"] == "s"
+    # D94: canvas에는 figures 키만 남는다.
+    assert set(canvas.keys()) == {"figures"}
     # D87: 저장된 figure 어디에도 url 키가 없다.
     assert "url" not in canvas["figures"][0]
 
 
 @pytest.mark.asyncio
 async def test_patch_canvas_empty_figures_key_present():
-    """figures 빈 리스트여도 ebs/art와 동일 규칙(항상 키 기록)으로 저장된다."""
+    """figures 빈 리스트여도 키는 항상 기록된다."""
     client = _CaptureClient(existing_attachments={})
-    await _patch_canvas_unified(client, "node-1", RetrievedBody(ebs=[], art=[]))
+    await _patch_canvas_unified(client, "node-1", RetrievedBody())
     canvas = client.updated["attachments"]["canvas"]
     assert canvas["figures"] == []
-    assert canvas["ebs"] == []
-    assert canvas["art"] == []
 
 
 @pytest.mark.asyncio

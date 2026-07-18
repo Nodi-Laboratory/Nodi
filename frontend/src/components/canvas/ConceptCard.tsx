@@ -2,8 +2,8 @@
 
 // ConceptCard — one concept card, absolutely positioned at concept.x/y.
 // Ported from Nodi-figma/components/ConceptCard.js: the inline-SVG / ConceptArt /
-// EbsCard paths are removed. 삽화는 이제 카드 안이 아니라 별도 ArtNode 리프로
-// 캔버스에 뜬다(concept.art 데이터 플로우는 그룹핑용으로 유지, 렌더만 제거).
+// EbsCard paths are removed. (D94: 삽화·영상 리프 자체가 제거됨 — 카드는 텍스트
+// 블록 + 출처 칩만 렌더한다.)
 //
 // 09: concept.pending === true 분기 — 로딩 카드(shimmer 제목 + 점 3개 바운스 + pulsing 테두리).
 

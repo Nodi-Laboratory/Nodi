@@ -36,7 +36,7 @@ class CanvasPatchBody(BaseModel):
 
     position_x: float | None = None
     position_y: float | None = None
-    # /retrieve 결과 {"ebs":[...], "art":[...]} — attachments.canvas 키로 병합.
+    # /retrieve 결과 {"figures":[...]} — attachments.canvas 키로 병합.
     attachments_canvas: dict | None = None
 
 

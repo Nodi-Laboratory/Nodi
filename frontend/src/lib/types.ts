@@ -95,14 +95,20 @@ export interface NodeRow {
   reference_sources?: ReferenceSource[] | null;
   /**
    * 캔버스 리프 노드 영속분(C5). `attachments.canvas`에 이 노드가 생성한
-   * EBS 영상/아트 추천 노드를 담아 세션 재수화 때 복원한다. 그 외 attachments
-   * 키(기타 첨부)는 건드리지 않는다. 카드 좌표는 저장하지 않는다 — 프론트
-   * d3-force(useTagLayout)가 매 세션 배치를 소유한다.
+   * 교과서 figure 추천 노드를 담아 세션 재수화 때 복원한다(D94: ebs/art 제거 —
+   * 구 노드의 잔존 키는 무시). 그 외 attachments 키(기타 첨부)는 건드리지
+   * 않는다. 카드 좌표는 저장하지 않는다 — 프론트 d3-force(useTagLayout)가
+   * 매 세션 배치를 소유한다.
    */
   attachments?: {
     canvas?: {
-      ebs?: { video_id: string; title: string; thumb: string; score?: number }[];
-      art?: { slug: string; url: string; title: string; score?: number }[];
+      figures?: {
+        figure_id: string;
+        file_id: string;
+        page?: number;
+        caption?: string;
+        score?: number;
+      }[];
     } | null;
     [key: string]: unknown;
   } | null;

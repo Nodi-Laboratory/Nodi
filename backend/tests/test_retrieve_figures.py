@@ -287,27 +287,15 @@ async def test_search_figures_score_threshold_from_overlay(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_retrieve_figure_leg_isolated(monkeypatch):
-    """figure 레그 내부 예외 → ebs/art 정상 + figures [] + degraded 불변(부분 성공)."""
+    """figure 레그 내부 예외 → figures [] + degraded 불변(임베딩 성공이면 False)."""
 
     async def fake_embed(q):
         return [0.1] * 4
-
-    async def fake_search(collection, vector, k, score_threshold=None, file_ids=None):
-        if collection == qdrant_store.COL_EBS:
-            return [
-                {"id": "e", "score": 0.9, "payload": {"video_id": "vid1", "title": "T"}}
-            ]
-        if collection == qdrant_store.COL_ART:
-            return [
-                {"id": "a", "score": 0.8, "payload": {"slug": "s1", "title": "A"}}
-            ]
-        return []
 
     async def boom_session(client, sid):
         raise RuntimeError("figure leg boom")
 
     monkeypatch.setattr(R.upstage, "embed_query", fake_embed)
-    monkeypatch.setattr(R.qdrant_store, "search", fake_search)
     monkeypatch.setattr(R.sessions, "get_session", boom_session)
     monkeypatch.setattr(R.UserClient, "from_user", classmethod(lambda cls, u: _FakeClient()))
 
@@ -315,8 +303,19 @@ async def test_retrieve_figure_leg_isolated(monkeypatch):
     out = await R.retrieve(body, user=_FakeUser())
     assert out["degraded"] is False
     assert out["figures"] == []
-    assert out["ebs"][0]["video_id"] == "vid1"
-    assert out["art"][0]["slug"] == "s1"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_embed_failure_degraded(monkeypatch):
+    """질의 임베딩 실패 → {figures: [], degraded: true} (D94 응답 shape)."""
+
+    async def boom_embed(q):
+        raise RuntimeError("upstage down")
+
+    monkeypatch.setattr(R.upstage, "embed_query", boom_embed)
+    body = RetrieveBody(question="질문", session_id="s1")
+    out = await R.retrieve(body, user=_FakeUser())
+    assert out == {"figures": [], "degraded": True}
 
 
 @pytest.mark.asyncio

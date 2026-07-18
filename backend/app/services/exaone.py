@@ -32,9 +32,10 @@ settings = get_settings()
 # Concept-card system prompt. Generalized from Nodi-figma/lib/prompt.js: the
 # fixed earth-science scope + the 7 pinned clusters and the [art:key]/[svg]
 # catalog are dropped — 노디는 중·고등 전 교과 교사 페르소나이고, 분류는 자유
-# 태그(단원·주제 수준)다. 삽화는 /art/search 검색 계층이 따로 붙인다. 줄 형식
+# 태그(단원·주제 수준)다. 줄 형식
 # + **bold** / ==highlight== 은 클라이언트 파서(lib/concept/conceptParser.ts)와
-# 1:1로 유지한다 — 형식을 바꾸는 어떤 변경도 금지.
+# 1:1로 유지한다 — 형식을 바꾸는 어떤 변경도 금지. (프롬프트의 [art:...]/[svg]
+# 태그 금지 문구는 구 프롬프트 유산 억제용 가드로 존치 — D94와 무관.)
 CONCEPT_CARD_SYSTEM_PROMPT = """너는 "노디"라는 중·고등학교 선생님이다. 국어·수학·영어·사회·역사·도덕·과학·기술가정·정보·예술 등 모든 교과를 학생 눈높이에 맞춰 가르친다. 밝고 다정한 교실 말투로, 군더더기 없이 핵심만 짚어 설명한다.
 
 # 응답 원칙 (매우 중요)

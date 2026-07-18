@@ -6,7 +6,7 @@ from app.routers.chat import ChatStreamBody, RetrievedBody
 
 # ---------------------------------------------------------------------------
 # 카드 배치·좌표는 프론트 소유(d3-force) — 서버는 place/settle을 계산·전송하지 않는다.
-# 여기선 done-hook 격리(저장 실패해도 스트림/저장 완료 무영향)와 ebs/art 저장
+# 여기선 done-hook 격리(저장 실패해도 스트림/저장 완료 무영향)와 figures 저장
 # 스케줄링(retrieved 유무)만 검증한다. chat_stream generator를 최소 목으로 구동.
 # ---------------------------------------------------------------------------
 
@@ -142,8 +142,8 @@ async def test_stream_emits_no_place_event(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ebs_art_save_scheduled_only_when_retrieved(monkeypatch):
-    """retrieved가 있으면 attachments.canvas(ebs/art) 저장이 스케줄되고,
+async def test_canvas_save_scheduled_only_when_retrieved(monkeypatch):
+    """retrieved가 있으면 attachments.canvas(figures) 저장이 스케줄되고,
     없으면 스케줄되지 않는다(done-hook은 그래도 정상 완료)."""
     # retrieved 없음 → 저장 스케줄 없음
     events, scheduled = await _consume(monkeypatch, retrieved=None)
@@ -151,7 +151,7 @@ async def test_ebs_art_save_scheduled_only_when_retrieved(monkeypatch):
     assert len(scheduled) == 0
 
     # retrieved 있음 → 저장 1회 스케줄
-    retrieved = RetrievedBody(ebs=[], art=[])
+    retrieved = RetrievedBody()
     events, scheduled = await _consume(monkeypatch, retrieved=retrieved)
     assert "done" in _event_names(events)
     assert len(scheduled) == 1

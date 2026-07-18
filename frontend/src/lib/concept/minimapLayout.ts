@@ -2,19 +2,6 @@
 // 카메라 가시영역→미니맵 사각형. DOM/React 독립(테스트·재사용). d3 미의존(순수 산술);
 // d3.scaleLinear 사용은 렌더 컴포넌트(ConceptMinimap)에서 이 Fit로 구성한다.
 
-import { CARD_CX } from "./cardMetrics";
-import type { Concept, ConceptGroup } from "./types";
-
-const CARD_H_FALLBACK = 200; // 높이 미상 시 근사(중심 계산용)
-
-export interface MiniCentroid {
-  id: string;
-  label: string;
-  count: number;
-  repConceptId: string;
-  wx: number;
-  wy: number;
-}
 export interface BBox {
   minX: number;
   minY: number;
@@ -25,39 +12,6 @@ export interface Fit {
   s: number;
   ox: number;
   oy: number;
-}
-
-// 그룹별 멤버 카드 "중심"의 월드 평균. 좌표 없는 멤버 제외, 유효 멤버 0이면 그룹 스킵.
-export function groupCentroids(
-  groups: ConceptGroup[],
-  concepts: Concept[],
-): MiniCentroid[] {
-  const byId = new Map<string, Concept>();
-  for (const c of concepts) byId.set(c.id, c);
-  const out: MiniCentroid[] = [];
-  for (const g of groups) {
-    let sx = 0;
-    let sy = 0;
-    let n = 0;
-    for (const mid of g.memberIds) {
-      const c = byId.get(mid);
-      if (!c || typeof c.x !== "number" || typeof c.y !== "number") continue;
-      const h = typeof c.h === "number" && c.h > 0 ? c.h : CARD_H_FALLBACK;
-      sx += c.x + CARD_CX;
-      sy += c.y + h / 2;
-      n += 1;
-    }
-    if (n === 0) continue;
-    out.push({
-      id: g.id,
-      label: g.label,
-      count: g.memberIds.length,
-      repConceptId: g.repConceptId,
-      wx: sx / n,
-      wy: sy / n,
-    });
-  }
-  return out;
 }
 
 export function worldBBox(pts: Array<{ wx: number; wy: number }>): BBox | null {

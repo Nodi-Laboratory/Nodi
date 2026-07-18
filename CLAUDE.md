@@ -84,15 +84,18 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
   **중·고등 전 교과 교사 페르소나 + 자유 분류 태그**(D89, `exaone.py`).
 - **캔버스 배치**: 개념 카드는 EXAONE 자유 태그로 클러스터링 — 태그 첫 등장
   순서로 황금각 슬롯 앵커를 영구 부여(D90, `useTagLayout`/`curriculumTags.ts`),
-  "기타"는 중앙. EBS 영상·SVG 아트·교과서 figure 추천 노드는
-  `routers/retrieve.py`가 별도 검색.
+  "기타"는 중앙. 교과서 figure 추천 노드는 `routers/retrieve.py`가 별도
+  검색(D94, 사용자 결정 2026-07-18: EBS 영상·SVG 아트 추천 기능 전면 제거 —
+  `/art/search`·인제스트 스크립트·Qdrant ebs/art_assets 컬렉션·art_assets
+  테이블(마이그레이션 0040) 포함).
 
 ## 불변식 (반드시 유지)
 
 - **RAG는 채팅을 절대 막지 않는다** — 모든 컨텍스트 빌더는 best-effort, 실패 시 None.
 - **Qdrant는 신뢰 경계가 아니다** — 사용자 파일 청크 본문은 Qdrant 페이로드에 넣지
   않고, 검색 히트 후 USER 스코프 Supabase 클라이언트로 재조회해 RLS가 재검증한다.
-  (예외: EBS·아트 등 전역 공용 카탈로그는 페이로드에 본문 저장 가능.)
+  (과거 예외였던 EBS·아트 전역 카탈로그는 D94로 제거. canvas_cards는 소유자·
+  세션 페이로드 필터를 강제한 채 제목·좌표를 페이로드에 저장한다.)
 - **임베딩은 비대칭** — 질의 `embedding-query`, 문서 `embedding-passage`. 혼용 금지.
 - **거리 규약** `distance = 1 - score` (Qdrant cosine → 기존 임계값 의미 유지).
 - **튜너블(D62)**: admin 오버레이(`app_settings`) > config 기본값. 새 노브는

@@ -11,7 +11,7 @@ Flow:
   4. Persist (question, structured-answer) = 1 node with a NULL label, advance
      head (set root if first), and report the node in the `done` event.
   5. After done: a fire-and-forget task patches nodes.attachments.canvas with the
-     ebs/art search results only (best-effort, log only on failure). No card
+     figure search results only (best-effort, log only on failure). No card
      coordinates, embedding, or canvas_cards.
 
 SSE event schema:
@@ -47,22 +47,6 @@ settings = get_settings()
 QUESTION_MAX_CHARS = 8000
 
 
-class RetrievedEbsItem(BaseModel):
-    """프론트가 /retrieve에서 받은 EBS 항목 — snake_case로 서버 전달."""
-    video_id: str
-    title: str
-    thumb: str
-    score: float
-
-
-class RetrievedArtItem(BaseModel):
-    """프론트가 /retrieve에서 받은 삽화 항목."""
-    slug: str
-    url: str
-    title: str
-    score: float
-
-
 class RetrievedFigureItem(BaseModel):
     """프론트가 /retrieve에서 받은 교과서 figure 항목.
 
@@ -78,9 +62,11 @@ class RetrievedFigureItem(BaseModel):
 
 
 class RetrievedBody(BaseModel):
-    """done 훅에서 attachments.canvas에 통합 저장할 ebs/art/figures 검색 결과."""
-    ebs: list[RetrievedEbsItem] = Field(default_factory=list)
-    art: list[RetrievedArtItem] = Field(default_factory=list)
+    """done 훅에서 attachments.canvas에 통합 저장할 figures 검색 결과.
+
+    D94: EBS·아트 제거 — 프론트 구버전이 ebs/art 키를 실어 보내도 extra 무시
+    (기본 모델 설정)로 버려진다.
+    """
     figures: list[RetrievedFigureItem] = Field(default_factory=list)
 
 
@@ -91,9 +77,9 @@ class ChatStreamBody(BaseModel):
     # D15: one-time branch comparison — other nodes to reference for THIS turn
     # only (not persisted, does not touch node.connections).
     reference_node_ids: list[str] | None = Field(default=None, max_length=20)
-    # 09 단일 writer: 프론트 retrieve 결과(ebs/art)를 서버에 전달해 done 훅이
-    # ebs/art를 attachments.canvas에 저장. null이면 저장하지 않음(첫 질문 전
-    # degraded 케이스 등). 카드 좌표는 프론트 소유 — 서버는 저장하지 않음.
+    # 09 단일 writer: 프론트 retrieve 결과(figures)를 서버에 전달해 done 훅이
+    # attachments.canvas에 저장. null이면 저장하지 않음(첫 질문 전 degraded
+    # 케이스 등). 카드 좌표는 프론트 소유 — 서버는 저장하지 않음.
     retrieved: RetrievedBody | None = None
 
 
@@ -104,11 +90,12 @@ def _sse(event: str, data: dict) -> str:
 async def _patch_canvas_unified(
     client: UserClient, node_id: str, retrieved: RetrievedBody | None = None,
 ) -> None:
-    """nodes.attachments.canvas에 ebs/art/figures만 저장(카드 좌표는 프론트 소유 — 저장 안 함).
+    """nodes.attachments.canvas에 figures만 저장(카드 좌표는 프론트 소유 — 저장 안 함).
 
     D87: figures는 figure_id/file_id 등 재수화 가능한 식별자만 저장하고 signed URL은
-    실지 않는다(RetrievedFigureItem에 url 필드 없음). ebs/art와 대칭 — retrieved가
-    있으면 세 키를 항상 기록(빈 리스트여도 키 유지, 기존 규칙 동일)."""
+    실지 않는다(RetrievedFigureItem에 url 필드 없음). retrieved가 있으면 키를 항상
+    기록(빈 리스트여도 키 유지). D94: 구 노드의 ebs/art 키는 canvas 통째 교체로
+    자연 소멸(프론트도 더 읽지 않음)."""
     if retrieved is None:
         return
     try:
@@ -119,13 +106,11 @@ async def _patch_canvas_unified(
         if not isinstance(attachments, dict):
             attachments = {}
         attachments["canvas"] = {
-            "ebs": [e.model_dump() for e in retrieved.ebs],
-            "art": [a.model_dump() for a in retrieved.art],
             "figures": [f.model_dump() for f in retrieved.figures],
         }
         await client.update("nodes", {"id": f"eq.{node_id}"}, {"attachments": attachments})
     except Exception:  # noqa: BLE001
-        logger.warning("attachments.canvas(ebs/art/figures) 저장 실패 node=%s", node_id, exc_info=True)
+        logger.warning("attachments.canvas(figures) 저장 실패 node=%s", node_id, exc_info=True)
 
 
 @router.post("/stream")
@@ -261,9 +246,7 @@ async def chat_stream(
             try:
                 # Labels + concept tags are REMOVED (design decision): persist
                 # just the (question, structured-answer) node with a null label.
-                # The frontend parses the answer text into concept cards; concept
-                # grouping + illustrations are resolved client-side via
-                # /art/search.
+                # The frontend parses the answer text into concept cards.
                 node = await svc.append_node(
                     client, body.session_id, parent_id, body.question, answer, None
                 )
@@ -303,7 +286,7 @@ async def chat_stream(
                     },
                 )
 
-                # attachments.canvas 저장(ebs/art만) — 카드 좌표는 프론트 소유.
+                # attachments.canvas 저장(figures만) — 카드 좌표는 프론트 소유.
                 # 자체 격리: 저장이 실패해도 스트림/저장 완료된 턴은 무영향(warning만).
                 # retrieved 없으면 _patch_canvas_unified가 조기 반환.
                 if body.retrieved is not None:

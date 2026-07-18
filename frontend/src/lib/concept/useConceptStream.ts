@@ -1,19 +1,19 @@
 "use client";
 
 // Concept-stream controller: drives Nodi's SSE /chat/stream through the concept
-// parser into a canvas of concept cards, resolves an illustration per concept via
-// /art/search, and clusters concepts into the semantic-similarity tree. Rehydrates
-// deterministically from persisted session nodes on load.
+// parser into a canvas of concept cards. Rehydrates deterministically from
+// persisted session nodes on load. (D94: EBS 영상·SVG 아트 추천 및
+// /art/search 임베딩 그룹핑 제거 — 클러스터링은 useTagLayout 자유 태그가 소유.)
 //
 // 배치: 카드 좌표는 프론트 d3-force sim(useTagLayout)이 소유한다. 여기서 부여하는
 //   좌표는 CENTER 기본값일 뿐이며, 서버 place/near/place_hint는 무시한다(서버는
 //   여전히 전송하지만 프론트가 위치에 쓰지 않는다). send는 SSE 전 POST /retrieve로
-//   ebs/art만 받고, pending 플레이스홀더를 CENTER에 표시한다. 카메라는 focusSignal의
-//   id로 sim 위치를 추종한다. 리프(영상/삽화)는 앵커 곁 오프셋 후보 위치를 쓴다.
-// 영속(§8, C5): done 후 서버 done 훅이 retrieve 결과(ebs/art)를 attachments.canvas에
+//   figure만 받고, pending 플레이스홀더를 CENTER에 표시한다. 카메라는 focusSignal의
+//   id로 sim 위치를 추종한다. 리프(figure)는 앵커 곁 오프셋 후보 위치를 쓴다.
+// 영속(§8, C5): done 후 서버 done 훅이 retrieve 결과(figures)를 attachments.canvas에
 //   저장(단일 writer). 카드 좌표는 저장/재적용하지 않는다(sim이 매 로드 재배치).
 // 재수화: replay로 카드 내용만 복원하고, 좌표는 CENTER 기본값(sim이 배치).
-//   attachments.canvas.ebs/art로 리프(영상 1·삽화 1)를 재생성한다.
+//   attachments.canvas.figures로 리프(figure 1)를 재생성한다.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -21,9 +21,7 @@ import {
   createSession,
   getFigure,
   retrieve,
-  searchArt,
   streamChat,
-  type ArtSearchResult,
   type SpaceTarget,
 } from "@/lib/api";
 import { sessionsKey, useSessionDetail } from "@/lib/queries";
@@ -32,7 +30,6 @@ import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type { ChatDoneEvent, NodeRow } from "@/lib/types";
 import { createConceptParser } from "./conceptParser";
 import { LAYOUT } from "./layout";
-import { buildGroups } from "./grouping";
 import {
   cardRect,
   leafRect,
@@ -40,31 +37,16 @@ import {
   placeLeafClear,
   type Rect,
 } from "./leafPlacement";
-import type { CanvasLeafNode, Concept, ConceptGroup, ParserEvent } from "./types";
+import type { CanvasLeafNode, Concept, ParserEvent } from "./types";
 
-// 09: 리프(영상/삽화) 선호 오프셋 — 앵커 카드 오른쪽 옆(CARD_W + MARGIN). 이 값은
+// 09: 리프(figure) 선호 오프셋 — 앵커 카드 오른쪽 옆(CARD_W + MARGIN). 이 값은
 // "선호 위치"일 뿐, placeLeafClear가 카드/다른 리프와 겹치지 않는 가장 가까운 빈
-// 자리로 확정한다(요구: 영상/삽화 ↔ 카드 무겹침).
+// 자리로 확정한다(요구: figure ↔ 카드 무겹침).
 const LEAF_OFFSET_X = LAYOUT.CARD_W + LAYOUT.MARGIN; // 460
 
-// Cross-render/session cache of art-search results, keyed by concept title, so a
-// reload (which re-resolves every concept) hits the cache instead of the network.
-const ART_CACHE = new Map<string, ArtSearchResult>();
-async function cachedSearchArt(title: string): Promise<ArtSearchResult> {
-  const key = title.trim();
-  if (!key) return { art: null, embedding: null };
-  const hit = ART_CACHE.get(key);
-  if (hit) return hit;
-  const res = await searchArt(key);
-  // Only cache positive/embedding results — let bare failures retry later.
-  if (res.embedding || res.art) ART_CACHE.set(key, res);
-  return res;
-}
-
 // C5: nodes.attachments.canvas 스키마(백엔드 병행 구축 — 계약 기준, 방어적 파싱).
+// D94: ebs/art 키 제거 — 구 노드에 잔존해도 읽지 않는다.
 interface PersistedCanvas {
-  ebs?: Array<{ video_id?: string; title?: string; thumb?: string; score?: number }>;
-  art?: Array<{ slug?: string; url?: string; title?: string; score?: number }>;
   // D87: figure는 url 제외 영속 — 재수화 시 getFigure로 fresh signed URL 재발급.
   figures?: Array<{
     figure_id?: string;
@@ -113,9 +95,6 @@ function reduceConcept(
           x,
           y,
           done: false,
-          art: null,
-          embedding: null,
-          groupId: null,
         },
       ];
     }
@@ -181,7 +160,6 @@ function replayNodes(reals: NodeRow[]): {
 
 export interface ConceptStream {
   concepts: Concept[];
-  groups: ConceptGroup[];
   leafNodes: CanvasLeafNode[];
   reply: string;
   busy: boolean;
@@ -200,7 +178,6 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
 
   const [concepts, setConcepts] = useState<Concept[]>([]);
-  const [groups, setGroups] = useState<ConceptGroup[]>([]);
   const [leafNodes, setLeafNodes] = useState<CanvasLeafNode[]>([]);
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
@@ -211,10 +188,8 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
 
   const conceptsRef = useRef<Concept[]>([]);
   const leafNodesRef = useRef<CanvasLeafNode[]>([]);
-  // Part B: 맵당 영상 1·삽화 1·figure 1 — 현재 대표의 최고 스코어(교체 판정 기준선).
+  // Part B: 맵당 figure 1 — 현재 대표의 최고 스코어(교체 판정 기준선).
   // 세션 동안 유지, 재수화 시 로드된 대표 스코어로 재설정.
-  const mapVideoScoreRef = useRef<number>(-Infinity);
-  const mapArtScoreRef = useRef<number>(-Infinity);
   const mapFigureScoreRef = useRef<number>(-Infinity); // D87
   const headRef = useRef<string | null>(null);
   const busyRef = useRef(false);
@@ -246,44 +221,6 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     leafNodesRef.current = next;
     setLeafNodes(next);
   }, []);
-
-  // Rebuild all groups from the current concepts, in order — deterministic and
-  // identical for a live turn and a reload (same order + cached embeddings).
-  // pending 플레이스홀더(제목 없음)는 그룹 대상에서 제외.
-  const rebuildGroups = useCallback(() => {
-    const g = buildGroups(
-      conceptsRef.current
-        .filter((c) => !c.pending)
-        .map((c) => ({
-          id: c.id,
-          title: c.title,
-          embedding: c.embedding ?? null,
-        })),
-    );
-    setGroups(g);
-  }, []);
-
-  // Resolve one concept's illustration + embedding, then regroup.
-  const resolveArt = useCallback(
-    async (conceptId: string) => {
-      const c = conceptsRef.current.find((x) => x.id === conceptId);
-      if (!c) return;
-      const res = await cachedSearchArt(c.title);
-      commitConcepts(
-        conceptsRef.current.map((x) =>
-          x.id === conceptId
-            ? {
-                ...x,
-                art: res.art ?? null,
-                embedding: res.embedding ?? x.embedding ?? null,
-              }
-            : x,
-        ),
-      );
-      rebuildGroups();
-    },
-    [commitConcepts, rebuildGroups],
-  );
 
   const applyEvent = useCallback(
     (ev: ParserEvent) => {
@@ -335,12 +272,8 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
 
       const next = reduceConcept(conceptsRef.current, ev);
       commitConcepts(next);
-      if (ev.t === "cend") {
-        const last = next[next.length - 1];
-        if (last) void resolveArt(last.id);
-      }
     },
-    [commitConcepts, resolveArt],
+    [commitConcepts],
   );
 
   const ensureSession = useCallback(async (): Promise<string | null> => {
@@ -392,25 +325,18 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           x: nearXY.x,
           y: nearXY.y,
           done: false,
-          art: null,
-          embedding: null,
-          groupId: null,
           pending: true,
         },
       ]);
       // 자동 포커싱: 이번 답변 첫 개념(pid). 워크스페이스가 이 id의 sim 위치를 추종한다.
       setFocusSignal({ x: nearXY.x, y: nearXY.y, key: ++focusKeyRef.current, id: pid });
 
-      // (c) Part B: 맵당 영상 1·삽화 1 — 최고 스코어 후보만 대표로 유지/교체.
+      // (c) Part B: 맵당 figure 1 — 최고 스코어 후보만 대표로 유지/교체.
       // 스트림 실패 시 되돌리기 위한 스냅샷.
       const leafSnapshot = leafNodesRef.current;
-      const scoreSnapshot = {
-        v: mapVideoScoreRef.current,
-        a: mapArtScoreRef.current,
-        f: mapFigureScoreRef.current,
-      };
+      const scoreSnapshot = { f: mapFigureScoreRef.current };
       const placeRep = (
-        id: "map-video" | "map-art" | "map-figure",
+        id: "map-figure",
         type: CanvasLeafNode["type"],
         extra: Partial<CanvasLeafNode>,
       ) => {
@@ -429,20 +355,6 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
         );
         commitLeafNodes([...others, { id, type, x, y, conceptId: pid, ...extra }]);
       };
-      const repVideo = r.ebs[0];
-      if (repVideo && typeof repVideo.score === "number" && repVideo.score > mapVideoScoreRef.current) {
-        mapVideoScoreRef.current = repVideo.score;
-        placeRep("map-video", "video", {
-          video: { videoId: repVideo.videoId, title: repVideo.title, thumb: repVideo.thumb },
-        });
-      }
-      const repArt = r.art[0];
-      if (repArt && typeof repArt.score === "number" && repArt.score > mapArtScoreRef.current) {
-        mapArtScoreRef.current = repArt.score;
-        placeRep("map-art", "art", {
-          art: { slug: repArt.slug, url: repArt.url, title: repArt.title },
-        });
-      }
       // D87: 교과서 figure — 맵당 1개, 최고 스코어 후보만 대표로 유지/교체.
       const repFigure = r.figures[0];
       if (repFigure && typeof repFigure.score === "number" && repFigure.score > mapFigureScoreRef.current) {
@@ -468,20 +380,8 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           session_id: sid,
           question: q,
           parent_node_id: headRef.current ?? undefined,
-          // 09 단일 writer: ebs/art/figures를 서버에 전달해 done 훅이 단일 PATCH로 통합 저장.
-          retrieved: (r.ebs.length > 0 || r.art.length > 0 || r.figures.length > 0) ? {
-            ebs: r.ebs.map((e) => ({
-              video_id: e.videoId,
-              title: e.title,
-              thumb: e.thumb,
-              score: e.score,
-            })),
-            art: r.art.map((a) => ({
-              slug: a.slug,
-              url: a.url,
-              title: a.title,
-              score: a.score,
-            })),
+          // 09 단일 writer: figures를 서버에 전달해 done 훅이 단일 PATCH로 저장.
+          retrieved: r.figures.length > 0 ? {
             // D87: figure는 url 제외(signed·만료) — 재수화 시 getFigure로 재발급.
             figures: r.figures.map((f) => ({
               figure_id: f.figureId,
@@ -526,13 +426,11 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       // 스트림 실패(done 미수신) 시 이번 send의 대표 교체를 되돌린다.
       if (!doneBox.current) {
         commitLeafNodes(leafSnapshot);
-        mapVideoScoreRef.current = scoreSnapshot.v;
-        mapArtScoreRef.current = scoreSnapshot.a;
         mapFigureScoreRef.current = scoreSnapshot.f;
       }
 
-      // (f) done: sessionsKey invalidate(제목 갱신). ebs/art 영속은 서버 done
-      // 훅이 concepts + ebs/art를 단일 PATCH로 처리(09 단일 writer 계약).
+      // (f) done: sessionsKey invalidate(제목 갱신). figures 영속은 서버 done
+      // 훅이 단일 PATCH로 처리(09 단일 writer 계약).
       if (doneBox.current?.node?.id) {
         // 09 회귀 수정: done 후 sessionKey(sid) invalidate를 하지 않는다.
         // 좌표는 서버 done 훅이 fire-and-forget으로 늦게 저장하므로, 여기서
@@ -560,7 +458,7 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
 
   // ── Rehydration from persisted nodes ──────────────────────────────────
   // replay는 카드 내용 복원용 — 좌표는 CENTER 기본값(d3-force sim이 배치).
-  // 리프(영상/삽화)는 attachments.canvas.ebs/art로 재생성.
+  // 리프(figure)는 attachments.canvas.figures로 재생성.
   const { data: detail } = useSessionDetail(activeSessionId);
   useEffect(() => {
     if (busyRef.current) return; // never clobber a live stream
@@ -578,22 +476,12 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     // attachments.canvas → 리프 재생성. 좌표 전부 확정된 재수화 시점이므로 여기서
     // 무겹침을 확정한다: 앵커 오른쪽 스택을 선호 위치로, 모든 카드 + 앞서 놓은
     // 리프를 장애물로 삼아 placeLeafClear가 카드와 겹치지 않는 자리로 배치한다.
-    // Part B: 전 노드 후보 중 최고 스코어로 영상 1·삽화 1 결정(argmax, 동점=첫 노드).
-    let bestVideo: { score: number; nodeId: string; e: NonNullable<PersistedCanvas["ebs"]>[number] } | null = null;
-    let bestArt: { score: number; nodeId: string; a: NonNullable<PersistedCanvas["art"]>[number] } | null = null;
+    // Part B: 전 노드 후보 중 최고 스코어로 figure 1 결정(argmax, 동점=첫 노드).
     let bestFigure: { score: number; nodeId: string; f: NonNullable<PersistedCanvas["figures"]>[number] } | null = null;
     for (const n of reals) {
       const canvas = (n as NodeRowWithAttachments).attachments?.canvas;
       if (!canvas) continue;
-      for (const e of canvas.ebs ?? []) {
-        if (!e?.video_id || typeof e.score !== "number") continue;
-        if (!bestVideo || e.score > bestVideo.score) bestVideo = { score: e.score, nodeId: n.id, e };
-      }
-      for (const a of canvas.art ?? []) {
-        if (!a?.slug || typeof a.score !== "number") continue;
-        if (!bestArt || a.score > bestArt.score) bestArt = { score: a.score, nodeId: n.id, a };
-      }
-      // D87: figure argmax(ebs/art와 대칭, 구 노드엔 figures 없음 — 방어 파싱).
+      // D87: figure argmax(구 노드엔 figures 없음 — 방어 파싱).
       for (const f of canvas.figures ?? []) {
         if (!f?.figure_id || typeof f.score !== "number") continue;
         if (!bestFigure || f.score > bestFigure.score) bestFigure = { score: f.score, nodeId: n.id, f };
@@ -606,43 +494,9 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       const anchor = idx == null ? undefined : built[idx];
       return anchor ? { x: anchor.x, y: anchor.y, id: anchor.id } : { x: 40, y: 40, id: undefined };
     };
-    if (bestVideo) {
-      const base = anchorXY(bestVideo.nodeId);
-      const d = LEAF_DIMS.video;
-      const { x, y } = placeLeafClear(base.x + LEAF_OFFSET_X, base.y, d.w, d.h, obstacles);
-      obstacles.push({ x, y, w: d.w, h: d.h });
-      leaves.push({
-        id: "map-video", type: "video", x, y, conceptId: base.id,
-        video: {
-          videoId: String(bestVideo.e.video_id),
-          title: bestVideo.e.title ?? "",
-          thumb: bestVideo.e.thumb ?? `https://i.ytimg.com/vi/${bestVideo.e.video_id}/hqdefault.jpg`,
-        },
-      });
-      mapVideoScoreRef.current = bestVideo.score;
-    } else {
-      mapVideoScoreRef.current = -Infinity;
-    }
-    if (bestArt) {
-      const base = anchorXY(bestArt.nodeId);
-      const d = LEAF_DIMS.art;
-      const { x, y } = placeLeafClear(base.x + LEAF_OFFSET_X, base.y, d.w, d.h, obstacles);
-      obstacles.push({ x, y, w: d.w, h: d.h });
-      leaves.push({
-        id: "map-art", type: "art", x, y, conceptId: base.id,
-        art: {
-          slug: String(bestArt.a.slug),
-          url: bestArt.a.url ?? `/art/${bestArt.a.slug}.svg`,
-          title: bestArt.a.title ?? "",
-        },
-      });
-      mapArtScoreRef.current = bestArt.score;
-    } else {
-      mapArtScoreRef.current = -Infinity;
-    }
     // D87: figure는 url 비영속 — 좌표(장애물)만 먼저 확정해 url=""(스켈레톤)로
     // 배치하고, getFigure로 fresh signed URL을 비동기 재발급해 리프를 갱신한다
-    // (resolveArt의 비동기 후처리 패턴과 동형). 실패 시 리프 제거(best-effort).
+    // (비동기 후처리 패턴). 실패 시 리프 제거(best-effort).
     if (bestFigure) {
       const base = anchorXY(bestFigure.nodeId);
       const d = LEAF_DIMS.figure;
@@ -688,17 +542,11 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     commitConcepts(built);
     commitLeafNodes(leaves);
     setReply("");
-    // title-fallback groups immediately; refine with embeddings as art resolves.
-    setGroups(
-      buildGroups(built.map((c) => ({ id: c.id, title: c.title, embedding: null }))),
-    );
-    for (const c of built) void resolveArt(c.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail]);
 
   return {
     concepts,
-    groups,
     leafNodes,
     reply,
     busy,

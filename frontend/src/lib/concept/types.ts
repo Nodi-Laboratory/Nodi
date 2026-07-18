@@ -1,7 +1,7 @@
 // Concept-card canvas domain types (ported/adapted from Nodi-figma §3).
-// The figma `svg`/`artRef`/`ebs` fields are dropped; illustrations now come from
-// the /art/search retrieval layer (`art`), and concepts carry an `embedding` +
-// `groupId` for the semantic-similarity concept tree.
+// D94: EBS 영상·SVG 아트 리프와 /art/search 임베딩 그룹핑 관련 타입
+// (ConceptArt/ConceptGroup, Concept.art/embedding/groupId) 제거 —
+// 클러스터링은 자유 태그(useTagLayout), 리프는 교과서 figure만 남는다.
 
 import type { RagSource } from "@/lib/types";
 
@@ -17,11 +17,6 @@ export interface Block {
   typing: boolean;
 }
 
-export interface ConceptArt {
-  slug: string;
-  url: string;
-}
-
 export interface Concept {
   id: string; // "c1","c2"… assigned by reducer order (deterministic)
   title: string;
@@ -33,9 +28,6 @@ export interface Concept {
   /** 09: place가 서버에 저장한 카드 높이. 리플레이 시 실림(Task 8 ConceptCard가 우선 사용). */
   h?: number;
   done: boolean;
-  art?: ConceptArt | null; // resolved via /art/search on `cend`
-  embedding?: number[] | null; // query embedding returned by /art/search
-  groupId?: string | null; // semantic-similarity group assignment
   /** D74: 이 턴(노드)의 RAG 출처 — 턴의 첫 개념에만 부착(출처 칩 푸터). */
   sources?: RagSource[] | null;
   /** /retrieve 선행 잠정 플레이스홀더 — 첫 cstart에서 승격(제목/좌표 확정). */
@@ -43,28 +35,18 @@ export interface Concept {
 }
 
 /**
- * C6: 캔버스 리프 노드(영상/삽화) — 개념 곁에 스폰되는 비스트리밍 노드.
- * id는 "l1","l2"… 삽입 순서(리플레이도 동일 순서 → 결정적).
+ * C6: 캔버스 리프 노드(교과서 figure) — 개념 곁에 스폰되는 비스트리밍 노드.
+ * D94: video/art 리프 제거.
  */
 export interface CanvasLeafNode {
   id: string;
-  type: "video" | "art" | "figure";
+  type: "figure";
   x: number;
   y: number;
   conceptId?: string; // 곁에 배치된 개념 id (near 앵커)
-  video?: { videoId: string; title: string; thumb: string };
-  art?: { slug: string; url: string; title: string };
   // D87: 교과서 figure 리프. url은 signed(만료 有) — 재수화 시 url=""로 먼저
   // 배치하고 getFigure로 비동기 재발급, FigureNode의 onError도 1회 재발급.
   figure?: { figureId: string; url: string; caption: string; page?: number };
-}
-
-export interface ConceptGroup {
-  id: string; // stable: `grp-${repConceptId}`
-  label: string; // representative concept title
-  memberIds: string[]; // concept.id members of this group
-  centroid: number[]; // running mean embedding (empty when no embeddings)
-  repConceptId: string; // camera target when the group is clicked
 }
 
 // Incremental parser event stream (1:1 with the applyEvent reducer).

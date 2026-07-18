@@ -18,8 +18,6 @@ import NoteCanvas, { focusCamera, type Camera } from "./NoteCanvas";
 import MapLoadingIndicator from "./MapLoadingIndicator";
 import ConceptCard from "./ConceptCard";
 import TagMarker from "./TagMarker";
-import VideoNode from "./VideoNode";
-import ArtNode from "./ArtNode";
 import FigureNode from "./FigureNode";
 import ConceptTreePanel from "./ConceptTreePanel";
 import TopBar from "./TopBar";
@@ -242,18 +240,12 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
           const laid = p ? { ...c, x: p.x, y: p.y } : c;
           return <ConceptCard key={c.id} concept={laid} />;
         })}
-        {/* 리프 노드(영상/삽화) — 개념 다음에 렌더(스폰 애니메이션은 .nodi-spawn).
+        {/* 리프 노드(figure) — 개념 다음에 렌더(스폰 애니메이션은 .nodi-spawn).
             앵커 개념의 sim 좌표로 리프를 재앵커(anchor의 스트림 좌표 대비 오프셋 유지).
             앵커 sim 위치가 없으면 기존 좌표 유지(best-effort 오버레이). */}
         {leafNodes.map((n) => {
           const laid = reanchorLeaf(n, concepts, positions);
-          return n.type === "video" ? (
-            <VideoNode key={n.id} node={laid} />
-          ) : n.type === "art" ? (
-            <ArtNode key={n.id} node={laid} />
-          ) : (
-            <FigureNode key={n.id} node={laid} />
-          );
+          return <FigureNode key={n.id} node={laid} />;
         })}
         {/* 태그 마커 — 클러스터 위(최상단 카드보다 위)로 띄워 카드와 안 겹침 + zIndex. */}
         {[...tagCentroids.entries()].map(([tag, c]) => {

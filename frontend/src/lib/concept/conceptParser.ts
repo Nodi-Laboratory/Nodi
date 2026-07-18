@@ -1,6 +1,6 @@
 // Incremental parser: turn the streamed EXAONE text into concept-card events.
 // Ported from Nodi-figma/lib/conceptParser.js, with the [art:key]/[svg] branches
-// REMOVED (illustrations now come from /art/search, not inline model output) and
+// REMOVED (inline model illustrations are not a thing anymore) and
 // made SYNCHRONOUS (Nodi streams tokens over SSE; per-char pacing, if wanted, is a
 // separate queue layer). The event schema is 1:1 with the applyEvent reducer.
 //
