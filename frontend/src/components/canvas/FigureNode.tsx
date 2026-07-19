@@ -69,7 +69,6 @@ function FigureNode({ node }: { node: CanvasLeafNode }) {
 
   const body = (
     <>
-      <span className={styles.label}>교과서 도판</span>
       <span className={styles.thumb}>
         {hasImage ? (
           // eslint-disable-next-line @next/next/no-img-element

@@ -26,14 +26,6 @@
   text-align: left;
 }
 
-.label {
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.3px;
-  color: #b06a00;
-}
-
 /* 이미지 컨테이너: contain(도판 잘림 방지) + 스켈레톤 배경 */
 .thumb {
   position: relative;
