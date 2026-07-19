@@ -1,32 +1,37 @@
-/* Bottom bar (h108 content + 20 pad, z-20). grid: avatar / center / spacer.
+/* Bottom bar (z-20). D96: 좌측 아바타+말풍선(꼬리) / 우측 입력줄+키보드 토글.
    nodiPulse/capFade keyframes come from the scoped theme (globals.css). */
 .bar {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 128px;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  min-height: 112px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
   gap: 20px;
-  align-items: center;
   padding: 0 28px 20px;
   z-index: 20;
   background: linear-gradient(rgba(253, 251, 242, 0), rgba(253, 251, 242, 0.92) 40%);
   pointer-events: none;
 }
-.avatar,
-.center {
+.left,
+.right {
   pointer-events: auto;
+  display: flex;
+  align-items: center;
 }
-.spacer {
-  width: 72px;
-  height: 1px;
+
+/* D96: 아바타 + 말풍선 묶음 — 노디가 말하는 형태. */
+.left {
+  gap: 14px;
+  min-width: 0;
 }
 
 /* avatar 72x72 — conic-gradient ring + face, radar ping while streaming */
 .avatar {
   position: relative;
+  flex: 0 0 72px;
   width: 72px;
   height: 72px;
   display: grid;
@@ -75,26 +80,32 @@
   background: #fffbee;
 }
 
-/* center: bubble + input bar */
-.center {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
+/* D96: 말풍선 — 아바타 옆, 왼쪽으로 꼬리(노디가 말하는 형태). */
 .bubble {
-  align-self: center;
-  max-width: 760px;
+  position: relative;
+  max-width: min(520px, 44vw);
   background: #fff;
   border: 1px solid rgba(43, 38, 32, 0.08);
   border-radius: 18px;
   padding: 10px 18px;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 16.5px;
+  font-size: 16px;
   line-height: 1.5;
   color: var(--ink, #2b2620);
   box-shadow: var(--shadow, 0 2px 10px rgba(60, 45, 0, 0.08));
   animation: capFade 0.4s ease both;
+}
+.bubble::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border-left: 1px solid rgba(43, 38, 32, 0.08);
+  border-bottom: 1px solid rgba(43, 38, 32, 0.08);
+  transform: translateY(-50%) rotate(45deg);
 }
 
 /* '생각 중' dots */
@@ -130,18 +141,24 @@
   }
 }
 
+/* D96: 우측 — 입력줄(열림 시) + 원형 키보드 토글. */
+.right {
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 /* input bar */
 .inputBar {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 640px;
-  max-width: 100%;
+  width: min(560px, 46vw);
   background: #fff;
   border: 1.5px solid var(--border, #f0e4c2);
   border-radius: 22px;
   padding: 6px 6px 6px 20px;
   box-shadow: var(--shadow, 0 2px 10px rgba(60, 45, 0, 0.08));
+  animation: capFade 0.25s ease both;
 }
 
 /* D83 부속(사용자 추가 지시): 입력줄 우측(전송 버튼 왼쪽) 원형 클립 버튼 —
@@ -216,4 +233,26 @@
 .send:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* D96: 원형 키보드 토글 — send와 같은 노랑 원형(56px), 열림 상태는 눌린 톤. */
+.toggle {
+  flex: 0 0 56px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--yellow, #ffc526);
+  color: var(--ink, #2b2620);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: var(--shadow, 0 2px 10px rgba(60, 45, 0, 0.08));
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.toggle:hover {
+  transform: scale(1.06);
+}
+.toggleOpen {
+  background: #ffdd7e;
 }
