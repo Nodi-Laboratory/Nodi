@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     figure_pipeline_enabled: bool = True          # 킬 스위치(enhanced 과금·장애 대응)
     figure_retrieve_max_distance: float = 0.60    # distance=1-score 규약(D73 게이트와 동일 스케일)
     figure_judge_concurrency: int = 4             # TTA 프록시 미실측 — 보수 기본
-    figure_retrieve_top_k: int = 1                # config 전용(admin 오버레이 없음)
+    figure_retrieve_top_k: int = 3                # D95: 다중 표시 — config 전용(admin 오버레이 없음)
     figure_batch_size: int = 8                    # figure_batch 잡 팬아웃 단위
     figure_signed_url_ttl_seconds: int = 21600    # 6h — 수업 시간 내 만료 실질 배제(D87)
     # --- figure 캡션 판정(EXAONE 비전, 플러그형 D88) — env: JUDGE_BASE_URL/JUDGE_MODEL/JUDGE_API_KEY ---

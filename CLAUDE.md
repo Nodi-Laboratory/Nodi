@@ -34,7 +34,9 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
   — D91 대체). 판정은 필수 게이트 — `JUDGE_API_KEY` 미설정이면 교과서 업로드
   자체를 503 거부하고, 판정 실패(-1 포함) figure는 임베딩 없이 failed(검색
   미노출, retry로 재판정 가능). 학생 질의와 유사한
-  figure(거리 게이트 0.60)는 캔버스 FigureNode로 표시 — 이미지는 백엔드 signed
+  figure(거리 게이트 0.60)는 캔버스 FigureNode로 표시 — **다중 표시**(D95:
+  top-3, 리프 id=`figure-{figureId}`로 세션 내 중복 제거·누적, 재수화는 전
+  노드 figures를 figureId dedupe 후 전부 복원). 이미지는 백엔드 signed
   URL로만 서빙, **URL 영속 금지**(재수화·만료 시 `GET /files/figures/{id}` 재발급,
   D87). figure 실패는 텍스트 인덱싱과 격리(`files.status` 불가침, D88).
 - **학생**은 워크스페이스에 참여해(학급 코드 가입) 세션을 열고, 선생님이 올린
@@ -87,7 +89,7 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
   "기타"는 중앙. 교과서 figure 추천 노드는 `routers/retrieve.py`가 별도
   검색(D94, 사용자 결정 2026-07-18: EBS 영상·SVG 아트 추천 기능 전면 제거 —
   `/art/search`·인제스트 스크립트·Qdrant ebs/art_assets 컬렉션·art_assets
-  테이블(마이그레이션 0040) 포함).
+  테이블 포함. 마이그레이션 0040은 2026-07-19 원격 적용 완료).
 
 ## 불변식 (반드시 유지)
 

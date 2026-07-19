@@ -13,7 +13,8 @@
 // 영속(§8, C5): done 후 서버 done 훅이 retrieve 결과(figures)를 attachments.canvas에
 //   저장(단일 writer). 카드 좌표는 저장/재적용하지 않는다(sim이 매 로드 재배치).
 // 재수화: replay로 카드 내용만 복원하고, 좌표는 CENTER 기본값(sim이 배치).
-//   attachments.canvas.figures로 리프(figure 1)를 재생성한다.
+//   attachments.canvas.figures로 figure 리프를 전부 재생성한다(D95: figureId
+//   중복 제거 — 같은 figure는 최고 스코어 턴의 개념에 앵커).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -188,9 +189,6 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
 
   const conceptsRef = useRef<Concept[]>([]);
   const leafNodesRef = useRef<CanvasLeafNode[]>([]);
-  // Part B: 맵당 figure 1 — 현재 대표의 최고 스코어(교체 판정 기준선).
-  // 세션 동안 유지, 재수화 시 로드된 대표 스코어로 재설정.
-  const mapFigureScoreRef = useRef<number>(-Infinity); // D87
   const headRef = useRef<string | null>(null);
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -331,20 +329,22 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       // 자동 포커싱: 이번 답변 첫 개념(pid). 워크스페이스가 이 id의 sim 위치를 추종한다.
       setFocusSignal({ x: nearXY.x, y: nearXY.y, key: ++focusKeyRef.current, id: pid });
 
-      // (c) Part B: 맵당 figure 1 — 최고 스코어 후보만 대표로 유지/교체.
-      // 스트림 실패 시 되돌리기 위한 스냅샷.
+      // (c) D95: 교과서 figure 다중 표시 — 이번 턴 히트(게이트 통과분)를 전부
+      // 배치하되 figureId로 중복 제거(이미 캔버스에 있는 figure는 다시 놓지
+      // 않는다 — 세션 동안 누적). 스트림 실패 시 되돌리기 위한 스냅샷.
       const leafSnapshot = leafNodesRef.current;
-      const scoreSnapshot = { f: mapFigureScoreRef.current };
-      const placeRep = (
-        id: "map-figure",
-        type: CanvasLeafNode["type"],
-        extra: Partial<CanvasLeafNode>,
-      ) => {
-        const d = LEAF_DIMS[type];
-        const others = leafNodesRef.current.filter((n) => n.id !== id);
+      const placedIds = new Set(
+        leafNodesRef.current
+          .map((n) => n.figure?.figureId)
+          .filter((v): v is string => !!v),
+      );
+      for (const f of r.figures) {
+        if (placedIds.has(f.figureId)) continue;
+        placedIds.add(f.figureId);
+        const d = LEAF_DIMS.figure;
         const obstacles: Rect[] = [
           ...conceptsRef.current.map(cardRect),
-          ...others.map(leafRect),
+          ...leafNodesRef.current.map(leafRect),
         ];
         const { x, y } = placeLeafClear(
           nearXY.x + LEAF_OFFSET_X,
@@ -353,20 +353,22 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           d.h,
           obstacles,
         );
-        commitLeafNodes([...others, { id, type, x, y, conceptId: pid, ...extra }]);
-      };
-      // D87: 교과서 figure — 맵당 1개, 최고 스코어 후보만 대표로 유지/교체.
-      const repFigure = r.figures[0];
-      if (repFigure && typeof repFigure.score === "number" && repFigure.score > mapFigureScoreRef.current) {
-        mapFigureScoreRef.current = repFigure.score;
-        placeRep("map-figure", "figure", {
-          figure: {
-            figureId: repFigure.figureId,
-            url: repFigure.url,
-            caption: repFigure.caption,
-            page: repFigure.page,
+        commitLeafNodes([
+          ...leafNodesRef.current,
+          {
+            id: `figure-${f.figureId}`,
+            type: "figure",
+            x,
+            y,
+            conceptId: pid,
+            figure: {
+              figureId: f.figureId,
+              url: f.url,
+              caption: f.caption,
+              page: f.page,
+            },
           },
-        });
+        ]);
       }
 
       const controller = new AbortController();
@@ -423,10 +425,9 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           ),
         );
       }
-      // 스트림 실패(done 미수신) 시 이번 send의 대표 교체를 되돌린다.
+      // 스트림 실패(done 미수신) 시 이번 send의 figure 배치를 되돌린다.
       if (!doneBox.current) {
         commitLeafNodes(leafSnapshot);
-        mapFigureScoreRef.current = scoreSnapshot.f;
       }
 
       // (f) done: sessionsKey invalidate(제목 갱신). figures 영속은 서버 done
@@ -476,15 +477,22 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     // attachments.canvas → 리프 재생성. 좌표 전부 확정된 재수화 시점이므로 여기서
     // 무겹침을 확정한다: 앵커 오른쪽 스택을 선호 위치로, 모든 카드 + 앞서 놓은
     // 리프를 장애물로 삼아 placeLeafClear가 카드와 겹치지 않는 자리로 배치한다.
-    // Part B: 전 노드 후보 중 최고 스코어로 figure 1 결정(argmax, 동점=첫 노드).
-    let bestFigure: { score: number; nodeId: string; f: NonNullable<PersistedCanvas["figures"]>[number] } | null = null;
+    // D95: 전 노드의 figures를 figureId로 중복 제거해 **전부** 복원한다 — 같은
+    // figure를 여러 턴이 히트했으면 최고 스코어 턴의 개념을 앵커로 쓴다.
+    const byFigureId = new Map<
+      string,
+      { score: number; nodeId: string; f: NonNullable<PersistedCanvas["figures"]>[number] }
+    >();
     for (const n of reals) {
       const canvas = (n as NodeRowWithAttachments).attachments?.canvas;
       if (!canvas) continue;
-      // D87: figure argmax(구 노드엔 figures 없음 — 방어 파싱).
+      // D87: 방어 파싱(구 노드엔 figures 없음).
       for (const f of canvas.figures ?? []) {
         if (!f?.figure_id || typeof f.score !== "number") continue;
-        if (!bestFigure || f.score > bestFigure.score) bestFigure = { score: f.score, nodeId: n.id, f };
+        const cur = byFigureId.get(f.figure_id);
+        if (!cur || f.score > cur.score) {
+          byFigureId.set(f.figure_id, { score: f.score, nodeId: n.id, f });
+        }
       }
     }
     const leaves: CanvasLeafNode[] = [];
@@ -496,47 +504,38 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
     };
     // D87: figure는 url 비영속 — 좌표(장애물)만 먼저 확정해 url=""(스켈레톤)로
     // 배치하고, getFigure로 fresh signed URL을 비동기 재발급해 리프를 갱신한다
-    // (비동기 후처리 패턴). 실패 시 리프 제거(best-effort).
-    if (bestFigure) {
-      const base = anchorXY(bestFigure.nodeId);
+    // (비동기 후처리 패턴). 실패 시 해당 리프만 제거(best-effort). 리프 id가
+    // figureId를 포함하므로(figure-{id}) 스테일 응답이 남의 슬롯을 건드릴 수 없다.
+    for (const { nodeId, f } of byFigureId.values()) {
+      const base = anchorXY(nodeId);
       const d = LEAF_DIMS.figure;
       const { x, y } = placeLeafClear(base.x + LEAF_OFFSET_X, base.y, d.w, d.h, obstacles);
       obstacles.push({ x, y, w: d.w, h: d.h });
-      const figureId = String(bestFigure.f.figure_id);
+      const figureId = String(f.figure_id);
+      const leafId = `figure-${figureId}`;
       leaves.push({
-        id: "map-figure", type: "figure", x, y, conceptId: base.id,
+        id: leafId, type: "figure", x, y, conceptId: base.id,
         figure: {
           figureId,
           url: "", // getFigure로 재발급(아래) 전까지 스켈레톤.
-          caption: bestFigure.f.caption ?? "",
-          page: typeof bestFigure.f.page === "number" ? bestFigure.f.page : undefined,
+          caption: f.caption ?? "",
+          page: typeof f.page === "number" ? f.page : undefined,
         },
       });
-      mapFigureScoreRef.current = bestFigure.score;
       void getFigure(figureId)
         .then((fresh) => {
           if (!fresh.url) throw new Error("빈 URL");
-          // D87: in-flight 중 send()가 다른 figure로 map-figure 슬롯을 교체할 수
-          // 있으므로 figureId가 일치하는 슬롯만 갱신 — 스테일 응답은 무시(no-op).
           commitLeafNodes(
             leafNodesRef.current.map((n) =>
-              n.id === "map-figure" && n.figure?.figureId === figureId
+              n.id === leafId && n.figure
                 ? { ...n, figure: { ...n.figure, url: fresh.url } }
                 : n,
             ),
           );
         })
         .catch(() => {
-          // D87: 스테일 실패가 슬롯을 차지한 라이브 figure를 지우지 않도록 동일
-          // figureId일 때만 제거.
-          commitLeafNodes(
-            leafNodesRef.current.filter(
-              (n) => !(n.id === "map-figure" && n.figure?.figureId === figureId),
-            ),
-          );
+          commitLeafNodes(leafNodesRef.current.filter((n) => n.id !== leafId));
         });
-    } else {
-      mapFigureScoreRef.current = -Infinity;
     }
 
     commitConcepts(built);
