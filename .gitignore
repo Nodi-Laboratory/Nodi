@@ -18,6 +18,12 @@ __pycache__/
 # Qdrant 로컬 볼륨 (docker-compose)
 qdrant_storage/
 
+# Qdrant 바이너리 (샌드박스: docker-in-docker 불가로 바이너리 직접 실행, D-없음 임시)
+.qdrant-bin/
+
+# 프로세스 백그라운드 실행 로그 (nohup, 로컬 상태 — 커밋 금지)
+*.log
+
 # OS / 에디터
 Thumbs.db
 .DS_Store
