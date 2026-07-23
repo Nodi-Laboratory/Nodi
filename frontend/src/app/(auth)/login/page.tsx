@@ -55,7 +55,10 @@ function LoginContent() {
 
       {(error || callbackError) && (
         <p className="mt-3 text-xs text-danger">
-          {error ?? "로그인에 실패했습니다. 다시 시도해 주세요."}
+          {error ??
+            (callbackError === "not_onboarded"
+              ? "온보딩이 완료되지 않았습니다. 다시 로그인해 주세요."
+              : "로그인에 실패했습니다. 다시 시도해 주세요.")}
         </p>
       )}
     </div>
