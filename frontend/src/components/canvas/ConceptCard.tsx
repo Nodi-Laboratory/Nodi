@@ -10,28 +10,10 @@
 import { memo, type CSSProperties } from "react";
 import type { Concept, Token } from "@/lib/concept/types";
 import type { RagSource } from "@/lib/types";
-// 08: 본문량 기반 동적 높이 — 백엔드 config(card_h_min/max/per_line)와 상수 일치.
-// 서버 estimate_card_height(body_lines) = clamp(H_MIN + lines*PER_LINE, H_MIN, H_MAX)와
-// 동일한 폴백을 프론트에서 재현(서버 저장 concept.h가 있으면 그 값을 신뢰).
-import {
-  CARD_H_MAX,
-  CARD_H_MIN,
-  CARD_H_PER_LINE,
-  CARD_H_STREAM_LINES,
-} from "@/lib/concept/cardMetrics";
+// 카드 높이는 인라인으로 고정하지 않는다(사용자 결정 2026-07-23): height:auto로
+// 본문 바이트만큼 카드가 그대로 늘어나고 줄어든다. cardMetrics.cardHeight()는
+// 충돌 회피 추정 전용이라 여기서 렌더에는 쓰지 않는다.
 import styles from "./ConceptCard.module.css";
-
-// 카드 높이(px): 우선순위 concept.h(서버 저장값) → 없으면 본문 줄 수 기반 폴백.
-// lines는 본문 "p" 블록 수 근사(서버 body_text.count("\n")+1과 대략 일치).
-function cardHeight(concept: Concept, lines: number): number {
-  if (typeof concept.h === "number" && concept.h > 0) return concept.h;
-  const est = CARD_H_MIN + Math.max(0, lines) * CARD_H_PER_LINE;
-  return Math.max(CARD_H_MIN, Math.min(CARD_H_MAX, est));
-}
-
-// D74: 출처 칩 푸터 높이 보정(px) — 카드가 인라인 height + overflow:hidden이라
-// 푸터만큼 높이를 늘려야 칩이 잘리지 않는다(CSS max-height 560 클램프는 유지).
-const SOURCES_EXTRA_H = 36;
 
 // D74: 파일 단위 중복 제거 칩(최대 3개 + 초과 개수). 노드(턴) 단위 provenance라
 // 턴의 첫 개념에만 sources가 부착된다(useConceptStream).
@@ -76,15 +58,13 @@ function ConceptCard({
 }) {
   const { id, title, cluster, blocks = [], x = 0, y = 0, pending, sources } = concept;
 
-  // 09: pending 분기 — 로딩 카드(실카드와 동일 골격 420px).
+  // 09: pending 분기 — 로딩 카드(실카드와 동일 골격 420px). 높이는 shimmer·점
+  // 콘텐츠에 맞춰 자동(height:auto) — 승격 시 본문 바이트만큼 자연스럽게 늘어난다.
   if (pending) {
-    // 본문 미확정 → 서버 스트리밍 기본(estimate_card_height(2))과 같은 높이로
-    // 예약해 pending→실카드 승격 시 레이아웃 점프를 줄인다.
-    const h = cardHeight(concept, CARD_H_STREAM_LINES);
     return (
       <article
         className={`${styles.card} ${styles.pending}`}
-        style={{ left: x, top: y, height: h } as CSSProperties}
+        style={{ left: x, top: y } as CSSProperties}
         data-testid="concept-card-pending"
         data-concept-id={id}
         aria-hidden="true"
@@ -103,10 +83,7 @@ function ConceptCard({
   }
 
   const paras = blocks.filter((b) => b.type === "p");
-  // 08: 서버 저장 concept.h 우선, 없으면 본문 "p" 블록 수로 폴백(pending과 동일 로직).
   const hasSources = !!sources && sources.length > 0;
-  const h =
-    cardHeight(concept, paras.length) + (hasSources ? SOURCES_EXTRA_H : 0);
   // 형광펜 색: "대기와 해양" 클러스터는 블루, 그 외 옐로 (figma CONTRACTS v1.1)
   const hlColor =
     cluster === "대기와 해양" ? "var(--hl-blue)" : "var(--hl-yellow)";
@@ -114,10 +91,9 @@ function ConceptCard({
   return (
     <article
       className={`${styles.card} ${highlighted ? styles.highlighted : ""}`}
-      // --hl-color: 본문 형광펜 밴드 색(클러스터별) — styles.hl에서 참조
-      style={
-        { left: x, top: y, height: h, "--hl-color": hlColor } as CSSProperties
-      }
+      // 높이 인라인 지정 없음 → height:auto로 본문에 딱 맞게(동적). --hl-color:
+      // 본문 형광펜 밴드 색(클러스터별) — styles.hl에서 참조.
+      style={{ left: x, top: y, "--hl-color": hlColor } as CSSProperties}
       data-testid="concept-card"
       data-concept-id={id}
     >

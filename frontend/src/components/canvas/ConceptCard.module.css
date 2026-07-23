@@ -4,13 +4,11 @@
   position: absolute; /* concept.x/y absolute (top-left) */
   width: 420px;
   box-sizing: border-box;
-  /* 08: 본문량 기반 동적 높이 클램프 — 백엔드 config(card_h_min/max)와 일치.
-     인라인 style의 height를 [min,max] 범위로 강제하고, 내용이 넘치면 스크롤 없이
-     max-height 내에서 클리핑(디자인 유지). */
-  min-height: 160px;
-  max-height: 560px;
-  overflow: hidden;
-  padding: 18px;
+  /* 높이 정책(사용자 결정 2026-07-23): 최소/최대 클램프 없이 height:auto —
+     본문 바이트만큼 카드가 그대로 늘어나고 줄어든다. 클리핑(overflow:hidden)도
+     제거해 긴 본문이 잘리지 않고 카드가 통째로 커진다. */
+  height: auto;
+  padding: 28px;
   border-radius: 18px;
   background: color-mix(in srgb, var(--bg) 55%, #ffffff);
   border: 1px solid color-mix(in srgb, var(--ink) 6%, transparent);
@@ -40,7 +38,7 @@
 }
 
 .title {
-  margin: 0 0 8px;
+  margin: 0 0 14px;
   font-family: var(--font-body);
   font-size: 24px;
   font-weight: 700;
@@ -51,11 +49,11 @@
 .body {
   font-family: var(--font-body);
   font-size: 21px;
-  line-height: 1.5;
+  line-height: 1.6;
   color: var(--text);
 }
 .p {
-  margin: 4px 0;
+  margin: 8px 0;
 }
 .p b {
   font-weight: 700;

@@ -3,12 +3,7 @@
 // 서버 canvas_layout._first_free_position(AABB 나선 탐색) 이식. 캔버스는
 // 무한 팬이므로 경계 클램프는 없다.
 
-import {
-  CARD_H_MAX,
-  CARD_H_MIN,
-  CARD_H_PER_LINE,
-  CARD_H_STREAM_LINES,
-} from "./cardMetrics";
+import { cardHeight } from "./cardMetrics";
 import type { CanvasLeafNode, Concept } from "./types";
 
 export interface Rect {
@@ -25,21 +20,12 @@ export const LEAF_DIMS: Record<CanvasLeafNode["type"], { w: number; h: number }>
   figure: { w: 260, h: 240 },
 };
 
-// 개념 카드 폭 — 높이 상수(CARD_H_*)는 cardMetrics(SSOT)에서 가져와 ConceptCard와 일치.
+// 개념 카드 폭 — 높이는 cardMetrics(SSOT)의 cardHeight()에서 가져와 ConceptCard와 일치.
 const CARD_W = 420;
 
-// 카드 렌더 높이 근사: 서버 저장 concept.h 우선, 없으면 본문 "p" 블록 수(=줄 수)
-// 기반 폴백. ConceptCard와 동일 로직 → 장애물 높이가 실제 렌더 높이와 일치.
-function cardHeight(c: Concept): number {
-  if (typeof c.h === "number" && c.h > 0) return c.h;
-  const lines = c.pending
-    ? CARD_H_STREAM_LINES
-    : (c.blocks ?? []).filter((b) => b.type === "p").length;
-  return Math.max(CARD_H_MIN, Math.min(CARD_H_MAX, CARD_H_MIN + lines * CARD_H_PER_LINE));
-}
-
 export function cardRect(c: Concept): Rect {
-  return { x: c.x, y: c.y, w: CARD_W, h: cardHeight(c) };
+  const hasSources = !!c.sources && c.sources.length > 0;
+  return { x: c.x, y: c.y, w: CARD_W, h: cardHeight(c, hasSources) };
 }
 
 export function leafRect(n: Pick<CanvasLeafNode, "x" | "y" | "type">): Rect {

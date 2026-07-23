@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { spaceTargetFromId, uploadFile } from "@/lib/api";
-import { CARD_CX } from "@/lib/concept/cardMetrics";
+import { CARD_CX, cardHeight } from "@/lib/concept/cardMetrics";
 import { useConceptStream } from "@/lib/concept/useConceptStream";
 import { useTagLayout } from "@/lib/concept/useTagLayout";
 import type { CanvasLeafNode, Concept } from "@/lib/concept/types";
@@ -28,8 +28,6 @@ import SessionDrawer from "./SessionDrawer";
 // Card center offset for focus/centering (CARD_CX = 카드 폭 절반, cardMetrics SSOT).
 const CARD_CY = 200;
 const INITIAL_CAMERA: Camera = { x: 120, y: 80, scale: 1 };
-// 리프 기본 태그 폴백 높이(레이아웃 아이템 h 미상 시).
-const LEAF_ITEM_H_FALLBACK = 216;
 
 // 미분류 개념의 폴백 태그(useTagLayout 시드/tagAnchor와 일치).
 const DEFAULT_TAG = "기타";
@@ -112,7 +110,7 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
     .map((c) => ({
       id: c.id,
       tag: c.cluster || DEFAULT_TAG,
-      h: c.h ?? LEAF_ITEM_H_FALLBACK,
+      h: cardHeight(c, !!c.sources && c.sources.length > 0),
     }));
   const { positions, tagCentroids } = useTagLayout(layoutItems);
 
