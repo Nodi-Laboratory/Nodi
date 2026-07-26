@@ -1,0 +1,69 @@
+# CI — PROCESS.md '완료 정의'의 2번(전체 스위트 / 프론트 스모크)을 자동화한다 (D97).
+#
+# 사람이 기억해서 돌리는 데 의존하던 검증을 PR마다 강제한다.
+# **시크릿을 쓰지 않는다** — 백엔드 테스트는 전부 mock이고, 프론트 빌드는
+# NEXT_PUBLIC_* 값이 없어도 통과한다(런타임에만 필요). 따라서 포크 PR에서도 돈다.
+
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 백엔드 테스트
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: 의존성 동기화 (락파일 고정)
+        # --frozen: uv.lock이 pyproject.toml과 어긋나면 실패한다.
+        # 락파일이 낡은 채 머지되는 걸 막는 게이트다.
+        run: uv sync --group dev --frozen
+
+      - name: pytest
+        run: uv run pytest tests/ -v
+
+      - name: 임포트 스모크
+        # 라우터 배선·순환 임포트 회귀를 잡는다 (키 없이 부팅 가능해야 한다).
+        run: uv run python -c "from app.main import app; print('ok')"
+
+  frontend:
+    name: 프론트 타입 · 빌드
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 의존성 설치 (락파일 고정)
+        run: npm ci
+
+      - name: 타입 체크
+        run: npx tsc --noEmit
+
+      - name: 빌드
+        run: npm run build

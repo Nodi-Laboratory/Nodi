@@ -1,0 +1,16 @@
+# 줄바꿈 정규화 — 저장소는 항상 LF로 보관한다 (D97).
+# Windows 팀원의 core.autocrlf 설정에 상관없이 커밋 내용이 같아지므로,
+# "파일 전체가 바뀐 것처럼 보이는" 가짜 diff가 생기지 않는다.
+* text=auto eol=lf
+
+# 바이너리 — 정규화 금지
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.pdf binary
+*.ico binary
+
+# 락파일·마이그레이션은 리뷰 시 diff 노이즈가 크다 — 생성물로 표시
+backend/uv.lock         linguist-generated=true
+frontend/package-lock.json linguist-generated=true
