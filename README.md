@@ -15,16 +15,17 @@ Next.js(App Router) · FastAPI · Supabase(Postgres/RLS/Auth/Storage) ·
 
 ## ⚠️ 합류 전에 반드시 읽을 것
 
-**이 프로젝트는 Supabase 프로젝트 하나를 팀 전체가 공유한다. 그 DB에는 실제
-사용 데이터가 들어 있다.** 로컬 Supabase 스택(`supabase/config.toml`)도 시드도
-없으므로, 개발 중 실행하는 모든 것이 같은 DB에 닿는다.
+**개발은 로컬 DB에서 한다.** 원격 Supabase 프로젝트에는 실제 사용 데이터가 들어
+있고 팀 전체가 공유하므로, 개발 중 원격에 붙지 않는다 (→ [로컬 DB](#로컬-db)).
+
+원격에 붙어야 할 때의 규칙:
 
 - **마이그레이션 원격 적용은 저장소 오너 한 사람만 한다.** 새 마이그레이션 SQL은
   커밋만 하고, 적용은 오너에게 요청한다 (적용 이력은 `docs/TASKS.md`에 기록).
 - **테스트 데이터를 지울 때 남의 것을 지우지 않는지 확인한다.** git과 달리
   되돌릴 수 없다.
-- 백엔드 테스트 스위트(`pytest`)는 전부 mock이라 원격 DB에 닿지 않는다 — 마음껏
-  돌려도 된다.
+- 백엔드 테스트 스위트(`pytest`)는 전부 mock이라 어느 DB에도 닿지 않는다 —
+  마음껏 돌려도 된다.
 
 ---
 
@@ -91,7 +92,41 @@ uvicorn app.main:app --reload --port 8000
 가급적 `uv sync`를 쓴다.
 </details>
 
-### 3) 설정 확인
+### 3) 로컬 DB
+
+```bash
+npx supabase start        # 최초 1회는 이미지 다운로드로 몇 분 걸린다
+npx supabase status       # API URL·키 확인
+```
+
+Postgres · PostgREST · Auth · Storage · Realtime이 전부 로컬로 뜬다.
+마이그레이션 `0001`~`0040`과 `supabase/seed.sql`이 자동 적용되므로
+**원격과 스키마가 동일하다** (테이블 11개 · RPC 18개).
+
+`backend/.env`의 Supabase 3종을 로컬 값으로 바꾼다 —
+`backend/.env.local.example`에 그대로 적혀 있다. 프론트는
+`frontend/.env.local`의 `NEXT_PUBLIC_SUPABASE_*`를 같은 값으로 맞춘다.
+
+**시드 계정** (비밀번호 전부 `nodi-local-dev`):
+
+| 계정 | 역할 |
+|---|---|
+| `teacher@nodi.local` | 교사 — 학급 "로컬 테스트 학급"(코드 `LOCAL1`) 담당 |
+| `student@nodi.local` | 학생 — 위 학급에 가입된 상태 |
+| `admin@nodi.local` | 관리자 |
+
+> 로컬은 **이메일/비밀번호 로그인**을 쓴다(Google OAuth 아님). 로컬에 OAuth
+> 클라이언트를 붙이는 대신 이 방식을 택했다 — `supabase/seed.sql` 주석 참조.
+
+| 명령 | 용도 |
+|---|---|
+| `npx supabase stop` | 스택 정지 (데이터 유지) |
+| `npx supabase db reset` | 마이그레이션 + 시드 재적용 (데이터 초기화) |
+| `npx supabase status` | 키·URL 재확인 |
+
+Studio(웹 콘솔): <http://127.0.0.1:54323> · 메일 확인: <http://127.0.0.1:54324>
+
+### 4) 설정 확인
 
 서버를 띄운 뒤 **<http://localhost:8000/health/config>** 를 연다.
 
@@ -195,6 +230,14 @@ cd frontend && npx tsc --noEmit && npm run build
 
 마이그레이션은 `supabase/migrations/`에 순번대로 있고, **최신은 `0040_drop_ebs_art.sql`**
 (원격 적용 완료). 적용 이력은 `docs/TASKS.md`에 기록한다.
+로컬에서는 `npx supabase db reset`으로 전량 재적용된다.
+
+> ⚠️ **API 롤 GRANT 부채**: 마이그레이션 어디에도 `anon`/`authenticated`/
+> `service_role`에 대한 명시적 `GRANT`가 없다. 원격 프로젝트가 Supabase의
+> **레거시 auto-expose 동작**에 기대고 있기 때문이다. 로컬은
+> `config.toml`의 `auto_expose_new_tables = true`로 같은 동작을 재현하지만,
+> **이 옵션은 2026-10-30에 제거된다.** 그전에 명시적 GRANT 마이그레이션을
+> 추가하거나 Supabase 자체를 걷어내야 한다.
 
 새 마이그레이션을 추가할 때:
 

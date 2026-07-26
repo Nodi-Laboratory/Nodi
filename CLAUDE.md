@@ -120,8 +120,15 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
   (업로드까지 쓰려면 `SUPABASE_SERVICE_ROLE_KEY`).
 - **설정 자가진단**: `GET /health/config` — 무엇이 빠졌는지 `blocking`·`judge.missing`이
   알려준다(D97, 비밀값 미노출). 같은 요약이 부팅 시 터미널에도 찍힌다.
-- **Supabase 프로젝트는 팀 공용이고 실데이터가 들어 있다** — 마이그레이션 원격
+- **로컬 DB(D98)**: `npx supabase start` — 마이그레이션 0001~0040 + `supabase/seed.sql`이
+  자동 적용돼 원격과 스키마가 같다(테이블 11 · RPC 18). `backend/.env`의 Supabase
+  3종만 `backend/.env.local.example` 값으로 바꾸면 된다. 시드 계정은
+  `teacher@/student@/admin@nodi.local`(비밀번호 `nodi-local-dev`), 로컬 인증은
+  이메일/비밀번호. **개발은 로컬에서 한다.**
+- **원격 Supabase 프로젝트는 팀 공용이고 실데이터가 들어 있다** — 마이그레이션 원격
   적용은 오너만, 파괴적 조작 금지(git과 달리 되돌릴 수 없다).
+- **GRANT 부채**: 마이그레이션에 API 롤 GRANT가 없고 Supabase 레거시 auto-expose에
+  의존한다. 로컬은 `config.toml`로 재현하지만 그 옵션은 2026-10-30 제거 예정.
 
 ## 컨벤션
 
