@@ -35,8 +35,45 @@ include = ["app*"]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "ruff>=0.14",
 ]
 
 [tool.pytest.ini_options]
 # pytest-asyncio: async 테스트를 마커 없이 자동 수집 (경고 0 보장).
 asyncio_mode = "auto"
+
+# ---------------------------------------------------------------------------
+# ruff — 린터 (D98)
+#
+# 팀원이 늘면 스타일 논쟁이 리뷰 시간을 먹는다. 도입 시점에 전량 green이어야
+# CI 게이트가 의미를 가지므로, 지금 통과하는 규칙만 켜고 확장은 별도 작업으로
+# 한다. 포매터(`ruff format`)는 아직 켜지 않는다 — 전 파일 재포맷은 diff가
+# 너무 커서 진행 중인 작업과 충돌한다.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"   # pyproject requires-python = ">=3.11"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle 오류
+    "F",    # pyflakes (미사용 import·변수 등)
+    "I",    # import 정렬
+    "UP",   # 파이썬 버전에 맞는 표기
+    "B",    # flake8-bugbear (조용히 틀리는 패턴)
+]
+ignore = [
+    # FastAPI의 `Depends(...)`/`Query(...)`를 기본 인자로 쓰는 것은 프레임워크
+    # 규약이다 — 이 프로젝트에서 54건 전부 그 패턴이라 오탐이다.
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 프롬프트 문안은 labs 실측으로 확정된 값이고 형식 변경이 금지돼 있다
+# (exaone.py 상단 주석 · figure_judge.py docstring). 줄바꿈을 넣으면 모델에
+# 가는 문자열이 바뀌므로 이 두 파일만 길이 규칙에서 제외한다.
+"app/services/exaone.py" = ["E501"]
+"app/services/figure_judge.py" = ["E501"]
+# 테스트에서 `pytest.raises(Exception)`은 "어떤 예외든 난다"를 검증하는
+# 의도적 표현이다(호출부가 best-effort로 삼키는 경로).
+"tests/*" = ["B017"]
