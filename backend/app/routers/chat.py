@@ -99,7 +99,10 @@ async def _patch_canvas_unified(
     if retrieved is None:
         return
     try:
-        rows = await client.select("nodes", {"id": f"eq.{node_id}", "select": "id,attachments", "limit": "1"})
+        rows = await client.select(
+            "nodes",
+            {"id": f"eq.{node_id}", "select": "id,attachments", "limit": "1"},
+        )
         if not rows:
             return
         attachments = rows[0].get("attachments") or {}

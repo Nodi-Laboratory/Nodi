@@ -263,12 +263,12 @@ async def upload_file(
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("스토리지 업로드 실패: path=%s", storage_path)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="저장소 업로드에 실패했습니다.",
-        )
+        ) from exc
 
     rows = await service.insert(
         "files",
