@@ -5,7 +5,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * Supabase 세션 갱신 + 라우트 보호 (Next.js 16 Proxy 패턴, @supabase/ssr).
  *
  * 보호 대상: (app)/(teacher)/(admin) + 온보딩 → 미로그인 시 /login.
- * 로그인 상태로 /login 진입 시 → /home.
+ * 로그인 상태로 인증 화면(/login·/signup) 진입 시 → /home.
  * 온보딩은 로그인 필요하지만, 로그인 사용자를 강제로 내보내지 않는다(가입 흐름 유지).
  */
 const PROTECTED_PREFIXES = [
@@ -16,6 +16,9 @@ const PROTECTED_PREFIXES = [
   "/admin",
   "/onboarding",
 ];
+
+/** 로그인한 사용자가 다시 볼 이유가 없는 화면 (D99: /signup 추가). */
+const AUTH_ONLY_PATHS = ["/login", "/signup"];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -55,7 +58,7 @@ export async function updateSession(request: NextRequest) {
     return redirectKeepingCookies(request, "/login", supabaseResponse);
   }
 
-  if (user && path === "/login") {
+  if (user && AUTH_ONLY_PATHS.includes(path)) {
     return redirectKeepingCookies(request, "/home", supabaseResponse);
   }
 
