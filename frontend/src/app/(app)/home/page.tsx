@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { MessageSquare } from "lucide-react";
 import { useProfile } from "@/lib/hooks";
@@ -7,6 +8,35 @@ import { prefetchSessionData, useHomeSummary } from "@/lib/queries";
 import { isRealId } from "@/lib/ids";
 import { useStartSession } from "@/lib/useStartSession";
 import type { HomeRecentSession, SpaceKind } from "@/lib/types";
+
+/**
+ * 최근 대화가 0건일 때의 빈 상태 (D100).
+ *
+ * 과거에는 "아직 대화가 없습니다." 한 줄이 전부였고, 그 한 줄이 화면 높이만큼
+ * 늘어난 카드 좌상단에 덩그러니 놓여 화면이 고장난 것처럼 보였다. 다음 행동을
+ * 제시하는 것이 빈 상태의 역할이다.
+ */
+function EmptyRecent() {
+  return (
+    <div className="flex flex-col items-center gap-3 px-4 py-10 text-center">
+      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-accent/40 text-accent-fg">
+        <MessageSquare size={20} aria-hidden />
+      </span>
+      <div>
+        <p className="text-sm font-medium text-fg">아직 대화가 없습니다</p>
+        <p className="mt-1 text-xs text-fg-muted">
+          궁금한 것을 물어보면 개념 카드가 캔버스에 펼쳐집니다.
+        </p>
+      </div>
+      <Link
+        href="/space/personal"
+        className="mt-1 rounded-lg border border-accent-border bg-accent px-4 py-2 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep"
+      >
+        첫 대화 시작하기
+      </Link>
+    </div>
+  );
+}
 
 /**
  * 홈 화면 — 항상 접근 가능한 진입점. 최근 대화 목록.
@@ -54,8 +84,14 @@ export default function HomePage() {
         <p className="mt-1 text-sm text-fg-muted">최근 대화를 한눈에.</p>
       </header>
 
-      {/* 최근 대화 */}
-      <section className="flex min-h-0 flex-1 flex-col rounded-xl border border-accent-border/30 bg-bg-elevated">
+      {/* 최근 대화 — D100: 목록이 있을 때만 남은 높이를 채운다. 과거에는 flex-1이
+          무조건 걸려 있어, 대화가 0건일 때도 카드가 화면 끝까지 늘어나고 안에는
+          한 줄만 떠 있었다(빈 화면이 고장난 것처럼 보임). */}
+      <section
+        className={`flex flex-col rounded-xl border border-accent-border/30 bg-bg-elevated ${
+          recent.length > 0 ? "min-h-0 flex-1" : ""
+        }`}
+      >
         <div className="border-b border-accent-border/30 px-5 py-3">
           <h2 className="text-sm font-semibold text-fg">최근 대화</h2>
         </div>
@@ -63,7 +99,7 @@ export default function HomePage() {
           {summaryLoading ? (
             <p className="px-2 py-3 text-sm text-fg-muted">불러오는 중…</p>
           ) : recent.length === 0 ? (
-            <p className="px-2 py-3 text-sm text-fg-muted">아직 대화가 없습니다.</p>
+            <EmptyRecent />
           ) : (
             <ul className="flex flex-col gap-1">
               {recent.map((s) => (
