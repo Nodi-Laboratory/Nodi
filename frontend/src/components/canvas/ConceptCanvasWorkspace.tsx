@@ -319,8 +319,16 @@ function Welcome() {
           height: 220,
           width: "auto",
           marginBottom: 4,
-          mixBlendMode: "multiply",
-          borderRadius: 16,
+          // D100: mixBlendMode:"multiply" + borderRadius 제거. 마스코트 PNG에
+          // 흰 배경이 구워져 있어 multiply로 지우고 있었는데, 이 방식은 뒤
+          // 배경이 균일할 때만 통한다 — 캔버스에는 방사형 글로우가 깔려 있어
+          // 흰 사각형 경계가 그대로 드러났다. PNG 자체를 투명 배경으로 바꿨다.
+          //
+          // 원본 아트워크가 몸통 아래를 잘라 끝내서 투명 전환 후 직선 절단면이
+          // 보인다. 하단만 부드럽게 페이드해 캔버스에 잠기는 것처럼 만든다.
+          maskImage: "linear-gradient(to bottom, #000 84%, transparent 100%)",
+          WebkitMaskImage:
+            "linear-gradient(to bottom, #000 84%, transparent 100%)",
         }}
       />
       <p
