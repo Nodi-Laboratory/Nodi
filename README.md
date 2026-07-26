@@ -1,23 +1,129 @@
 # Nodi
 
-> 지구과학·과학 개념을 **손으로 쓴 노트처럼 펼쳐지는 무한 캔버스**에서 배우는 학습 앱.
-> 질문하면 EXAONE이 개념 카드를 스트리밍하고, 질의 임베딩으로 카드가 놓일 자리를 잡은 뒤
-> 관련 **EBS 영상**과 **SVG 일러스트**를 개념 주변에 노드로 함께 띄운다.
+> 교실 학습용 AI 도우미. 학생이 질문하면 EXAONE이 **개념 카드**를 스트리밍하고,
+> 무한 캔버스 위에 주제별로 묶어 배치한다. 선생님이 올린 수업 자료·교과서를
+> 근거로 답한다.
 
-Next.js(App Router) 프론트엔드 · FastAPI 백엔드 · Supabase(Postgres/RLS/Auth) ·
-**Qdrant**(벡터) · **Upstage**(임베딩 + 문서 파싱) · **EXAONE**(대화 생성) 스택.
+Next.js(App Router) · FastAPI · Supabase(Postgres/RLS/Auth/Storage) ·
+**Qdrant**(벡터 4096d) · **Upstage**(임베딩 + 문서 파싱) · **EXAONE**(대화 생성).
+
+- 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](CLAUDE.md)** ← 이 저장소의 규범 문서
+- 작업 체계: [`docs/TASKS.md`](docs/TASKS.md) · [`docs/AGENTS.md`](docs/AGENTS.md) · [`docs/PROCESS.md`](docs/PROCESS.md)
+- 배포(클라우드 VM): [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+
+---
+
+## ⚠️ 합류 전에 반드시 읽을 것
+
+**이 프로젝트는 Supabase 프로젝트 하나를 팀 전체가 공유한다. 그 DB에는 실제
+사용 데이터가 들어 있다.** 로컬 Supabase 스택(`supabase/config.toml`)도 시드도
+없으므로, 개발 중 실행하는 모든 것이 같은 DB에 닿는다.
+
+- **마이그레이션 원격 적용은 저장소 오너 한 사람만 한다.** 새 마이그레이션 SQL은
+  커밋만 하고, 적용은 오너에게 요청한다 (적용 이력은 `docs/TASKS.md`에 기록).
+- **테스트 데이터를 지울 때 남의 것을 지우지 않는지 확인한다.** git과 달리
+  되돌릴 수 없다.
+- 백엔드 테스트 스위트(`pytest`)는 전부 mock이라 원격 DB에 닿지 않는다 — 마음껏
+  돌려도 된다.
+
+---
+
+## 빠른 시작
+
+### 사전 준비
+
+- **Node.js 20+** / npm
+- **Python 3.11+** (권장 3.12)
+- **Docker** — Qdrant 컨테이너용
+- **[uv](https://docs.astral.sh/uv/)** — 파이썬 의존성 관리 (`pip install uv` 또는 `winget install astral-sh.uv`)
+- 키: Supabase 프로젝트 접근, Upstage API 키, EXAONE(Friendli) 키 → 오너에게 요청
+
+### 1) 환경 변수
+
+```bash
+cp backend/.env.example        backend/.env           # 백엔드
+cp frontend/.env.local.example frontend/.env.local    # 프론트엔드
+```
+
+```powershell
+# Windows PowerShell
+copy backend\.env.example        backend\.env
+copy frontend\.env.local.example frontend\.env.local
+```
+
+각 파일의 주석을 따라 값을 채운다. 필수는 4개 —
+`SUPABASE_URL` · `SUPABASE_ANON_KEY` · `UPSTAGE_API_KEY` · `EXAONE_API_KEY`.
+(업로드까지 쓰려면 `SUPABASE_SERVICE_ROLE_KEY`도 필요.)
+
+> **⚠️ `.env` 위치**: 백엔드는 **`backend/.env`**를 읽는다 (저장소 루트 아님 —
+> `backend/app/config.py`의 `BACKEND_ENV`). 루트에 두면 값이 하나도 안 읽히는데
+> **서버는 정상 부팅하므로** 원인을 찾기 어렵다.
+
+### 2) 실행
+
+```bash
+# 0) Qdrant (벡터 저장소)
+docker compose up -d qdrant          # 대시보드: http://localhost:6333/dashboard
+
+# 1) 백엔드 (FastAPI)
+cd backend
+uv sync --group dev                  # uv.lock 기준으로 .venv 구성 (버전 고정)
+uv run uvicorn app.main:app --reload --port 8000
+
+# 2) 프론트엔드 (Next.js) — 다른 터미널
+cd frontend
+npm ci                               # package-lock.json 기준
+npm run dev                          # http://localhost:3000
+```
+
+<details>
+<summary>uv 없이 (폴백)</summary>
+
+```bash
+cd backend
+python -m venv .venv                              # Windows: py -3.12 -m venv .venv
+source .venv/bin/activate                         # Windows: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt pytest pytest-asyncio
+uvicorn app.main:app --reload --port 8000
+```
+
+`requirements.txt`는 하한(`>=`)만 있어 **팀원마다 다른 버전이 깔린다.**
+가급적 `uv sync`를 쓴다.
+</details>
+
+### 3) 설정 확인
+
+서버를 띄운 뒤 **<http://localhost:8000/health/config>** 를 연다.
+
+```jsonc
+{
+  "ready": true,        // ← 채팅 한 턴에 필요한 설정이 모두 갖춰짐
+  "blocking": [],       // ← 비어 있어야 정상. 남아 있으면 그게 빠진 것
+  "judge": { "configured": false, "missing": ["JUDGE_API_KEY", "JUDGE_BASE_URL"] }
+}
+```
+
+비밀값은 노출되지 않는다(존재 여부만). 부팅 시 터미널에도 같은 요약이 찍힌다.
+
+`ready: false`면 `blocking` 배열이 원인을 정확히 알려준다. 대부분은
+`.env`를 루트에 만들었거나 `UPSTAGE_API_KEY`를 빠뜨린 경우다.
 
 ---
 
 ## 주요 기능
 
-- **개념 캔버스** — pan/zoom 무한 캔버스에 개념 카드를 손글씨 스타일로 배치. `(app)/space/[spaceId]`.
-- **임베딩 기반 배치** — 사용자 질의를 임베딩해 가장 유사한 기존 개념 근처에 **잠정 배치**하고,
-  EXAONE 응답(개념)이 오면 최종 격자 칸으로 **재조정**(부드러운 이동 애니메이션).
-- **추천 노드** — 질의와 의미가 가까우면 **EBS 영상 노드**·**SVG 아트 노드**를 개념 옆에 별도로 생성.
-- **선생님/학생 워크스페이스** — Supabase Google OAuth 로그인/가입, 역할(student/teacher/admin),
-  개인(personal)·학급(class) 세션 스코프, RLS로 접근 제어, 온보딩(학급 코드 가입).
-- **파일 RAG** — 업로드한 자료를 **Upstage Document Parsing**으로 추출·청킹·임베딩해 답변 근거로 활용.
+- **개념 캔버스** — pan/zoom 무한 캔버스에 개념 카드를 손글씨 스타일로 배치.
+  `(app)/space/[spaceId]`.
+- **태그 기반 배치** — EXAONE이 개념마다 자유 태그(단원·주제 수준)를 붙이고,
+  프론트가 태그 첫 등장 순서로 황금각 슬롯 앵커를 부여해 묶는다(D89/D90).
+- **선생님 워크스페이스** — 학급 개설, 수업 자료(`class_material`)·교과서
+  (`textbook`) 업로드. 자료는 청킹 → 임베딩 → Qdrant로 RAG 구축.
+- **학생 세션 파일** — 학생이 올린 파일(`user_upload`)은 임베딩 없이 청킹만 하고
+  **세션 컨텍스트로 전문 주입**한다(D83~D85, 기본 예산 150K자).
+- **교과서 figure** — 교과서 PDF에서 도판을 추출해 비전 판정으로 캡션을 확정하고
+  (D93), 학생 질의와 가까운 도판을 캔버스에 FigureNode로 띄운다(D95).
+- **인증/권한** — Supabase Google OAuth, 역할(student/teacher/admin),
+  개인(personal)·학급(class) 스코프, RLS로 접근 제어.
 
 ---
 
@@ -25,27 +131,28 @@ Next.js(App Router) 프론트엔드 · FastAPI 백엔드 · Supabase(Postgres/RL
 
 ```
 프론트(Next.js, (app)/space/[spaceId])
-  ConceptCanvasWorkspace = NoteCanvas + ConceptCard + VideoNode/ArtNode
-  useConceptStream: (1) POST /retrieve → 잠정배치+추천노드 스폰
+  ConceptCanvasWorkspace = NoteCanvas + ConceptCard + FigureNode
+  useConceptStream: (1) POST /retrieve  → 잠정 배치 + figure 추천 노드
                     (2) POST /chat/stream(SSE, EXAONE) → 개념 스트리밍 → 재조정
-                    (3) PATCH /nodes/{id} → 위치·추천노드 영속(attachments.canvas)
+                    (3) PATCH /nodes/{id} → 위치·노드 영속(attachments.canvas)
         │
 백엔드(FastAPI)
-  services/upstage.py   임베딩(embedding-query/passage, 4096d) + 문서 파싱(document-parse)
-  services/qdrant_store 컬렉션 file_chunks / art_assets / ebs (size=4096, Cosine)
-  services/exaone.py    대화 생성(스트리밍) — 그대로 유지
-  services/gemini.py    라벨/태그/네비게이터(비임베딩 LLM) — 그대로 유지
-  routers/retrieve.py   질의 임베딩 + Qdrant(ebs/art) 검색
+  services/upstage.py       임베딩(embedding-query/passage, 4096d) + 문서 파싱
+  services/qdrant_store.py  컬렉션 file_chunks / canvas_cards / textbook_figures
+  services/exaone.py        대화 생성(스트리밍)
+  services/figure_*.py      교과서 도판 추출·비전 판정
+  routers/retrieve.py       질의 임베딩 + Qdrant 검색
         │
-Supabase(관계형 + RLS + Auth + Storage)   ·   Qdrant(벡터만; RLS 없음 → 앱이 스코프 필터 강제)
+Supabase(관계형 + RLS + Auth + Storage)  ·  Qdrant(벡터만; RLS 없음 → 앱이 스코프 강제)
 ```
 
-**임베딩/벡터 스택 (2026-07 이전)**: 과거 Gemini 768d + pgvector → **Upstage 4096d + Qdrant**로 전면 이전.
-- 임베딩은 비대칭 모델(질의 `embedding-query`, 문서 `embedding-passage`), 출력 정규화(내적=코사인).
-- PDF/이미지 텍스트 추출은 **Upstage Document Parsing**(기존 Gemini OCR 대체).
-- Qdrant에는 **벡터만** 저장. 관계형/소유권은 Supabase(RLS)에 두고, RAG 검색은 RLS로 스코프한
-  `file_id`로 payload 필터 + 청크 텍스트는 유저 스코프 Supabase에서 재조회 → 교차 유저 유출 방지.
-- 마이그레이션 `0028`이 pgvector 컬럼/HNSW 인덱스/검색 RPC를 제거.
+**불변식** (자세히는 [`CLAUDE.md`](CLAUDE.md)):
+
+- RAG는 채팅을 절대 막지 않는다 — 모든 컨텍스트 빌더는 best-effort.
+- Qdrant는 신뢰 경계가 아니다 — 청크 본문은 USER 스코프 Supabase로 재조회해
+  RLS가 재검증한다.
+- 임베딩은 비대칭 — 질의 `embedding-query`, 문서 `embedding-passage`. 혼용 금지.
+- 거리 규약 `distance = 1 - score`.
 
 ---
 
@@ -56,135 +163,53 @@ Nodi/
 ├─ frontend/                 Next.js (App Router, TypeScript)
 │  └─ src/
 │     ├─ app/(app)/space/[spaceId]/   대화 캔버스 라우트
-│     ├─ components/canvas/           NoteCanvas·ConceptCard·VideoNode·ArtNode …
-│     └─ lib/concept/                 useConceptStream·layout·near·grouping …
-│  └─ public/art/{slug}.svg           개념 일러스트(정적 서빙)
+│     ├─ components/canvas/           NoteCanvas·ConceptCard·FigureNode …
+│     └─ lib/concept/                 useConceptStream·layout·useTagLayout …
 ├─ backend/                  FastAPI
-│  ├─ app/services/          upstage·qdrant_store·exaone·embedding·rag·embedding_worker …
-│  ├─ app/routers/           retrieve·chat·art·nodes·sessions·me …
-│  └─ scripts/               ingest_ebs.py·generate_art.py·ebs_catalog.json·art_seeds.json
-├─ supabase/migrations/      0001 … 0028_vectors_to_qdrant.sql
+│  ├─ app/services/          upstage·qdrant_store·exaone·embedding_worker·figure_* …
+│  ├─ app/routers/           retrieve·chat·files·nodes·sessions·teacher·admin·me …
+│  └─ tests/                 pytest (전부 mock — 외부 호출·원격 DB 없음)
+├─ supabase/migrations/      0001 … 0040
+├─ docs/                     TASKS·AGENTS·PROCESS·DEPLOYMENT + superpowers/{specs,plans}
 └─ docker-compose.yml        qdrant 서비스
 ```
 
 ---
 
-## 사전 준비
-
-- Node.js 20+ / npm
-- Python **3.11+** (권장 3.12; 시스템 3.9는 `str | None` 타입 문법 미지원)
-- Docker 데몬 (Docker Desktop 또는 colima 등) — Qdrant 컨테이너용
-- 계정/키: **Supabase 프로젝트**, **Upstage API 키**, **EXAONE(Friendli) 키**, **Google Gemini 키**
-  (라벨/태그/네비게이터용), *(선택)* Anthropic 키(오프라인 아트 생성용)
-
----
-
-## 환경 변수
-
-설정은 **저장소 루트 `.env`**(gitignored)에서 읽는다. 프론트는 `frontend/.env.local`.
-
-### 루트 `.env` (백엔드)
-
-| 키 | 용도 | 필수 |
-|---|---|---|
-| `UPSTAGE_API_KEY` | 임베딩 + 문서 파싱 | ✅ |
-| `QDRANT_URL` | 벡터 저장소 (기본 `http://localhost:6333`) | ✅ |
-| `EXAONE_API_KEY` | 대화 생성(Friendli serverless) | ✅ |
-| `GOOGLE_GEMINI_API_KEY` | 노드 라벨·개념 태그·네비게이터 | ✅ |
-| `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | 인증·데이터·스토리지 | ✅ |
-| `SUPABASE_PROJECT_REF`, `SUPABASE_JWKS_URL` | JWT 검증(미지정 시 URL에서 파생) | ⭕ |
-| `ANTHROPIC_API_KEY` | 오프라인 SVG 아트 생성(`generate_art.py`)에서만 | ⭕ |
-
-### `frontend/.env.local`
-
-| 키 | 용도 |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | 브라우저 Supabase 클라이언트 |
-| `NEXT_PUBLIC_API_BASE_URL` | 백엔드 주소 (예: `http://localhost:8000`) |
-
-예시 파일: `backend/.env.example`, `frontend/.env.local.example`.
-
-> ⚠️ `.env`에 넣은 키는 절대 커밋하지 말 것. 노출된 키는 즉시 회전(rotate).
-
----
-
-## 로컬 실행
+## 검증
 
 ```bash
-# 0) Qdrant (벡터 저장소)
-docker compose up -d qdrant          # 대시보드: http://localhost:6333/dashboard
+# 백엔드 테스트 (전부 mock — 키·네트워크 불필요)
+cd backend && uv run pytest tests/ -v
 
-# 1) 백엔드 (FastAPI)  — 루트 .env 채운 뒤
-cd backend
-python3 -m venv .venv && source .venv/bin/activate   # (uv 사용 시: uv venv --python 3.12 .venv)
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000            # GET /health 로 상태 확인
-
-# 2) 프론트엔드 (Next.js) — 다른 터미널
-cd frontend
-npm install
-npm run dev                                          # http://localhost:3000
-```
-
----
-
-## 데이터 시딩 (검색 활성화)
-
-Qdrant 컬렉션은 비어 있으면 검색이 아무것도 반환하지 않는다. 최초 1회 채운다.
-
-```bash
-cd backend && source .venv/bin/activate
-
-# EBS 영상 카탈로그(32종) → Qdrant `ebs`
-python scripts/ingest_ebs.py            # --dry-run 으로 미리보기
-
-# SVG 아트(frontend/public/art/*.svg) → Supabase art_assets + Qdrant `art_assets`
-#  · 파일이 이미 있으면 재사용(임베딩·인덱싱만), 없으면 ANTHROPIC_API_KEY로 Claude 생성
-python scripts/generate_art.py          # --force 로 재인덱싱, --dry-run 지원
-```
-
-기본 8종 아트: `earth-interior · plate-tectonics · water-cycle · photosynthesis ·
-solar-system · cell-structure · pythagorean-theorem · supply-demand`
-(시드는 `backend/scripts/art_seeds.json`, 파일은 `frontend/public/art/`).
-
-**업로드 파일 RAG 재임베딩**: 과거 768d(pgvector) 데이터는 4096d(Qdrant)로 다시 임베딩해야
-검색된다 — 관리자 requeue로 각 파일 재처리(`embedding_worker`가 Upstage로 재임베딩→Qdrant 업서트).
-
----
-
-## 데이터베이스 마이그레이션
-
-`supabase/migrations/`에 순번대로 적용. 최신은 **`0028_vectors_to_qdrant.sql`**:
-pgvector 컬럼(`file_chunks.embedding`·`art_assets.embedding`)을 nullable로, HNSW 인덱스와
-검색 RPC(`search_file_chunks`·`search_art_assets`)를 제거한다.
-
-> ⚠️ `0028`은 검색 RPC를 삭제하므로 **반드시 Upstage/Qdrant 백엔드 신버전과 함께** 적용한다.
-> 구버전 백엔드는 이 마이그레이션 이후 아트/RAG 검색이 실패한다.
-
----
-
-## 검증 (스모크)
-
-```bash
-# 백엔드 컴파일/임포트
-cd backend && python -m compileall -q app scripts && python -c "from app.main import app; print('ok')"
-
-# 프론트 타입/빌드
+# 프론트 타입 + 빌드 스모크
 cd frontend && npx tsc --noEmit && npm run build
-
-# 검색 스모크 예시 (질의 임베딩 → Qdrant)
-#   "달의 위상은 왜 변해?"  → EBS "달의 위상 변화"
-#   "광합성이 뭐야?"        → ART  photosynthesis
-#   무관한 질의             → 임계(≈0.35) 미달로 추천 노드 미생성
 ```
 
-Qdrant 코사인 임계는 `retrieve_ebs_min_score` / `retrieve_art_min_score`(기본 0.35),
-개념 근접 배치 임계는 프론트 `NEAR_EMBED_THRESHOLD`(0.5)로 조정한다.
+두 가지는 CI(`.github/workflows/ci.yml`)에서도 돌지만, **PR 올리기 전에 로컬에서
+먼저 통과시킨다.**
 
 ---
 
-## 참고
+## 데이터베이스
 
-- 자세한 백엔드 엔드포인트 목록: `backend/README.md`
-- 이 이전 작업의 설계 배경/결정: `~/.claude/plans/nodi-nodi-figma-temporal-reddy.md`
-- 대화 생성은 EXAONE, 임베딩·문서 파싱은 Upstage, 라벨/태그/네비게이터는 Gemini가 담당한다.
+마이그레이션은 `supabase/migrations/`에 순번대로 있고, **최신은 `0040_drop_ebs_art.sql`**
+(원격 적용 완료). 적용 이력은 `docs/TASKS.md`에 기록한다.
+
+새 마이그레이션을 추가할 때:
+
+1. `00NN_설명.sql`로 커밋한다 (적용은 하지 않는다).
+2. 튜너블(`app_settings`) 노브를 추가했다면 시드 마이그레이션도 함께 넣는다 —
+   안 그러면 admin 콘솔에 뜨지 않는다(D62).
+3. 오너에게 원격 적용을 요청하고, 적용되면 `docs/TASKS.md`에 날짜와 함께 기록한다.
+
+---
+
+## 컨벤션
+
+- 주석·docstring·커밋 메시지는 **한국어**, 제약·근거 위주.
+- 커밋 프리픽스 `[feat]:` / `[fix]:` / `[docs]:` / `[tune]:` / `[chore]:`
+- 설계 결정은 **D-번호**(D93, D97 …)로 코드 주석에 남긴다.
+- 스펙은 `docs/superpowers/specs/`, 구현 계획은 `docs/superpowers/plans/`.
+- `.env`·`qdrant_storage/`·`.claude/`는 커밋 금지(`.gitignore`).
+- **`main` 직접 작업 금지.** 작업 브랜치는 `dev`.
