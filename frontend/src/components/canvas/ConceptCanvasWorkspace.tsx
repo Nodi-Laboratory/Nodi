@@ -230,8 +230,13 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
         onToggleTree={() => setTreeOpen((v) => !v)}
       />
 
+      {/* D100: Welcome을 NoteCanvas(팬/줌 변환 평면) 밖으로 뺐다. 캔버스 좌표
+          left:240/top:130에 고정돼 있어 뷰포트 중앙이 아니었고, 좁은 화면에서는
+          우측으로 밀려 잘렸다(768px 실측). 카메라를 따라 움직일 이유도 없는
+          정적 인사말이다. */}
+      {concepts.length === 0 && !loading && <Welcome />}
+
       <NoteCanvas camera={camera} onCameraChange={setCamera}>
-        {concepts.length === 0 && !loading && <Welcome />}
         {concepts.map((c) => {
           // sim 좌표 우선, 아직 배치 전이면 기존 좌표 폴백.
           const p = positions.get(c.id);
@@ -298,17 +303,22 @@ function Welcome() {
     <div
       data-testid="welcome"
       style={{
+        // 뷰포트 중앙 정렬. 하단 바(약 112px)와 상단 바만큼 여백을 둬 시각
+        // 중심이 아래로 치우치지 않게 한다.
         position: "absolute",
-        left: 240,
-        top: 130,
-        width: 460,
+        inset: 0,
+        paddingTop: 64,
+        paddingBottom: 112,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
+        justifyContent: "center",
         textAlign: "center",
         gap: 10,
         pointerEvents: "none",
         userSelect: "none",
+        // 카드가 아직 없을 때만 뜨므로 겹칠 대상은 없지만, 상/하단 바보다는 아래.
+        zIndex: 1,
       }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
