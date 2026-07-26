@@ -115,8 +115,9 @@ Postgres · PostgREST · Auth · Storage · Realtime이 전부 로컬로 뜬다.
 | `student@nodi.local` | 학생 — 위 학급에 가입된 상태 |
 | `admin@nodi.local` | 관리자 |
 
-> 로컬은 **이메일/비밀번호 로그인**을 쓴다(Google OAuth 아님). 로컬에 OAuth
-> 클라이언트를 붙이는 대신 이 방식을 택했다 — `supabase/seed.sql` 주석 참조.
+> 인증은 **이메일/비밀번호**다(D99 — Google OAuth 제거). `/signup`에서 역할을
+> 골라 가입하고 `/login`으로 들어온다. 구글 로그인은 나중에 자체 리다이렉션으로
+> 다시 붙일 예정이다.
 
 | 명령 | 용도 |
 |---|---|
@@ -157,8 +158,9 @@ Studio(웹 콘솔): <http://127.0.0.1:54323> · 메일 확인: <http://127.0.0.1
   **세션 컨텍스트로 전문 주입**한다(D83~D85, 기본 예산 150K자).
 - **교과서 figure** — 교과서 PDF에서 도판을 추출해 비전 판정으로 캡션을 확정하고
   (D93), 학생 질의와 가까운 도판을 캔버스에 FigureNode로 띄운다(D95).
-- **인증/권한** — Supabase Google OAuth, 역할(student/teacher/admin),
-  개인(personal)·학급(class) 스코프, RLS로 접근 제어.
+- **인증/권한** — 이메일/비밀번호 자체 회원가입·로그인(D99), 역할
+  (student/teacher/admin), 개인(personal)·학급(class) 스코프, RLS로 접근 제어.
+  가입 시 고른 역할은 `student`·`teacher`만 허용되며 `admin`은 승격으로만 부여된다.
 
 ---
 
