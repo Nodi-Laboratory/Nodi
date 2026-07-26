@@ -462,7 +462,9 @@ async def parse_document_full(data: bytes, filename: str) -> tuple[str, list[dic
     md_parts: list[str] = []
     elements: list[dict] = []
     id_offset = 0  # 이전 조각까지의 누적 요소 수(전역 유일 id 오프셋)
-    for (start_page, _seg), payload in zip(ranges, payloads):
+    # strict=True — 위 gather가 순서·개수를 보존하므로 두 길이는 같아야 한다.
+    # 어긋나면 페이지 오프셋이 밀려 요소 page가 전부 틀어지므로 즉시 드러낸다.
+    for (start_page, _seg), payload in zip(ranges, payloads, strict=True):
         md = _extract_markdown(payload)
         if md:
             md_parts.append(md)

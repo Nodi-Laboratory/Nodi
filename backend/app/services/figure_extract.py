@@ -122,7 +122,11 @@ def extract_figures(elements: list[dict], top_k: int = 3) -> list[dict]:
 
     records: list[dict] = []
     for page, els in sorted(by_page.items()):
-        def cands(categories=None):
+        # els를 기본 인자로 묶어 현재 페이지 요소에 고정한다. 클로저로 두면
+        # 늦은 바인딩이라 호출 시점의 마지막 페이지를 보게 된다 — 지금은 같은
+        # 반복 안에서만 호출해 문제가 없지만, 나중에 이 함수를 밖으로 넘기는
+        # 순간 조용히 틀린 후보를 만든다.
+        def cands(categories=None, els=els):
             """categories=None이면 figure를 제외한 모든 카테고리
             (figure의 텍스트는 생성된 영어 설명이라 캡션 후보가 아님)."""
             return [

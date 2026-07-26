@@ -105,7 +105,10 @@ async def _search_figures(
             return_exceptions=True,
         )
         out: list[dict] = []
-        for row, url in zip(ranked, urls):
+        # strict=True — gather는 입력 순서·개수를 보존하므로 두 길이는 같아야
+        # 한다. 어긋나면 figure와 URL이 밀려 엉뚱한 도판이 붙으므로 조용히
+        # 짧은 쪽에서 끊지 말고 즉시 드러낸다.
+        for row, url in zip(ranked, urls, strict=True):
             if isinstance(url, BaseException) or not url:
                 continue  # url 없는 figure 노드 방지(D87)
             out.append(figures.figure_item(row, url, scores.get(str(row["id"]))))
