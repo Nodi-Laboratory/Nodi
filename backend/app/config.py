@@ -116,9 +116,16 @@ class Settings(BaseSettings):
     figure_batch_size: int = 8                    # figure_batch 잡 팬아웃 단위
     figure_signed_url_ttl_seconds: int = 21600    # 6h — 수업 시간 내 만료 실질 배제(D87)
     # --- figure 캡션 판정(EXAONE 비전, 플러그형 D88) — env: JUDGE_BASE_URL/JUDGE_MODEL/JUDGE_API_KEY ---
-    judge_base_url: str = "http://proxy.tta-gpu.gov-nhncloud.com:30099/v1"
+    # D97: base_url 기본값 제거(빈 문자열). 기존 기본값은 TTA 게이트웨이 30099를
+    # 가리켰으나 그 포트는 프론트엔드(Next.js 8080)로 용도가 바뀌었고 llama.cpp는
+    # 8081 내부 전용으로 이동했다(docs/DEPLOYMENT.md) — 즉 **기본값이 판정과
+    # 무관한 서비스를 가리키는 상태**였다. 키만 채운 신규 환경이 비전 요청을
+    # 엉뚱한 곳으로 보내는 사고를 막기 위해 비우고, 두 값을 모두 명시하게 한다.
+    judge_base_url: str = ""
     judge_model: str = "EXAONE-4.5-33B"
-    judge_api_key: str = ""                       # 미설정 → 판정 생략(위치기반 캡션 유지)
+    # D93: 판정은 필수 게이트다 — 미설정이면 교과서 업로드 자체가 503으로 거부된다
+    # (services/files.py). 판정 생략 폴백은 D88 시절 동작으로, 더 이상 없다.
+    judge_api_key: str = ""
 
     # --- App ---
     # Postgres role embedded in Supabase user JWTs (NOT the app role).
