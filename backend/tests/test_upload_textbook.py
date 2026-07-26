@@ -59,8 +59,12 @@ async def _fake_overlay():
 @pytest.fixture(autouse=True)
 def _judge_configured(monkeypatch):
     """D93: 교과서 업로드는 figure 판정(VLM) 설정이 필수 — 기본 테스트는 설정된
-    상태로 두고, 미설정 거부는 전용 테스트가 개별적으로 덮어쓴다."""
-    monkeypatch.setattr(F.figure_judge, "is_configured", lambda: True)
+    상태로 두고, 미설정 거부는 전용 테스트가 개별적으로 덮어쓴다.
+
+    D97: 게이트가 `missing_config()`(빠진 키 목록)를 보도록 바뀌었다 — 빈
+    리스트가 '전부 설정됨'이다.
+    """
+    monkeypatch.setattr(F.figure_judge, "missing_config", lambda: [])
 
 
 async def _upload(svc, user, name, *, space_kind="class", space_ref="c1", mime=None):
@@ -71,9 +75,9 @@ async def _upload(svc, user, name, *, space_kind="class", space_ref="c1", mime=N
 
 @pytest.mark.asyncio
 async def test_textbook_judge_unconfigured_rejected_503(monkeypatch):
-    """D93: JUDGE_API_KEY 미설정 → 교과서 업로드 503(저장·DB 쓰기 전 조기 거절)."""
+    """D93: 판정 미설정 → 교과서 업로드 503(저장·DB 쓰기 전 조기 거절)."""
     monkeypatch.setattr(F.app_settings, "get_overlay", _fake_overlay)
-    monkeypatch.setattr(F.figure_judge, "is_configured", lambda: False)
+    monkeypatch.setattr(F.figure_judge, "missing_config", lambda: ["JUDGE_API_KEY"])
     svc = _FakeService()
     with pytest.raises(HTTPException) as ei:
         await _upload(svc, _FakeUserClient(is_teacher=True), "book.pdf")
@@ -83,10 +87,27 @@ async def test_textbook_judge_unconfigured_rejected_503(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_textbook_503_detail_names_every_missing_key(monkeypatch):
+    """D97: 503 사유가 빠진 키를 전부 나열한다 — base_url 누락이 원인일 때
+    'JUDGE_API_KEY만 넣으면 되는 줄' 알고 헤매는 사고를 막는다."""
+    monkeypatch.setattr(F.app_settings, "get_overlay", _fake_overlay)
+    monkeypatch.setattr(
+        F.figure_judge, "missing_config", lambda: ["JUDGE_API_KEY", "JUDGE_BASE_URL"]
+    )
+    svc = _FakeService()
+    with pytest.raises(HTTPException) as ei:
+        await _upload(svc, _FakeUserClient(is_teacher=True), "book.pdf")
+    assert ei.value.status_code == 503
+    assert "JUDGE_API_KEY" in ei.value.detail
+    assert "JUDGE_BASE_URL" in ei.value.detail
+    assert svc.storage == [] and svc.inserted == []
+
+
+@pytest.mark.asyncio
 async def test_judge_unconfigured_other_kinds_unaffected(monkeypatch):
     """D93 게이트는 textbook 전용 — class_material 업로드는 판정 미설정과 무관."""
     monkeypatch.setattr(F.app_settings, "get_overlay", _fake_overlay)
-    monkeypatch.setattr(F.figure_judge, "is_configured", lambda: False)
+    monkeypatch.setattr(F.figure_judge, "missing_config", lambda: ["JUDGE_API_KEY"])
     svc = _FakeService()
     row = await F.upload_file(
         svc, _FakeUserClient(is_teacher=True), "t1", "class", "c1",

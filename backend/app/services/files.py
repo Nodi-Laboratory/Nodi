@@ -150,16 +150,20 @@ async def upload_file(
             detail="class_material/textbook requires space_kind='class'.",
         )
     # D93: 교과서 figure 캡션은 비전 판정이 확정한다(판정 필수 — 위치기반 매칭
-    # 제거). JUDGE_API_KEY 미설정이면 figure가 전부 임베딩 불가로 실패하므로
-    # 업로드 자체를 막는다(저장·DB 쓰기 전에 조기 거절).
-    if kind == "textbook" and not figure_judge.is_configured():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "교과서 업로드가 비활성화되어 있습니다 — figure 판정(VLM) 설정"
-                "(JUDGE_API_KEY)이 필요합니다."
-            ),
-        )
+    # 제거). 판정 설정이 없으면 figure가 전부 임베딩 불가로 실패하므로 업로드
+    # 자체를 막는다(저장·DB 쓰기 전에 조기 거절).
+    # D97: 빠진 키 이름을 그대로 돌려준다 — 과거 메시지는 JUDGE_API_KEY만
+    # 언급해서, base_url이 빠진 환경의 운영자가 원인을 못 찾았다.
+    if kind == "textbook":
+        missing = figure_judge.missing_config()
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "교과서 업로드가 비활성화되어 있습니다 — figure 판정(VLM) "
+                    f"설정이 필요합니다. 누락: {', '.join(missing)}"
+                ),
+            )
     # D83: 세션 연결은 user_upload 전용 — 학급 자료는 세션에 귀속되지 않는다.
     if session_id is not None and kind != "user_upload":
         raise HTTPException(

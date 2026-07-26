@@ -83,8 +83,18 @@ disown
 
 ```
 JUDGE_BASE_URL=http://localhost:8081/v1   # 로컬 llama.cpp — 8080은 프론트엔드가 씀
-JUDGE_API_KEY=rkd0520                      # llama-server --api-key와 일치해야 함
+JUDGE_MODEL=EXAONE-4.5-33B
+JUDGE_API_KEY=<llama-server --api-key와 동일한 값>
 ```
+
+> **D97 — 이제 세 값 모두 필수다.** `judge_base_url`의 config 기본값이 제거됐고
+> (과거 기본값은 게이트웨이 30099를 가리켰는데 그 포트는 프론트엔드로 넘어갔다),
+> 셋 중 하나라도 비면 교과서 업로드가 503으로 거부된다. 설정 상태는
+> `curl http://localhost:8000/health/config` 의 `judge` 블록으로 확인한다.
+
+> ⚠️ **키를 이 문서에 적지 말 것.** 실제 값은 VM의 `backend/.env`와
+> `/home/ubuntu/exaone4.5/run_server.sh`에만 둔다. (과거 이 문서에 평문으로
+> 적혀 있었고 git 히스토리에 남아 있다 — 협업자를 늘리기 전에 회전 권장.)
 
 > `.env` 수정은 `uvicorn --reload`의 파일 감시 대상이 아닐 수 있다(기본은 `.py` 위주).
 > 값이 실제로 반영됐는지 불확실하면 프로세스를 재기동해서 확실히 한다.
@@ -106,13 +116,18 @@ disown
 rkd0520 --mmproj models/mmproj-EXAONE-4.5-33B-BF16.gguf`(멀티모달 vision).
 
 33B 모델 로딩에 GPU 기준 약 5~10초 소요. 확인:
-`curl http://localhost:8081/v1/models -H "Authorization: Bearer rkd0520"`
+`curl http://localhost:8081/v1/models -H "Authorization: Bearer $JUDGE_API_KEY"`
 
 > **포트는 반드시 8081.** 8080은 프론트엔드 몫이다. 원래 기본은 8080이었고
 > `judge_base_url` config 기본값(`http://proxy.tta-gpu.gov-nhncloud.com:30099/v1`)도
 > 8080 기준이었는데, 프론트를 8080에 앉히면서 8081로 옮기고 `JUDGE_BASE_URL`을
 > 로컬 직결(`http://localhost:8081/v1`)로 오버라이드했다(원격 프록시 왕복 대신
 > 로컬 직결이라 지연시간도 더 좋아짐).
+>
+> **D97에서 그 config 기본값 자체를 제거했다** — 기본값이 프론트엔드로 용도가
+> 바뀐 포트를 계속 가리키고 있어서, `JUDGE_API_KEY`만 채운 신규 환경이 비전
+> 요청을 엉뚱한 서비스로 보내는 사고가 가능했다. 이제 `JUDGE_BASE_URL`을
+> 명시하지 않으면 교과서 업로드가 아예 거부된다(조용히 실패하지 않는다).
 
 ---
 

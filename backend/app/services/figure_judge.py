@@ -5,8 +5,9 @@
 selected_index=-1은 "해당 없음".
 
 판정 모델은 플러그형: config의 judge_base_url / judge_model / judge_api_key로
-교체 가능(기본값 TTA GPU 프록시의 EXAONE-4.5-33B). judge_api_key 미설정이면
-is_configured()가 False.
+교체 가능(OpenAI 호환 비전 엔드포인트면 무엇이든). **셋 중 하나라도 비어 있으면
+is_configured()가 False**이고, 교과서 업로드가 503으로 거부된다(D97 — 과거에는
+api_key 하나만 봐서 더미 키로 게이트가 열렸다). base_url에는 기본값이 없다.
 
 D93(사용자 결정 2026-07-18): 판정은 **게이트다** — 캡션은 판정이 확정하며
 (위치기반 매칭 제거), 미설정이면 교과서 업로드 자체가 거부되고(files.py),
@@ -135,9 +136,36 @@ def final_embed_text(record: dict, selected_index: int) -> str:
     return str(candidates[selected_index]).strip()[:8000]
 
 
+def missing_config() -> list[str]:
+    """판정 호출에 필요한데 비어 있는 설정 키 이름 목록 (없으면 빈 리스트).
+
+    D97: 진단용 — /health와 부팅 경고가 "무엇이" 빠졌는지 그대로 보여준다.
+    """
+    missing = []
+    if not settings.judge_api_key.strip():
+        missing.append("JUDGE_API_KEY")
+    if not settings.judge_base_url.strip():
+        missing.append("JUDGE_BASE_URL")
+    if not settings.judge_model.strip():
+        missing.append("JUDGE_MODEL")
+    return missing
+
+
 def is_configured() -> bool:
-    """판정 엔드포인트 키가 설정됐는지 — 비어 있으면 판정 생략 신호(False)."""
-    return bool(settings.judge_api_key)
+    """판정 엔드포인트가 호출 가능한 형태로 설정됐는지.
+
+    D97: 과거에는 ``bool(judge_api_key)`` 하나만 봤다. 그 결과 **아무 문자열이나
+    키 자리에 넣으면** files.py의 교과서 업로드 게이트가 열렸고, base_url이
+    비었거나 죽은 주소여도 업로드가 통과한 뒤 판정만 전량 실패했다 — figure
+    실패는 D88로 files.status와 격리돼 있어 교사 화면에는 'indexed'로 보이고,
+    회로차단(CIRCUIT_BREAK_THRESHOLD)까지 겹쳐 잡이 빨리 끝나므로 정상처럼
+    보이는 **조용한 전멸**이 된다. 세 값을 모두 요구해 게이트를 실질화한다.
+
+    도달성(네트워크)까지는 보지 않는다 — 부팅·업로드 경로에 외부 호출을 넣지
+    않는다는 기존 방침 유지. 도달성 확인은 운영자가 /health의 judge 블록과
+    부팅 경고 로그로 판단한다.
+    """
+    return not missing_config()
 
 
 async def _call_judge(

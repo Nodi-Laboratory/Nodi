@@ -31,9 +31,10 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
   `textbook_figures`에 적재(D86). **figure 캡션은 비전 판정이 확정한다**(D93,
   사용자 결정 2026-07-18): 후보는 bbox 중심 절대거리 top-3(위치기반 매칭 제거),
   판정이 고른 후보 **캡션 단독**이 임베딩 텍스트(heading·alt·enhanced 설명 제외
-  — D91 대체). 판정은 필수 게이트 — `JUDGE_API_KEY` 미설정이면 교과서 업로드
-  자체를 503 거부하고, 판정 실패(-1 포함) figure는 임베딩 없이 failed(검색
-  미노출, retry로 재판정 가능). 학생 질의와 유사한
+  — D91 대체). 판정은 필수 게이트 — `JUDGE_API_KEY`·`JUDGE_BASE_URL`·`JUDGE_MODEL`
+  중 **하나라도** 비면 교과서 업로드 자체를 503 거부하고(D97 — 과거엔 api_key만
+  검사해 더미 값으로 게이트가 열렸다. base_url 기본값도 제거), 판정 실패(-1 포함)
+  figure는 임베딩 없이 failed(검색 미노출, retry로 재판정 가능). 학생 질의와 유사한
   figure(거리 게이트 0.60)는 캔버스 FigureNode로 표시 — **다중 표시**(D95:
   top-3, 리프 id=`figure-{figureId}`로 세션 내 중복 제거·누적, 재수화는 전
   노드 figures를 figureId dedupe 후 전부 복원). 이미지는 백엔드 signed
@@ -105,14 +106,22 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
 
 ## 개발
 
-- 백엔드 테스트: `cd backend && python -m pytest tests/ -v` (venv: `backend/.venv`)
-- 로컬 실행 (README '로컬 실행' 참조):
+- 백엔드 의존성: **`cd backend && uv sync --group dev`** (`uv.lock` 기준 버전 고정).
+  `requirements.txt`는 하한만 있는 폴백 — 버전이 팀원마다 갈리므로 권장하지 않는다.
+- 백엔드 테스트: `cd backend && uv run pytest tests/ -v` (전부 mock — 키·네트워크 불필요)
+- 로컬 실행 (README '빠른 시작' 참조):
   1. `docker compose up -d qdrant` (대시보드 http://localhost:6333/dashboard)
-  2. `cd backend && uvicorn app.main:app --reload --port 8000` (`GET /health` 확인)
+  2. `cd backend && uv run uvicorn app.main:app --reload --port 8000`
   3. `cd frontend && npm run dev` (http://localhost:3000)
 - 프론트 타입/빌드 스모크: `cd frontend && npx tsc --noEmit && npm run build`
-- 환경 변수: 루트 `.env` (`backend/.env.example` 참고 — UPSTAGE_API_KEY, QDRANT_URL,
-  EXAONE_API_KEY, Supabase 키)
+- **환경 변수: `backend/.env`** (루트 `.env` 아님 — `config.py`의 `BACKEND_ENV`).
+  프론트는 `frontend/.env.local`. 각각 `.env.example`·`.env.local.example` 참고.
+  필수 4종: `SUPABASE_URL`·`SUPABASE_ANON_KEY`·`UPSTAGE_API_KEY`·`EXAONE_API_KEY`
+  (업로드까지 쓰려면 `SUPABASE_SERVICE_ROLE_KEY`).
+- **설정 자가진단**: `GET /health/config` — 무엇이 빠졌는지 `blocking`·`judge.missing`이
+  알려준다(D97, 비밀값 미노출). 같은 요약이 부팅 시 터미널에도 찍힌다.
+- **Supabase 프로젝트는 팀 공용이고 실데이터가 들어 있다** — 마이그레이션 원격
+  적용은 오너만, 파괴적 조작 금지(git과 달리 되돌릴 수 없다).
 
 ## 컨벤션
 
