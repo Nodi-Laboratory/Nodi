@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -48,7 +48,7 @@ _poll_lock = asyncio.Lock()
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ async def _recover_stale_jobs(svc: ServiceClient) -> int:
     awaits its jobs before returning) is never seen as stale.
     """
     cutoff = (
-        datetime.now(timezone.utc)
+        datetime.now(UTC)
         - timedelta(seconds=settings.embedding_stale_seconds)
     ).isoformat()
     stale = await svc.select(

@@ -8,8 +8,6 @@ D93(사용자 결정 2026-07-18): 위치기반 캡션 매칭(수평겹침·수�
 
 import base64
 
-import pytest
-
 from app.services import figure_extract as F
 
 

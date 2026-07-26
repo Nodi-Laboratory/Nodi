@@ -73,7 +73,7 @@ class UserClient:
         self._token = user_token
 
     @classmethod
-    def from_user(cls, user: Any) -> "UserClient":
+    def from_user(cls, user: Any) -> UserClient:
         return cls(user.token)
 
     def _headers(self, prefer: str | None = None) -> dict[str, str]:

@@ -3,7 +3,6 @@ import pytest
 from app.routers import chat as C
 from app.routers.chat import ChatStreamBody, RetrievedBody
 
-
 # ---------------------------------------------------------------------------
 # 카드 배치·좌표는 프론트 소유(d3-force) — 서버는 place/settle을 계산·전송하지 않는다.
 # 여기선 done-hook 격리(저장 실패해도 스트림/저장 완료 무영향)와 figures 저장

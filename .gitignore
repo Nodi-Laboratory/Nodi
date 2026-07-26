@@ -4,7 +4,12 @@
 # 환경 변수 / 비밀 키
 .env
 .env.*
+# 예시 템플릿만 예외 — 실제 키가 아니라 채우는 방법을 적은 파일이다.
+# `.env.*` 패턴이 `.env.local.example`까지 삼키므로 `*.example`로 열어 준다
+# (frontend/.gitignore도 같은 이유로 !.env.local.example을 두고 있다).
+!*.env.example
 !.env.example
+!.env.*.example
 
 # Python (backend)
 .venv/

@@ -37,6 +37,10 @@ jobs:
         # 락파일이 낡은 채 머지되는 걸 막는 게이트다.
         run: uv sync --group dev --frozen
 
+      - name: ruff (린트)
+        # 설정은 pyproject.toml [tool.ruff]. 도입 시점 전량 green.
+        run: uv run ruff check app tests
+
       - name: pytest
         run: uv run pytest tests/ -v
 
@@ -61,6 +65,9 @@ jobs:
 
       - name: 의존성 설치 (락파일 고정)
         run: npm ci
+
+      - name: 린트
+        run: npm run lint
 
       - name: 타입 체크
         run: npx tsc --noEmit

@@ -7,7 +7,7 @@ deferred to Stage 3b.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -101,7 +101,7 @@ async def put_setting(
             "key": key,
             "value": body.value,
             "updated_by": user.id,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         },
         on_conflict="key",
     )

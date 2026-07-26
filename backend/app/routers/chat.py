@@ -34,11 +34,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
+from ..config import get_settings
 from ..services import exaone, gemini, memory, rag, session_context
 from ..services import sessions as svc
 from ..services.supabase_client import UserClient
 from ..services.turn_log import TurnLog
-from ..config import get_settings
 
 logger = logging.getLogger("nodi.chat")
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -99,7 +99,10 @@ async def _patch_canvas_unified(
     if retrieved is None:
         return
     try:
-        rows = await client.select("nodes", {"id": f"eq.{node_id}", "select": "id,attachments", "limit": "1"})
+        rows = await client.select(
+            "nodes",
+            {"id": f"eq.{node_id}", "select": "id,attachments", "limit": "1"},
+        )
         if not rows:
             return
         attachments = rows[0].get("attachments") or {}
