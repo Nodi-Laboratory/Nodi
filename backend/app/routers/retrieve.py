@@ -14,6 +14,7 @@ best-effort: 어떤 실패든 200 (검색은 부가 기능). degraded=true는 �
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends
@@ -89,15 +90,25 @@ async def _search_figures(
             },
         )
         by_id = {str(r["id"]): r for r in rows}
+        # Qdrant 랭킹 유지; RLS/삭제로 못 읽는 id는 조용히 탈락.
+        ranked = [by_id[h["id"]] for h in hits if h["id"] in by_id]
+        if not ranked:
+            return []
+        # D98: signed URL 발급을 병렬화. 과거에는 히트마다 순차 await이라
+        # top_k(기본 3)만큼 Storage 서명 왕복이 직렬로 쌓였고, 이건 학생 질의의
+        # 응답 경로다(캔버스에 figure가 뜨기 전 대기). chat.py의 컨텍스트 빌더
+        # 병렬화(D66)와 같은 처리.
+        # return_exceptions: 한 건의 서명 실패가 나머지 figure까지 죽이지 않게
+        # — sign_figure_url은 이미 None을 반환하지만 방어적으로 유지한다.
+        urls = await asyncio.gather(
+            *(figures.sign_figure_url(row) for row in ranked),
+            return_exceptions=True,
+        )
         out: list[dict] = []
-        for h in hits:  # Qdrant 랭킹 유지; RLS/삭제로 못 읽는 id는 조용히 탈락
-            row = by_id.get(h["id"])
-            if not row:
-                continue
-            url = await figures.sign_figure_url(row)
-            if not url:  # url 없는 figure 노드 방지(D87)
-                continue
-            out.append(figures.figure_item(row, url, scores.get(h["id"])))
+        for row, url in zip(ranked, urls):
+            if isinstance(url, BaseException) or not url:
+                continue  # url 없는 figure 노드 방지(D87)
+            out.append(figures.figure_item(row, url, scores.get(str(row["id"]))))
         return out
     except Exception:  # noqa: BLE001 - figure 레그 실패는 figures:[]로만 강등
         logger.exception("figure 검색 실패 — figures 빈 목록으로 강등")
