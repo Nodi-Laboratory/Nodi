@@ -1,5 +1,5 @@
-import types
 import pytest
+
 from app.services import qdrant_store
 
 

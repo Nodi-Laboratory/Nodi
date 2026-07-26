@@ -5,11 +5,9 @@
 재사용하게 한다.
 """
 
-import pytest
 
 from app.services.exaone import extract_used_tags
 from app.services.gemini import _WRAP_TAGS, compose_system_structured
-
 
 # --- extract_used_tags -----------------------------------------------------
 

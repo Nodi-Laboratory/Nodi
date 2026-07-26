@@ -11,13 +11,11 @@ figures 기록, (3) retrieved=None 회귀만 함수 단위로 검증한다.
 
 import pytest
 
-from app.routers import chat as C
 from app.routers.chat import (
     RetrievedBody,
     RetrievedFigureItem,
     _patch_canvas_unified,
 )
-
 
 # ---------------------------------------------------------------------------
 # RetrievedBody / figures 파싱
