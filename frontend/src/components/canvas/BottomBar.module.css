@@ -1,5 +1,12 @@
 /* Bottom bar (z-20). D96: 좌측 아바타+말풍선(꼬리) / 우측 입력줄+키보드 토글.
    nodiPulse/capFade keyframes come from the scoped theme (globals.css). */
+/* D100: 좁은 폭에서 말풍선이 무너지던 문제.
+   - .inputBar가 고정 width라 줄어들지 않아, 남는 압박을 말풍선이 전부 떠안았다.
+   - max-width에 vw를 쓰는데 vw는 **뷰포트 전체** 기준이라 좌측 사이드바 64px를
+     빼지 않는다. 실제 사용 가능 폭보다 크게 잡혀 계산이 어긋났다.
+   실측(768px 뷰포트): 말풍선이 123px로 찌그러져 "식물이 / 햇빛으로 / 음식을"
+   식으로 6줄이 됐다.
+   → 둘 다 flex로 함께 줄어들게 하고, 그래도 부족하면 wrap으로 위아래로 쌓는다. */
 .bar {
   position: absolute;
   left: 0;
@@ -7,9 +14,10 @@
   bottom: 0;
   min-height: 112px;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 20px;
+  gap: 12px 20px;
   padding: 0 28px 20px;
   z-index: 20;
   background: linear-gradient(rgba(253, 251, 242, 0), rgba(253, 251, 242, 0.92) 40%);
@@ -20,12 +28,14 @@
   pointer-events: auto;
   display: flex;
   align-items: center;
+  min-width: 0;
 }
 
 /* D96: 아바타 + 말풍선 묶음 — 노디가 말하는 형태. */
+/* flex-basis 320px: 이보다 좁아지면 아래 .right가 다음 줄로 내려간다. */
 .left {
   gap: 14px;
-  min-width: 0;
+  flex: 1 1 320px;
 }
 
 /* avatar 72x72 — conic-gradient ring + face, radar ping while streaming */
@@ -83,7 +93,11 @@
 /* D96: 말풍선 — 아바타 옆, 왼쪽으로 꼬리(노디가 말하는 형태). */
 .bubble {
   position: relative;
-  max-width: min(520px, 44vw);
+  /* vw 제거(D100) — 부모 flex가 이미 가용 폭을 제한한다. min-width로 바닥을
+     둬서, 더 좁아지면 줄바꿈으로 뭉개지는 대신 .right가 아래로 내려가게 한다. */
+  flex: 0 1 auto;
+  min-width: 180px;
+  max-width: 520px;
   background: #fff;
   border: 1px solid rgba(43, 38, 32, 0.08);
   border-radius: 18px;
@@ -142,8 +156,10 @@
 }
 
 /* D96: 우측 — 입력줄(열림 시) + 원형 키보드 토글. */
+/* flex-basis 380px: 입력줄이 쓸 만한 최소 폭. 좌우가 한 줄에 안 들어가면 wrap. */
 .right {
   gap: 10px;
+  flex: 1 1 380px;
   justify-content: flex-end;
 }
 
@@ -152,7 +168,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  width: min(560px, 46vw);
+  /* D100: 고정 width → flex. 고정이라 줄어들지 않아 말풍선만 찌그러졌다. */
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 560px;
   background: #fff;
   border: 1.5px solid var(--border, #f0e4c2);
   border-radius: 22px;

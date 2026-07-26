@@ -222,24 +222,22 @@ Host 헤더 유무와 무관하게 동일하게 라우팅됨을 확인함(순수
 
 ---
 
-## 6. Supabase Auth 설정 (외부 접속 origin마다 필수)
+## 6. Supabase Auth 설정
 
-Google OAuth 로그인은 origin이 바뀔 때마다 Supabase 프로젝트 설정을 갱신해야 한다.
-프로젝트: `yqxoxszshrtljcgspidr` →
-https://supabase.com/dashboard/project/yqxoxszshrtljcgspidr/auth/url-configuration
+**D99(2026-07-27)로 Google OAuth를 제거했다.** 인증은 이메일/비밀번호 자체
+회원가입·로그인이며, 리다이렉트 왕복이 없다. 따라서 **origin이 바뀌어도 Auth
+설정을 갱신할 필요가 없다** — 과거 이 절에 있던 Redirect URL 등록·Site URL
+폴백·PKCE 쿠키 충돌 대응은 전부 OAuth 전용 문제라 함께 사라졌다.
 
-- **Redirect URLs**에 사용하는 모든 origin의 콜백을 등록:
-  - `http://114.110.181.24:30099/**` (IP 접속용, 현재 주 경로)
-  - `http://proxy.tta-gpu.gov-nhncloud.com:30099/**` (도메인 접속 — HSTS 때문에
-    브라우저에서 도달 자체가 안 되지만, 등록은 해둬도 무방)
-  - `http://localhost:3000/**` (로컬 개발용, 유지)
-- **Site URL**은 반드시 **실제로 도달 가능한** 주소로 맞춰둘 것(현재
-  `http://114.110.181.24:30099`). GoTrue는 인증 에러(`flow_state_already_used` 등)
-  발생 시 요청받은 redirect_to가 아니라 **Site URL로 폴백**한다 — 옛날 값
-  (`http://localhost:3000`)으로 방치하면, 에러 시 사용자 자신의 PC의 localhost로
-  리다이렉트되어 브라우저가 응답 없는 요청을 무한 대기하게 된다(실제로 겪은 증상).
-- `flow_state_already_used`가 재현되면 대개 여러 번 재시도하며 쌓인 오래된 PKCE
-  쿠키 충돌이다 — 시크릿창(새 프로필)에서 한 번만 깨끗하게 재시도해서 확인.
+남는 항목:
+
+- **Site URL**은 비밀번호 재설정 메일 링크에 쓰이므로, 그 기능을 켤 때
+  실제 도달 가능한 주소로 맞춘다(현재 `http://114.110.181.24:30099`).
+- 이메일 확인(`enable_confirmations`)을 켜면 가입 직후 세션이 발급되지 않는다 —
+  프론트가 그 경우 `/login?signup=1`로 안내하도록 이미 분기돼 있다.
+
+구글 로그인은 나중에 **자체 리다이렉션**으로 다시 붙일 예정이다. 그때 이 절을
+새 방식 기준으로 다시 쓴다.
 
 ---
 

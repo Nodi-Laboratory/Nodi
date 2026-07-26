@@ -1,71 +1,115 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { AuthShell, AuthSwitch, Field } from "@/components/auth/AuthForm";
+import { roleHome } from "@/lib/roleHome";
 
 /**
- * 로그인 페이지.
- * "Google로 로그인" → Supabase OAuth(PKCE) → /auth/callback 으로 복귀.
- * 콜백 실패 시 ?error=... 로 돌아오며, useSearchParams로 렌더 시 파생값으로 표시.
- * (useSearchParams는 Suspense 경계가 필요하므로 LoginContent를 <Suspense>로 감쌈.)
+ * 로그인 — 이메일/비밀번호 (D99).
+ *
+ * Google OAuth를 제거했다. 과거에는 signInWithOAuth → /auth/callback에서
+ * role·onboarded를 읽어 분기했는데, 콜백 라우트가 사라졌으므로 그 분기를
+ * 여기서 한다: admin→/admin, teacher→/teacher, student→onboarded?/home:/onboarding.
+ *
+ * 온보딩 미완료 학생을 로그아웃시키던 과거 동작(e49d84d)은 없앴다. 그건 OAuth
+ * 왕복 중에는 온보딩 화면으로 보낼 방법이 마땅치 않아 생긴 우회였는데, 이제는
+ * 세션을 그대로 두고 /onboarding으로 보내면 된다.
  */
 function LoginContent() {
-  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const searchParams = useSearchParams();
-  const callbackError = searchParams.get("error");
+  // 회원가입 직후 이 화면으로 돌아오는 경우의 안내.
+  const notice = searchParams.get("signup") === "1" ? "가입이 완료되었습니다. 로그인해 주세요." : null;
 
-  const handleGoogleLogin = async () => {
+  const handleLogin = async () => {
     setError(null);
-    setLoading(true);
+    setPending(true);
+
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
     });
-    if (error) {
-      setError("로그인을 시작할 수 없습니다. 잠시 후 다시 시도해 주세요.");
-      setLoading(false);
+
+    if (signInError || !data.user) {
+      // Supabase는 계정 없음과 비밀번호 불일치를 같은 오류로 준다(계정 존재
+      // 여부 노출 방지). 문구도 구분하지 않는다.
+      setError("이메일 또는 비밀번호가 올바르지 않습니다.");
+      setPending(false);
+      return;
     }
-    // 성공 시 구글로 리다이렉트되므로 추가 처리 없음.
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role, onboarded")
+      .eq("id", data.user.id)
+      .single();
+
+    // 캐시에 이전 계정 흔적이 남지 않도록 비우고 이동한다.
+    queryClient.clear();
+    const destination =
+      profile?.role === "student" && !profile?.onboarded
+        ? "/onboarding"
+        : roleHome(profile?.role);
+    router.replace(destination);
+    router.refresh();
   };
 
   return (
-    <div className="rounded-2xl border border-accent-border/30 bg-bg-elevated p-8 text-center shadow-sm">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-xl font-bold text-accent-fg">
-        n
-      </div>
-      <h1 className="text-xl font-bold text-fg">nodi 로그인</h1>
-      <p className="mt-1 text-sm text-fg-muted">
-        AI 대화를 노드·트리로 시각화하는 서비스
-      </p>
-
-      <button
-        type="button"
-        onClick={handleGoogleLogin}
-        disabled={loading}
-        className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg border border-accent-border bg-white px-4 py-2.5 text-sm font-medium text-fg transition-colors hover:bg-bg disabled:opacity-60"
-      >
-        {loading ? "이동 중…" : "Google로 로그인"}
-      </button>
-
-      {(error || callbackError) && (
-        <p className="mt-3 text-xs text-danger">
-          {error ??
-            (callbackError === "not_onboarded"
-              ? "온보딩이 완료되지 않았습니다. 다시 로그인해 주세요."
-              : "로그인에 실패했습니다. 다시 시도해 주세요.")}
-        </p>
-      )}
-    </div>
+    <AuthShell
+      title="nodi 로그인"
+      subtitle="교실에서 함께 쓰는 학습 캔버스"
+      onSubmit={handleLogin}
+      submitLabel="로그인"
+      pendingLabel="로그인 중…"
+      pending={pending}
+      disabled={!email.trim() || !password}
+      error={error}
+      notice={error ? null : notice}
+      footer={
+        <AuthSwitch
+          prompt="계정이 없으신가요?"
+          href="/signup"
+          label="회원가입"
+        />
+      }
+    >
+      <Field
+        label="이메일"
+        type="email"
+        name="email"
+        autoComplete="email"
+        placeholder="you@example.com"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        required
+      />
+      <Field
+        label="비밀번호"
+        type="password"
+        name="password"
+        autoComplete="current-password"
+        placeholder="••••••••"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        required
+      />
+    </AuthShell>
   );
 }
 
 export default function LoginPage() {
+  // useSearchParams는 Suspense 경계가 필요하다.
   return (
     <Suspense fallback={null}>
       <LoginContent />

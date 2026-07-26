@@ -173,23 +173,15 @@ Manager가 사용자에게 묻고 멈추는 경우는 다음뿐이다:
   `npm run dev -- --port 3001`. 프론트는 `NEXT_PUBLIC_API_BASE_URL`이
   백엔드 포트를 가리키므로, 백엔드 포트를 바꿨다면 프론트 구동 시
   `NEXT_PUBLIC_API_BASE_URL=http://localhost:8001`을 함께 넘긴다.
-- **검증 계정** (2026-07-14 구축): 로그인은 Google OAuth(Supabase Auth)이며,
-  브라우저 자동화는 역할별 playwright-cli 세션 + 영속 프로필을 쓴다 —
-  프로필에 세션이 저장되어 재로그인 불필요. 역할별로 토큰이 분리된다.
-  - 선생님: `playwright-cli -s=teacher --profile ~/.nodi-e2e/teacher`
-    (bassykd@gmail.com "code dh", `profiles.role='teacher'`)
-  - 학생: `playwright-cli -s=student --profile ~/.nodi-e2e/student`
-    (bassrkd64@gmail.com "김동훈", `profiles.role='student'`)
-  - 무인 자동화 예비 학생 계정: `nodi-e2e-student@example.com` — 비밀번호는
-    `~/.nodi-e2e/.student-pw`(저장소 밖, 커밋 금지). Google 없이
-    `/auth/v1/token?grant_type=password`(anon 키)로 세션 JSON을 받아
-    @supabase/ssr 쿠키 포맷(`sb-<ref>-auth-token`, "base64-"+base64url,
-    3180자 초과 시 `.0/.1` 청킹)으로 주입한다 — 주입은
-    `playwright-cli run-code "async (page) => { await
-    page.context().addCookies([...]); }"` (외부 CDN 코드 로드 금지).
-  - 새 프로필에서 Google 로그인이 필요하면 `--headed`로 띄워 **사용자에게
-    수동 로그인을 요청**한다 — 자동화 브라우저는 격리 프로필이라 OS 크롬의
-    Google 세션·프로필이 없다 (2026-07-14 실측).
+- **검증 계정** (D99, 2026-07-27 갱신): 로그인은 **이메일/비밀번호**다
+  (Google OAuth 제거). 로컬 스택의 `supabase/seed.sql`이 역할별 계정을 만들어
+  두므로 브라우저 자동화도 그냥 로그인 폼을 채우면 된다 — 영속 프로필·쿠키
+  주입 같은 우회가 더는 필요 없다.
+  - 선생님 `teacher@nodi.local` / 학생 `student@nodi.local` /
+    관리자 `admin@nodi.local` — 비밀번호는 전부 `nodi-local-dev`
+  - 학급 "로컬 테스트 학급"(코드 `LOCAL1`)에 교사·학생이 이미 소속돼 있다.
+  - 토큰이 직접 필요하면 `POST /auth/v1/token?grant_type=password`(anon 키)로
+    받는다.
 
 ## 안전 규칙 (이 저장소 특수 사정)
 

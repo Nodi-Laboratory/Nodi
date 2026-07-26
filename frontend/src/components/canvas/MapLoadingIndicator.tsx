@@ -39,11 +39,12 @@ export default function MapLoadingIndicator({
         userSelect: "none",
       }}
     >
+      {/* D100: mixBlendMode:"multiply" 제거 — PNG가 진짜 투명 배경이 됐다. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src="/nodi-mascot.png"
         alt=""
-        style={{ height: 26, width: "auto", mixBlendMode: "multiply" }}
+        style={{ height: 26, width: "auto" }}
       />
       <span style={{ display: "inline-flex", alignItems: "center" }}>
         <i className="nodi-ldot" style={{ animationDelay: "0ms" }} />

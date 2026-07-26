@@ -8,6 +8,7 @@ import {
   Settings,
   Shield,
   School,
+  User,
   type LucideIcon,
 } from "lucide-react";
 import { useMyClasses, useProfile } from "@/lib/hooks";
@@ -38,7 +39,7 @@ function NavIcon({
       title={label}
       aria-label={label}
       aria-current={active ? "page" : undefined}
-      className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-colors ${
+      className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep ${
         active
           ? "bg-white/10 text-sidebar-fg-active"
           : "text-sidebar-fg hover:bg-white/5 hover:text-sidebar-fg-active"
@@ -52,17 +53,29 @@ function NavIcon({
   );
 }
 
+/**
+ * 공간 전환 배지 (D100).
+ *
+ * 과거에는 개인 공간이 "개인"(2글자), 학급이 이름 첫 글자(1글자)를 40px 원 안에
+ * 넣어 표기 규칙이 서로 달랐다 — 화면상 "개인"과 "로"가 나란히 놓여 잘린 것처럼
+ * 보였다. 이제 개인 공간은 **아이콘**, 학급은 **머리글자 1자**로 종류를 형태로
+ * 구분한다. 텍스트를 원 안에 우겨넣지 않으므로 이름 길이에 영향받지 않는다.
+ */
 function SpaceBadge({
   href,
   label,
-  short,
   active,
+  icon: Icon,
+  initial,
   onPrefetch,
 }: {
   href: string;
   label: string;
-  short: string;
   active: boolean;
+  /** 개인 공간처럼 고정 의미를 가진 공간은 아이콘으로 표시한다. */
+  icon?: LucideIcon;
+  /** 학급처럼 이름이 다양한 공간은 머리글자 1자로 표시한다. */
+  initial?: string;
   onPrefetch?: () => void;
 }) {
   return (
@@ -72,13 +85,13 @@ function SpaceBadge({
       title={`공간 전환: ${label}`}
       aria-label={`공간 전환: ${label}`}
       aria-current={active ? "page" : undefined}
-      className={`flex h-10 w-10 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
+      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep ${
         active
           ? "border-accent-deep bg-accent text-accent-fg"
           : "border-white/15 text-sidebar-fg hover:border-accent-deep hover:text-sidebar-fg-active"
       }`}
     >
-      {short}
+      {Icon ? <Icon size={18} strokeWidth={2} /> : initial}
     </Link>
   );
 }
@@ -133,11 +146,13 @@ export function IconSidebar() {
 
           <div className="my-1 h-px w-8 bg-white/10" />
 
-          <div className="flex flex-col items-center gap-2 overflow-y-auto">
+          {/* min-h-0가 있어야 flex 부모 안에서 실제로 스크롤된다 — 없으면 학급이
+              많을 때 목록이 사이드바 밖으로 밀려 하단 프로필 버튼을 가린다. */}
+          <div className="flex min-h-0 flex-col items-center gap-2 overflow-y-auto">
             <SpaceBadge
               href="/space/personal"
               label="개인 공간"
-              short="개인"
+              icon={User}
               active={isActive("/space/personal")}
               onPrefetch={() => prefetchSpace("personal")}
             />
@@ -149,7 +164,7 @@ export function IconSidebar() {
                   key={m.class_id}
                   href={href}
                   label={label}
-                  short={initials(m.classes?.name, "반")}
+                  initial={initials(m.classes?.name, "반")}
                   active={isActive(href)}
                   onPrefetch={() => prefetchSpace(m.class_id)}
                 />
