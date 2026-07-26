@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
+from .logging_setup import configure_logging, log_config_summary
 from .routers import (
     admin,
     chat,
@@ -33,6 +34,10 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # D97: nodi.* 로거에 핸들러를 붙이고(uvicorn 기본 설정은 안 붙인다) 통합
+    # 설정 상태를 1회 출력한다 — 빠진 값을 부팅 시점에 드러낸다.
+    configure_logging()
+    log_config_summary()
     # Startup: embedding worker (no-op if SUPABASE_SERVICE_ROLE_KEY is unset).
     # The shared PostgREST connection pools (D65, user + worker) are created
     # lazily on first use.
