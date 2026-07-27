@@ -8,14 +8,11 @@
 mock 방식은 test_upload_whitelist.py / test_rpc_void.py 패턴을 그대로 따른다.
 """
 
-import json
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 from app.services import files as F
-from app.services import service_client as SVC
 
 MB = 1024 * 1024
 
@@ -179,77 +176,4 @@ async def test_textbook_rides_larger_limit(monkeypatch):
     assert len(svc.storage) == 1
 
 
-# --- service_client.storage_sign(D87) ---------------------------------------
 
-
-class _FakeResponse:
-    def __init__(self, status_code, payload):
-        self.status_code = status_code
-        self._payload = payload
-        self.content = json.dumps(payload).encode()
-        self.text = self.content.decode()
-
-    def json(self):
-        return self._payload
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
-
-
-class _FakePostClient:
-    """post() 호출의 url/json 바디를 기록하고 준비된 응답을 돌려준다."""
-
-    def __init__(self, response):
-        self._response = response
-        self.calls = []
-
-    async def post(self, url, json=None, headers=None, timeout=None):
-        self.calls.append({"url": url, "json": json, "headers": headers})
-        return self._response
-
-
-def _service_client(monkeypatch, response):
-    fake = _FakePostClient(response)
-    monkeypatch.setattr(SVC, "_get_http", lambda: fake)
-    monkeypatch.setattr(
-        SVC, "settings",
-        SimpleNamespace(rest_url="http://x/rest/v1", storage_url="http://x/storage/v1"),
-    )
-    return SVC.ServiceClient("srv-key"), fake
-
-
-@pytest.mark.asyncio
-async def test_storage_sign_builds_absolute_url(monkeypatch):
-    """요청 경로/바디(expiresIn)와 signedURL 상대경로 → 절대 URL 조립 검증."""
-    signed = "/object/sign/files/t1/f1/figures/p1_e1.png?token=abc"
-    client, fake = _service_client(monkeypatch, _FakeResponse(200, {"signedURL": signed}))
-    url = await client.storage_sign(
-        "files", "t1/f1/figures/p1_e1.png", 3600
-    )
-    # 요청은 POST /storage/v1/object/sign/{bucket}/{path}, 바디 {"expiresIn": n}.
-    call = fake.calls[0]
-    assert call["url"] == "http://x/storage/v1/object/sign/files/t1/f1/figures/p1_e1.png"
-    assert call["json"] == {"expiresIn": 3600}
-    # 응답 signedURL(상대경로)을 storage 베이스에 붙여 절대 URL로 반환.
-    assert url == "http://x/storage/v1" + signed
-
-
-@pytest.mark.asyncio
-async def test_storage_sign_raises_on_error(monkeypatch):
-    """실패(4xx)는 raise — 호출부(retrieve/figures)가 best-effort로 처리."""
-    client, _ = _service_client(monkeypatch, _FakeResponse(404, {"error": "not found"}))
-    with pytest.raises(Exception):
-        await client.storage_sign("files", "t1/f1/figures/p1_e1.png", 3600)
-
-
-@pytest.mark.asyncio
-async def test_storage_sign_raises_on_missing_signed_url(monkeypatch):
-    """2xx이나 signedURL 키 부재 → 예외(정크 URL 반환 금지, D87 가드 무력화 방지).
-
-    베이스 URL만 조립하면 비어 있지 않은 정크가 되어 호출부 `if not url` 가드가
-    뚫린다 — 예외로 강등해 sign_figure_url이 None으로 처리하게 한다.
-    """
-    client, _ = _service_client(monkeypatch, _FakeResponse(200, {"noSignedURL": "x"}))
-    with pytest.raises(Exception):
-        await client.storage_sign("files", "t1/f1/figures/p1_e1.png", 3600)

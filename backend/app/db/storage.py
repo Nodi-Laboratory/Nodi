@@ -35,12 +35,20 @@ def _root() -> Path:
 
 
 def _resolve(bucket: str, path: str) -> Path:
-    """버킷·경로 → 실제 파일 경로. 루트 탈출은 거부한다."""
+    """버킷·경로 → 실제 파일 경로. **버킷 밖으로 나가면 거부한다.**
+
+    경계를 루트가 아니라 **버킷 디렉터리**로 잡는 이유: `u1/../../outside.txt`는
+    정규화하면 루트 안이지만 버킷 밖이다(실측). 루트만 검사하면 다른 버킷이나
+    루트 직하에 쓰는 경로가 열린다.
+    """
     root = _root()
-    target = (root / bucket / path).resolve()
-    # is_relative_to: 정규화 후에도 루트 하위인지. `..`·심볼릭 조작을 막는다.
-    if not target.is_relative_to(root):
-        raise StorageError(f"저장소 루트 밖 경로: {bucket}/{path}")
+    bucket_dir = (root / bucket).resolve()
+    if not bucket_dir.is_relative_to(root):
+        raise StorageError(f"저장소 루트 밖 버킷: {bucket!r}")
+    target = (bucket_dir / path).resolve()
+    # is_relative_to: 정규화 후에도 버킷 하위인지. `..`·심볼릭 조작을 막는다.
+    if not target.is_relative_to(bucket_dir):
+        raise StorageError(f"버킷 밖 경로: {bucket}/{path}")
     return target
 
 
