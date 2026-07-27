@@ -38,20 +38,27 @@ export function createConceptParser(
   let line = ""; // current line buffer
   let inConcept = false; // between cstart..cend
 
-  // Stream one body line as bstart / delta* / bend. **bold**(b) and
-  // ==highlight==(h) toggle and may overlap. A lone `*` is dropped; a lone `=`
-  // is emitted as a literal char (figma v1.1 behaviour).
-  function emitBody(type: "p", body: string): void {
-    emit({ t: "bstart", block: { type } });
+  // **bold**(b) / ==highlight==(h) 마커를 걷어내며 글자를 하나씩 흘린다. 두 마커는
+  // 겹칠 수 있다. 홀로 남은 `*`는 버리고, 홀로 남은 `=`는 글자로 내보낸다
+  // (figma v1.1 동작).
+  //
+  // 본문과 채팅 버블이 **같은 함수**를 쓴다 — 예전에는 본문만 마커를 처리하고
+  // `CHAT:` 줄은 글자를 그대로 흘려서, 모델이 버블에 강조를 쓰면
+  // `…과정을 알려줄게==광합성==이야.` 처럼 마커가 학생 화면에 그대로 찍혔다
+  // (2026-07-27 실측).
+  function scanMarkup(
+    text: string,
+    put: (ch: string, bold: boolean, hi: boolean) => void,
+  ): void {
     let bold = false;
     let star = false;
     let hi = false;
     let eq = false;
-    const put = (ch: string) => emit({ t: "delta", ch, b: bold, h: hi });
-    for (const ch of Array.from(body)) {
+    const emitChar = (ch: string) => put(ch, bold, hi);
+    for (const ch of Array.from(text)) {
       if (ch === "*") {
         if (eq) {
-          put("=");
+          emitChar("=");
           eq = false;
         }
         if (star) {
@@ -74,12 +81,18 @@ export function createConceptParser(
       }
       if (star) star = false;
       if (eq) {
-        put("=");
+        emitChar("=");
         eq = false;
       }
-      put(ch);
+      emitChar(ch);
     }
-    if (eq) put("=");
+    if (eq) emitChar("=");
+  }
+
+  // 본문 한 줄을 bstart / delta* / bend로 흘린다.
+  function emitBody(type: "p", body: string): void {
+    emit({ t: "bstart", block: { type } });
+    scanMarkup(body, (ch, b, h) => emit({ t: "delta", ch, b, h }));
     emit({ t: "bend" });
   }
 
@@ -98,9 +111,10 @@ export function createConceptParser(
     // chat line
     if (trimmed.startsWith(CHAT_PREFIX)) {
       emit({ t: "reply-start" });
-      for (const ch of Array.from(trimmed.slice(CHAT_PREFIX.length).trim())) {
-        emit({ t: "reply", ch });
-      }
+      // 버블은 평문이라 강조 플래그를 쓸 곳이 없다 — 마커만 걷어낸다.
+      scanMarkup(trimmed.slice(CHAT_PREFIX.length).trim(), (ch) =>
+        emit({ t: "reply", ch }),
+      );
       return;
     }
 
