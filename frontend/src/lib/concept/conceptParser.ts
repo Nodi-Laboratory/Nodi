@@ -18,6 +18,15 @@ const CONCEPT_RE = /^@concept:\s*(.*)$/;
 const RELATED_RE = /^@related:\s*(.*)$/;
 const CHAT_PREFIX = "CHAT:"; // 채팅 버블 라인 접두사
 
+// 종료 토큰의 변형을 흡수한다. 프롬프트는 `@end`를 요구하지만 모델이 `/end`나
+// `[end]`로 쓰고, 심지어 **본문 줄 끝에 붙여** 내보내는 일이 실제로 관측됐다
+// (2026-07-27 학생 세션: `- … 폭발을 일으켜요  /end`). 프롬프트만으로는 100%
+// 막을 수 없고, 못 알아보면 제어 토큰이 학생 화면의 카드에 그대로 찍힌다.
+const END_LINE_RE = /^[@/\\[(]?end[\])]?$/i;
+// 본문 꼬리에 붙은 경우. 접두 기호를 **필수**로 둬서 "…the end"처럼 end로 끝나는
+// 정상 문장을 잘라먹지 않는다.
+const END_TAIL_RE = /\s*[@/\\[(]end[\])]?\s*$/i;
+
 export interface ConceptParser {
   push(text: string): void;
   end(): void;
@@ -109,7 +118,7 @@ export function createConceptParser(
     }
 
     // concept end
-    if (trimmed === "@end") {
+    if (END_LINE_RE.test(trimmed)) {
       closeConcept();
       return;
     }
@@ -128,7 +137,12 @@ export function createConceptParser(
     // body line — only inside an open concept (silently skip before cstart)
     if (!inConcept) return;
     if (trimmed.startsWith("- ")) {
-      emitBody("p", trimmed.slice(2).trim());
+      const raw2 = trimmed.slice(2).trim();
+      const body = raw2.replace(END_TAIL_RE, "");
+      if (body) emitBody("p", body);
+      // 꼬리에 종료 토큰이 붙어 있었다면 그 자리가 개념의 끝이다. 뒤이어 진짜
+      // `@end`가 와도 closeConcept가 멱등이라 문제되지 않는다.
+      if (body !== raw2) closeConcept();
     }
     // unrecognised lines are silently skipped
   }
