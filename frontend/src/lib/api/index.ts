@@ -14,6 +14,11 @@
 
 export { ApiError, clearTokenCache } from "./_core";
 
+export type { AuthResult } from "./auth";
+export { signup, login, authErrorMessage } from "./auth";
+
+export { getProfile, listMyClasses, joinClass, updateDisplayName } from "./profile";
+
 export type { SpaceTarget } from "./sessions";
 export {
   spaceTargetFromId,
@@ -66,3 +71,4 @@ export {
   getAdminLogs,
   getAdminLogDetail,
 } from "./admin";
+

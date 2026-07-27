@@ -3,15 +3,18 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { createClient } from "@/lib/supabase/client";
+import { ApiError, joinClass, updateDisplayName } from "@/lib/api";
+import { clearToken } from "@/lib/session";
 import { useMyClasses, useProfile } from "@/lib/hooks";
 
 /**
  * 프로필 설정.
  * - 본인 profile 로드(display_name/email/role)
- * - 이름 변경(display_name update)
- * - 학급 추가(join_class_by_code 재사용) + 내 학급 목록
- * - 로그아웃(signOut)
+ * - 이름 변경
+ * - 학급 추가(학급 코드) + 내 학급 목록
+ * - 로그아웃
+ *
+ * D104: Supabase 클라이언트로 DB를 직접 조작하던 것을 백엔드 API로 옮겼다.
  */
 export default function ProfilePage() {
   const router = useRouter();
@@ -36,17 +39,12 @@ export default function ProfilePage() {
 
     setNameMsg(null);
     setSavingName(true);
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("profiles")
-      .update({ display_name: trimmed })
-      .eq("id", profile.id);
-
-    if (error) {
-      setNameMsg("이름을 저장하지 못했습니다.");
-    } else {
+    try {
+      await updateDisplayName(trimmed);
       setNameMsg("저장되었습니다.");
       await queryClient.invalidateQueries({ queryKey: ["profile"] });
+    } catch {
+      setNameMsg("이름을 저장하지 못했습니다.");
     }
     setSavingName(false);
   };
@@ -57,20 +55,15 @@ export default function ProfilePage() {
 
     setClassMsg(null);
     setJoining(true);
-    const supabase = createClient();
-    const { error } = await supabase.rpc("join_class_by_code", {
-      p_code: trimmed,
-    });
-
-    if (error) {
-      if (
-        error.code === "P0002" ||
-        error.message?.includes("invalid_join_code")
-      ) {
-        setClassMsg("유효하지 않은 학급 코드입니다.");
-      } else {
-        setClassMsg("학급 연결에 실패했습니다.");
-      }
+    try {
+      await joinClass(trimmed);
+    } catch (err) {
+      // 서버가 잘못된 코드를 404로 준다(join_class_by_code의 P0002 변환).
+      setClassMsg(
+        err instanceof ApiError && err.status === 404
+          ? "유효하지 않은 학급 코드입니다."
+          : "학급 연결에 실패했습니다.",
+      );
       setJoining(false);
       return;
     }
@@ -81,9 +74,8 @@ export default function ProfilePage() {
     setJoining(false);
   };
 
-  const handleLogout = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+  const handleLogout = () => {
+    clearToken();
     queryClient.clear();
     router.push("/login");
     router.refresh();

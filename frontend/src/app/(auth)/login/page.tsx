@@ -3,7 +3,8 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { createClient } from "@/lib/supabase/client";
+import { authErrorMessage, getProfile, login } from "@/lib/api";
+import { saveToken } from "@/lib/session";
 import { AuthShell, AuthSwitch, Field } from "@/components/auth/AuthForm";
 import { roleHome } from "@/lib/roleHome";
 
@@ -35,34 +36,28 @@ function LoginContent() {
     setError(null);
     setPending(true);
 
-    const supabase = createClient();
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    try {
+      const auth = await login(email.trim(), password);
+      // 토큰을 먼저 저장해야 이어지는 프로필 조회가 인증된다.
+      saveToken(auth.access_token);
+      // 캐시에 이전 계정 흔적이 남지 않도록 비우고 이동한다.
+      queryClient.clear();
 
-    if (signInError || !data.user) {
-      // Supabase는 계정 없음과 비밀번호 불일치를 같은 오류로 준다(계정 존재
-      // 여부 노출 방지). 문구도 구분하지 않는다.
-      setError("이메일 또는 비밀번호가 올바르지 않습니다.");
+      const profile = await getProfile();
+      const destination =
+        profile?.role === "student" && !profile?.onboarded
+          ? "/onboarding"
+          : roleHome(profile?.role);
+      router.replace(destination);
+      router.refresh();
+    } catch (err) {
+      // 서버가 계정 없음과 비밀번호 불일치를 같은 401로 준다(계정 존재 여부
+      // 노출 방지) — 프론트에서 다시 갈라 쓰지 않는다.
+      setError(
+        authErrorMessage(err, "이메일 또는 비밀번호가 올바르지 않습니다."),
+      );
       setPending(false);
-      return;
     }
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role, onboarded")
-      .eq("id", data.user.id)
-      .single();
-
-    // 캐시에 이전 계정 흔적이 남지 않도록 비우고 이동한다.
-    queryClient.clear();
-    const destination =
-      profile?.role === "student" && !profile?.onboarded
-        ? "/onboarding"
-        : roleHome(profile?.role);
-    router.replace(destination);
-    router.refresh();
   };
 
   return (
