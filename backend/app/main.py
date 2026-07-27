@@ -62,16 +62,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# D105: 도메인 라우터는 전부 `/api` 아래로 모은다.
+#
+# 예전에는 /home·/admin·/teacher가 프론트 **페이지 경로와 같은 이름**이었다.
+# 그래서 배포에서 공통 접두사 없이 리라이트할 수 없어, next.config가
+# `/api/:path* → :8000/:path*`로 접두사를 벗겨 넘기는 편법을 썼다. 그 결과
+# 로컬(:8000 직접)과 배포(/api 경유)의 경로가 갈라져, 한쪽에서만 나는 버그가
+# 생길 수 있었다. 접두사를 백엔드가 직접 가지면 양쪽이 같아진다.
+#
+# health는 일부러 접두사 밖에 둔다 — 인프라 liveness 프로브의 계약이고
+# (README `GET /health`), API 클라이언트가 아니라 운영자가 호출한다.
 app.include_router(health.router)
-app.include_router(me.router)
-app.include_router(sessions.router)
-app.include_router(nodes.router)
-app.include_router(chat.router)
-app.include_router(home.router)
-app.include_router(admin.router)
-app.include_router(files.router)
-app.include_router(teacher.router)
-app.include_router(retrieve.router)
+for _router in (
+    me.router,
+    sessions.router,
+    nodes.router,
+    chat.router,
+    home.router,
+    admin.router,
+    files.router,
+    teacher.router,
+    retrieve.router,
+):
+    app.include_router(_router, prefix="/api")
 
 
 @app.get("/", tags=["health"])

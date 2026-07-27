@@ -170,10 +170,10 @@ disown -a
 ### `frontend/.env.local` (신규 생성, gitignore 대상)
 
 ```
-NEXT_PUBLIC_SUPABASE_URL=https://yqxoxszshrtljcgspidr.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 NEXT_PUBLIC_API_BASE_URL=/api
 ```
+
+(D104로 Supabase 값 2종은 사라졌다 — 프론트에 실을 자격증명이 없다.)
 
 `NEXT_PUBLIC_API_BASE_URL`이 절대 URL(`http://localhost:8000`)이 아니라 **상대 경로
 `/api`**인 이유: 외부에서 브라우저가 직접 붙는 origin은 오직 8080(→30099) 하나뿐이라,
@@ -185,13 +185,19 @@ NEXT_PUBLIC_API_BASE_URL=/api
 
 ```ts
 async rewrites() {
-  return [{ source: "/api/:path*", destination: "http://localhost:8000/:path*" }];
+  return [{ source: "/api/:path*", destination: "http://localhost:8000/api/:path*" }];
 }
 ```
 
-백엔드 라우터 prefix(`/home`, `/admin`, `/teacher`)가 프론트 페이지 경로와 그대로
-겹치기 때문에, 공통 접두사 없이 직접 리라이트할 수 없다 — `/api` 네임스페이스로
-분리해서 충돌을 피했다.
+D105: 백엔드 도메인 라우터가 **직접 `/api` 접두사를 가진다.** 그래서 rewrite는
+접두사를 벗기지 않고 그대로 넘긴다 — 로컬(`:8000/api/...`)과 배포(`/api/...`)의
+경로가 같아져, 한쪽에서만 나는 경로 버그가 사라진다.
+
+예전에는 백엔드 prefix(`/home`·`/admin`·`/teacher`)가 프론트 페이지 경로와 겹쳐
+여기서 `/api`를 떼고 넘겨야 했다. 그 편법이 경로 차이의 원인이었다.
+
+`/health`는 접두사 밖에 남겨 뒀다 — 인프라 liveness 프로브의 계약이라
+API 클라이언트가 아니라 운영자가 백엔드에 직접 호출한다.
 
 ---
 
