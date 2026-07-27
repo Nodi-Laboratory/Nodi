@@ -4,28 +4,12 @@
 > 무한 캔버스 위에 주제별로 묶어 배치한다. 선생님이 올린 수업 자료·교과서를
 > 근거로 답한다.
 
-Next.js(App Router) · FastAPI · Supabase(Postgres/RLS/Auth/Storage) ·
+Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
 **Qdrant**(벡터 4096d) · **Upstage**(임베딩 + 문서 파싱) · **EXAONE**(대화 생성).
 
 - 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](CLAUDE.md)** ← 이 저장소의 규범 문서
 - 작업 체계: [`docs/TASKS.md`](docs/TASKS.md) · [`docs/AGENTS.md`](docs/AGENTS.md) · [`docs/PROCESS.md`](docs/PROCESS.md)
-- 배포(클라우드 VM): [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
-
----
-
-## ⚠️ 합류 전에 반드시 읽을 것
-
-**개발은 로컬 DB에서 한다.** 원격 Supabase 프로젝트에는 실제 사용 데이터가 들어
-있고 팀 전체가 공유하므로, 개발 중 원격에 붙지 않는다 (→ [로컬 DB](#로컬-db)).
-
-원격에 붙어야 할 때의 규칙:
-
-- **마이그레이션 원격 적용은 저장소 오너 한 사람만 한다.** 새 마이그레이션 SQL은
-  커밋만 하고, 적용은 오너에게 요청한다 (적용 이력은 `docs/TASKS.md`에 기록).
-- **테스트 데이터를 지울 때 남의 것을 지우지 않는지 확인한다.** git과 달리
-  되돌릴 수 없다.
-- 백엔드 테스트 스위트(`pytest`)는 전부 mock이라 어느 DB에도 닿지 않는다 —
-  마음껏 돌려도 된다.
+- 배포: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 
 ---
 
@@ -35,15 +19,36 @@ Next.js(App Router) · FastAPI · Supabase(Postgres/RLS/Auth/Storage) ·
 
 - **Node.js 20+** / npm
 - **Python 3.11+** (권장 3.12)
-- **Docker** — Qdrant 컨테이너용
-- **[uv](https://docs.astral.sh/uv/)** — 파이썬 의존성 관리 (`pip install uv` 또는 `winget install astral-sh.uv`)
-- 키: Supabase 프로젝트 접근, Upstage API 키, EXAONE(Friendli) 키 → 오너에게 요청
+- **Docker** — Postgres·Qdrant 컨테이너용
+- **[uv](https://docs.astral.sh/uv/)** — 파이썬 의존성 관리 (`pip install uv`)
+- 키: Upstage API 키, EXAONE(Friendli) 키 → 오너에게 요청
 
-### 1) 환경 변수
+> 외부 서비스 의존은 **AI API 두 개뿐**이다(EXAONE·Upstage). 데이터·인증·파일은
+> 전부 로컬에서 돈다.
+
+### 1) 인프라
 
 ```bash
-cp backend/.env.example        backend/.env           # 백엔드
-cp frontend/.env.local.example frontend/.env.local    # 프론트엔드
+docker compose up -d      # postgres(5433) + qdrant(6333)
+```
+
+`db/`의 SQL이 이름순으로 자동 적용된다(**최초 1회, 빈 볼륨일 때만**):
+
+| 파일 | 내용 |
+|---|---|
+| `00_bootstrap.sql` | `auth.uid()` · `public.users` · 역할(`nodi_app`/`nodi_worker`) |
+| `01_schema.sql` | 테이블 11 · RLS 정책 32 · 함수 19 |
+| `02_triggers.sql` | 가입 시 프로필 자동 생성 |
+| `03_app_settings.sql` | admin 튜너블 기본값 11종 |
+| `04_seed.sql` | (계정을 넣지 않는다 — 아래 참조) |
+
+전부 다시 적용하려면 `docker compose down -v && docker compose up -d`.
+
+### 2) 환경 변수
+
+```bash
+cp backend/.env.example        backend/.env
+cp frontend/.env.local.example frontend/.env.local
 ```
 
 ```powershell
@@ -52,82 +57,41 @@ copy backend\.env.example        backend\.env
 copy frontend\.env.local.example frontend\.env.local
 ```
 
-각 파일의 주석을 따라 값을 채운다. 필수는 4개 —
-`SUPABASE_URL` · `SUPABASE_ANON_KEY` · `UPSTAGE_API_KEY` · `EXAONE_API_KEY`.
-(업로드까지 쓰려면 `SUPABASE_SERVICE_ROLE_KEY`도 필요.)
+백엔드 필수 3종 — `DATABASE_URL` · `DATABASE_WORKER_URL` · `JWT_SECRET`
+(+ AI 키 `UPSTAGE_API_KEY`·`EXAONE_API_KEY`). 프론트는 `NEXT_PUBLIC_API_BASE_URL`
+하나뿐이다.
 
 > **⚠️ `.env` 위치**: 백엔드는 **`backend/.env`**를 읽는다 (저장소 루트 아님 —
 > `backend/app/config.py`의 `BACKEND_ENV`). 루트에 두면 값이 하나도 안 읽히는데
 > **서버는 정상 부팅하므로** 원인을 찾기 어렵다.
 
-### 2) 실행
+### 3) 실행
 
 ```bash
-# 0) Qdrant (벡터 저장소)
-docker compose up -d qdrant          # 대시보드: http://localhost:6333/dashboard
-
-# 1) 백엔드 (FastAPI)
 cd backend
-uv sync --group dev                  # uv.lock 기준으로 .venv 구성 (버전 고정)
+uv sync --group dev                  # uv.lock 기준(버전 고정)
 uv run uvicorn app.main:app --reload --port 8000
 
-# 2) 프론트엔드 (Next.js) — 다른 터미널
-cd frontend
-npm ci                               # package-lock.json 기준
+cd frontend                          # 다른 터미널
+npm ci
 npm run dev                          # http://localhost:3000
 ```
 
-<details>
-<summary>uv 없이 (폴백)</summary>
+### 4) 계정 만들기
+
+**시드 계정이 없다.** 빈 상태로 시작해 직접 만든다.
+
+- **학생·교사** — <http://localhost:3000/signup> 에서 역할을 골라 가입
+- **관리자** — 가입 폼으로는 얻을 수 없다(권한 상승 차단). CLI로 만든다:
 
 ```bash
 cd backend
-python -m venv .venv                              # Windows: py -3.12 -m venv .venv
-source .venv/bin/activate                         # Windows: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt pytest pytest-asyncio
-uvicorn app.main:app --reload --port 8000
+uv run python -m app.cli create-user admin@example.com <비밀번호> --role admin
+uv run python -m app.cli grant-admin someone@example.com   # 기존 계정 승격
+uv run python -m app.cli list-users
 ```
 
-`requirements.txt`는 하한(`>=`)만 있어 **팀원마다 다른 버전이 깔린다.**
-가급적 `uv sync`를 쓴다.
-</details>
-
-### 3) 로컬 DB
-
-```bash
-npx supabase start        # 최초 1회는 이미지 다운로드로 몇 분 걸린다
-npx supabase status       # API URL·키 확인
-```
-
-Postgres · PostgREST · Auth · Storage · Realtime이 전부 로컬로 뜬다.
-마이그레이션 `0001`~`0040`과 `supabase/seed.sql`이 자동 적용되므로
-**원격과 스키마가 동일하다** (테이블 11개 · RPC 18개).
-
-`backend/.env`의 Supabase 3종을 로컬 값으로 바꾼다 —
-`backend/.env.local.example`에 그대로 적혀 있다. 프론트는
-`frontend/.env.local`의 `NEXT_PUBLIC_SUPABASE_*`를 같은 값으로 맞춘다.
-
-**시드 계정** (비밀번호 전부 `nodi-local-dev`):
-
-| 계정 | 역할 |
-|---|---|
-| `teacher@nodi.local` | 교사 — 학급 "로컬 테스트 학급"(코드 `LOCAL1`) 담당 |
-| `student@nodi.local` | 학생 — 위 학급에 가입된 상태 |
-| `admin@nodi.local` | 관리자 |
-
-> 인증은 **이메일/비밀번호**다(D99 — Google OAuth 제거). `/signup`에서 역할을
-> 골라 가입하고 `/login`으로 들어온다. 구글 로그인은 나중에 자체 리다이렉션으로
-> 다시 붙일 예정이다.
-
-| 명령 | 용도 |
-|---|---|
-| `npx supabase stop` | 스택 정지 (데이터 유지) |
-| `npx supabase db reset` | 마이그레이션 + 시드 재적용 (데이터 초기화) |
-| `npx supabase status` | 키·URL 재확인 |
-
-Studio(웹 콘솔): <http://127.0.0.1:54323> · 메일 확인: <http://127.0.0.1:54324>
-
-### 4) 설정 확인
+### 5) 설정 확인
 
 서버를 띄운 뒤 **<http://localhost:8000/health/config>** 를 연다.
 
@@ -135,14 +99,11 @@ Studio(웹 콘솔): <http://127.0.0.1:54323> · 메일 확인: <http://127.0.0.1
 {
   "ready": true,        // ← 채팅 한 턴에 필요한 설정이 모두 갖춰짐
   "blocking": [],       // ← 비어 있어야 정상. 남아 있으면 그게 빠진 것
-  "judge": { "configured": false, "missing": ["JUDGE_API_KEY", "JUDGE_BASE_URL"] }
+  "auth": { "secret_is_default": true }   // 운영 전 JWT_SECRET 교체
 }
 ```
 
 비밀값은 노출되지 않는다(존재 여부만). 부팅 시 터미널에도 같은 요약이 찍힌다.
-
-`ready: false`면 `blocking` 배열이 원인을 정확히 알려준다. 대부분은
-`.env`를 루트에 만들었거나 `UPSTAGE_API_KEY`를 빠뜨린 경우다.
 
 ---
 
@@ -180,13 +141,13 @@ Studio(웹 콘솔): <http://127.0.0.1:54323> · 메일 확인: <http://127.0.0.1
   services/figure_*.py      교과서 도판 추출·비전 판정
   routers/retrieve.py       질의 임베딩 + Qdrant 검색
         │
-Supabase(관계형 + RLS + Auth + Storage)  ·  Qdrant(벡터만; RLS 없음 → 앱이 스코프 강제)
+Postgres(관계형 + RLS + 자체 인증 + 파일)  ·  Qdrant(벡터만; RLS 없음 → 앱이 스코프 강제)
 ```
 
 **불변식** (자세히는 [`CLAUDE.md`](CLAUDE.md)):
 
 - RAG는 채팅을 절대 막지 않는다 — 모든 컨텍스트 빌더는 best-effort.
-- Qdrant는 신뢰 경계가 아니다 — 청크 본문은 USER 스코프 Supabase로 재조회해
+- Qdrant는 신뢰 경계가 아니다 — 청크 본문은 USER 스코프 Postgres로 재조회해
   RLS가 재검증한다.
 - 임베딩은 비대칭 — 질의 `embedding-query`, 문서 `embedding-passage`. 혼용 금지.
 - 거리 규약 `distance = 1 - score`.
@@ -206,7 +167,7 @@ Nodi/
 │  ├─ app/services/          upstage·qdrant_store·exaone·embedding_worker·figure_* …
 │  ├─ app/routers/           retrieve·chat·files·nodes·sessions·teacher·admin·me …
 │  └─ tests/                 pytest (전부 mock — 외부 호출·원격 DB 없음)
-├─ supabase/migrations/      0001 … 0040
+├─ db/                       스키마·RLS 정책·함수 (00~04)
 ├─ docs/                     TASKS·AGENTS·PROCESS·DEPLOYMENT + superpowers/{specs,plans}
 └─ docker-compose.yml        qdrant 서비스
 ```
@@ -228,25 +189,44 @@ cd frontend && npx tsc --noEmit && npm run build
 
 ---
 
+
 ## 데이터베이스
 
-마이그레이션은 `supabase/migrations/`에 순번대로 있고, **최신은 `0040_drop_ebs_art.sql`**
-(원격 적용 완료). 적용 이력은 `docs/TASKS.md`에 기록한다.
-로컬에서는 `npx supabase db reset`으로 전량 재적용된다.
+스키마는 `db/`의 SQL 5개다. 마이그레이션 번호 대신 **현재 상태 하나**를 둔다
+(D104: 구 마이그레이션 0001~0042를 `pg_dump`로 스쿼시 — 절반이 생성 후 삭제된
+것이라 이력 가치보다 죽은 코드 비용이 컸다).
 
-> ⚠️ **API 롤 GRANT 부채**: 마이그레이션 어디에도 `anon`/`authenticated`/
-> `service_role`에 대한 명시적 `GRANT`가 없다. 원격 프로젝트가 Supabase의
-> **레거시 auto-expose 동작**에 기대고 있기 때문이다. 로컬은
-> `config.toml`의 `auto_expose_new_tables = true`로 같은 동작을 재현하지만,
-> **이 옵션은 2026-10-30에 제거된다.** 그전에 명시적 GRANT 마이그레이션을
-> 추가하거나 Supabase 자체를 걷어내야 한다.
+### 권한은 DB가 강제한다
 
-새 마이그레이션을 추가할 때:
+RLS 정책 32개 + 함수 19개가 "누가 무엇에 접근 가능한가"를 정의한다. **앱 코드가
+실수해도 남의 데이터가 나오지 않는다.**
 
-1. `00NN_설명.sql`로 커밋한다 (적용은 하지 않는다).
-2. 튜너블(`app_settings`) 노브를 추가했다면 시드 마이그레이션도 함께 넣는다 —
-   안 그러면 admin 콘솔에 뜨지 않는다(D62).
-3. 오너에게 원격 적용을 요청하고, 적용되면 `docs/TASKS.md`에 날짜와 함께 기록한다.
+동작 방식:
+
+```
+요청 → nodi_app 역할로 트랜잭션 시작
+     → SET LOCAL app.user_id = '<사용자 uuid>'
+     → auth.uid()가 그 값을 돌려주고, 정책들이 그걸로 판정
+```
+
+`SET LOCAL`은 트랜잭션 스코프라 커밋 시 사라진다 — 커넥션 풀에서 앞 요청의
+사용자 컨텍스트가 남는 사고가 구조적으로 불가능하다.
+
+| 역할 | RLS | 용도 |
+|---|---|---|
+| `nodi_app` | 적용 | 사용자 요청 (`UserClient`) |
+| `nodi_worker` | BYPASSRLS | 백그라운드 워커·인증 (`ServiceClient`) |
+
+`public.users`(비밀번호 해시)는 `nodi_app`에 **GRANT 자체를 주지 않는다** —
+정책보다 앞선 단계에서 막히므로 정책을 잘못 써도 해시가 노출되지 않는다.
+
+### 스키마를 바꿀 때
+
+`db/01_schema.sql`을 직접 수정하고 `docker compose down -v && up -d`로 재적용한다.
+운영 DB가 생기면 그때 마이그레이션 도구를 도입한다 — 지금은 로컬 전용이라
+파일 하나가 더 명확하다.
+
+> ⚠️ **`down -v`는 데이터를 지운다.** 계정도 함께 사라지므로 다시 만들어야 한다.
 
 ---
 
@@ -258,3 +238,4 @@ cd frontend && npx tsc --noEmit && npm run build
 - 스펙은 `docs/superpowers/specs/`, 구현 계획은 `docs/superpowers/plans/`.
 - `.env`·`qdrant_storage/`·`.claude/`는 커밋 금지(`.gitignore`).
 - **`main` 직접 작업 금지.** 작업 브랜치는 `dev`.
+
