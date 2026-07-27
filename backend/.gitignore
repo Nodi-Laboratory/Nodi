@@ -1,0 +1,6 @@
+
+# 커버리지 산출물 (D105) — pytest --cov 실행 흔적.
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
