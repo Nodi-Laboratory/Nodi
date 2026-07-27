@@ -128,10 +128,11 @@ def test_extract_figures_full_record():
     assert r["page"] == 1
     assert r["element_id"] == 10
     assert r["bbox"] == [0.1, 0.40, 0.5, 0.60]
-    # D93: caption·embed_text·match_kind는 판정 전이므로 빈 값 — 확정은 워커.
-    assert r["caption"] == ""
-    assert r["embed_text"] == ""
-    assert r["match_kind"] == ""
+    # D103: 파서가 caption으로 라벨한 요소가 가까이 있으므로 여기서 확정된다
+    # (비전 판정 불필요). 캡션이 곧 임베딩 텍스트다.
+    assert r["caption"] == "그림 1 고구려의 전성기"
+    assert r["embed_text"] == "그림 1 고구려의 전성기"
+    assert r["match_kind"] == "parsed"
     assert r["alt"] == "고구려 지도"
     assert r["description"] == "A map of Goguryeo"
     assert r["figure_type"] == "map"
@@ -205,6 +206,64 @@ def test_extract_figures_top_k_passthrough():
     c3 = _text_el(4, "heading1", (0.4, 0.80, 0.6, 0.82), "c3")
     recs = F.extract_figures([fig, c1, c2, c3], top_k=1)
     assert len(recs[0]["candidates"]) == 1
+
+
+# --- D103: 파서 라벨 캡션 -----------------------------------------------------
+
+
+def test_parsed_caption_prefers_labeled_over_nearer_paragraph():
+    """더 가까운 paragraph가 있어도 캡션은 **라벨된** 요소에서 고른다.
+
+    거리만 보면 paragraph가 이기지만, 그건 본문일 수 있다. 파서가 caption이라고
+    라벨한 것만 캡션으로 확정하는 것이 D103의 요지다.
+    """
+    fig = _fig_el(1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode())
+    near_para = _text_el(2, "paragraph", (0.1, 0.61, 0.5, 0.62), "본문 문장")
+    far_caption = _text_el(3, "caption", (0.1, 0.66, 0.5, 0.68), "그림 2 첨성대")
+    recs = F.extract_figures([fig, near_para, far_caption])
+    assert recs[0]["caption"] == "그림 2 첨성대"
+    assert recs[0]["match_kind"] == "parsed"
+    # candidates는 거리순 그대로 — 판정 폴백 경로가 쓰는 값이라 불변.
+    assert recs[0]["candidates"][0] == "본문 문장"
+
+
+def test_parsed_caption_accepts_footnote_category():
+    """footnote로 라벨된 요소도 캡션으로 인정한다(교과서마다 라벨이 갈린다)."""
+    fig = _fig_el(1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode())
+    note = _text_el(2, "footnote", (0.1, 0.62, 0.5, 0.64), "▲ 무구정광대다라니경")
+    recs = F.extract_figures([fig, note])
+    assert recs[0]["caption"] == "▲ 무구정광대다라니경"
+    assert recs[0]["match_kind"] == "parsed"
+
+
+def test_parsed_caption_ignored_when_too_far():
+    """페이지 반대편의 캡션 라벨은 이 figure의 것이 아니다 — 추측하지 않는다."""
+    fig = _fig_el(1, (0.05, 0.05, 0.25, 0.20), b64=base64.b64encode(_JPG).decode())
+    far = _text_el(2, "caption", (0.75, 0.85, 0.95, 0.92), "다른 그림의 캡션")
+    recs = F.extract_figures([fig, far])
+    assert recs[0]["caption"] == ""
+    assert recs[0]["match_kind"] == ""
+
+
+def test_parsed_caption_absent_leaves_judge_path():
+    """라벨이 없으면 빈 값으로 남겨 판정 경로(D93)가 candidates에서 고른다."""
+    fig = _fig_el(1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode())
+    para = _text_el(2, "paragraph", (0.1, 0.62, 0.5, 0.64), "캡션일 수도 아닐 수도")
+    recs = F.extract_figures([fig, para])
+    assert recs[0]["caption"] == ""
+    assert recs[0]["embed_text"] == ""
+    assert recs[0]["match_kind"] == ""
+    assert recs[0]["candidates"] == ["캡션일 수도 아닐 수도"]
+
+
+def test_parsed_caption_scoped_to_same_page():
+    """다른 페이지의 캡션 라벨은 쓰지 않는다."""
+    fig = _fig_el(
+        1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode(), page=1,
+    )
+    other = _text_el(2, "caption", (0.1, 0.62, 0.5, 0.64), "2페이지 캡션", page=2)
+    recs = F.extract_figures([fig, other])
+    assert recs[0]["caption"] == ""
 
 
 # ── text_from_elements ─────────────────────────────────────────────────
