@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
-from .supabase_client import UserClient
+from ..db.client import UserClient
 
 # Columns returned to the client for tree reconstruction.
 # `connections` (uuid[]) lists other-branch nodes imported into this node, so the
@@ -222,3 +222,4 @@ async def append_node(
             )
         return result[0]
     return result
+

@@ -17,8 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_role
+from ..db.client import UserClient
 from ..services import files as files_svc
-from ..services.supabase_client import UserClient
 
 router = APIRouter(prefix="/teacher", tags=["teacher"])
 
@@ -153,3 +153,4 @@ async def list_materials(
             "order": "created_at.desc",
         },
     )
+

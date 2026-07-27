@@ -21,10 +21,9 @@ from fastapi import (
 )
 
 from ..auth.deps import CurrentUser, get_current_user
+from ..db.client import UserClient, get_service_client
 from ..services import app_settings, figures
 from ..services import files as svc
-from ..services.service_client import get_service_client
-from ..services.supabase_client import UserClient
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -220,3 +219,4 @@ async def get_chunk_context(
             detail="Chunk not found or not accessible.",
         )
     return rows
+

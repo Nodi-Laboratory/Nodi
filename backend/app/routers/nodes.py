@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from ..auth.deps import CurrentUser, get_current_user
-from ..services.supabase_client import UserClient
+from ..db.client import UserClient
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 
@@ -168,3 +168,4 @@ async def remove_connection(
         {"p_node_id": node_id, "p_source_node_id": source_node_id},
     )
     return {"node_id": node_id, "connections": _connections(result)}
+

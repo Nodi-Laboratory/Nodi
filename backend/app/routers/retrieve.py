@@ -22,8 +22,8 @@ from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
 from ..config import get_settings
+from ..db.client import UserClient
 from ..services import app_settings, figures, qdrant_store, rag, sessions, upstage
-from ..services.supabase_client import UserClient
 
 logger = logging.getLogger("nodi.retrieve")
 router = APIRouter(prefix="/retrieve", tags=["retrieve"])
@@ -135,3 +135,4 @@ async def retrieve(
     # figure는 자체 try/except 레그 — 실패는 figures:[]로만 강등.
     figure_items = await _search_figures(user, body.session_id, vec)
     return {"figures": figure_items, "degraded": False}
+

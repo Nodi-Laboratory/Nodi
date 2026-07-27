@@ -17,9 +17,8 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from ..config import get_settings
+from ..db.client import ServiceClient, UserClient
 from . import app_settings, figure_judge, qdrant_store
-from .service_client import ServiceClient
-from .supabase_client import UserClient
 from .upstage import UPSTAGE_PARSE_MAX_BYTES
 
 settings = get_settings()
@@ -420,3 +419,4 @@ async def list_session_files(
             "order": "created_at.asc",
         },
     )
+

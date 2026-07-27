@@ -25,7 +25,7 @@ import logging
 from typing import Any
 
 from ..config import get_settings
-from .supabase_client import UserClient
+from ..db.client import UserClient
 
 logger = logging.getLogger("nodi.memory")
 settings = get_settings()
@@ -270,3 +270,4 @@ async def build_comparison_context(
     except Exception:  # noqa: BLE001 - comparison must never break chat
         logger.exception("Comparison context assembly failed")
         return None, [], []
+

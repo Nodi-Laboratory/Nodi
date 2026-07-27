@@ -20,10 +20,13 @@ from typing import Any
 import asyncpg
 from fastapi import HTTPException, status
 
+from ..config import get_settings
 from . import query as Q
+from . import storage
 from .pool import user_conn, worker_conn
 
 logger = logging.getLogger("nodi.db.client")
+settings = get_settings()
 
 # asyncpg는 jsonb를 str로 돌려준다. 서비스 코드는 dict/list를 기대하므로
 # 코덱을 걸어 자동 변환한다(커넥션마다 1회).
@@ -290,7 +293,40 @@ class UserClient(_BaseClient):
 
 
 class ServiceClient(_BaseClient):
-    """워커·인증 경로 — RLS를 우회한다(구 service_role)."""
+    """워커·인증 경로 — RLS를 우회한다(구 service_role).
+
+    파일 저장 메서드는 시그니처를 그대로 유지한다 — 호출부가
+    `svc.storage_upload(bucket, path, data, mime)` 형태로 쓴다.
+    """
 
     def _conn(self):
         return worker_conn()
+
+    # --- 파일 저장 (D104-5) -------------------------------------------------
+    async def storage_upload(
+        self, bucket: str, path: str, data: bytes, content_type: str
+    ) -> None:
+        await storage.upload(bucket, path, data, content_type)
+
+    async def storage_download(self, bucket: str, path: str) -> bytes:
+        return await storage.download(bucket, path)
+
+    async def storage_delete(self, bucket: str, path: str) -> None:
+        await storage.delete(bucket, path)
+
+    async def storage_sign(self, bucket: str, path: str, expires_in: int) -> str:
+        return await storage.sign(bucket, path, expires_in)
+
+
+def get_service_client() -> ServiceClient | None:
+    """워커 클라이언트. 워커 DSN이 없으면 None(구 service_role 부재와 동형).
+
+    호출부는 None을 "이 기능 비활성"으로 해석해 503을 낸다 — 그 계약을 유지한다.
+    """
+    if not settings.database_worker_url:
+        return None
+    return ServiceClient()
+
+
+def has_service_role() -> bool:
+    return get_service_client() is not None

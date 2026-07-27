@@ -23,7 +23,7 @@ import logging
 import time
 from typing import Any
 
-from .service_client import get_service_client
+from ..db.client import get_service_client
 
 logger = logging.getLogger("nodi.app_settings")
 
@@ -133,3 +133,4 @@ def as_str(overlay: dict[str, Any], key: str, default: str) -> str:
     if isinstance(raw, str):
         return raw.strip() or default
     return str(raw)
+

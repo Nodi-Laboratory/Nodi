@@ -35,9 +35,9 @@ from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
 from ..config import get_settings
+from ..db.client import UserClient
 from ..services import exaone, gemini, memory, rag, session_context
 from ..services import sessions as svc
-from ..services.supabase_client import UserClient
 from ..services.turn_log import TurnLog
 
 logger = logging.getLogger("nodi.chat")
@@ -314,3 +314,4 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+

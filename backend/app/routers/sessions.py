@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, get_current_user
+from ..db.client import UserClient
 from ..services import sessions as svc
-from ..services.supabase_client import UserClient
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -106,3 +106,4 @@ async def set_node_positions(
         client, session_id, [p.model_dump() for p in body.positions]
     )
     return {"updated": n}
+

@@ -13,8 +13,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 
 from ..auth.deps import CurrentUser, get_current_user
+from ..db.client import UserClient
 from ..services import home
-from ..services.supabase_client import UserClient
 
 router = APIRouter(prefix="/home", tags=["home"])
 
@@ -31,3 +31,4 @@ async def home_summary(
         "spaces": spaces,
         "recent_sessions": recents,
     }
+

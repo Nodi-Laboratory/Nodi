@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 from ..config import get_settings
-from .service_client import get_service_client
+from ..db.client import get_service_client
 
 logger = logging.getLogger("nodi.figures")
 settings = get_settings()
@@ -81,3 +81,4 @@ def figure_item(
     if score is not None:
         item["score"] = score
     return item
+

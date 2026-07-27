@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "pydantic>=2.7",
+    "pydantic[email]>=2.7",
     "pydantic-settings>=2.3",
     "python-jose[cryptography]>=3.3",
     "httpx>=0.27",
@@ -80,4 +80,5 @@ ignore = [
 # 테스트에서 `pytest.raises(Exception)`은 "어떤 예외든 난다"를 검증하는
 # 의도적 표현이다(호출부가 best-effort로 삼키는 경로).
 "tests/*" = ["B017"]
+
 

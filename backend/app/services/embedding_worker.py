@@ -30,6 +30,7 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ..config import get_settings
+from ..db.client import ServiceClient, get_service_client
 from . import (
     app_settings,
     embedding,
@@ -38,7 +39,6 @@ from . import (
     qdrant_store,
     upstage,
 )
-from .service_client import ServiceClient, get_service_client
 
 logger = logging.getLogger("nodi.embedding_worker")
 settings = get_settings()
@@ -1131,3 +1131,4 @@ def stop() -> None:
     if _scheduler is not None:
         _scheduler.shutdown(wait=False)
         _scheduler = None
+

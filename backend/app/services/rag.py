@@ -21,8 +21,8 @@ import logging
 from typing import Any
 
 from ..config import get_settings
+from ..db.client import UserClient
 from . import app_settings, embedding, qdrant_store
-from .supabase_client import UserClient
 
 logger = logging.getLogger("nodi.rag")
 settings = get_settings()
@@ -268,3 +268,4 @@ async def build_rag_context(
     except Exception:  # noqa: BLE001 - RAG must never break chat
         logger.exception("RAG retrieval failed")
         return None
+
