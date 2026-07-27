@@ -72,5 +72,10 @@ jobs:
       - name: 타입 체크
         run: npx tsc --noEmit
 
+      - name: 테스트 (vitest)
+        # D105: 프론트 테스트가 0개였다 — tsc·build만으로는 배치 좌표 오류나
+        # 파서의 제어 토큰 누출을 잡을 수 없다(둘 다 실제로 발생했다).
+        run: npm test
+
       - name: 빌드
         run: npm run build
