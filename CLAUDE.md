@@ -31,10 +31,13 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
   `textbook_figures`에 적재(D86). **figure 캡션은 비전 판정이 확정한다**(D93,
   사용자 결정 2026-07-18): 후보는 bbox 중심 절대거리 top-3(위치기반 매칭 제거),
   판정이 고른 후보 **캡션 단독**이 임베딩 텍스트(heading·alt·enhanced 설명 제외
-  — D91 대체). 판정은 필수 게이트 — `JUDGE_API_KEY`·`JUDGE_BASE_URL`·`JUDGE_MODEL`
-  중 **하나라도** 비면 교과서 업로드 자체를 503 거부하고(D97 — 과거엔 api_key만
-  검사해 더미 값으로 게이트가 열렸다. base_url 기본값도 제거), 판정 실패(-1 포함)
-  figure는 임베딩 없이 failed(검색 미노출, retry로 재판정 가능). 학생 질의와 유사한
+  — D91 대체). **D103: 캡션 확정은 2단 경로다** — ① 파서가 `caption`/`footnote`로
+  라벨한 요소가 가까이(정규화 거리 0.25 이내) 있으면 그대로 캡션
+  (`match_kind='parsed'`, 비전 판정 불필요), ② 라벨이 없으면 비전 판정이
+  candidates에서 고른다(폴백). **둘 다 없으면 캡션 없이 failed — 추측하지 않는다.**
+  판정 미설정은 더 이상 업로드를 막지 않고(D93 게이트 해제), 라벨 없는 figure만
+  처리되지 않는다. 판정 실패(-1 포함) figure는 임베딩 없이 failed(검색 미노출,
+  retry로 재판정 가능). 학생 질의와 유사한
   figure(거리 게이트 0.60)는 캔버스 FigureNode로 표시 — **다중 표시**(D95:
   top-3, 리프 id=`figure-{figureId}`로 세션 내 중복 제거·누적, 재수화는 전
   노드 figures를 figureId dedupe 후 전부 복원). 이미지는 백엔드 signed

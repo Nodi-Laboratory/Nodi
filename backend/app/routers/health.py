@@ -74,11 +74,18 @@ async def health_config() -> dict:
     judge_missing = figure_judge.missing_config()
     judge = {
         "configured": not judge_missing,
-        # 무엇이 빠졌는지 그대로 — 이 목록이 교과서 업로드 503 사유와 동일하다.
         "missing": judge_missing,
         "base_url": settings.judge_base_url or None,
         "model": settings.judge_model or None,
         "pipeline_enabled": settings.figure_pipeline_enabled,
+        # D103: 판정은 더 이상 교과서 업로드를 막지 않는다. 파서가 caption/
+        # footnote로 라벨한 figure는 판정 없이 처리되고, 판정은 라벨이 없는
+        # figure를 건지는 폴백이다. 미설정이면 그 figure만 캡션 없이 실패한다.
+        "role": "fallback",
+        "note": (
+            "미설정이어도 교과서 업로드는 가능하다. 파서가 캡션으로 라벨하지 "
+            "않은 도판만 처리되지 않는다."
+        ),
     }
 
     qdrant = {"url": settings.qdrant_url, "configured": bool(settings.qdrant_url)}

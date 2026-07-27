@@ -74,38 +74,28 @@ async def _upload(svc, user, name, *, space_kind="class", space_ref="c1", mime=N
 
 
 @pytest.mark.asyncio
-async def test_textbook_judge_unconfigured_rejected_503(monkeypatch):
-    """D93: 판정 미설정 → 교과서 업로드 503(저장·DB 쓰기 전 조기 거절)."""
-    monkeypatch.setattr(F.app_settings, "get_overlay", _fake_overlay)
-    monkeypatch.setattr(F.figure_judge, "missing_config", lambda: ["JUDGE_API_KEY"])
-    svc = _FakeService()
-    with pytest.raises(HTTPException) as ei:
-        await _upload(svc, _FakeUserClient(is_teacher=True), "book.pdf")
-    assert ei.value.status_code == 503
-    assert "JUDGE_API_KEY" in ei.value.detail
-    assert svc.storage == [] and svc.inserted == []
+async def test_textbook_upload_allowed_without_judge(monkeypatch):
+    """D103: 판정 미설정이어도 교과서 업로드는 통과한다.
 
-
-@pytest.mark.asyncio
-async def test_textbook_503_detail_names_every_missing_key(monkeypatch):
-    """D97: 503 사유가 빠진 키를 전부 나열한다 — base_url 누락이 원인일 때
-    'JUDGE_API_KEY만 넣으면 되는 줄' 알고 헤매는 사고를 막는다."""
+    캡션 확정에 파서 라벨(caption/footnote) 경로가 생겨서 판정이 유일한 출처가
+    아니다. 판정은 라벨 없는 figure를 건지는 폴백일 뿐이므로, 미설정을 이유로
+    업로드 자체를 막으면 멀쩡히 처리될 figure까지 잃는다. (D93에서는 판정이
+    유일한 출처라 503으로 막았다 — 그 전제가 깨졌다.)
+    """
     monkeypatch.setattr(F.app_settings, "get_overlay", _fake_overlay)
     monkeypatch.setattr(
         F.figure_judge, "missing_config", lambda: ["JUDGE_API_KEY", "JUDGE_BASE_URL"]
     )
     svc = _FakeService()
-    with pytest.raises(HTTPException) as ei:
-        await _upload(svc, _FakeUserClient(is_teacher=True), "book.pdf")
-    assert ei.value.status_code == 503
-    assert "JUDGE_API_KEY" in ei.value.detail
-    assert "JUDGE_BASE_URL" in ei.value.detail
-    assert svc.storage == [] and svc.inserted == []
+    row = await _upload(svc, _FakeUserClient(is_teacher=True), "book.pdf")
+    assert row["kind"] == "textbook"
+    assert row["status"] == "uploaded"
+    assert svc.storage and svc.inserted  # 저장·DB 쓰기까지 정상 진행
 
 
 @pytest.mark.asyncio
 async def test_judge_unconfigured_other_kinds_unaffected(monkeypatch):
-    """D93 게이트는 textbook 전용 — class_material 업로드는 판정 미설정과 무관."""
+    """class_material 업로드는 예나 지금이나 판정 설정과 무관하다."""
     monkeypatch.setattr(F.app_settings, "get_overlay", _fake_overlay)
     monkeypatch.setattr(F.figure_judge, "missing_config", lambda: ["JUDGE_API_KEY"])
     svc = _FakeService()

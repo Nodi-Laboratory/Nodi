@@ -149,21 +149,20 @@ async def upload_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class_material/textbook requires space_kind='class'.",
         )
-    # D93: 교과서 figure 캡션은 비전 판정이 확정한다(판정 필수 — 위치기반 매칭
-    # 제거). 판정 설정이 없으면 figure가 전부 임베딩 불가로 실패하므로 업로드
-    # 자체를 막는다(저장·DB 쓰기 전에 조기 거절).
-    # D97: 빠진 키 이름을 그대로 돌려준다 — 과거 메시지는 JUDGE_API_KEY만
-    # 언급해서, base_url이 빠진 환경의 운영자가 원인을 못 찾았다.
-    if kind == "textbook":
-        missing = figure_judge.missing_config()
-        if missing:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    "교과서 업로드가 비활성화되어 있습니다 — figure 판정(VLM) "
-                    f"설정이 필요합니다. 누락: {', '.join(missing)}"
-                ),
-            )
+    # D103: 판정(VLM) 미설정이 더 이상 업로드를 막지 않는다. 캡션 확정에 파서
+    # 라벨(caption/footnote) 경로가 생겨서, 판정 없이도 figure가 만들어질 수
+    # 있기 때문이다(figure_extract). 판정은 라벨이 없는 figure를 건지는
+    # 폴백으로 남는다 — 미설정이면 그 figure만 캡션 없이 실패한다.
+    #
+    # (D93에서는 판정이 유일한 캡션 출처라 업로드 자체를 503으로 막았다.
+    #  그 전제가 깨졌으므로 게이트도 함께 걷어낸다. 텍스트 RAG는 어느 경우에도
+    #  정상 동작하므로 교과서 업로드를 막을 이유가 없다.)
+    if kind == "textbook" and figure_judge.missing_config():
+        logger.info(
+            "교과서 업로드 — figure 판정 미설정(%s). 파서가 캡션으로 라벨한 "
+            "figure만 처리된다.",
+            ", ".join(figure_judge.missing_config()),
+        )
     # D83: 세션 연결은 user_upload 전용 — 학급 자료는 세션에 귀속되지 않는다.
     if session_id is not None and kind != "user_upload":
         raise HTTPException(

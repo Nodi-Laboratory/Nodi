@@ -702,50 +702,82 @@ async def _handle_figure_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
         return
     owner_id = files[0].get("owner_id")
 
-    # ── 판정(D93: 게이트) — 미설정이면 배치 전체 failed. 캡션은 판정이 확정하므로
-    #    판정 없이는 임베딩할 텍스트가 없다(업로드 게이트 files.py가 1차 방어).
-    if not figure_judge.is_configured():
-        for row in figures:
-            await svc.update(
-                "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
-            )
-        await _fail_job(
-            svc, job["id"], "judge 미설정 — 교과서 figure는 판정 필수(D93)"
+    # ── D103: 캡션 확정 2단 경로.
+    #    1순위 — 추출 시점에 파서 라벨(caption/footnote)로 이미 확정된 행
+    #            (match_kind="parsed"). 판정 호출 없이 그대로 임베딩한다.
+    #    2순위 — 남은 행은 비전 판정이 candidates에서 고른다(D93 경로).
+    #    판정이 미설정이면 2순위 행만 캡션 없이 failed — 1순위 행은 영향 없다.
+    #    (D93에서는 판정 미설정 시 배치 전체를 failed 처리했는데, 파싱 경로가
+    #     생기면서 그 전제가 깨졌다.)
+    to_embed: list[dict[str, Any]] = []  # {"row", "text", "patch"}
+    need_judge: list[dict[str, Any]] = []
+    for row in figures:
+        parsed_text = (row.get("embed_text") or "").strip()
+        if row.get("match_kind") == "parsed" and parsed_text:
+            to_embed.append({
+                "row": row,
+                "text": parsed_text,
+                # patch shape은 판정 경로와 동일해야 한다 — 아래 _mark가 네 키를
+                # 모두 읽는다. 파싱 경로는 판정을 안 거쳤으므로 판정 메타는 None.
+                "patch": {
+                    "id": row["id"],
+                    "selected_index": None,
+                    "judge_reason": None,
+                    "match_kind": "parsed",
+                    "embed_text": parsed_text,
+                },
+            })
+        else:
+            need_judge.append(row)
+
+    if need_judge and not figure_judge.is_configured():
+        # 판정 없이 캡션을 지어내지 않는다 — 해당 행만 failed로 남긴다.
+        logger.info(
+            "judge 미설정 — 파서 라벨 없는 figure %d건 스킵 (파싱 캡션 %d건은 진행) file=%s",
+            len(need_judge), len(to_embed), file_id,
         )
-        return
+        for row in need_judge:
+            await svc.update(
+                "textbook_figures", {"id": f"eq.{row['id']}"},
+                {"status": "failed", "match_kind": "no-caption"},
+            )
+        need_judge = []
 
     overlay = await app_settings.get_overlay()
-    try:
-        items = []
-        for row in figures:
-            ext = (row["image_path"].rsplit(".", 1)[-1] or "png").lower()
-            img = await svc.storage_download(
-                settings.storage_bucket, row["image_path"]
+    judgments: list[dict | None] = []
+    if need_judge:
+        try:
+            items = []
+            for row in need_judge:
+                ext = (row["image_path"].rsplit(".", 1)[-1] or "png").lower()
+                img = await svc.storage_download(
+                    settings.storage_bucket, row["image_path"]
+                )
+                items.append({
+                    "candidates": row.get("candidates") or [],
+                    "image_bytes": img,
+                    "ext": ext,
+                })
+            concurrency = app_settings.as_int(
+                overlay, "figure_judge_concurrency",
+                settings.figure_judge_concurrency, 1, 32,
             )
-            items.append({
-                "candidates": row.get("candidates") or [],
-                "image_bytes": img,
-                "ext": ext,
-            })
-        concurrency = app_settings.as_int(
-            overlay, "figure_judge_concurrency",
-            settings.figure_judge_concurrency, 1, 32,
-        )
-        judgments = await figure_judge.judge_all(items, concurrency=concurrency)
-    except Exception as exc:  # noqa: BLE001 - D93: 판정 준비 실패 = 배치 실패(재시도 상속)
-        logger.exception("figure 판정 실패 file=%s", file_id)
-        for row in figures:
-            await svc.update(
-                "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
-            )
-        await _fail_job(svc, job["id"], f"figure judge error: {exc}")
-        return
+            judgments = await figure_judge.judge_all(items, concurrency=concurrency)
+        except Exception as exc:  # noqa: BLE001 - 판정 준비 실패 = 배치 실패(재시도 상속)
+            logger.exception("figure 판정 실패 file=%s", file_id)
+            # D103: 판정이 필요했던 행만 failed. 파서 라벨로 이미 확정된 행은
+            # 판정과 무관하므로 같이 죽이지 않는다.
+            for row in need_judge:
+                await svc.update(
+                    "textbook_figures", {"id": f"eq.{row['id']}"}, {"status": "failed"}
+                )
+            await _fail_job(svc, job["id"], f"figure judge error: {exc}")
+            return
 
     # ── 판정 반영(D93): 선택된 행만 임베딩 대상. judge-error(개별 실패·회로차단)
     #    ·judge-none(-1 해당없음)은 캡션이 없으므로 임베딩 없이 failed 확정 —
     #    판정 메타는 남겨 재판정·디버그 근거로 쓴다.
-    to_embed: list[dict[str, Any]] = []  # {"row", "text", "patch"}
-    for i, row in enumerate(figures):
+    for i, row in enumerate(need_judge):
         j = judgments[i]
         if j is None:
             await svc.update(

@@ -360,8 +360,13 @@ async def test_figure_batch_judge_none_fails_rows_without_embedding(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_figure_batch_unconfigured_fails_batch(monkeypatch):
-    """⑤ 판정 미설정 → 행 전부 failed + 잡 failed(D93 게이트 — judge_all 미호출)."""
+async def test_figure_batch_unconfigured_skips_only_unlabeled(monkeypatch):
+    """⑤ D103: 판정 미설정 → 라벨 없는 행만 no-caption failed. 잡은 done.
+
+    D93에서는 판정이 유일한 캡션 출처라 배치 전체를 failed로 마감했다. D103에서
+    파서 라벨 경로가 생기면서, 판정 미설정은 "그 경로를 못 쓴다"일 뿐 배치 실패가
+    아니다 — 임베딩할 게 없으면 잡은 정상 마감(done)한다.
+    """
     called = {"judge": False}
 
     async def fake_judge_all(items, *, concurrency):
@@ -369,7 +374,7 @@ async def test_figure_batch_unconfigured_fails_batch(monkeypatch):
         return [None for _ in items]
 
     async def boom_embed(texts):
-        raise AssertionError("미설정이면 임베딩까지 가지 않는다(D93)")
+        raise AssertionError("캡션이 없으면 임베딩까지 가지 않는다")
 
     monkeypatch.setattr(W.figure_judge, "is_configured", lambda: False)
     monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
@@ -382,10 +387,87 @@ async def test_figure_batch_unconfigured_fails_batch(monkeypatch):
     failed = [patch for t, _, patch in svc.updates
               if t == "textbook_figures" and patch.get("status") == "failed"]
     assert len(failed) == 1
-    job_failed = [patch for t, _, patch in svc.updates
-                  if t == "jobs" and patch.get("status") == "failed"]
-    assert job_failed
+    assert failed[0]["match_kind"] == "no-caption"
+    job_done = [patch for t, _, patch in svc.updates
+                if t == "jobs" and patch.get("status") == "done"]
+    assert job_done, "임베딩할 캡션이 없을 뿐 배치는 실패가 아니다"
     assert all(t != "files" for t, _, _ in svc.updates)
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_parsed_caption_skips_judge(monkeypatch):
+    """D103 핵심: 파서 라벨로 확정된 행은 판정 없이 그대로 임베딩된다."""
+    captured = {}
+    called = {"judge": False}
+
+    async def fake_judge_all(items, *, concurrency):
+        called["judge"] = True
+        return [None for _ in items]
+
+    async def fake_embed(texts):
+        captured["texts"] = list(texts)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
+        captured["points"] = points
+
+    # 판정은 아예 미설정 — 그래도 파싱 캡션 행은 처리돼야 한다.
+    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: False)
+    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+
+    row = _fig_row("r0", 0)
+    row["match_kind"] = "parsed"
+    row["embed_text"] = "그림 3 첨성대"
+    svc = _FakeService(_tb_file(), figures=[row])
+    await W._handle_figure_batch(svc, _fig_batch_job())
+
+    assert called["judge"] is False, "파싱 캡션이면 판정을 호출하지 않는다"
+    assert captured["texts"] == ["그림 3 첨성대"], "캡션 단독 임베딩(D93 규약 유지)"
+    embedded = [patch for t, _, patch in svc.updates
+                if t == "textbook_figures" and patch.get("status") == "embedded"]
+    assert embedded and embedded[0]["match_kind"] == "parsed"
+    # 판정을 안 거쳤으므로 판정 메타는 비어 있다.
+    assert embedded[0]["selected_index"] is None
+    assert embedded[0]["judge_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_mixed_parsed_and_judge(monkeypatch):
+    """파싱 캡션 행과 판정 필요 행이 섞여도 각자 경로로 처리된다."""
+    captured = {}
+
+    async def fake_judge_all(items, *, concurrency):
+        # 판정 대상은 라벨 없는 1건뿐이어야 한다.
+        captured["judged"] = len(items)
+        return [{"selected_index": 0, "reason": "r"} for _ in items]
+
+    async def fake_embed(texts):
+        captured["texts"] = list(texts)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
+        captured["points"] = points
+
+    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+
+    parsed = _fig_row("r0", 0)
+    parsed["match_kind"] = "parsed"
+    parsed["embed_text"] = "파싱 캡션"
+    unlabeled = _fig_row("r1", 1, candidates=["판정 후보"])
+
+    svc = _FakeService(_tb_file(), figures=[parsed, unlabeled])
+    await W._handle_figure_batch(svc, _fig_batch_job())
+
+    assert captured["judged"] == 1, "라벨 있는 행은 판정에 넘기지 않는다"
+    assert set(captured["texts"]) == {"파싱 캡션", "판정 후보"}
+    kinds = {patch["match_kind"] for t, _, patch in svc.updates
+             if t == "textbook_figures" and patch.get("status") == "embedded"}
+    assert kinds == {"parsed", "judge"}
 
 
 @pytest.mark.asyncio

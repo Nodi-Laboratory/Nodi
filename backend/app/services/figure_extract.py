@@ -6,14 +6,23 @@
 전담한다(판정 필수, 임베딩은 선택 캡션만). heading(figure 위쪽 최근접
 heading1, 없으면 페이지 첫 heading1)은 표시·디버그용으로만 수집한다.
 
-실측 근거(labs): 파싱이 caption 카테고리를 paragraph로 흡수하고 img alt를
-항상 생성하지는 않는다. figure 요소의 텍스트(content)는 파서가 생성한 영어
-설명이라 캡션 후보가 아니다 — 후보군에서 figure 카테고리를 제외한다.
+D103(2026-07-27 사용자 결정): 캡션 확정을 **2단 경로**로 바꾼다.
+  1순위 — 파서가 caption/footnote로 **라벨한** 요소가 가까이 있으면 그대로 캡션
+          (match_kind="parsed"). 비전 판정 불필요.
+  2순위 — 라벨이 없으면 candidates를 비전 판정이 고른다(D93 경로, 선택적).
+  둘 다 없으면 캡션 없이 실패. **추측한 캡션은 어느 경로에서도 만들지 않는다.**
+
+실측 근거(labs): 파싱이 caption 카테고리를 paragraph로 흡수하는 교과서가 있고
+img alt를 항상 생성하지도 않는다 — 그래서 1순위가 항상 잡히지는 않는다. 다만
+라벨이 붙은 경우까지 버릴 이유는 없어 D103에서 1순위로 승격했다(비전 모델 없이
+동작하는 경로 확보). figure 요소의 텍스트(content)는 파서가 생성한 영어 설명이라
+캡션 후보가 아니다 — 후보군에서 figure 카테고리를 제외한다.
 
 DB·워커 계약: extract_figures가 반환하는 레코드 shape(키 목록)에 task4-6의
-워커가 의존한다 — 키를 임의로 바꾸지 않는다. caption·embed_text·match_kind는
-판정 전이므로 빈 값이다(워커 figure_batch가 판정 후 확정, D93). RAG 텍스트
-청크는 text_from_elements가 figure 설명을 배제해 오염을 막는다.
+워커가 의존한다 — 키를 임의로 바꾸지 않는다. caption·embed_text는 1순위에서
+잡히면 여기서 채워지고(match_kind="parsed"), 아니면 빈 값으로 두어 워커
+figure_batch의 판정이 확정한다. RAG 텍스트 청크는 text_from_elements가 figure
+설명을 배제해 오염을 막는다.
 """
 from __future__ import annotations
 
@@ -28,6 +37,18 @@ logger = logging.getLogger("nodi.figure_extract")
 
 # 후보군에서 제외할 카테고리(생성된 영어 설명이라 캡션 후보가 아님).
 FIGURE_CATEGORIES = {"figure"}
+
+# D103: 파서가 **명시적으로 캡션이라고 라벨한** 카테고리. 이 라벨이 붙은 요소는
+# 추측이 아니라 파서의 판단이므로, 비전 판정 없이 그대로 캡션으로 쓴다.
+# (labs 실측에서 caption이 paragraph로 흡수되는 교과서가 있었는데, 그건 "라벨이
+#  안 붙는" 경우다 — 붙은 경우까지 버릴 이유는 없다. 안 붙으면 아래 판정 경로로
+#  넘어가고, 판정도 없으면 그 figure는 캡션 없이 실패한다. 추측은 하지 않는다.)
+CAPTION_CATEGORIES = {"caption", "footnote"}
+
+# 캡션으로 인정할 최대 중심간 거리(페이지 정규화 좌표, 0~1).
+# 페이지 반대편에 있는 캡션 라벨은 이 figure의 것이 아니다. 2단 편집에서 옆
+# 단(段)까지 잡히지 않을 정도로 보수적으로 잡았다.
+MAX_CAPTION_DISTANCE = 0.25
 
 _ALT_RE = re.compile(r"alt=[\"']([^\"']*)[\"']", re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -95,6 +116,28 @@ def element_text(el: dict) -> str:
     return _TAG_RE.sub(" ", c.get("html") or "").strip()
 
 
+def nearest_caption(fig_box, captions) -> str:
+    """파서가 캡션으로 라벨한 요소 중 가장 가까운 것 (없거나 멀면 '') — D103.
+
+    captions는 [(bbox, text)] — CAPTION_CATEGORIES 요소만 걸러 넘긴다.
+    MAX_CAPTION_DISTANCE를 넘으면 이 figure의 캡션으로 보지 않는다. 거리만 보고
+    방향(아래쪽 우선)은 보지 않는다 — 교과서마다 캡션 위치가 달라 방향 규칙이
+    오히려 틀렸다는 것이 D93의 결론이었다.
+    """
+    fcx, fcy = _center(fig_box)
+    best: tuple[float, str] | None = None
+    for cap_box, text in captions:
+        if not text:
+            continue
+        ccx, ccy = _center(cap_box)
+        d = math.hypot(ccx - fcx, ccy - fcy)
+        if d > MAX_CAPTION_DISTANCE:
+            continue
+        if best is None or d < best[0]:
+            best = (d, text)
+    return best[1] if best else ""
+
+
 def _nearest_heading(fig_box, headings) -> str:
     """figure 위쪽 최근접 heading1, 없으면 페이지 첫 heading1 (없으면 '')."""
     above = [(fig_box[1] - b[3], t) for b, t in headings if b[3] <= fig_box[1] + 0.01]
@@ -139,6 +182,8 @@ def extract_figures(elements: list[dict], top_k: int = 3) -> list[dict]:
 
         headings = cands({"heading1"})
         all_texts = cands()
+        # D103: 파서가 캡션이라고 라벨한 요소만 따로 모은다(추측 아님).
+        labeled_captions = cands(CAPTION_CATEGORIES)
 
         for el in els:
             if el.get("category") not in FIGURE_CATEGORIES:
@@ -160,20 +205,25 @@ def extract_figures(elements: list[dict], top_k: int = 3) -> list[dict]:
             heading = _nearest_heading(fig_box, headings)
             candidates = rank_candidates(fig_box, all_texts, k=top_k)
 
-            # D93: caption·embed_text·match_kind는 판정 후 워커가 확정 —
-            # 추출 시점엔 빈 값(키는 워커·DB 계약이므로 유지).
+            # D103: 파서가 캡션으로 라벨한 요소가 가까이 있으면 그것을 캡션으로
+            # 확정한다(비전 판정 불필요). 없으면 D93대로 빈 값으로 두고 워커의
+            # 판정 경로가 candidates에서 고른다. 판정도 없으면 캡션 없이 실패 —
+            # 어느 경로든 **추측한 캡션은 만들지 않는다**.
+            parsed = nearest_caption(fig_box, labeled_captions)
+
             records.append({
                 "page": page,
                 "element_id": el["id"],
                 "bbox": list(fig_box),
-                "caption": "",
+                # 캡션이 곧 임베딩 텍스트다(D93: 캡션 단독).
+                "caption": parsed,
                 "alt": alt,
                 "description": description,
                 "figure_type": fig_type,
                 "heading": heading,
                 "candidates": candidates,
-                "embed_text": "",
-                "match_kind": "",
+                "embed_text": parsed,
+                "match_kind": "parsed" if parsed else "",
                 "image_bytes": raw,
                 "ext": ext,
             })
