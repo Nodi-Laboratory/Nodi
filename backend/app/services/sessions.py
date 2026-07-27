@@ -159,14 +159,6 @@ def ancestor_chain_nodes(
     return chain
 
 
-def assemble_history(
-    nodes: list[dict[str, Any]], parent_node_id: str | None
-) -> list[tuple[str, str]]:
-    """Ancestor chain (root -> ... -> parent) as ordered (question, answer)."""
-    chain = ancestor_chain_nodes(nodes, parent_node_id)
-    return [(n.get("question") or "", n.get("answer") or "") for n in chain]
-
-
 async def append_node(
     client: UserClient,
     session_id: str,

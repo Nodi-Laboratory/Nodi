@@ -125,12 +125,3 @@ def as_bool(overlay: dict[str, Any], key: str, default: bool) -> bool:
         return raw.strip().lower() in ("true", "1", "yes", "on")
     return default
 
-
-def as_str(overlay: dict[str, Any], key: str, default: str) -> str:
-    raw = overlay.get(key)
-    if raw is None:
-        return default
-    if isinstance(raw, str):
-        return raw.strip() or default
-    return str(raw)
-

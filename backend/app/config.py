@@ -80,7 +80,6 @@ class Settings(BaseSettings):
     # (D80: 구 Gemini 임베딩 모델·차원 설정 키 제거).
     # Chunks per embedding_batch child job; sub-batched per embed request.
     embedding_batch_size: int = 64
-    embedding_request_max_chunks: int = 32  # per embed_content call
     embedding_worker_concurrency: int = 3  # parallel jobs claimed per poll
     embedding_worker_poll_seconds: int = 5
     embedding_max_attempts: int = 3

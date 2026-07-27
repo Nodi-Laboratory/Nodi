@@ -356,7 +356,3 @@ def get_service_client() -> ServiceClient | None:
     if not settings.database_worker_url:
         return None
     return ServiceClient()
-
-
-def has_service_role() -> bool:
-    return get_service_client() is not None

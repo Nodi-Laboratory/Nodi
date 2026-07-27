@@ -4,14 +4,15 @@ Qdrant에는 RLS가 없다 — 신뢰 경계가 아니다. file_chunks 페이로
 {chunk_id, file_id, owner_id}만 저장(본문 없음)하고, 청크 텍스트는 검색 후
 USER 스코프 Supabase 클라이언트로 다시 조회해 RLS가 접근을 재검증한다.
 스코핑은 호출부가 file_ids 페이로드 필터로 강제한다.
-(ebs/art_assets 전역 카탈로그 컬렉션은 D94로 제거 — 기존 로컬 인스턴스의
-잔존 컬렉션은 무해하며, 정리는 수동 DELETE /collections/{name}.)
+컬렉션은 file_chunks(자료 청크)와 textbook_figures(교과서 도판) 둘뿐이다.
+ebs/art_assets는 D94, canvas_cards는 D105로 제거됐다 — 카드 좌표·제목을
+벡터로 들고 있던 컬렉션인데, 배치가 프론트 d3-force로 넘어가면서 쓰는 쪽이
+사라졌다.
 """
 
 from __future__ import annotations
 
 import logging
-import uuid
 
 from qdrant_client import AsyncQdrantClient, models
 
@@ -22,7 +23,6 @@ logger = logging.getLogger("nodi.qdrant")
 settings = get_settings()
 
 COL_FILE_CHUNKS = "file_chunks"
-COL_CANVAS_CARDS = "canvas_cards"
 # 교과서 figure 임베딩 컬렉션(TASK 4, D86). file_chunks와 동형(4096d/Cosine) —
 # figure 캡션·description 임베딩을 저장하고, file_id 페이로드 필터로 스코핑한다.
 # 청크 본문과 마찬가지로 페이로드엔 식별자만(본문 없음), 히트 후 RLS 재조회.
@@ -39,15 +39,6 @@ def get_client() -> AsyncQdrantClient:
     return _client
 
 
-# ---------------------------------------------------------------------------
-# 포인트 ID 규약: 행 uuid가 있으면 그대로(청크 id), 없으면 uuid5로 결정론적
-# 생성(재실행이 중복 대신 덮어쓰도록).
-# ---------------------------------------------------------------------------
-def canvas_card_point_id(node_id: str, concept_index: int) -> str:
-    """canvas_cards 포인트 id — 멱등 upsert를 위한 결정론 uuid5."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"card:{node_id}:{concept_index}"))
-
-
 async def ensure_collections() -> None:
     """전체 컬렉션(4096d, Cosine) 생성 보장 + 페이로드 인덱스.
 
@@ -58,7 +49,6 @@ async def ensure_collections() -> None:
         client = get_client()
         for name in (
             COL_FILE_CHUNKS,
-            COL_CANVAS_CARDS,
             COL_TEXTBOOK_FIGURES,
         ):
             if not await client.collection_exists(name):
@@ -87,15 +77,6 @@ async def ensure_collections() -> None:
             )
         except Exception:  # noqa: BLE001
             logger.debug("textbook_figures file_id 인덱스 생성 생략")
-        # canvas_cards.session_id KEYWORD 인덱스 (세션 필터 성능).
-        try:
-            await client.create_payload_index(
-                collection_name=COL_CANVAS_CARDS,
-                field_name="session_id",
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
-        except Exception:  # noqa: BLE001
-            logger.debug("canvas_cards session_id 인덱스 생성 생략")
     except Exception:  # noqa: BLE001 - 부팅을 죽이지 않는다
         logger.warning(
             "Qdrant 컬렉션 보장 실패 — 부팅은 계속, 사용 시점에 에러로 드러남 (url=%s)",
@@ -119,113 +100,6 @@ async def upsert(collection: str, points: list[dict]) -> None:
         ],
         wait=True,
     )
-
-
-async def scroll_canvas_cards(
-    owner_id: str,
-    session_id: str,
-    *,
-    limit: int = 200,
-    with_vectors: bool = False,
-) -> list[dict]:
-    """canvas_cards 컬렉션을 세션 필터로 scroll — payload(+옵션 벡터) 반환.
-
-    반환: [{"id": str, "payload": {...}}] (with_vectors=True면 각 dict에 "vector" 추가).
-    owner_id + session_id 조합으로 강제 스코핑 (Qdrant는 RLS 없음).
-    """
-    client = get_client()
-    query_filter = models.Filter(
-        must=[
-            models.FieldCondition(
-                key="owner_id",
-                match=models.MatchValue(value=owner_id),
-            ),
-            models.FieldCondition(
-                key="session_id",
-                match=models.MatchValue(value=session_id),
-            ),
-        ]
-    )
-    result, _next = await client.scroll(
-        collection_name=COL_CANVAS_CARDS,
-        scroll_filter=query_filter,
-        limit=limit,
-        with_vectors=with_vectors,
-        with_payload=True,
-    )
-    out: list[dict] = []
-    for pt in result:
-        item = {"id": str(pt.id), "payload": pt.payload or {}}
-        if with_vectors:
-            item["vector"] = pt.vector
-        out.append(item)
-    return out
-
-
-async def upsert_canvas_card(
-    owner_id: str,
-    session_id: str,
-    node_id: str,
-    concept_index: int,
-    title: str,
-    x: float,
-    y: float,
-    size_h: float,
-    vector: list[float],
-) -> None:
-    """canvas_cards 멱등 upsert. 좌표(연속)+크기+벡터 저장."""
-    client = get_client()
-    point = models.PointStruct(
-        id=canvas_card_point_id(node_id, concept_index),
-        vector=vector,
-        payload={
-            "owner_id": owner_id,
-            "session_id": session_id,
-            "node_id": node_id,
-            "concept_index": concept_index,
-            "title": title,
-            "x": x,
-            "y": y,
-            "size_h": size_h,
-        },
-    )
-    await client.upsert(collection_name=COL_CANVAS_CARDS, points=[point])
-
-
-async def search_canvas_cards(
-    vector: list[float],
-    owner_id: str,
-    session_id: str,
-    k: int = 1,
-) -> list[dict]:
-    """canvas_cards kNN top-k — owner+session 필터 강제.
-
-    반환: [{"id","score","payload"}]
-    """
-    client = get_client()
-    query_filter = models.Filter(
-        must=[
-            models.FieldCondition(
-                key="owner_id",
-                match=models.MatchValue(value=owner_id),
-            ),
-            models.FieldCondition(
-                key="session_id",
-                match=models.MatchValue(value=session_id),
-            ),
-        ]
-    )
-    res = await client.query_points(
-        collection_name=COL_CANVAS_CARDS,
-        query=vector,
-        limit=k,
-        query_filter=query_filter,
-        with_payload=True,
-    )
-    return [
-        {"id": str(pt.id), "score": pt.score, "payload": pt.payload or {}}
-        for pt in res.points
-    ]
 
 
 async def search(
