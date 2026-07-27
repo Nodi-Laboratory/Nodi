@@ -30,6 +30,13 @@ type Centroids = Map<string, { x: number; y: number; count: number }>;
 const COHESION = 0.08;  // 태그 고정 앵커 응집 강도
 const CHARGE = -500;    // 클러스터 내 균등 분산(인터-태그 분리는 고정 앵커)
 const COLLIDE_GAP = 28; // 무겹침 여백
+// 다 식은 sim에 크기 변화가 들어왔을 때만 주는 약한 nudge(재가열 0.9와 구분).
+const RESIZE_NUDGE = 0.15;
+
+// 카드 충돌 반경 — 높이가 바뀌면 이 힘만 다시 만들어 주면 된다.
+function collideRadius(n: LNode): number {
+  return Math.hypot(CARD_W, n.h) / 2 + COLLIDE_GAP;
+}
 
 // 결정론 시드용 소나선(피보나치 나선) — 새 카드를 자기 태그 앵커 근처의 겹치지 않는
 // 자리에 뿌려 초기 겹침 방지 + 즉시 제자리(sim 재가열 전에도 위치 노출).
@@ -75,6 +82,11 @@ export function useTagLayout(items: Array<{ id: string; tag: string; h: number }
     positions: new Map(),
     tagCentroids: new Map(),
   }));
+  // 틱마다 갱신되는 **최신** 좌표. 상태(snap)와 같은 내용이지만 리렌더를 거치지
+  // 않고 읽을 수 있다 — 카메라 추종처럼 "매 프레임 최신 좌표"가 필요한 쪽이
+  // positions 상태에 의존하면, 틱 → 렌더 → 이펙트 → setState → … 로 이어지는
+  // 업데이트 사슬이 생겨 React 중첩 업데이트 한도에 걸린다(2026-07-27 실측).
+  const positionsRef = useRef<Positions>(new Map());
   const simRef = useRef<Simulation<LNode, undefined> | null>(null);
   const nodesRef = useRef<Map<string, LNode>>(new Map());
   // 태그별 카드 개수(결정론 시드 오프셋용) — 세션 동안 누적.
@@ -98,8 +110,17 @@ export function useTagLayout(items: Array<{ id: string; tag: string; h: number }
     return slotAnchor(slot);
   };
 
-  // 입력 items의 안정 키(순서·태그·개수 변화 감지)
-  const sig = items.map((i) => `${i.id}:${i.tag}:${Math.round(i.h)}`).join("|");
+  // 입력 items의 키를 **두 갈래**로 쪼갠다(2026-07-27).
+  //
+  //   구성원 키 — 카드 id·태그. 바뀌면 배치 자체가 달라지므로 재가열해야 한다.
+  //   크기 키   — 높이. 스트리밍 중 본문이 늘면서 **토큰마다** 바뀐다.
+  //
+  // 예전엔 둘이 한 키였다. 그래서 답변이 흐르는 내내 매 토큰 sim을 alpha 0.9로
+  // 재가열했고, 그 위에 틱마다 setSnap이 얹혀 React가 중첩 업데이트 한도(50)를
+  // 넘겼다 — 콘솔에 "Maximum update depth exceeded"가 질문 1회당 3~4건씩
+  // 쌓였다(2026-07-27 실측). 높이 변화는 재가열 없이 충돌 반경만 갱신한다.
+  const memberSig = items.map((i) => `${i.id}:${i.tag}`).join("|");
+  const sizeSig = items.map((i) => Math.round(i.h)).join(",");
 
   useEffect(() => {
     const nodes = nodesRef.current;
@@ -132,31 +153,57 @@ export function useTagLayout(items: Array<{ id: string; tag: string; h: number }
       }
     };
     // 틱마다 현재 노드 좌표를 스냅샷 상태로 밀어 리렌더(ref 읽기는 여기서만).
-    const onTick = () => setSnap(snapshot(arr, anchorFor));
+    const publish = (next: { positions: Positions; tagCentroids: Centroids }) => {
+      positionsRef.current = next.positions;
+      setSnap(next);
+    };
+    const onTick = () => publish(snapshot(arr, anchorFor));
 
     let sim = simRef.current;
     if (!sim) {
       sim = forceSimulation<LNode>(arr)
         .force("charge", forceManyBody<LNode>().strength(CHARGE))
-        .force("collide", forceCollide<LNode>((n) => Math.hypot(CARD_W, n.h) / 2 + COLLIDE_GAP))
+        .force("collide", forceCollide<LNode>(collideRadius))
         .force("cohesion", cohesion)
         .alphaMin(0.02)
         .on("tick", onTick);
       simRef.current = sim;
     } else {
       sim.nodes(arr);
-      sim.force("collide", forceCollide<LNode>((n) => Math.hypot(CARD_W, n.h) / 2 + COLLIDE_GAP));
+      sim.force("collide", forceCollide<LNode>(collideRadius));
       sim.force("cohesion", cohesion);
       sim.on("tick", onTick);
       sim.alpha(0.9).restart(); // 재가열 → 전체 재배치 애니메이션
     }
     // 시드/재조정 직후 초기 좌표를 한 번 반영(틱 이전에도 위치 노출).
-    setSnap(snapshot(arr, anchorFor));
+    publish(snapshot(arr, anchorFor));
     return () => {};
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig]);
+  }, [memberSig]);
+
+  // 카드 높이만 바뀐 경우(= 스트리밍 중 본문이 자라는 경우). 노드를 새로 만들지도,
+  // sim을 재가열하지도 않는다 — 충돌 반경만 새 높이로 갈아끼운다.
+  useEffect(() => {
+    const sim = simRef.current;
+    if (!sim) return;
+    const nodes = nodesRef.current;
+    for (const it of items) {
+      const n = nodes.get(it.id);
+      if (n) n.h = it.h;
+    }
+    sim.force("collide", forceCollide<LNode>(collideRadius));
+    // 이미 다 식어 멈춘 sim이면 새 크기가 화면에 반영되지 않으므로 약하게 깨운다.
+    // 가열 중일 때(= 스트리밍 도중 대부분)는 아무 것도 하지 않는다 — 여기서
+    // restart하면 위에서 없앤 토큰마다 재가열이 그대로 되살아난다.
+    if (sim.alpha() <= sim.alphaMin()) sim.alpha(RESIZE_NUDGE).restart();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sizeSig]);
 
   useEffect(() => () => { simRef.current?.stop(); }, []);
 
-  return { positions: snap.positions, tagCentroids: snap.tagCentroids };
+  return {
+    positions: snap.positions,
+    tagCentroids: snap.tagCentroids,
+    positionsRef,
+  };
 }

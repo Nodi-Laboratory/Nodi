@@ -32,6 +32,12 @@ const INITIAL_CAMERA: Camera = { x: 120, y: 80, scale: 1 };
 // 미분류 개념의 폴백 태그(useTagLayout 시드/tagAnchor와 일치).
 const DEFAULT_TAG = "기타";
 
+// 카메라 추종: 이만큼 움직여야 카메라를 다시 옮긴다(px). sim이 수렴할 때의
+// 미세 진동으로 카메라가 떨리지 않게 하는 문턱값.
+const FOLLOW_EPS_PX = 0.5;
+// 움직임 없는 프레임이 이만큼 이어지면 추종을 끝낸다(≈0.5초).
+const FOLLOW_SETTLE_FRAMES = 30;
+
 // 리프 노드를 앵커 개념의 sim 좌표로 재앵커한다: 앵커가 스트림 좌표에서 sim 좌표로
 // 이동한 만큼(Δ) 리프도 함께 옮겨 상대 오프셋을 보존한다. 앵커 sim 위치가 없으면
 // 기존 좌표를 그대로 유지(best-effort 오버레이).
@@ -112,7 +118,7 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
       tag: c.cluster || DEFAULT_TAG,
       h: cardHeight(c, !!c.sources && c.sources.length > 0),
     }));
-  const { positions, tagCentroids } = useTagLayout(layoutItems);
+  const { positions, tagCentroids, positionsRef } = useTagLayout(layoutItems);
 
   const [camera, setCamera] = useState<Camera>(INITIAL_CAMERA);
   const [treeOpen, setTreeOpen] = useState(false);
@@ -179,18 +185,41 @@ export function ConceptCanvasWorkspace({ spaceId }: { spaceId: string }) {
   }, [concepts, positions, vp]);
 
   // 생성 지점 자동 포커싱: 새 답변 첫 개념(focusSignal.id)의 sim 위치를 추종한다.
-  // 카드가 d3-force로 자기 태그 앵커로 이동하는 동안 positions가 틱마다 갱신 → 카메라도 함께
-  // 이동(변하는 위치를 따라감). 시뮬 수렴 시 positions 안정 → 추종 정지. 현재 배율 유지.
+  // 카드가 d3-force로 자기 태그 앵커로 이동하는 동안 카메라도 함께 이동하고,
+  // 시뮬이 수렴하면 추종을 멈춘다. 배율은 유지.
+  //
+  // **positions 상태에 의존하지 않는다**(2026-07-27). 예전에는 deps에 positions가
+  // 있었는데, 그 Map은 sim 틱마다 새로 만들어진다 → 틱 → 렌더 → 이 이펙트 →
+  // setCamera → 커밋 → 다음 틱 …이 매 프레임 연쇄해 React가 중첩 업데이트
+  // 한도(50)를 넘겼다("Maximum update depth exceeded", 질문 1회당 3~4건).
+  // 대신 rAF 루프가 positionsRef에서 최신 좌표를 직접 읽는다 — 커밋 단계 밖에서
+  // 갱신되므로 사슬이 끊긴다.
   useEffect(() => {
     const id = focusSignal?.id;
     if (!id) return;
-    const p = positions.get(id);
-    if (!p) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCamera((prev) =>
-      focusCamera(vp(), { x: p.x + CARD_CX, y: p.y + CARD_CY }, prev.scale),
-    );
-  }, [focusSignal, positions, vp]);
+    let raf = 0;
+    let last: { x: number; y: number } | null = null;
+    let still = 0; // 움직임 없는 연속 프레임 수
+    const follow = () => {
+      const p = positionsRef.current.get(id);
+      if (p) {
+        const moved =
+          !last || Math.hypot(p.x - last.x, p.y - last.y) > FOLLOW_EPS_PX;
+        if (moved) {
+          still = 0;
+          last = { x: p.x, y: p.y };
+          setCamera((prev) =>
+            focusCamera(vp(), { x: p.x + CARD_CX, y: p.y + CARD_CY }, prev.scale),
+          );
+        } else if (++still >= FOLLOW_SETTLE_FRAMES) {
+          return; // 수렴 — rAF를 더 돌리지 않는다(빈 루프가 남지 않게).
+        }
+      }
+      raf = requestAnimationFrame(follow);
+    };
+    raf = requestAnimationFrame(follow);
+    return () => cancelAnimationFrame(raf);
+  }, [focusSignal, positionsRef, vp]);
 
   const zoomBy = useCallback(
     (factor: number) => {
