@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Settings, LogOut } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { clearToken } from "@/lib/session";
 import { useProfile } from "@/lib/hooks";
 
 /**
@@ -29,8 +29,7 @@ export function AccountMenu({ dark = false }: { dark?: boolean }) {
   }, []);
 
   const handleLogout = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    clearToken();
     queryClient.clear();
     router.push("/login");
     router.refresh();
@@ -94,3 +93,4 @@ export function AccountMenu({ dark = false }: { dark?: boolean }) {
     </div>
   );
 }
+

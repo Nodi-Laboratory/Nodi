@@ -7,54 +7,28 @@
  * 밑줄 접두사는 "이 폴더 내부용"이라는 표시다 — 앱 코드는 `@/lib/api`(index)만
  * 임포트하고 이 모듈을 직접 참조하지 않는다.
  */
-import { createClient } from "@/lib/supabase/client";
+import { clearToken, readToken } from "@/lib/session";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 /**
- * 08 G(D67): access_token 메모리 캐시. 모든 fetch가 호출당 `getSession()`을 await하던
- * 비용을 줄인다(보통 로컬 캐시지만 보장 없음). expires_at까지 재사용하되 만료 60초 전엔
- * getSession을 다시 불러 supabase가 갱신한 최신 토큰을 받는다(안전 마진).
- */
-let tokenCache: { token: string; expiresAtMs: number } | null = null;
-
-/**
- * 08 M1: access_token 캐시 무효화. 인증 상태가 바뀌면(로그아웃/로그인/토큰 갱신)
- * 반드시 호출해 캐시가 만료 전 옛 토큰을 들고 있는 것을 막는다(동작 불변 보장).
- * Providers의 supabase onAuthStateChange가 모든 이벤트에서 호출한다.
+ * D104-7: 토큰 캐시가 사라졌다.
+ *
+ * 구성에서는 매 fetch가 `supabase.auth.getSession()`을 await 했고(네트워크 왕복
+ * 가능성), 그 비용을 줄이려 메모리 캐시 + 만료 60초 전 갱신 로직을 뒀다. 이제
+ * 토큰은 쿠키에 있는 문자열 하나라 읽기가 동기·무비용이다 — 캐시할 대상이 없다.
+ *
+ * 이 함수는 로그아웃 경로가 계속 호출하므로 유지하되, 쿠키를 지우는 일을 한다.
  */
 export function clearTokenCache(): void {
-  tokenCache = null;
+  clearToken();
 }
 
-async function getAccessToken(): Promise<string | null> {
-  const now = Date.now();
-  if (tokenCache && tokenCache.expiresAtMs - 60_000 > now) {
-    return tokenCache.token;
-  }
-  const supabase = createClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (session?.access_token) {
-    tokenCache = {
-      token: session.access_token,
-      // expires_at은 unix 초. 없으면 보수적으로 1분만 캐시.
-      expiresAtMs: session.expires_at
-        ? session.expires_at * 1000
-        : now + 60_000,
-    };
-    return session.access_token;
-  }
-  tokenCache = null;
-  return null;
-}
-
-/** Supabase 세션의 access_token을 Authorization 헤더로. (키 하드코딩 없음) */
+/** 저장된 액세스 토큰을 Authorization 헤더로. */
 export async function authHeaders(
   json = false,
 ): Promise<Record<string, string>> {
-  const token = await getAccessToken();
+  const token = readToken();
   const headers: Record<string, string> = {};
   if (token) {
     headers.Authorization = `Bearer ${token}`;

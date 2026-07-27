@@ -1,6 +1,5 @@
 /** SSE 스트리밍 채팅. api.ts(806줄)에서 분리 — D102. */
-import { API_BASE, authHeaders, ApiError } from "./_core";
-import { createClient } from "@/lib/supabase/client";
+import { API_BASE, authHeaders, ensureOk } from "./_core";
 import { isRealId } from "@/lib/ids";
 import type {
   ChatDoneEvent,
@@ -36,10 +35,13 @@ export interface ChatStreamBody {
 /**
  * 노드 좌표 일괄 영속(D20). 드래그 종료/재정렬 시 저장.
  *
- * 08 C(D69): 노드마다 1 RT(서버 for-루프)였던 set_node_positions를 단일 RPC
- * `set_node_positions_bulk`(0026) 1회 호출로 교체한다(N RT→1). RPC는 SECURITY INVOKER라
- * 호출자 JWT + nodes RLS로 owner 본인 노드만 갱신하며, PostgREST rpc 패턴
- * (예: join_class_by_code)을 따라 supabase 클라이언트로 직접 호출한다.
+ * 08 C(D69): 노드마다 1 RT였던 set_node_positions를 단일 RPC
+ * `set_node_positions_bulk`(0026) 1회 호출로 교체한다(N RT→1). RPC는 SECURITY
+ * INVOKER라 호출자 컨텍스트 + nodes RLS로 owner 본인 노드만 갱신한다.
+ *
+ * D104: 구성에서는 프론트가 Supabase 클라이언트로 이 RPC를 **직접** 호출했다.
+ * Supabase를 걷어내면서 백엔드 POST /nodes/positions를 거친다 — 권한 판정
+ * 위치(RLS)는 그대로다.
  *
  * D52/D63: 영속 직전 비-UUID id(provisional:/optimistic: 등)를 isRealId로 1차 필터한다
  * (RPC도 캐스트 전 필터하지만 이중 방어). 남은 게 없으면 호출 자체를 생략.
@@ -51,18 +53,20 @@ export async function putNodePositions(
   if (!isRealId(sessionId)) return;
   const valid = positions.filter((p) => isRealId(p.node_id));
   if (valid.length === 0) return;
-  const supabase = createClient();
-  const { error } = await supabase.rpc("set_node_positions_bulk", {
-    p_session_id: sessionId,
-    p_positions: valid.map((p) => ({
-      node_id: p.node_id,
-      x: Math.round(p.x),
-      y: Math.round(p.y),
-    })),
-  });
-  if (error) {
-    throw new ApiError(500, error.message ?? "좌표 저장에 실패했습니다.");
-  }
+  await ensureOk(
+    await fetch(`${API_BASE}/nodes/positions`, {
+      method: "POST",
+      headers: await authHeaders(true),
+      body: JSON.stringify({
+        session_id: sessionId,
+        positions: valid.map((p) => ({
+          node_id: p.node_id,
+          x: Math.round(p.x),
+          y: Math.round(p.y),
+        })),
+      }),
+    }),
+  );
 }
 
 export interface ChatStreamHandlers {
@@ -193,4 +197,6 @@ export async function streamChat(
     signal,
   );
 }
+
+
 

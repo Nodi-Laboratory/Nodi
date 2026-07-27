@@ -60,7 +60,7 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 
 ## 스택
 
-Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS/Auth/Storage)
+Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권한 강제·자체 인증)
 · Qdrant(벡터 4096d/Cosine, `docker compose up -d qdrant`) · Upstage(임베딩 + 문서 파싱)
 · EXAONE `K-EXAONE-236B-A23B`(Friendli 서버리스, 스트리밍 챗, 256K 컨텍스트).
 
@@ -71,7 +71,7 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
   → Upstage Document Parse(50MB 초과 PDF는 페이지 분할 파싱, D78)
   → 문단 인지 청킹(1,200자/오버랩 150자, admin 튜너블)
   → `embedding_batch` 잡 팬아웃(64청크 단위) → Upstage `embedding-passage` 4096d
-  → **벡터는 Qdrant, 청크 본문·상태는 Supabase `file_chunks`**.
+  → **벡터는 Qdrant, 청크 본문·상태는 Postgres `file_chunks`**.
   교과서는 `upstage.parse_document_full`(표준 모드+coordinates+figure base64 —
   D92로 enhanced 제거, 조각 ≤48MB·≤100p 사전 분할)로 텍스트·elements를 한 번에
   얻고 figure 팬아웃(`figure_batch` 잡, 배치 8): 크롭 Storage 업로드 → 비전
@@ -99,13 +99,21 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
 
 - **RAG는 채팅을 절대 막지 않는다** — 모든 컨텍스트 빌더는 best-effort, 실패 시 None.
 - **Qdrant는 신뢰 경계가 아니다** — 사용자 파일 청크 본문은 Qdrant 페이로드에 넣지
-  않고, 검색 히트 후 USER 스코프 Supabase 클라이언트로 재조회해 RLS가 재검증한다.
+  않고, 검색 히트 후 USER 스코프 클라이언트로 재조회해 RLS가 재검증한다.
   (과거 예외였던 EBS·아트 전역 카탈로그는 D94로 제거. canvas_cards는 소유자·
   세션 페이로드 필터를 강제한 채 제목·좌표를 페이로드에 저장한다.)
 - **임베딩은 비대칭** — 질의 `embedding-query`, 문서 `embedding-passage`. 혼용 금지.
 - **거리 규약** `distance = 1 - score` (Qdrant cosine → 기존 임계값 의미 유지).
 - **튜너블(D62)**: admin 오버레이(`app_settings`) > config 기본값. 새 노브는
-  `app_settings.as_*` + clamp로 읽고 시드 마이그레이션을 추가해야 admin 콘솔에 뜬다.
+  `app_settings.as_*` + clamp로 읽고 `db/03_app_settings.sql`에 기본값을 추가해야
+  admin 콘솔에 뜬다.
+- **권한은 DB가 강제한다(D104)** — RLS 정책 32개 + 함수 19개. 앱 코드로 옮기지
+  않는다. 사용자 요청은 `nodi_app` 역할 + `SET LOCAL app.user_id`로 돌고,
+  `auth.uid()`가 그 값을 읽어 정책이 판정한다. **직접 커넥션을 얻지 말 것** —
+  `db/pool.py`의 `user_conn()`이 트랜잭션과 컨텍스트 주입을 한 묶음으로 보장한다
+  (그 경로를 우회하면 앞 요청의 사용자로 질의가 나갈 수 있다).
+  워커는 `nodi_worker`(BYPASSRLS). 비밀번호 해시가 든 `public.users`는
+  `nodi_app`에 GRANT 자체가 없다 — 정책보다 앞선 방어.
 
 ## 개발
 
@@ -113,25 +121,23 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Supabase(Postgres/RLS
   `requirements.txt`는 하한만 있는 폴백 — 버전이 팀원마다 갈리므로 권장하지 않는다.
 - 백엔드 테스트: `cd backend && uv run pytest tests/ -v` (전부 mock — 키·네트워크 불필요)
 - 로컬 실행 (README '빠른 시작' 참조):
-  1. `docker compose up -d qdrant` (대시보드 http://localhost:6333/dashboard)
+  1. `docker compose up -d` (postgres 5433 + qdrant 6333)
   2. `cd backend && uv run uvicorn app.main:app --reload --port 8000`
   3. `cd frontend && npm run dev` (http://localhost:3000)
 - 프론트 타입/빌드 스모크: `cd frontend && npx tsc --noEmit && npm run build`
 - **환경 변수: `backend/.env`** (루트 `.env` 아님 — `config.py`의 `BACKEND_ENV`).
   프론트는 `frontend/.env.local`. 각각 `.env.example`·`.env.local.example` 참고.
-  필수 4종: `SUPABASE_URL`·`SUPABASE_ANON_KEY`·`UPSTAGE_API_KEY`·`EXAONE_API_KEY`
-  (업로드까지 쓰려면 `SUPABASE_SERVICE_ROLE_KEY`).
+  백엔드 필수: `DATABASE_URL`·`DATABASE_WORKER_URL`·`JWT_SECRET` +
+  `UPSTAGE_API_KEY`·`EXAONE_API_KEY`. 프론트는 `NEXT_PUBLIC_API_BASE_URL` 하나.
 - **설정 자가진단**: `GET /health/config` — 무엇이 빠졌는지 `blocking`·`judge.missing`이
   알려준다(D97, 비밀값 미노출). 같은 요약이 부팅 시 터미널에도 찍힌다.
-- **로컬 DB(D98)**: `npx supabase start` — 마이그레이션 0001~0040 + `supabase/seed.sql`이
-  자동 적용돼 원격과 스키마가 같다(테이블 11 · RPC 18). `backend/.env`의 Supabase
-  3종만 `backend/.env.local.example` 값으로 바꾸면 된다. 시드 계정은
-  `teacher@/student@/admin@nodi.local`(비밀번호 `nodi-local-dev`), 로컬 인증은
-  이메일/비밀번호. **개발은 로컬에서 한다.**
-- **원격 Supabase 프로젝트는 팀 공용이고 실데이터가 들어 있다** — 마이그레이션 원격
-  적용은 오너만, 파괴적 조작 금지(git과 달리 되돌릴 수 없다).
-- **GRANT 부채**: 마이그레이션에 API 롤 GRANT가 없고 Supabase 레거시 auto-expose에
-  의존한다. 로컬은 `config.toml`로 재현하지만 그 옵션은 2026-10-30 제거 예정.
+- **DB 스키마(D104)**: `db/`의 SQL 5개가 이름순 자동 적용된다(빈 볼륨일 때 1회).
+  바꾸려면 `01_schema.sql`을 고치고 `docker compose down -v && up -d`.
+  **`down -v`는 데이터를 지운다** — 계정도 사라지므로 다시 만들어야 한다.
+- **계정은 시드하지 않는다**. 학생·교사는 `/signup`에서 가입하고, 관리자는
+  가입으로 얻을 수 없어(D99) CLI로 만든다:
+  `uv run python -m app.cli create-user <이메일> <비번> --role admin`
+  (`grant-admin` / `list-users`도 있다).
 
 ## 컨벤션
 

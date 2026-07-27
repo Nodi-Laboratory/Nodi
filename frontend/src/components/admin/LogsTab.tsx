@@ -14,7 +14,6 @@ import {
   GitBranch,
 } from "lucide-react";
 import { getAdminLogDetail, getAdminLogs, listAdminUsers } from "@/lib/api";
-import { createClient } from "@/lib/supabase/client";
 import type {
   AdminLog,
   AdminLogDetail,
@@ -26,10 +25,12 @@ import type {
 } from "@/lib/types";
 
 const LIMIT = 20;
+// D104-6: Realtime 대체 폴링 주기.
+const REFRESH_MS = 30_000;
 
 /**
  * 로그 탭(D25→D34): 채팅 턴 단위 ai_logs 실시간 모니터 + 턴 상세 슬라이드오버.
- * 과거 조회(사용자/날짜 필터·페이지네이션) + Supabase Realtime로 신규 턴 라이브 추가.
+ * 과거 조회(사용자/날짜 필터·페이지네이션) + 첫 페이지 자동 새로고침(D104-6).
  * 행 클릭 → 우측 상세 드로어(시스템 프롬프트 하이라이트·컨텍스트 블록·트레이스).
  */
 export function LogsTab() {
@@ -38,14 +39,20 @@ export function LogsTab() {
   const [until, setUntil] = useState<string>("");
   const [offset, setOffset] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [liveLogs, setLiveLogs] = useState<AdminLog[]>([]);
-  const [live, setLive] = useState(false);
 
   const { data: users } = useQuery<AdminUser[]>({
     queryKey: ["admin", "users"],
     queryFn: listAdminUsers,
   });
 
+  // D104-6: Supabase Realtime 구독을 제거하고 **폴링**으로 대체했다.
+  //
+  // 구성에서는 Realtime이 ai_logs INSERT를 밀어줘 목록 맨 위에 라이브로 붙였다.
+  // Supabase를 걷어내면서 그 채널이 사라졌고, 이 화면 하나를 위해 WebSocket
+  // 인프라를 새로 세우는 것은 과하다고 판단했다(관리자 전용).
+  //
+  // 첫 페이지를 보고 있을 때만 주기 갱신한다 — 과거 페이지를 뒤지는 중에
+  // 목록이 흔들리면 오히려 방해된다.
   const { data, isLoading, isError } = useQuery<AdminLogsResponse>({
     queryKey: ["admin", "logs", userId || null, since || null, until || null, offset],
     queryFn: () =>
@@ -56,37 +63,11 @@ export function LogsTab() {
         limit: LIMIT,
         offset,
       }),
+    refetchInterval: offset === 0 ? REFRESH_MS : false,
   });
 
-  // ── Realtime 구독: ai_logs INSERT → 목록 맨 위에 라이브 추가 ──
-  useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel("admin-ai_logs")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "ai_logs" },
-        (payload) => {
-          setLiveLogs((prev) => [payload.new as AdminLog, ...prev].slice(0, 100));
-        },
-      )
-      .subscribe((status) => setLive(status === "SUBSCRIBED"));
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, []);
-
-  const logs = data?.logs ?? [];
-  // 라이브 추가분은 첫 페이지에서만, 현재 필터에 맞는 것만, 중복 제거
-  const liveExtra =
-    offset === 0
-      ? liveLogs.filter(
-          (l) =>
-            (!userId || l.owner_id === userId) &&
-            !logs.some((x) => x.id === l.id),
-        )
-      : [];
-  const display = [...liveExtra, ...logs];
+  const display = data?.logs ?? [];
+  const logs = display;
 
   const resetPage = () => setOffset(0);
   const emailFor = (ownerId: string) =>
@@ -97,15 +78,11 @@ export function LogsTab() {
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-sm font-semibold text-[#e7e3d8]">채팅 턴 로그</h2>
         <span
-          className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-            live
-              ? "bg-[#e0796a]/20 text-[#e0796a]"
-              : "bg-white/5 text-[#9a948a]"
-          }`}
-          title={live ? "실시간 구독 중" : "구독 대기"}
+          className="flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-medium text-[#9a948a]"
+          title={`${REFRESH_MS / 1000}초마다 자동 새로고침 (첫 페이지)`}
         >
           <Radio size={11} />
-          {live ? "LIVE" : "연결 중…"}
+          자동 새로고침
         </span>
 
         <select
@@ -162,7 +139,6 @@ export function LogsTab() {
             <LogRow
               key={l.id}
               log={l}
-              isLive={liveExtra.some((x) => x.id === l.id)}
               selected={selectedId === l.id}
               onSelect={() => setSelectedId(l.id)}
               userEmail={emailFor(l.owner_id)}
@@ -206,13 +182,11 @@ export function LogsTab() {
 
 function LogRow({
   log,
-  isLive,
   selected,
   onSelect,
   userEmail,
 }: {
   log: AdminLog;
-  isLive: boolean;
   selected: boolean;
   onSelect: () => void;
   userEmail: string;
@@ -228,11 +202,6 @@ function LogRow({
           : "border-white/10 bg-[#25211a] hover:border-white/20"
       }`}
     >
-      {isLive && (
-        <span className="rounded bg-[#e0796a]/20 px-1.5 py-0.5 text-[10px] font-medium text-[#e0796a]">
-          NEW
-        </span>
-      )}
       <span className="rounded bg-[#e0a32e]/20 px-1.5 py-0.5 text-xs font-medium text-[#fcf58b]">
         {log.kind || "chat"}
       </span>
@@ -723,3 +692,7 @@ function preview(v: unknown, max = 400): string {
   const s = typeof v === "string" ? v : JSON.stringify(v);
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
+
+
+
+

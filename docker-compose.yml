@@ -1,7 +1,31 @@
-# Nodi 로컬 인프라 — Qdrant 벡터 저장소 (Supabase 옆, 임베딩 4096d/Cosine).
-# 실행: docker compose up -d qdrant
-# 대시보드: http://localhost:6333/dashboard
+# Nodi 로컬 인프라 (D104: Supabase 스택 → 순수 Postgres + Qdrant)
+#
+# 실행: docker compose up -d
+#   postgres  5433  데이터·권한(RLS)·비즈니스 함수
+#   qdrant    6333  벡터 검색 (대시보드 http://localhost:6333/dashboard)
+#
+# 스키마는 db/ 의 파일이 이름순으로 자동 적용된다(공식 postgres 이미지의
+# docker-entrypoint-initdb.d 규약) — **최초 1회, 빈 볼륨일 때만** 실행된다.
+# 다시 적용하려면 볼륨을 지운다: docker compose down -v && docker compose up -d
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: nodi
+    ports:
+      # 5433 — 로컬에 이미 도는 Postgres(5432)와 충돌하지 않게.
+      - "5433:5432"
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro
+      - nodi_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nodi"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   qdrant:
     image: qdrant/qdrant
     ports:
@@ -9,3 +33,6 @@ services:
       - "6334:6334" # gRPC
     volumes:
       - ./qdrant_storage:/qdrant/storage
+
+volumes:
+  nodi_pgdata:

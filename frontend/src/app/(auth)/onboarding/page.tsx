@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { createClient } from "@/lib/supabase/client";
-import { completeOnboarding } from "@/lib/api";
+import { ApiError, completeOnboarding, joinClass } from "@/lib/api";
 import { useMyClasses, useProfile } from "@/lib/hooks";
 
 /**
@@ -35,21 +34,15 @@ export default function OnboardingPage() {
     setError(null);
     setLoading(true);
 
-    const supabase = createClient();
-    const { error } = await supabase.rpc("join_class_by_code", {
-      p_code: trimmed,
-    });
-
-    if (error) {
-      // P0002 = invalid_join_code (잘못된/없는 코드)
-      if (
-        error.code === "P0002" ||
-        error.message?.includes("invalid_join_code")
-      ) {
-        setError("유효하지 않은 학급 코드입니다. 다시 확인해 주세요.");
-      } else {
-        setError("학급 연결 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.");
-      }
+    try {
+      await joinClass(trimmed);
+    } catch (err) {
+      // 서버가 잘못된 코드를 404로 준다(join_class_by_code의 P0002 변환).
+      setError(
+        err instanceof ApiError && err.status === 404
+          ? "유효하지 않은 학급 코드입니다. 다시 확인해 주세요."
+          : "학급 연결 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+      );
       setLoading(false);
       return;
     }
@@ -134,3 +127,4 @@ export default function OnboardingPage() {
     </div>
   );
 }
+

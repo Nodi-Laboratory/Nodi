@@ -1,0 +1,17 @@
+-- 03_seed — 초기 데이터 (D104)
+--
+-- **계정을 시드하지 않는다** (2026-07-27 사용자 결정). 빈 상태로 안정적으로
+-- 올린 뒤, 역할에 맞는 계정을 직접 만든다.
+--
+-- 계정 만드는 법:
+--   학생·교사 — 앱의 /signup 화면에서 가입
+--   관리자    — 가입으로는 얻을 수 없다(D99 권한 상승 차단). CLI로 만든다:
+--
+--     cd backend
+--     uv run python -m app.cli create-user admin@example.com <비밀번호> --role admin
+--     # 또는 이미 가입한 계정을 승격
+--     uv run python -m app.cli grant-admin someone@example.com
+--
+-- app_settings(admin 튜너블)은 01_schema.sql이 테이블 정의와 함께 시드한다 —
+-- 비어 있으면 admin 콘솔에 노브가 뜨지 않으므로 그건 데이터가 아니라 스키마의
+-- 일부로 취급한다.

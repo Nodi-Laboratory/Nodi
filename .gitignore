@@ -43,5 +43,6 @@ Thumbs.db
 # playwright-cli 세션 상태 (스냅샷·세션 데이터 — 로컬 도구 상태, 커밋 금지)
 .playwright-cli/
 
-# Supabase CLI 로컬 상태(link 정보·pooler-url 등 — 커밋 금지)
-supabase/.temp/
+
+# 로컬 파일 저장소 (D104: 구 Supabase Storage 대체 — 업로드 파일)
+backend/.storage/

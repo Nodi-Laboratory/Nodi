@@ -12,8 +12,8 @@ import logging
 from typing import Any
 
 from ..config import get_settings
+from ..db.client import UserClient
 from . import app_settings
-from .supabase_client import UserClient
 
 settings = get_settings()
 logger = logging.getLogger("nodi.session_context")
@@ -85,3 +85,4 @@ async def build_session_file_context(
     except Exception:  # noqa: BLE001 - 주입 실패가 채팅을 막으면 안 된다
         logger.exception("세션 파일 컨텍스트 구축 실패")
         return None
+

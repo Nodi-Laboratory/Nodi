@@ -2,15 +2,14 @@
 # Install: pip install -r requirements.txt
 fastapi>=0.115
 uvicorn[standard]>=0.30
-pydantic>=2.7
+pydantic[email]>=2.7
 pydantic-settings>=2.3
-python-jose[cryptography]>=3.3
 httpx>=0.27
+asyncpg>=0.30
+pyjwt>=2.9
+bcrypt>=4.2
 qdrant-client>=1.10
-supabase>=2.6
 apscheduler>=3.10
 python-ulid>=2.2
 pypdf>=4.0
 python-multipart>=0.0.9
-# Offline only: SVG art generation script (backend/scripts/generate_art.py).
-anthropic>=0.40

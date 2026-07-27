@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .supabase_client import UserClient
+from ..db.client import UserClient
 
 
 async def get_my_spaces(
@@ -61,3 +61,4 @@ async def get_recent_sessions(
     if space_ref:
         params["space_ref"] = f"eq.{space_ref}"
     return await client.select("sessions", params)
+

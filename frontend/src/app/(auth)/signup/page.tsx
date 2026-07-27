@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { createClient } from "@/lib/supabase/client";
+import { authErrorMessage, signup } from "@/lib/api";
+import { saveToken } from "@/lib/session";
 import { AuthShell, AuthSwitch, Field } from "@/components/auth/AuthForm";
 import { roleHome } from "@/lib/roleHome";
 
@@ -48,35 +49,28 @@ export default function SignupPage() {
     setError(null);
     setPending(true);
 
-    const supabase = createClient();
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email: email.trim(),
-      password,
-      options: {
-        data: { full_name: displayName.trim(), role },
-      },
-    });
-
-    if (signUpError) {
+    try {
+      const auth = await signup({
+        email: email.trim(),
+        password,
+        display_name: displayName.trim() || null,
+        role,
+      });
+      // 가입과 동시에 로그인 상태가 된다(이메일 확인 단계 없음).
+      saveToken(auth.access_token);
+      queryClient.clear();
+      // 학생은 온보딩(학급 코드), 교사는 콘솔로.
+      router.replace(role === "student" ? "/onboarding" : roleHome(role));
+      router.refresh();
+    } catch (err) {
       setError(
-        signUpError.message.toLowerCase().includes("already")
-          ? "이미 가입된 이메일입니다. 로그인해 주세요."
-          : "가입에 실패했습니다. 입력을 확인하고 다시 시도해 주세요.",
+        authErrorMessage(
+          err,
+          "가입에 실패했습니다. 입력을 확인하고 다시 시도해 주세요.",
+        ),
       );
       setPending(false);
-      return;
     }
-
-    // 이메일 확인이 켜진 환경: 세션이 없다 → 로그인 화면으로.
-    if (!data.session) {
-      router.replace("/login?signup=1");
-      return;
-    }
-
-    // 세션이 바로 생긴 환경: 학생은 온보딩(학급 코드), 교사는 콘솔로.
-    queryClient.clear();
-    router.replace(role === "student" ? "/onboarding" : roleHome(role));
-    router.refresh();
   };
 
   return (

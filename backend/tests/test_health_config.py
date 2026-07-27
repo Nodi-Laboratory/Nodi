@@ -19,10 +19,10 @@ SECRETS = {
     "exaone_api_key": "flp_SECRET_EXAONE",
     "upstage_api_key": "up_SECRET_UPSTAGE",
     "judge_api_key": "SECRET_JUDGE",
-    "supabase_anon_key": "sb_publishable_SECRET",
-    "supabase_service_role_key": "eyJSECRET_SERVICE_ROLE",
+    "jwt_secret": "SUPER_SECRET_SIGNING_KEY",
+    "database_url": "postgresql://nodi_app:SECRET_DB_PASSWORD@localhost:5433/nodi",
+    "database_worker_url": "postgresql://nodi_worker:SECRET_WORKER_PW@localhost:5433/nodi",
 }
-
 # TestClient를 context manager로 쓰지 않는다 — lifespan이 돌면 Qdrant 접속·워커
 # 기동이 일어난다. 직접 .get()은 startup 없이 라우트만 태운다.
 
@@ -38,7 +38,7 @@ def test_health_shape_unchanged(monkeypatch):
     assert r.status_code == 200
     assert set(r.json()) == {
         "status", "service", "environment",
-        "supabase_configured", "jwks_configured", "service_role_present",
+        "db_configured", "worker_configured",
     }
 
 
@@ -52,11 +52,10 @@ def test_config_never_leaks_secret_values(monkeypatch):
 
 
 def test_config_reports_ready_when_core_set(monkeypatch):
-    """채팅 한 턴의 최소 조건(supabase+exaone+upstage)이 갖춰지면 ready."""
+    """채팅 한 턴의 최소 조건(database+exaone+upstage)이 갖춰지면 ready."""
     _set(
         monkeypatch,
-        supabase_url="https://x.supabase.co",
-        supabase_anon_key="sb_publishable_x",
+        database_url="postgresql://a:b@localhost/nodi",
         exaone_api_key="flp_x",
         upstage_api_key="up_x",
     )
@@ -69,8 +68,7 @@ def test_config_flags_missing_upstage(monkeypatch):
     """UPSTAGE_API_KEY 누락 — .env.example이 이 키를 빠뜨려 생기던 대표 사고."""
     _set(
         monkeypatch,
-        supabase_url="https://x.supabase.co",
-        supabase_anon_key="sb_publishable_x",
+        database_url="postgresql://a:b@localhost/nodi",
         exaone_api_key="flp_x",
         upstage_api_key="",
     )
@@ -94,8 +92,7 @@ def test_config_judge_is_not_blocking(monkeypatch):
     """판정 미설정은 교과서 기능만 막는다 — 채팅은 성립하므로 ready를 깨지 않는다."""
     _set(
         monkeypatch,
-        supabase_url="https://x.supabase.co",
-        supabase_anon_key="sb_publishable_x",
+        database_url="postgresql://a:b@localhost/nodi",
         exaone_api_key="flp_x",
         upstage_api_key="up_x",
     )
@@ -116,3 +113,5 @@ def test_config_exaone_mode_reflects_endpoint_id(monkeypatch):
     d = TestClient(app).get("/health/config").json()
     assert d["exaone"]["mode"] == "serverless"
     assert d["exaone"]["model"] == "LGAI/K-EXAONE"
+
+

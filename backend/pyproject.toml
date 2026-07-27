@@ -1,27 +1,22 @@
 [project]
 name = "nodi-backend"
 version = "0.1.0"
-description = "nodi backend — FastAPI + Supabase (Stage 0 foundation)"
+description = "nodi backend — FastAPI + Postgres (자체 인증·RLS)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "pydantic>=2.7",
+    "pydantic[email]>=2.7",
     "pydantic-settings>=2.3",
-    "python-jose[cryptography]>=3.3",
     "httpx>=0.27",
     "qdrant-client>=1.10",
-    "supabase>=2.6",
     "apscheduler>=3.10",
     "python-ulid>=2.2",
     "pypdf>=4.0",
     "python-multipart>=0.0.9",
-]
-
-[project.optional-dependencies]
-# Offline only: SVG art library generation (backend/scripts/generate_art.py).
-art = [
-    "anthropic>=0.40",
+    "asyncpg>=0.30",
+    "pyjwt>=2.9",
+    "bcrypt>=4.2",
 ]
 
 [build-system]
@@ -77,3 +72,5 @@ ignore = [
 # 테스트에서 `pytest.raises(Exception)`은 "어떤 예외든 난다"를 검증하는
 # 의도적 표현이다(호출부가 best-effort로 삼키는 경로).
 "tests/*" = ["B017"]
+
+

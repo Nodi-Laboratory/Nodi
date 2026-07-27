@@ -1,13 +1,12 @@
 """Health / readiness endpoints (no auth).
 
-D97: `/health/config`를 **환경 자가진단 창구**로 추가했다. 과거에는 `/health`가
-Supabase 3종만 노출해서, 신규 팀원이 UPSTAGE_API_KEY 누락·판정 미설정 같은
-문제를 "질문을 던져 503이 날 때"까지 알 수 없었다. 기존 `/health`는 liveness
-계약이므로 응답 형태를 바꾸지 않고 그대로 둔다.
+D97: `/health/config`는 **환경 자가진단 창구**다. 신규 팀원이 자기 `.env`에
+무엇이 빠졌는지 브라우저 한 번으로 확인한다.
+
+D104: Supabase 3종(url/anon/service_role) 대신 Postgres DSN 2종을 본다.
 
 **비밀값은 절대 노출하지 않는다** — 존재 여부(bool)와 비밀이 아닌 URL·모델명만.
-네트워크 도달성도 확인하지 않는다(헬스 경로에 외부 호출 금지) — 설정이
-채워졌는지만 본다.
+네트워크 도달성도 확인하지 않는다(헬스 경로에 외부 호출 금지).
 """
 
 from __future__ import annotations
@@ -21,44 +20,55 @@ router = APIRouter(tags=["health"])
 settings = get_settings()
 
 
+def _dsn_host(dsn: str) -> str | None:
+    """DSN에서 비밀번호를 뺀 host/db만. 진단에 자격증명을 싣지 않는다."""
+    if not dsn:
+        return None
+    tail = dsn.rsplit("@", 1)[-1]
+    return tail or None
+
+
 @router.get("/health")
 async def health() -> dict:
-    """Liveness probe + a glimpse of which integrations are configured.
+    """Liveness probe + 어떤 통합이 구성됐는지 한눈에.
 
-    Does not expose secret values — only whether they are present.
+    비밀값은 노출하지 않는다 — 존재 여부만.
     """
     return {
         "status": "ok",
         "service": "nodi-backend",
         "environment": settings.environment,
-        "supabase_configured": bool(settings.supabase_url),
-        "jwks_configured": bool(settings.jwks_url),
-        "service_role_present": bool(settings.supabase_service_role_key),
+        "db_configured": bool(settings.database_url),
+        "worker_configured": bool(settings.database_worker_url),
     }
 
 
 @router.get("/health/config")
 async def health_config() -> dict:
-    """설정 자가진단 — 신규 환경에서 무엇이 빠졌는지 한눈에 본다(D97).
+    """설정 자가진단 — 신규 환경에서 무엇이 빠졌는지 한눈에 본다.
 
-    `ready`는 **채팅 한 턴이 성립하는 최소 조건**이다(Supabase 인증 + EXAONE +
-    Upstage). 파일 업로드는 service_role이, 교과서는 judge가 추가로 필요하므로
-    각 블록의 `configured`를 따로 본다.
-
-    반환값에 비밀은 없다 — bool과 비밀이 아닌 URL·모델명뿐이다.
+    `ready`는 **채팅 한 턴이 성립하는 최소 조건**이다(DB + EXAONE + Upstage).
+    파일 업로드는 worker DSN이, 교과서는 judge가 추가로 필요하므로 각 블록의
+    `configured`를 따로 본다.
     """
-    supabase = {
-        "url_set": bool(settings.supabase_url),
-        "anon_key_set": bool(settings.supabase_anon_key),
-        # 미설정이면 업로드·임베딩 워커가 전부 503 (routers/files.py).
-        "service_role_set": bool(settings.supabase_service_role_key),
-        "jwks_url": settings.jwks_url or None,
+    database = {
+        "app_dsn_set": bool(settings.database_url),
+        # 미설정이면 업로드·임베딩 워커가 전부 503 (구 service_role 부재와 동형).
+        "worker_dsn_set": bool(settings.database_worker_url),
+        "host": _dsn_host(settings.database_url),
     }
-    supabase["configured"] = supabase["url_set"] and supabase["anon_key_set"]
+    database["configured"] = database["app_dsn_set"]
+
+    auth = {
+        "jwt_algorithm": settings.jwt_algorithm,
+        "expire_minutes": settings.jwt_expire_minutes,
+        # 기본 시크릿이면 누구나 토큰을 위조할 수 있다 — 운영 전 반드시 교체.
+        "secret_is_default": settings.jwt_secret == "dev-only-change-me",
+        "configured": bool(settings.jwt_secret),
+    }
 
     exaone = {
         "api_key_set": bool(settings.exaone_api_key),
-        # 설정 시 dedicated(/dedicated/v1), 미설정 시 serverless(/serverless/v1).
         "mode": "dedicated" if settings.exaone_endpoint_id else "serverless",
         "model": settings.exaone_endpoint_id or settings.exaone_model,
         "base_url": settings.friendli_base_url,
@@ -78,9 +88,8 @@ async def health_config() -> dict:
         "base_url": settings.judge_base_url or None,
         "model": settings.judge_model or None,
         "pipeline_enabled": settings.figure_pipeline_enabled,
-        # D103: 판정은 더 이상 교과서 업로드를 막지 않는다. 파서가 caption/
-        # footnote로 라벨한 figure는 판정 없이 처리되고, 판정은 라벨이 없는
-        # figure를 건지는 폴백이다. 미설정이면 그 figure만 캡션 없이 실패한다.
+        # D103: 판정은 교과서 업로드를 막지 않는다 — 파서가 캡션으로 라벨한
+        # figure는 판정 없이 처리되고, 판정은 라벨 없는 figure의 폴백이다.
         "role": "fallback",
         "note": (
             "미설정이어도 교과서 업로드는 가능하다. 파서가 캡션으로 라벨하지 "
@@ -89,11 +98,12 @@ async def health_config() -> dict:
     }
 
     qdrant = {"url": settings.qdrant_url, "configured": bool(settings.qdrant_url)}
+    storage = {"root": settings.storage_root, "bucket": settings.storage_bucket}
 
     # 채팅 한 턴이 불가능하게 만드는 항목들 — 비어 있어야 정상.
     blocking: list[str] = []
-    if not supabase["configured"]:
-        blocking.append("supabase")
+    if not database["configured"]:
+        blocking.append("database")
     if not exaone["configured"]:
         blocking.append("exaone")
     if not upstage["configured"]:
@@ -103,9 +113,11 @@ async def health_config() -> dict:
         "ready": not blocking,
         "blocking": blocking,
         "environment": settings.environment,
-        "supabase": supabase,
+        "database": database,
+        "auth": auth,
         "exaone": exaone,
         "upstage": upstage,
         "qdrant": qdrant,
+        "storage": storage,
         "judge": judge,
     }

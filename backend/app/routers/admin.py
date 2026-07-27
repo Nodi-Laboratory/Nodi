@@ -14,8 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
+from ..db.client import UserClient
 from ..services import app_settings
-from ..services.supabase_client import UserClient
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -172,3 +172,4 @@ async def get_log_detail(
             status_code=status.HTTP_404_NOT_FOUND, detail="Log not found."
         )
     return {"log": rows[0]}
+

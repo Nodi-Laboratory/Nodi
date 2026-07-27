@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
+from .db.pool import close_pools
 from .logging_setup import configure_logging, log_config_summary
 from .routers import (
     admin,
@@ -26,8 +27,6 @@ from .routers import (
     teacher,
 )
 from .services import embedding_worker, qdrant_store
-from .services.service_client import aclose_service_http
-from .services.supabase_client import aclose_shared_client
 
 settings = get_settings()
 
@@ -38,17 +37,14 @@ async def lifespan(_app: FastAPI):
     # 설정 상태를 1회 출력한다 — 빠진 값을 부팅 시점에 드러낸다.
     configure_logging()
     log_config_summary()
-    # Startup: embedding worker (no-op if SUPABASE_SERVICE_ROLE_KEY is unset).
-    # The shared PostgREST connection pools (D65, user + worker) are created
-    # lazily on first use.
+    # 임베딩 워커(워커 DSN 미설정이면 no-op). DB 풀은 첫 사용 시 지연 생성된다.
     # Qdrant 컬렉션 보장(멱등, 절대 raise 안 함 — Qdrant 다운이어도 부팅 계속).
     await qdrant_store.ensure_collections()
     embedding_worker.start(_app)
     yield
-    # Shutdown: stop the scheduler + close both shared httpx connection pools.
+    # D104: PostgREST httpx 풀 → asyncpg 풀. 종료 시 함께 닫는다.
     embedding_worker.stop()
-    await aclose_shared_client()
-    await aclose_service_http()
+    await close_pools()
 
 
 app = FastAPI(

@@ -51,24 +51,31 @@ def log_config_summary() -> None:
     def mark(ok: bool) -> str:
         return "OK  " if ok else "MISSING"
 
-    supabase_ok = bool(s.supabase_url and s.supabase_anon_key)
+    db_ok = bool(s.database_url)
     logger.info("--- nodi 설정 점검 (environment=%s) ---", s.environment)
-    logger.info("  Supabase      : %s (service_role=%s)",
-                mark(supabase_ok), mark(bool(s.supabase_service_role_key)))
+    logger.info("  Postgres      : %s (worker=%s)",
+                mark(db_ok), mark(bool(s.database_worker_url)))
     logger.info("  EXAONE        : %s (%s)", mark(bool(s.exaone_api_key)),
                 "dedicated" if s.exaone_endpoint_id else "serverless")
     logger.info("  Upstage       : %s", mark(bool(s.upstage_api_key)))
     logger.info("  Qdrant        : %s", s.qdrant_url or "MISSING")
+    logger.info("  파일 저장     : %s", s.storage_root)
     logger.info("  figure 판정   : %s", mark(figure_judge.is_configured()))
 
-    if not supabase_ok:
+    if not db_ok:
         logger.warning(
-            "SUPABASE_URL/SUPABASE_ANON_KEY 미설정 — 인증·데이터 접근이 전부 "
-            "실패한다. 설정 파일 위치는 backend/.env 다(루트 .env 아님)."
+            "DATABASE_URL 미설정 — 데이터 접근이 전부 실패한다. "
+            "설정 파일 위치는 backend/.env 다(루트 .env 아님)."
         )
-    if not s.supabase_service_role_key:
+    if not s.database_worker_url:
         logger.warning(
-            "SUPABASE_SERVICE_ROLE_KEY 미설정 — 파일 업로드·임베딩 워커가 503."
+            "DATABASE_WORKER_URL 미설정 — 파일 업로드·임베딩 워커가 503."
+        )
+    # D104: 자체 인증으로 전환하면서 토큰 서명 키 관리 책임이 우리에게 왔다.
+    if s.environment != "development" and s.jwt_secret == "dev-only-change-me":
+        logger.warning(
+            "JWT_SECRET이 기본값이다 — 운영에서는 반드시 교체해야 한다. "
+            "누구나 토큰을 위조할 수 있다."
         )
     if not s.exaone_api_key:
         logger.warning("EXAONE_API_KEY 미설정 — 채팅 스트리밍이 503.")

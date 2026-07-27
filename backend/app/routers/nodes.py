@@ -17,13 +17,24 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from ..auth.deps import CurrentUser, get_current_user
-from ..services.supabase_client import UserClient
+from ..db.client import UserClient
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 
 
 class ConnectionBody(BaseModel):
     source_node_id: str
+
+
+class NodePosition(BaseModel):
+    node_id: str
+    x: int
+    y: int
+
+
+class BulkPositionsBody(BaseModel):
+    session_id: str
+    positions: list[NodePosition]
 
 
 class PositionBody(BaseModel):
@@ -38,6 +49,30 @@ class CanvasPatchBody(BaseModel):
     position_y: float | None = None
     # /retrieve 결과 {"figures":[...]} — attachments.canvas 키로 병합.
     attachments_canvas: dict | None = None
+
+
+@router.post("/positions")
+async def set_positions_bulk(
+    body: BulkPositionsBody,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """노드 좌표 일괄 저장 (D69의 set_node_positions_bulk RPC 1회 호출).
+
+    D104: 구성에서는 프론트가 Supabase 클라이언트로 이 RPC를 직접 호출했다.
+    그 경로가 사라져 백엔드를 거친다 — RPC는 SECURITY INVOKER라 호출자 컨텍스트
+    + nodes RLS로 **본인 노드만** 갱신된다(권한 판정 위치는 그대로).
+    """
+    if not body.positions:
+        return {"updated": 0}
+    client = UserClient.from_user(user)
+    updated = await client.rpc(
+        "set_node_positions_bulk",
+        {
+            "p_session_id": body.session_id,
+            "p_positions": [p.model_dump() for p in body.positions],
+        },
+    )
+    return {"updated": int(updated or 0)}
 
 
 def _connections(result: object) -> list[str]:
@@ -168,3 +203,4 @@ async def remove_connection(
         {"p_node_id": node_id, "p_source_node_id": source_node_id},
     )
     return {"node_id": node_id, "connections": _connections(result)}
+
