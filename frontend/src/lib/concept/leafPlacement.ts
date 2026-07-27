@@ -4,6 +4,7 @@
 // 무한 팬이므로 경계 클램프는 없다.
 
 import { cardHeight } from "./cardMetrics";
+import { CARD_W } from "./curriculumTags";
 import type { CanvasLeafNode, Concept } from "./types";
 
 export interface Rect {
@@ -20,9 +21,8 @@ export const LEAF_DIMS: Record<CanvasLeafNode["type"], { w: number; h: number }>
   figure: { w: 260, h: 240 },
 };
 
-// 개념 카드 폭 — 높이는 cardMetrics(SSOT)의 cardHeight()에서 가져와 ConceptCard와 일치.
-const CARD_W = 420;
-
+// 카드 폭은 curriculumTags(SSOT), 높이는 cardMetrics의 cardHeight() —
+// 둘 다 ConceptCard의 실제 렌더와 같은 값에서 나온다.
 export function cardRect(c: Concept): Rect {
   const hasSources = !!c.sources && c.sources.length > 0;
   return { x: c.x, y: c.y, w: CARD_W, h: cardHeight(c, hasSources) };

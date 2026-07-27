@@ -26,11 +26,10 @@ import {
   type SpaceTarget,
 } from "@/lib/api";
 import { sessionsKey, useSessionDetail } from "@/lib/queries";
-import { CENTER } from "./curriculumTags";
+import { CARD_MARGIN, CARD_W, CENTER } from "./curriculumTags";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type { ChatDoneEvent, NodeRow } from "@/lib/types";
 import { createConceptParser } from "./conceptParser";
-import { LAYOUT } from "./layout";
 import {
   cardRect,
   leafRect,
@@ -43,7 +42,7 @@ import type { CanvasLeafNode, Concept, ParserEvent } from "./types";
 // 09: 리프(figure) 선호 오프셋 — 앵커 카드 오른쪽 옆(CARD_W + MARGIN). 이 값은
 // "선호 위치"일 뿐, placeLeafClear가 카드/다른 리프와 겹치지 않는 가장 가까운 빈
 // 자리로 확정한다(요구: figure ↔ 카드 무겹침).
-const LEAF_OFFSET_X = LAYOUT.CARD_W + LAYOUT.MARGIN; // 460
+const LEAF_OFFSET_X = CARD_W + CARD_MARGIN; // 460
 
 // C5: nodes.attachments.canvas 스키마(백엔드 병행 구축 — 계약 기준, 방어적 파싱).
 // D94: ebs/art 키 제거 — 구 노드에 잔존해도 읽지 않는다.

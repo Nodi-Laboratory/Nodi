@@ -5,8 +5,13 @@
 
 export const CANVAS_W = 3200;
 export const CANVAS_H = 2200;
-export const CARD_W = 420;
 export const CENTER = { x: CANVAS_W / 2, y: CANVAS_H / 2 };
+
+// 카드 치수 SSOT. 이 값이 세 곳(layout.ts·leafPlacement.ts·여기)에 각각 리터럴로
+// 박혀 있었다 — 하나만 고치면 충돌 계산과 리프 배치가 서로 어긋난다.
+export const CARD_W = 420;
+// 카드 옆 리프를 놓을 때 쓰는 여백.
+export const CARD_MARGIN = 40;
 
 export const TAG_RING_RADIUS = 1400; // 기존 칠각형 반경 유지 — 클러스터 간 분리
 export const TAG_GOLDEN_ANGLE = 2.399963; // 황금각(rad) — 인접 슬롯 인덱스가 서로 멀리 떨어짐
