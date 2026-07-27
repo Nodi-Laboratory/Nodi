@@ -16,6 +16,9 @@ dependencies = [
     "python-ulid>=2.2",
     "pypdf>=4.0",
     "python-multipart>=0.0.9",
+    "asyncpg>=0.30",
+    "pyjwt>=2.9",
+    "bcrypt>=4.2",
 ]
 
 [project.optional-dependencies]
@@ -77,3 +80,4 @@ ignore = [
 # 테스트에서 `pytest.raises(Exception)`은 "어떤 예외든 난다"를 검증하는
 # 의도적 표현이다(호출부가 best-effort로 삼키는 경로).
 "tests/*" = ["B017"]
+

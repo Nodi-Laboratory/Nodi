@@ -19,14 +19,26 @@ BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 
 class Settings(BaseSettings):
-    # --- Supabase ---
-    supabase_url: str = ""
-    supabase_project_ref: str = ""
-    # JWKS endpoint used to verify ES256-signed user JWTs.
-    supabase_jwks_url: str = ""
-    supabase_anon_key: str = ""
-    # Optional in Stage 0 — server-side privileged ops. App must boot without it.
-    supabase_service_role_key: str = ""
+    # --- Postgres (D104: Supabase 제거) ---
+    # 두 DSN이 **역할이 다르다** — 구 UserClient/ServiceClient 구분을 DB 역할로
+    # 재현한 것이다. app은 RLS가 적용되고, worker는 BYPASSRLS다.
+    # worker DSN이 비면 업로드·임베딩 워커가 비활성(구 service_role 부재와 동형).
+    database_url: str = "postgresql://nodi_app:nodi_app_dev@localhost:5433/nodi"
+    database_worker_url: str = (
+        "postgresql://nodi_worker:nodi_worker_dev@localhost:5433/nodi"
+    )
+
+    # --- 자체 인증 (D104-4) ---
+    # 액세스 토큰 서명 키. 운영에서는 반드시 교체한다(부팅 시 경고).
+    jwt_secret: str = "dev-only-change-me"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60 * 12  # 수업 한 타임을 넉넉히 덮는다
+
+    # --- 파일 저장 (D104-5) ---
+    # Supabase Storage 대체. 컨테이너·경로 규약은 그대로 유지한다.
+    storage_root: str = str(REPO_ROOT / "backend" / ".storage")
+    # signed URL 서명 키(HMAC). 비면 jwt_secret을 쓴다.
+    storage_sign_secret: str = ""
 
     # --- AI (EXAONE / Friendli) — chat-answer generation ---
     # Friendli serverless endpoint (OpenAI-compatible chat completions). Replaces
@@ -130,8 +142,6 @@ class Settings(BaseSettings):
     judge_api_key: str = ""
 
     # --- App ---
-    # Postgres role embedded in Supabase user JWTs (NOT the app role).
-    jwt_audience: str = "authenticated"
     cors_origins: list[str] = ["http://localhost:3000"]
     environment: str = "development"
 
@@ -143,28 +153,9 @@ class Settings(BaseSettings):
     )
 
     @property
-    def jwks_url(self) -> str:
-        """Resolved JWKS URL, derived from SUPABASE_URL if not given explicitly."""
-        if self.supabase_jwks_url:
-            return self.supabase_jwks_url
-        if self.supabase_url:
-            return f"{self.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
-        return ""
-
-    @property
-    def rest_url(self) -> str:
-        return f"{self.supabase_url.rstrip('/')}/rest/v1" if self.supabase_url else ""
-
-    @property
-    def auth_issuer(self) -> str:
-        """Expected `iss` claim of Supabase-issued user JWTs."""
-        return f"{self.supabase_url.rstrip('/')}/auth/v1" if self.supabase_url else ""
-
-    @property
-    def storage_url(self) -> str:
-        return (
-            f"{self.supabase_url.rstrip('/')}/storage/v1" if self.supabase_url else ""
-        )
+    def sign_secret(self) -> str:
+        """파일 signed URL 서명 키 — 미지정이면 jwt_secret을 공용한다."""
+        return self.storage_sign_secret or self.jwt_secret
 
 
 @lru_cache
