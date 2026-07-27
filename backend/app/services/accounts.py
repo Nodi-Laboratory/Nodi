@@ -59,7 +59,12 @@ async def create_account(
         row = await conn.fetchrow(
             """
             insert into public.users (email, password_hash, raw_user_meta_data)
-            values ($1, $2, $3::jsonb)
+            -- ::text::jsonb 로 **두 단계** 캐스팅한다. `$3::jsonb`만 쓰면 asyncpg가
+            -- 파라미터 타입을 jsonb로 추론해 이미 직렬화된 문자열을 다시 JSON
+            -- 문자열로 감싼다 — 결과가 객체가 아니라 문자열이 되어
+            -- `raw_user_meta_data->>'full_name'`이 NULL을 돌려주고, 트리거가
+            -- 이름·역할을 폴백해 버린다(실측: 이름이 이메일 앞부분, 역할이 student).
+            values ($1, $2, $3::text::jsonb)
             returning id, email
             """,
             email,
