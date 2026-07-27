@@ -41,8 +41,10 @@ jobs:
         # 설정은 pyproject.toml [tool.ruff]. 도입 시점 전량 green.
         run: uv run ruff check app tests
 
-      - name: pytest
-        run: uv run pytest tests/ -v
+      - name: pytest (+ 커버리지 리포트)
+        # D105: --cov-fail-under을 걸지 않는다. 숫자를 게이트로 만들면 의미 없는
+        # 테스트로 숫자만 채우게 된다 — 목적은 어디가 비었는지 보이게 하는 것이다.
+        run: uv run pytest tests/ -v --cov
 
       - name: 임포트 스모크
         # 라우터 배선·순환 임포트 회귀를 잡는다 (키 없이 부팅 가능해야 한다).

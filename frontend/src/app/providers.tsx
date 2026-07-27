@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { shouldRetry } from "@/lib/retryPolicy";
 
 /**
  * 전역 클라이언트 Provider — react-query QueryClient(staleTime 60s 기본).
@@ -19,6 +20,8 @@ export function Providers({ children }: { children: ReactNode }) {
           queries: {
             staleTime: 60 * 1000,
             refetchOnWindowFocus: false,
+            // D105: 4xx는 재시도하지 않는다 (근거·계약은 lib/retryPolicy).
+            retry: shouldRetry,
           },
         },
       }),

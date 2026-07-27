@@ -30,12 +30,26 @@ include = ["app*"]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.0",
     "ruff>=0.14",
 ]
 
 [tool.pytest.ini_options]
 # pytest-asyncio: async 테스트를 마커 없이 자동 수집 (경고 0 보장).
 asyncio_mode = "auto"
+
+# D105: 커버리지는 **목표치를 강제하지 않는다**(--cov-fail-under 없음).
+# 숫자를 게이트로 걸면 의미 없는 테스트로 숫자만 채우는 압력이 생긴다.
+# 목적은 "어디가 비어 있는지 보이게" 하는 것 — 워커 테스트 공백이
+# TASKS.md TASK 4 백로그에 이미 적혀 있었는데 측정 수단이 없었다.
+# 기본 실행은 그대로 빠르고, 커버리지는 `uv run pytest --cov` 로 켠다.
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/cli.py"]
+
+[tool.coverage.report]
+show_missing = false
+skip_covered = true
 
 # ---------------------------------------------------------------------------
 # ruff — 린터 (D98)
