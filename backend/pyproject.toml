@@ -1,17 +1,15 @@
 [project]
 name = "nodi-backend"
 version = "0.1.0"
-description = "nodi backend — FastAPI + Supabase (Stage 0 foundation)"
+description = "nodi backend — FastAPI + Postgres (자체 인증·RLS)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pydantic[email]>=2.7",
     "pydantic-settings>=2.3",
-    "python-jose[cryptography]>=3.3",
     "httpx>=0.27",
     "qdrant-client>=1.10",
-    "supabase>=2.6",
     "apscheduler>=3.10",
     "python-ulid>=2.2",
     "pypdf>=4.0",
@@ -19,12 +17,6 @@ dependencies = [
     "asyncpg>=0.30",
     "pyjwt>=2.9",
     "bcrypt>=4.2",
-]
-
-[project.optional-dependencies]
-# Offline only: SVG art library generation (backend/scripts/generate_art.py).
-art = [
-    "anthropic>=0.40",
 ]
 
 [build-system]
