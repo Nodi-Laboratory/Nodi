@@ -66,7 +66,8 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
 
 ## 핵심 파이프라인
 
-- **파일 인제스트** (`services/embedding_worker.py`): 업로드(형식 화이트리스트 D75,
+- **파일 인제스트** (`services/worker/`, D105로 책임별 분할 —
+  jobs·split·batch·figures·common·runner): 업로드(형식 화이트리스트 D75,
   용량 kind별 D77 — 교사 자료 500MB/학생 50MB) → `embedding_split` 잡
   → Upstage Document Parse(50MB 초과 PDF는 페이지 분할 파싱, D78)
   → 문단 인지 청킹(1,200자/오버랩 150자, admin 튜너블)
@@ -114,17 +115,26 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   (그 경로를 우회하면 앞 요청의 사용자로 질의가 나갈 수 있다).
   워커는 `nodi_worker`(BYPASSRLS). 비밀번호 해시가 든 `public.users`는
   `nodi_app`에 GRANT 자체가 없다 — 정책보다 앞선 방어.
+- **카드 좌표는 저장하지 않는다(D105)** — 소유자는 프론트 d3-force(`useTagLayout`)
+  이고, 매 로드마다 재계산한다. 태그 슬롯이 첫 등장 순서로만 정해지므로 같은
+  세션은 항상 같은 배치로 수렴한다. 좌표를 받아 적는 엔드포인트·컬럼은 제거됐다.
 
 ## 개발
 
 - 백엔드 의존성: **`cd backend && uv sync --group dev`** (`uv.lock` 기준 버전 고정).
   `requirements.txt`는 하한만 있는 폴백 — 버전이 팀원마다 갈리므로 권장하지 않는다.
-- 백엔드 테스트: `cd backend && uv run pytest tests/ -v` (전부 mock — 키·네트워크 불필요)
+- 백엔드 테스트: `cd backend && uv run pytest tests/ -v` (전부 mock — 키·네트워크 불필요).
+  커버리지는 `--cov` 추가(목표치 강제 없음 — 어디가 비었는지 보는 용도, D105).
+- 프론트 테스트: `cd frontend && npm test` (vitest, D105). 대상은 `lib/concept`의
+  파서·배치 순수 함수 — 컴포넌트 렌더 테스트는 아직 없다.
 - 로컬 실행 (README '빠른 시작' 참조):
   1. `docker compose up -d` (postgres 5433 + qdrant 6333)
   2. `cd backend && uv run uvicorn app.main:app --reload --port 8000`
   3. `cd frontend && npm run dev` (http://localhost:3000)
 - 프론트 타입/빌드 스모크: `cd frontend && npx tsc --noEmit && npm run build`
+- **API 경로(D105)**: 백엔드 도메인 라우터는 전부 `/api` 아래다. `/health`만
+  접두사 밖(인프라 liveness 계약). 프론트 `NEXT_PUBLIC_API_BASE_URL`은 로컬
+  `http://localhost:8000/api`, 배포 `/api` — 뒤 경로가 양쪽에서 같다.
 - **환경 변수: `backend/.env`** (루트 `.env` 아님 — `config.py`의 `BACKEND_ENV`).
   프론트는 `frontend/.env.local`. 각각 `.env.example`·`.env.local.example` 참고.
   백엔드 필수: `DATABASE_URL`·`DATABASE_WORKER_URL`·`JWT_SECRET` +
