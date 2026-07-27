@@ -10,7 +10,6 @@ import pytest
 
 from app.db import query as Q
 
-
 # --- WHERE ------------------------------------------------------------------
 
 
