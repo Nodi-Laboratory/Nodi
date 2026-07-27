@@ -282,7 +282,7 @@ class UserClient(_BaseClient):
         self._user_id = user_id
 
     @classmethod
-    def from_user(cls, user: Any) -> "UserClient":
+    def from_user(cls, user: Any) -> UserClient:
         return cls(getattr(user, "id", None))
 
     def _conn(self):
