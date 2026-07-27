@@ -14,9 +14,9 @@ import re
 
 import pytest
 
-from app.services import embedding_worker as W
+from app.services import app_settings, figure_extract, figure_judge, qdrant_store, upstage
 from app.services import files as F
-from app.services import qdrant_store
+from app.services.worker import common, figures, jobs, runner, split
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ def _patches(monkeypatch):
     # _qdrant_delete_file_points(실함수)가 네트워크 없이 돌게 get_client만 대역.
     # delete_file 테스트는 자체 recording fake로 이 setattr을 덮어써 호출을 검증한다.
     monkeypatch.setattr(qdrant_store, "get_client", lambda: _NoopQdrant())
-    monkeypatch.setattr(W.app_settings, "get_overlay", _overlay_default)
+    monkeypatch.setattr(app_settings, "get_overlay", _overlay_default)
 
 
 # ===========================================================================
@@ -186,18 +186,18 @@ async def test_textbook_split_fans_out_figures_and_text(monkeypatch):
     async def fake_parse(data, filename):
         return ("전체 마크다운", [{"page": 1}])
 
-    monkeypatch.setattr(W.upstage, "parse_document_full", fake_parse)
+    monkeypatch.setattr(upstage, "parse_document_full", fake_parse)
     monkeypatch.setattr(
-        W.figure_extract, "text_from_elements",
+        figure_extract, "text_from_elements",
         lambda els: "문단 하나입니다.\n\n문단 둘입니다.",
     )
     monkeypatch.setattr(
-        W.figure_extract, "extract_figures",
+        figure_extract, "extract_figures",
         lambda els: [_fig_record(1, 10), _fig_record(2, 20, ext="jpg")],
     )
 
     svc = _FakeService(_tb_file())
-    await W._handle_split(svc, _split_job())
+    await split._handle_split(svc, _split_job())
 
     # figure 행 2개 — status=pending, seq 0-base, image_bytes/ext는 행에 없음.
     fig_inserts = [r for t, r in svc.inserts if t == "textbook_figures"]
@@ -238,13 +238,13 @@ async def test_extract_exception_isolates_text_pipeline(monkeypatch):
     def boom(els):
         raise RuntimeError("extract 폭발")
 
-    monkeypatch.setattr(W.upstage, "parse_document_full", fake_parse)
-    monkeypatch.setattr(W.figure_extract, "text_from_elements",
+    monkeypatch.setattr(upstage, "parse_document_full", fake_parse)
+    monkeypatch.setattr(figure_extract, "text_from_elements",
                         lambda els: "본문 텍스트입니다.")
-    monkeypatch.setattr(W.figure_extract, "extract_figures", boom)
+    monkeypatch.setattr(figure_extract, "extract_figures", boom)
 
     svc = _FakeService(_tb_file())
-    await W._handle_split(svc, _split_job())
+    await split._handle_split(svc, _split_job())
 
     assert all(t != "textbook_figures" for t, _ in svc.inserts)
     chunk_rows = [row for t, rows in svc.inserts if t == "file_chunks"
@@ -264,17 +264,17 @@ async def test_kill_switch_off_skips_figures(monkeypatch):
     async def fake_parse(data, filename):
         return ("md", [{"page": 1}])
 
-    monkeypatch.setattr(W.app_settings, "get_overlay", overlay_off)
-    monkeypatch.setattr(W.upstage, "parse_document_full", fake_parse)
-    monkeypatch.setattr(W.figure_extract, "text_from_elements",
+    monkeypatch.setattr(app_settings, "get_overlay", overlay_off)
+    monkeypatch.setattr(upstage, "parse_document_full", fake_parse)
+    monkeypatch.setattr(figure_extract, "text_from_elements",
                         lambda els: "본문입니다.")
     monkeypatch.setattr(
-        W.figure_extract, "extract_figures",
+        figure_extract, "extract_figures",
         lambda els: (_ for _ in ()).throw(AssertionError("킬스위치 off인데 호출됨")),
     )
 
     svc = _FakeService(_tb_file())
-    await W._handle_split(svc, _split_job())
+    await split._handle_split(svc, _split_job())
 
     assert all(t != "textbook_figures" for t, _ in svc.inserts)
     assert not svc.storage_uploads
@@ -290,22 +290,22 @@ async def test_split_idempotent_no_duplicate_figures(monkeypatch):
     async def fake_parse(data, filename):
         return ("md", [{"page": 1}])
 
-    monkeypatch.setattr(W.upstage, "parse_document_full", fake_parse)
-    monkeypatch.setattr(W.figure_extract, "text_from_elements",
+    monkeypatch.setattr(upstage, "parse_document_full", fake_parse)
+    monkeypatch.setattr(figure_extract, "text_from_elements",
                         lambda els: "본문입니다.")
     monkeypatch.setattr(
-        W.figure_extract, "extract_figures",
+        figure_extract, "extract_figures",
         lambda els: [_fig_record(1, 10), _fig_record(1, 11)],
     )
 
     svc = _FakeService(_tb_file())
-    await W._handle_split(svc, _split_job())
+    await split._handle_split(svc, _split_job())
     figs_after_1 = len(svc.tables["textbook_figures"])
     figbatch_after_1 = await svc.count(
         "jobs", {"target_id": "eq.f1", "kind": "eq.figure_batch"}
     )
 
-    await W._handle_split(svc, _split_job())
+    await split._handle_split(svc, _split_job())
     assert len(svc.tables["textbook_figures"]) == figs_after_1
     figbatch_after_2 = await svc.count(
         "jobs", {"target_id": "eq.f1", "kind": "eq.figure_batch"}
@@ -341,12 +341,12 @@ async def test_figure_batch_judge_none_fails_rows_without_embedding(monkeypatch)
     async def boom_embed(texts):
         raise AssertionError("판정 실패 행은 임베딩하지 않는다(D93)")
 
-    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
-    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
-    monkeypatch.setattr(W.upstage, "embed_passages", boom_embed)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(upstage, "embed_passages", boom_embed)
 
     svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0), _fig_row("r1", 1)])
-    await W._handle_figure_batch(svc, _fig_batch_job())
+    await figures._handle_figure_batch(svc, _fig_batch_job())
 
     failed = [patch for t, _, patch in svc.updates
               if t == "textbook_figures" and patch.get("status") == "failed"]
@@ -376,12 +376,12 @@ async def test_figure_batch_unconfigured_skips_only_unlabeled(monkeypatch):
     async def boom_embed(texts):
         raise AssertionError("캡션이 없으면 임베딩까지 가지 않는다")
 
-    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: False)
-    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
-    monkeypatch.setattr(W.upstage, "embed_passages", boom_embed)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: False)
+    monkeypatch.setattr(figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(upstage, "embed_passages", boom_embed)
 
     svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0)])
-    await W._handle_figure_batch(svc, _fig_batch_job())
+    await figures._handle_figure_batch(svc, _fig_batch_job())
 
     assert called["judge"] is False, "미설정이면 판정을 호출하지 않는다"
     failed = [patch for t, _, patch in svc.updates
@@ -412,16 +412,16 @@ async def test_figure_batch_parsed_caption_skips_judge(monkeypatch):
         captured["points"] = points
 
     # 판정은 아예 미설정 — 그래도 파싱 캡션 행은 처리돼야 한다.
-    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: False)
-    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
-    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
-    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: False)
+    monkeypatch.setattr(figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(common, "_qdrant_upsert", fake_upsert)
 
     row = _fig_row("r0", 0)
     row["match_kind"] = "parsed"
     row["embed_text"] = "그림 3 첨성대"
     svc = _FakeService(_tb_file(), figures=[row])
-    await W._handle_figure_batch(svc, _fig_batch_job())
+    await figures._handle_figure_batch(svc, _fig_batch_job())
 
     assert called["judge"] is False, "파싱 캡션이면 판정을 호출하지 않는다"
     assert captured["texts"] == ["그림 3 첨성대"], "캡션 단독 임베딩(D93 규약 유지)"
@@ -450,10 +450,10 @@ async def test_figure_batch_mixed_parsed_and_judge(monkeypatch):
     async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
         captured["points"] = points
 
-    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
-    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
-    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
-    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(common, "_qdrant_upsert", fake_upsert)
 
     parsed = _fig_row("r0", 0)
     parsed["match_kind"] = "parsed"
@@ -461,7 +461,7 @@ async def test_figure_batch_mixed_parsed_and_judge(monkeypatch):
     unlabeled = _fig_row("r1", 1, candidates=["판정 후보"])
 
     svc = _FakeService(_tb_file(), figures=[parsed, unlabeled])
-    await W._handle_figure_batch(svc, _fig_batch_job())
+    await figures._handle_figure_batch(svc, _fig_batch_job())
 
     assert captured["judged"] == 1, "라벨 있는 행은 판정에 넘기지 않는다"
     assert set(captured["texts"]) == {"파싱 캡션", "판정 후보"}
@@ -486,16 +486,16 @@ async def test_figure_batch_judge_selects_candidate(monkeypatch):
         captured["points"] = points
         captured["collection"] = collection
 
-    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
-    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
-    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
-    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(common, "_qdrant_upsert", fake_upsert)
 
     svc = _FakeService(
         _tb_file(),
         figures=[_fig_row("r0", 0, candidates=["정답 후보", "오답"])],
     )
-    await W._handle_figure_batch(svc, _fig_batch_job())
+    await figures._handle_figure_batch(svc, _fig_batch_job())
 
     # D93: 선택 캡션만 — heading·alt·위치캡션 미포함.
     assert captured["texts"] == ["정답 후보"]
@@ -530,10 +530,10 @@ async def test_figure_batch_minus_one_fails_row_others_embed(monkeypatch):
     async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
         captured["points"] = points
 
-    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
-    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
-    monkeypatch.setattr(W.upstage, "embed_passages", fake_embed)
-    monkeypatch.setattr(W, "_qdrant_upsert", fake_upsert)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(common, "_qdrant_upsert", fake_upsert)
 
     svc = _FakeService(
         _tb_file(),
@@ -542,7 +542,7 @@ async def test_figure_batch_minus_one_fails_row_others_embed(monkeypatch):
             _fig_row("r1", 1, candidates=["오답", "정답 후보"]),
         ],
     )
-    await W._handle_figure_batch(svc, _fig_batch_job())
+    await figures._handle_figure_batch(svc, _fig_batch_job())
 
     assert captured["texts"] == ["정답 후보"]
     assert [pt["id"] for pt in captured["points"]] == ["r1"]
@@ -567,12 +567,12 @@ async def test_figure_batch_embed_failure_fails_rows_and_job(monkeypatch):
     async def boom_embed(texts):
         raise RuntimeError("upstage 500")
 
-    monkeypatch.setattr(W.figure_judge, "is_configured", lambda: True)
-    monkeypatch.setattr(W.figure_judge, "judge_all", fake_judge_all)
-    monkeypatch.setattr(W.upstage, "embed_passages", boom_embed)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(figure_judge, "judge_all", fake_judge_all)
+    monkeypatch.setattr(upstage, "embed_passages", boom_embed)
 
     svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0)])
-    await W._handle_figure_batch(svc, _fig_batch_job())
+    await figures._handle_figure_batch(svc, _fig_batch_job())
 
     fig_failed = [patch for t, _, patch in svc.updates
                   if t == "textbook_figures" and patch.get("status") == "failed"]
@@ -591,7 +591,7 @@ async def test_figure_batch_no_pending_marks_done(monkeypatch):
         _tb_file(),
         figures=[_fig_row("r0", 0, status="embedded")],
     )
-    await W._handle_figure_batch(svc, _fig_batch_job())
+    await figures._handle_figure_batch(svc, _fig_batch_job())
     job_done = [patch for t, _, patch in svc.updates
                 if t == "jobs" and patch.get("status") == "done"]
     assert job_done
@@ -607,7 +607,7 @@ async def test_fail_file_for_figure_batch_no_file_status(monkeypatch):
     svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0)])
     job = {"id": "fj1", "kind": "figure_batch", "target_id": "f1",
            "batch_range": {"from_seq": 0, "to_seq": 8}}
-    await W._fail_file_for_job(svc, job, "boom")
+    await jobs._fail_file_for_job(svc, job, "boom")
 
     fig_failed = [patch for t, _, patch in svc.updates
                   if t == "textbook_figures" and patch.get("status") == "failed"]
@@ -623,7 +623,7 @@ async def test_requeue_textbook_resets_failed_figures(monkeypatch):
         figures=[_fig_row("r0", 0, status="failed")],
         chunks=[{"file_id": "f1", "seq": 0, "status": "embedded"}],
     )
-    action = await W.requeue_file(svc, "f1")
+    action = await runner.requeue_file(svc, "f1")
 
     assert "figures_requeued" in action
     # failed 행이 pending으로

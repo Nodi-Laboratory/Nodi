@@ -52,7 +52,7 @@ def _storage_key_name(filename: str | None, ext: str) -> str:
     return f"{stem}.{ext}"
 
 
-# D75: 업로드 형식 화이트리스트 — _extract_text(embedding_worker)의 실제 처리
+# D75: 업로드 형식 화이트리스트 — _extract_text(worker.common)의 실제 처리
 # 능력과 일치시킨다(Upstage Document Parse: pdf/이미지, UTF-8 디코드: txt/md).
 # 목록 밖은 스토리지 업로드 전에 422로 거절(깨진 청킹·splitting 고착 예방).
 ALLOWED_UPLOAD_EXTENSIONS = frozenset(
@@ -358,12 +358,12 @@ async def delete_file(
     # 워커의 재분할 정리와 같은 best-effort 헬퍼를 재사용해 오펀 벡터를 지운다
     # (내부 try/except+warning — 실패해도 삭제는 이미 성공). 워커 순환 임포트를
     # 피해 지역 임포트(retry_file과 동일 패턴).
-    from . import embedding_worker
+    from .worker import common as worker_common
 
-    await embedding_worker._qdrant_delete_file_points(file_id)
+    await worker_common._qdrant_delete_file_points(file_id)
     # D86: textbook figure 임베딩 포인트도 정리(별도 Qdrant 컬렉션).
     if is_textbook:
-        await embedding_worker._qdrant_delete_file_points(
+        await worker_common._qdrant_delete_file_points(
             file_id, collection=qdrant_store.COL_TEXTBOOK_FIGURES
         )
 
@@ -373,10 +373,10 @@ async def retry_file(
 ) -> str:
     """Re-process a file (owner only). Delegates to the worker's idempotent
     requeue. Returns the action taken."""
-    from . import embedding_worker  # local import avoids a worker import cycle
+    from . import worker  # local import avoids a worker import cycle
 
     await _assert_file_owner(client, owner_id, file_id)
-    return await embedding_worker.requeue_file(service, file_id)
+    return await worker.requeue_file(service, file_id)
 
 
 async def list_files(

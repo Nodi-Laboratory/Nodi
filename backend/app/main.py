@@ -26,7 +26,7 @@ from .routers import (
     sessions,
     teacher,
 )
-from .services import embedding_worker, qdrant_store
+from .services import qdrant_store, worker
 
 settings = get_settings()
 
@@ -40,10 +40,10 @@ async def lifespan(_app: FastAPI):
     # 임베딩 워커(워커 DSN 미설정이면 no-op). DB 풀은 첫 사용 시 지연 생성된다.
     # Qdrant 컬렉션 보장(멱등, 절대 raise 안 함 — Qdrant 다운이어도 부팅 계속).
     await qdrant_store.ensure_collections()
-    embedding_worker.start(_app)
+    worker.start(_app)
     yield
     # D104: PostgREST httpx 풀 → asyncpg 풀. 종료 시 함께 닫는다.
-    embedding_worker.stop()
+    worker.stop()
     await close_pools()
 
 
