@@ -696,6 +696,11 @@ CREATE INDEX idx_files_space_created ON public.files USING btree (space_kind, sp
 
 CREATE INDEX idx_jobs_owner ON public.jobs USING btree (owner_id);
 
+-- D105: parent_job_id는 ON DELETE CASCADE인데 인덱스가 없었다. 부모 잡을 지울
+-- 때마다 RI 트리거가 자식을 찾느라 jobs를 통째로 훑는다.
+-- 실측(부모 200 + 자식 6,000행, 부모 50개 삭제): 트리거 279ms → 13.7ms (20배).
+-- split 잡은 parent가 NULL이므로 부분 인덱스로 크기를 줄인다.
+CREATE INDEX idx_jobs_parent ON public.jobs USING btree (parent_job_id) WHERE (parent_job_id IS NOT NULL);
 CREATE INDEX idx_jobs_status ON public.jobs USING btree (status, created_at);
 
 CREATE INDEX idx_jobs_target ON public.jobs USING btree (target_id);
