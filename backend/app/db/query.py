@@ -106,6 +106,20 @@ def build_where(
         col = _ident(key)
         op, _, val = raw.partition(".")
 
+        if op == "before":
+            # `before.<초>` — "지금으로부터 N초 전보다 오래된" (D104).
+            #
+            # PostgREST 시절에는 파이썬이 만든 ISO 문자열을 그냥 넘겼는데,
+            # asyncpg는 timestamptz 파라미터에 문자열을 받지 않는다(실측:
+            # DataError). 게다가 앱 시계와 DB 시계가 어긋나면 판정도 틀린다 —
+            # **시간 계산을 DB에서** 하도록 바꾼다.
+            if not val.isdigit():
+                raise UnsupportedQuery(f"before는 초 단위 정수여야 한다: {raw!r}")
+            clauses.append(f"{col} < now() - make_interval(secs => ${idx})")
+            args.append(int(val))
+            idx += 1
+            continue
+
         if op == "in":
             # `in.(a,b,c)`
             body = val.strip()

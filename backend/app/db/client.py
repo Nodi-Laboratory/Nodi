@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 import asyncpg
 from fastapi import HTTPException, status
@@ -46,8 +49,35 @@ async def _prepare(conn: asyncpg.Connection) -> None:
         )
 
 
+def _jsonable(value: Any) -> Any:
+    """asyncpg 반환값 → JSON 호환 원시값 (D104 회귀 방지).
+
+    **왜 필요한가**: PostgREST는 JSON을 돌려줬으므로 uuid·timestamptz가 전부
+    **문자열**이었고, 코드베이스 전체가 그 전제로 쓰였다. asyncpg는 `uuid.UUID`·
+    `datetime` 객체를 돌려주는데, 파이썬에서 `UUID(...) == "..."`는 **항상 거짓**이다.
+
+    실제로 이 차이가 채팅을 통째로 막았다 — chat.py의
+    `session["owner_id"] != user.id`가 UUID vs str 비교라 항상 참이 되어 모든
+    질문이 403("세션 소유자만 채팅할 수 있습니다")으로 거부됐다.
+
+    비교·f-string 보간·응답 직렬화가 코드 곳곳에 흩어져 있으므로, 호출부 수십
+    곳을 고치는 대신 **경계 한 곳에서** 옛 계약(문자열)으로 되돌린다.
+    """
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, list):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    return value
+
+
 def _rows(records: list[asyncpg.Record]) -> list[dict[str, Any]]:
-    return [dict(r) for r in records]
+    return [{k: _jsonable(v) for k, v in r.items()} for r in records]
 
 
 def _fail(exc: Exception, op: str) -> None:

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -171,15 +171,14 @@ async def _recover_stale_jobs(svc: ServiceClient) -> int:
     finalize). updated_at is stamped at claim, so a live in-flight job (the poll
     awaits its jobs before returning) is never seen as stale.
     """
-    cutoff = (
-        datetime.now(UTC)
-        - timedelta(seconds=settings.embedding_stale_seconds)
-    ).isoformat()
+    # D104: 컷오프를 파이썬이 아니라 **DB에서** 계산한다(`before.<초>`).
+    # asyncpg가 timestamptz 파라미터에 문자열을 받지 않기도 하고, 앱 시계와 DB
+    # 시계가 어긋나면 스테일 판정 자체가 틀리기 때문이다.
     stale = await svc.select(
         "jobs",
         {
             "status": "eq.running",
-            "updated_at": f"lt.{cutoff}",
+            "updated_at": f"before.{settings.embedding_stale_seconds}",
             "select": "id,kind,target_id,attempts,batch_range",
             "limit": "50",
         },

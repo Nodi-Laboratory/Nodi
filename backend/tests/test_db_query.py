@@ -152,3 +152,18 @@ def test_select_full_query_shape():
         " ORDER BY updated_at DESC LIMIT 5"
     )
     assert args == ["u1"]
+
+
+# --- D104: before(초) — DB에서 시간 계산 -------------------------------------
+
+
+def test_before_uses_db_clock():
+    """앱 시계가 아니라 DB의 now()를 쓴다 — 시계 어긋남으로 판정이 틀리지 않게."""
+    where, args, _ = Q.build_where({"updated_at": "before.120"})
+    assert where == " WHERE updated_at < now() - make_interval(secs => $1)"
+    assert args == [120]
+
+
+def test_before_requires_integer_seconds():
+    with pytest.raises(Q.UnsupportedQuery):
+        Q.build_where({"updated_at": "before.2026-07-27T00:00:00"})
