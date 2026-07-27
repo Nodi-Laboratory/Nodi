@@ -79,8 +79,6 @@ export interface NodeRow {
   question: string;
   answer: string;
   label: string | null;
-  position_x: number | null;
-  position_y: number | null;
   created_at: string;
   /** Stage 3a: 이 노드가 가져온 source 노드 id들(기억 연결). */
   connections?: string[] | null;

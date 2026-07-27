@@ -20,10 +20,13 @@ from ..db.client import UserClient
 # frontend can draw memory-link edges (Stage 3a).
 # `reference_sources` (D46/0019) carries which branches an answer referenced this
 # turn — without it the "참조 브랜치" chips/popup never render (D57).
-# `attachments`(0001 jsonb)의 "canvas" 키는 캔버스 리프 노드(EBS 영상/아트 추천)
-# 영속분 — 세션 재수화 때 VideoNode/ArtNode를 복원하려면 함께 내려줘야 한다(C5).
+# `attachments`(0001 jsonb)의 "canvas" 키는 캔버스 리프 노드(교과서 도판) 영속분 —
+# 세션 재수화 때 FigureNode를 복원하려면 함께 내려줘야 한다(C5).
+# D105: position_x/position_y는 select에서 뺐다 — 좌표의 소유자는 프론트
+# d3-force이고 서버는 저장하지 않는다. 매 세션 조회마다 항상 NULL인 컬럼 두 개를
+# 실어 보내고 있었다.
 NODE_SELECT = (
-    "id,session_id,parent_id,question,answer,label,position_x,position_y,"
+    "id,session_id,parent_id,question,answer,label,"
     "connections,rag_sources,reference_sources,attachments,created_at"
 )
 SESSION_SELECT = (
@@ -107,30 +110,6 @@ async def update_session_title(
 async def delete_session(client: UserClient, session_id: str) -> None:
     """Delete a session (nodes cascade; files.session_id -> null, see 0011)."""
     await client.delete("sessions", {"id": f"eq.{session_id}"})
-
-
-async def set_node_positions(
-    client: UserClient,
-    session_id: str,
-    positions: list[dict[str, Any]],
-) -> int:
-    """Persist node coordinates (D20). RLS nodes_update_owner gates ownership.
-
-    Each item: {node_id, x, y}. Scoped to the given session for safety.
-    Returns the number of nodes updated.
-    """
-    updated = 0
-    for p in positions:
-        node_id = p.get("node_id")
-        if not node_id:
-            continue
-        rows = await client.update(
-            "nodes",
-            {"id": f"eq.{node_id}", "session_id": f"eq.{session_id}"},
-            {"position_x": p.get("x"), "position_y": p.get("y")},
-        )
-        updated += len(rows)
-    return updated
 
 
 async def get_session(client: UserClient, session_id: str) -> dict[str, Any]:

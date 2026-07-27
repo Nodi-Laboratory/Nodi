@@ -113,8 +113,6 @@ CREATE TABLE public.nodes (
     question text,
     answer text,
     label text,
-    position_x double precision,
-    position_y double precision,
     connections uuid[] DEFAULT '{}'::uuid[] NOT NULL,
     attachments jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -461,32 +459,6 @@ begin
     return v_conn;
 end;
 $$;
-
-CREATE FUNCTION public.set_node_positions_bulk(p_session_id uuid, p_positions jsonb) RETURNS integer
-    LANGUAGE sql
-    SET search_path TO 'public'
-    AS $_$
-    with input as (
-        select e
-          from jsonb_array_elements(coalesce(p_positions, '[]'::jsonb)) e
-         where -- drop optimistic/non-uuid ids before they hit the ::uuid cast
-               (e->>'node_id') ~*
-                 '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-               -- only persist well-formed numeric coordinates
-           and jsonb_typeof(e->'x') = 'number'
-           and jsonb_typeof(e->'y') = 'number'
-    ),
-    upd as (
-        update public.nodes n
-           set position_x = (i.e->>'x')::double precision,
-               position_y = (i.e->>'y')::double precision
-          from input i
-         where n.id = (i.e->>'node_id')::uuid
-           and n.session_id = p_session_id
-        returning n.id
-    )
-    select count(*)::int from upd;
-$_$;
 
 CREATE FUNCTION public.teacher_class_overview() RETURNS TABLE(id uuid, name text, join_code text, created_at timestamp with time zone, student_count bigint, material_count bigint, last_activity_at timestamp with time zone)
     LANGUAGE sql STABLE SECURITY DEFINER

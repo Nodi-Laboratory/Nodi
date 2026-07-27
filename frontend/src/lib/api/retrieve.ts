@@ -1,6 +1,5 @@
 /** 질의 임베딩 검색(교과서 figure) + signed URL 재발급. api.ts(806줄)에서 분리 — D102. */
 import { API_BASE, authHeaders, ensureOk } from "./_core";
-import { isRealId } from "@/lib/ids";
 
 // ── 임베딩 검색 + 캔버스 영속 (Upstage /retrieve · PATCH /nodes, C4/C5) ──
 
@@ -120,29 +119,3 @@ export async function getFigure(
     page: typeof body.page === "number" ? body.page : undefined,
   };
 }
-
-/**
- * PATCH /nodes/{id} (C5) — retrieve 결과(figures) 영속.
- * 09: 좌표 저장은 서버 done 훅이 담당 → positionX/Y 전달 제거.
- * done 이후 fire-and-forget: 실패는 삼킨다(캔버스는 replay만으로도 재구성 가능).
- */
-export async function patchNodeCanvas(
-  nodeId: string,
-  patch: {
-    attachmentsCanvas?: NodeCanvasAttachment | null;
-  },
-): Promise<void> {
-  if (!isRealId(nodeId)) return; // D63: 임시 id는 DB 경계로 못 보냄
-  try {
-    await fetch(`${API_BASE}/nodes/${nodeId}`, {
-      method: "PATCH",
-      headers: await authHeaders(true),
-      body: JSON.stringify({
-        attachments_canvas: patch.attachmentsCanvas ?? null,
-      }),
-    });
-  } catch {
-    /* best-effort */
-  }
-}
-

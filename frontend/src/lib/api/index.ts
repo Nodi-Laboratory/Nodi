@@ -52,14 +52,14 @@ export {
 export { addConnection, removeConnection } from "./nodes";
 
 export type { ChatStreamBody, ChatStreamHandlers } from "./chat";
-export { streamChat, putNodePositions } from "./chat";
+export { streamChat } from "./chat";
 
 export type {
   RetrieveFigureHit,
   RetrieveResult,
   NodeCanvasAttachment,
 } from "./retrieve";
-export { retrieve, getFigure, patchNodeCanvas } from "./retrieve";
+export { retrieve, getFigure } from "./retrieve";
 
 export { getHomeSummary } from "./home";
 

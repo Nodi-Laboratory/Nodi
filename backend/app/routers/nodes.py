@@ -1,7 +1,5 @@
-"""Node endpoints — canvas persistence + memory-link connections (Stage 3a).
+"""Node endpoints — memory-link connections (Stage 3a).
 
-- PATCH  /nodes/{id}                       canvas state (coords + attachments)
-- PATCH  /nodes/{id}/position              persist a single node's coordinates
 - POST   /nodes/{id}/connections           link another branch's node in
 - DELETE /nodes/{id}/connections/{src}     unlink it
 
@@ -9,6 +7,10 @@ Connections power "node memory linking": a node's `connections uuid[]` lists
 other-branch nodes pulled into it; chat context assembly LCA-trims and injects
 them as reference (see services/memory.py). All writes are owner-only (RLS +
 the add/remove RPCs in migration 0007).
+
+D105: 좌표 영속 엔드포인트(POST /positions, PATCH /{id}, PATCH /{id}/position)는
+제거됐다. 카드 좌표의 소유자는 프론트 d3-force 시뮬레이션이고(useTagLayout),
+서버는 답변 원문만 저장한다 — 좌표를 받아 적을 곳 자체가 없다.
 """
 
 from __future__ import annotations
@@ -26,144 +28,11 @@ class ConnectionBody(BaseModel):
     source_node_id: str
 
 
-class NodePosition(BaseModel):
-    node_id: str
-    x: int
-    y: int
-
-
-class BulkPositionsBody(BaseModel):
-    session_id: str
-    positions: list[NodePosition]
-
-
-class PositionBody(BaseModel):
-    position_x: float | None = None
-    position_y: float | None = None
-
-
-class CanvasPatchBody(BaseModel):
-    """개념 캔버스 영속화(§8) — 좌표 + 검색 결과. None 필드는 건드리지 않는다."""
-
-    position_x: float | None = None
-    position_y: float | None = None
-    # /retrieve 결과 {"figures":[...]} — attachments.canvas 키로 병합.
-    attachments_canvas: dict | None = None
-
-
-@router.post("/positions")
-async def set_positions_bulk(
-    body: BulkPositionsBody,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict:
-    """노드 좌표 일괄 저장 (D69의 set_node_positions_bulk RPC 1회 호출).
-
-    D104: 구성에서는 프론트가 Supabase 클라이언트로 이 RPC를 직접 호출했다.
-    그 경로가 사라져 백엔드를 거친다 — RPC는 SECURITY INVOKER라 호출자 컨텍스트
-    + nodes RLS로 **본인 노드만** 갱신된다(권한 판정 위치는 그대로).
-    """
-    if not body.positions:
-        return {"updated": 0}
-    client = UserClient.from_user(user)
-    updated = await client.rpc(
-        "set_node_positions_bulk",
-        {
-            "p_session_id": body.session_id,
-            "p_positions": [p.model_dump() for p in body.positions],
-        },
-    )
-    return {"updated": int(updated or 0)}
-
-
 def _connections(result: object) -> list[str]:
     """Normalize the RPC's uuid[] return into a list of strings."""
     if isinstance(result, list):
         return [str(x) for x in result]
     return []
-
-
-@router.patch("/{node_id}")
-async def patch_node_canvas(
-    node_id: str,
-    body: CanvasPatchBody,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict:
-    """캔버스 상태 PATCH — 좌표 저장 + attachments.canvas 병합 (소유자 전용, RLS).
-
-    attachments는 read-modify-write로 "canvas" 키만 갱신 — 다른 attachment
-    키(provenance 등)는 보존한다. 프론트는 chat done 후 fire-and-forget 호출.
-    """
-    client = UserClient.from_user(user)
-    rows = await client.select(
-        "nodes",
-        {
-            "id": f"eq.{node_id}",
-            "select": "id,position_x,position_y,attachments",
-            "limit": "1",
-        },
-    )
-    if not rows:
-        # 없는 노드거나 RLS가 숨김(타인 세션) — 동일하게 404.
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Node not found or not yours.",
-        )
-    current = rows[0]
-
-    patch: dict = {}
-    if body.position_x is not None:
-        patch["position_x"] = body.position_x
-    if body.position_y is not None:
-        patch["position_y"] = body.position_y
-    if body.attachments_canvas is not None:
-        attachments = current.get("attachments")
-        if not isinstance(attachments, dict):
-            attachments = {}
-        attachments["canvas"] = body.attachments_canvas
-        patch["attachments"] = attachments
-
-    if not patch:
-        return {
-            "id": node_id,
-            "position_x": current.get("position_x"),
-            "position_y": current.get("position_y"),
-            "attachments": current.get("attachments") or {},
-        }
-
-    updated = await client.update("nodes", {"id": f"eq.{node_id}"}, patch)
-    if not updated:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Node not found or not yours.",
-        )
-    row = updated[0]
-    return {
-        "id": node_id,
-        "position_x": row.get("position_x"),
-        "position_y": row.get("position_y"),
-        "attachments": row.get("attachments") or {},
-    }
-
-
-@router.patch("/{node_id}/position")
-async def set_node_position(
-    node_id: str,
-    body: PositionBody,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict:
-    """Persist a single node's coordinates (D20). Owner only (RLS)."""
-    client = UserClient.from_user(user)
-    rows = await client.update(
-        "nodes",
-        {"id": f"eq.{node_id}"},
-        {"position_x": body.position_x, "position_y": body.position_y},
-    )
-    if not rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Node not found or not yours.",
-        )
-    return {"id": node_id, "position_x": body.position_x, "position_y": body.position_y}
 
 
 @router.post("/{node_id}/connections")

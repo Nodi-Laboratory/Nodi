@@ -25,16 +25,6 @@ class RenameSessionBody(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
 
-class NodePosition(BaseModel):
-    node_id: str
-    x: float | None = None
-    y: float | None = None
-
-
-class NodePositionsBody(BaseModel):
-    positions: list[NodePosition] = Field(default_factory=list, max_length=2000)
-
-
 @router.post("", status_code=201)
 async def create_session(
     body: CreateSessionBody,
@@ -93,17 +83,4 @@ async def delete_session(
     client = UserClient.from_user(user)
     await svc.delete_session(client, session_id)
 
-
-@router.put("/{session_id}/node-positions")
-async def set_node_positions(
-    session_id: str,
-    body: NodePositionsBody,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, Any]:
-    """Batch-persist node coordinates after drag/relayout (D20)."""
-    client = UserClient.from_user(user)
-    n = await svc.set_node_positions(
-        client, session_id, [p.model_dump() for p in body.positions]
-    )
-    return {"updated": n}
 
