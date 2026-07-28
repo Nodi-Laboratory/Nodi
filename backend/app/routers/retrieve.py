@@ -1,6 +1,6 @@
 """POST /retrieve — 개념 캔버스용 질의 임베딩 + 교과서 figure 노드 검색.
 
-Upstage embedding-query(4096d)로 질의를 임베딩해, 학급 세션이면 교과서
+Upstage embedding-query로 질의를 임베딩해(D106: 1024d), 학급 세션이면 교과서
 figure(textbook_figures)를 학급 스코프로 검색해 signed URL과 함께 반환한다
 (TASK 4, D87). EBS 영상·SVG 아트 전역 카탈로그 검색은 D94(사용자 결정
 2026-07-18)로 제거됨. 카드 배치·카메라는 프론트 소유(d3-force)이므로 서버는

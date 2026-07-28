@@ -1,8 +1,9 @@
-"""Upstage API 클라이언트 — 임베딩(4096d) + 문서 파싱(Document Parse).
+"""Upstage API 클라이언트 — 임베딩(1024d) + 문서 파싱(Document Parse).
 
 임베딩은 비대칭 모델: 질의는 `embedding-query`, 문서는 `embedding-passage`
-(혼용 시 검색 품질 저하 — 반드시 kind로 구분). 출력은 4096차원이며 문서상
-정규화되어 나오지만, 코사인=내적 불변식을 위해 방어적으로 L2 정규화한다.
+(혼용 시 검색 품질 저하 — 반드시 kind로 구분). 기본 출력은 4096차원이지만
+`dimensions` 파라미터로 1024를 요청한다(D106 — 근거는 EMBED_DIM 주석).
+문서상 정규화되어 나오지만, 코사인=내적 불변식을 위해 방어적으로 L2 정규화한다.
 
 문서 파싱(Document Parse)은 PDF와 이미지를 하나의 엔드포인트로 커버
 (기존 Gemini OCR 텍스트 추출 대체). 100p 초과 문서는 async 폴링 경로.
@@ -24,8 +25,23 @@ from ..config import get_settings
 logger = logging.getLogger("nodi.upstage")
 settings = get_settings()
 
-# Upstage 임베딩 모델의 고정 출력 차원. Qdrant 컬렉션(size=4096)과의 계약.
-EMBED_DIM = 4096
+# 임베딩 차원 (D106). Qdrant 컬렉션 size와의 계약 — **바꾸면 컬렉션을 다시
+# 만들고 전량 재임베딩해야 한다**(Qdrant는 컬렉션 차원을 변경할 수 없다).
+#
+# Upstage 기본 출력은 4096이지만 OpenAI 호환 `dimensions` 파라미터로 축소된
+# 벡터를 받을 수 있다(Matryoshka). 실측으로 1024를 골랐다 — 미니 코퍼스
+# (문서 12 · 질의 6 · 무관 질의 3)에서:
+#
+#   차원   top-1   온토픽 평균거리   최악 온토픽   무관질의 최소거리   마진
+#   4096    6/6        0.524          0.621          0.871         0.251
+#   1024    6/6        0.482          0.591          0.860         0.269
+#    256    6/6        0.473          0.619          0.848         0.229
+#
+# 검색 정확도는 차이가 없고, 1024가 게이트(0.60) 대비 여유가 가장 크다.
+# 4096에서는 최악 온토픽이 0.621로 **게이트를 넘어 차단**됐는데 1024에서는
+# 0.591로 통과한다. 벡터는 16KB → 4KB(1/4).
+# 256까지 줄이면 마진이 다시 좁아지므로 여기서 멈춘다.
+EMBED_DIM = 1024
 
 # 요청당 입력 상한(배치 <=100) / 텍스트당 <=4000토큰 — 토크나이저 없이
 # 문자 기준으로 방어적 절단(~8000자, 한글 기준 넉넉히 토큰 한도 아래).
@@ -126,7 +142,7 @@ def _model_for(kind: str) -> str:
 async def embed_texts(
     texts: list[str], *, kind: str = "passage"
 ) -> list[list[float]]:
-    """텍스트 목록 -> L2 정규화된 4096d 벡터 목록.
+    """텍스트 목록 -> L2 정규화된 EMBED_DIM 차원 벡터 목록.
 
     비대칭 모델이므로 kind를 반드시 구분: 질의="query", 문서="passage".
     배치 <=100 단위로 분할 호출하고, 응답은 index로 정렬해 입력 순서를 보존.
@@ -142,7 +158,10 @@ async def embed_texts(
             resp = await _post_with_retry(
                 client,
                 f"{_base()}/embeddings",
-                json={"model": model, "input": batch},
+                # D106: dimensions로 축소 벡터를 받는다. 이 값이 빠지면 4096이
+                # 돌아와 아래 차원 검증에서 즉시 실패한다 — 컬렉션과 어긋난 채
+                # 조용히 적재되는 일은 없다.
+                json={"model": model, "input": batch, "dimensions": EMBED_DIM},
                 headers=_headers(),
             )
             data = sorted(resp.json().get("data") or [], key=lambda d: d["index"])

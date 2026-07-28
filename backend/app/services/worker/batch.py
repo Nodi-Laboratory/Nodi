@@ -1,6 +1,6 @@
 """embedding_batch 잡 — 청크 임베딩 → Qdrant 업서트 → 진행률 갱신.
 
-Upstage embedding-passage(4096d)로 임베딩하고 벡터는 Qdrant에만 넣는다.
+Upstage embedding-passage(upstage.EMBED_DIM)로 임베딩하고 벡터는 Qdrant에만 넣는다.
 Postgres에는 상태만 기록한다(본문은 file_chunks에 이미 있다).
 """
 

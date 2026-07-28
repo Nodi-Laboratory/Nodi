@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # --- AI (EXAONE / Friendli) — chat-answer generation ---
     # Friendli serverless endpoint (OpenAI-compatible chat completions). Replaces
     # Gemini for the streamed chat answer. Embeddings now run on Upstage
-    # (4096d, Qdrant) — see the Upstage/Qdrant sections below.
+    # (Qdrant, 차원은 upstage.EMBED_DIM) — see the Upstage/Qdrant sections below.
     exaone_api_key: str = ""  # Friendli API key (starts with flp_)
     exaone_model: str = "LGAI-EXAONE/K-EXAONE-236B-A23B"  # serverless model id
     # 전용 엔드포인트 ID. 설정되면 dedicated(/dedicated/v1, model=endpoint_id, 예약 GPU →
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     exaone_temperature: float = 0.5
     exaone_max_tokens: int = 2048
 
-    # --- AI (Upstage) — 임베딩(4096d) + 문서 파싱(Document Parse) ---
+    # --- AI (Upstage) — 임베딩(1024d, D106) + 문서 파싱(Document Parse) ---
     # 비대칭 임베딩: 질의 embedding-query / 문서 embedding-passage (혼용 금지).
     # PDF/이미지 텍스트 추출은 document-parse가 기존 Gemini OCR을 대체.
     upstage_api_key: str = ""
@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     upstage_document_parse_model: str = "document-parse"
 
     # --- Qdrant (벡터 저장소 — pgvector 대체) ---
-    # 컬렉션: file_chunks / canvas_cards / textbook_figures (전부 4096d, Cosine).
+    # 컬렉션: file_chunks / textbook_figures (전부 upstage.EMBED_DIM, Cosine).
     # Qdrant엔 RLS가 없다 — 스코핑은 백엔드 페이로드 필터로 강제(qdrant_store).
     qdrant_url: str = "http://localhost:6333"
 
@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     # Truncate each imported answer in the reference block (char budget).
     memory_answer_char_cap: int = 400
 
-    # 임베딩은 Upstage embedding-passage/query 4096d + Qdrant로 완전 이전됨
+    # 임베딩은 Upstage embedding-passage/query + Qdrant로 완전 이전됨
     # (D80: 구 Gemini 임베딩 모델·차원 설정 키 제거).
     # Chunks per embedding_batch child job; sub-batched per embed request.
     embedding_batch_size: int = 64

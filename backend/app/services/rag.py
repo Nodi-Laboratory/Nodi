@@ -3,7 +3,7 @@
 D82: 파일 링크·제안 엔진 제거로 RAG는 **학급 자료(class_material) 자동 스코프
 단일 경로**로 단순화됐다. 학급 세션이면 그 학급의
 class_material 파일을 링크 없이 검색 후보로 삼아 질의를 임베딩(Upstage query,
-4096d)하고, cosine-search(Qdrant, file_id 페이로드 필터로 스코핑) 상위 청크에
+1024d)하고, cosine-search(Qdrant, file_id 페이로드 필터로 스코핑) 상위 청크에
 전(全) 청크 거리 게이트(class_material_rag_max_distance)를 적용해 인사말·무관
 질의 턴의 프롬프트 오염을 막은 뒤, SOURCE-LABELLED 참고 블록
 ("[학급 자료에서 참고]")으로 주입한다. 개인 공간·비학급 세션엔 주입 없음.

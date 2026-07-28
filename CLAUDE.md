@@ -61,7 +61,7 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 ## 스택
 
 Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권한 강제·자체 인증)
-· Qdrant(벡터 4096d/Cosine, `docker compose up -d qdrant`) · Upstage(임베딩 + 문서 파싱)
+· Qdrant(벡터 1024d/Cosine, `docker compose up -d qdrant`) · Upstage(임베딩 + 문서 파싱)
 · EXAONE `K-EXAONE-236B-A23B`(Friendli 서버리스, 스트리밍 챗, 256K 컨텍스트).
 
 ## 핵심 파이프라인
@@ -71,7 +71,7 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   용량 kind별 D77 — 교사 자료 500MB/학생 50MB) → `embedding_split` 잡
   → Upstage Document Parse(50MB 초과 PDF는 페이지 분할 파싱, D78)
   → 문단 인지 청킹(1,200자/오버랩 150자, admin 튜너블)
-  → `embedding_batch` 잡 팬아웃(64청크 단위) → Upstage `embedding-passage` 4096d
+  → `embedding_batch` 잡 팬아웃(64청크 단위) → Upstage `embedding-passage` 1024d(D106)
   → **벡터는 Qdrant, 청크 본문·상태는 Postgres `file_chunks`**.
   교과서는 `upstage.parse_document_full`(표준 모드+coordinates+figure base64 —
   D92로 enhanced 제거, 조각 ≤48MB·≤100p 사전 분할)로 텍스트·elements를 한 번에

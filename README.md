@@ -5,7 +5,7 @@
 > 근거로 답한다.
 
 Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
-**Qdrant**(벡터 4096d) · **Upstage**(임베딩 + 문서 파싱) · **EXAONE**(대화 생성).
+**Qdrant**(벡터 1024d) · **Upstage**(임베딩 + 문서 파싱) · **EXAONE**(대화 생성).
 
 - 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](CLAUDE.md)** ← 이 저장소의 규범 문서
 - 작업 체계: [`docs/TASKS.md`](docs/TASKS.md) · [`docs/AGENTS.md`](docs/AGENTS.md) · [`docs/PROCESS.md`](docs/PROCESS.md)
@@ -135,7 +135,7 @@ uv run python -m app.cli list-users
                     (3) PATCH /nodes/{id} → 위치·노드 영속(attachments.canvas)
         │
 백엔드(FastAPI)
-  services/upstage.py       임베딩(embedding-query/passage, 4096d) + 문서 파싱
+  services/upstage.py       임베딩(embedding-query/passage, 1024d) + 문서 파싱
   services/qdrant_store.py  컬렉션 file_chunks / canvas_cards / textbook_figures
   services/exaone.py        대화 생성(스트리밍)
   services/figure_*.py      교과서 도판 추출·비전 판정

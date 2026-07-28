@@ -186,7 +186,7 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     is_textbook = f.get("kind") == "textbook"
 
     # (구 D65 차원 가드 폐기 — 벡터는 Qdrant에만 저장하고 차원은 Upstage
-    #  EMBED_DIM=4096 고정. 검증은 upstage.embed_texts + Qdrant 컬렉션이 수행.)
+    #  차원은 upstage.EMBED_DIM. 검증은 upstage.embed_texts + Qdrant 컬렉션이 수행.)
 
     # Idempotency (crash recovery): if batch jobs already exist for this file the
     # split already fanned out — just mark this (re-queued) split done. Otherwise

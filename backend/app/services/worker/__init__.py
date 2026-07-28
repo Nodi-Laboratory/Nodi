@@ -7,7 +7,7 @@ apscheduler가 `jobs(status='queued')`를 폴링해 서비스 롤 클라이언�
   embedding_split : 파일 다운로드 → 텍스트 추출(PDF·이미지는 Upstage Document
                     Parse, 평문은 디코드) → 청킹 → file_chunks(pending) 적재 +
                     chunk_total·status='embedding' → embedding_batch 자식 잡 생성
-  embedding_batch : 배치 청크 임베딩(Upstage passage, 4096d) → 벡터는 Qdrant
+  embedding_batch : 배치 청크 임베딩(Upstage passage, 1024d) → 벡터는 Qdrant
                     file_chunks에 업서트 → status='embedded', 진행률 재계산.
                     전 청크가 해소되면 파일 'indexed'(일부 실패 시 'partial')
   figure_batch    : 교과서 도판 크롭 · 캡션 확정 · 임베딩 (D86)

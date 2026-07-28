@@ -1,4 +1,4 @@
-"""Qdrant 벡터 저장소 — 컬렉션 보장 + upsert + 검색 (4096d, Cosine).
+"""Qdrant 벡터 저장소 — 컬렉션 보장 + upsert + 검색 (upstage.EMBED_DIM, Cosine).
 
 Qdrant에는 RLS가 없다 — 신뢰 경계가 아니다. file_chunks 페이로드는
 {chunk_id, file_id, owner_id}만 저장(본문 없음)하고, 청크 텍스트는 검색 후
@@ -23,7 +23,7 @@ logger = logging.getLogger("nodi.qdrant")
 settings = get_settings()
 
 COL_FILE_CHUNKS = "file_chunks"
-# 교과서 figure 임베딩 컬렉션(TASK 4, D86). file_chunks와 동형(4096d/Cosine) —
+# 교과서 figure 임베딩 컬렉션(TASK 4, D86). file_chunks와 동형(같은 차원/Cosine) —
 # figure 캡션·description 임베딩을 저장하고, file_id 페이로드 필터로 스코핑한다.
 # 청크 본문과 마찬가지로 페이로드엔 식별자만(본문 없음), 히트 후 RLS 재조회.
 COL_TEXTBOOK_FIGURES = "textbook_figures"
@@ -40,7 +40,7 @@ def get_client() -> AsyncQdrantClient:
 
 
 async def ensure_collections() -> None:
-    """전체 컬렉션(4096d, Cosine) 생성 보장 + 페이로드 인덱스.
+    """전체 컬렉션(EMBED_DIM, Cosine) 생성 보장 + 페이로드 인덱스.
 
     멱등. 부팅 경로에서 호출되므로 절대 raise하지 않는다 — 실패는 로그만 남기고,
     실제 사용 시점(upsert/search)의 예외로 드러난다.
