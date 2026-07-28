@@ -461,6 +461,18 @@ CREATE TABLE public.ai_logs (
     skill_calls jsonb DEFAULT '[]'::jsonb NOT NULL,
     errors jsonb DEFAULT '[]'::jsonb NOT NULL,
     token_estimate integer,
+    -- D113 관측성. token_estimate는 글자수/4 어림이라 과금·한도 판단에 쓸 수
+    -- 없었다. tokens는 **공급자가 준 실측 usage**다:
+    --   {"prompt":n,"completion":n,"total":n,
+    --    "calls":[{"stage":"decide|answer","model":..,"prompt":n,"completion":n,
+    --              "estimated":bool}]}
+    -- estimated=true는 스트리밍 응답이 usage를 안 줘서 어림한 경우 —
+    -- 실측과 어림을 섞어 놓고 실측인 척하지 않는다.
+    tokens jsonb DEFAULT '{}'::jsonb NOT NULL,
+    -- 'react' | 'legacy'. 어느 경로로 돈 턴인지 로그만 보고 알 수 있어야 한다.
+    route text,
+    model text,
+    duration_ms integer,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -745,6 +757,12 @@ CREATE POLICY file_chunks_select_own ON public.file_chunks FOR SELECT USING ((EX
    FROM public.files f
   WHERE ((f.id = file_chunks.file_id) AND (f.owner_id = ( SELECT auth.uid() AS uid))))));
 
+-- D113: 관리자 전역 읽기. 운영 콘솔이 "문서가 어떻게 올라갔는지"(청크 경계·
+-- 임베딩 상태)와 RAG 테스트 결과를 보여주려면 소유자·학급과 무관하게 읽어야
+-- 한다. **읽기 전용**이며 sessions_select_admin·ai_logs_select_admin과 같은
+-- 형태다 — 권한은 계속 DB가 강제한다(D104).
+CREATE POLICY file_chunks_select_admin ON public.file_chunks FOR SELECT USING (public.is_admin());
+
 ALTER TABLE public.files ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY files_delete_own ON public.files FOR DELETE USING ((owner_id = ( SELECT auth.uid() AS uid)));
@@ -754,6 +772,9 @@ CREATE POLICY files_insert_own ON public.files FOR INSERT WITH CHECK (((owner_id
 CREATE POLICY files_select_class ON public.files FOR SELECT USING (((kind = ANY (ARRAY['class_material'::text, 'textbook'::text])) AND public.is_class_member(space_ref)));
 
 CREATE POLICY files_select_own ON public.files FOR SELECT USING ((owner_id = ( SELECT auth.uid() AS uid)));
+
+-- D113: 관리자 전역 읽기(읽기 전용 — insert/update/delete 정책은 그대로).
+CREATE POLICY files_select_admin ON public.files FOR SELECT USING (public.is_admin());
 
 CREATE POLICY files_update_own ON public.files FOR UPDATE USING ((owner_id = ( SELECT auth.uid() AS uid))) WITH CHECK (((owner_id = ( SELECT auth.uid() AS uid)) AND ((kind <> ALL (ARRAY['class_material'::text, 'textbook'::text])) OR public.is_class_teacher(space_ref))));
 
@@ -772,6 +793,11 @@ CREATE POLICY nodes_insert_owner ON public.nodes FOR INSERT WITH CHECK ((EXISTS 
   WHERE ((s.id = nodes.session_id) AND (s.owner_id = ( SELECT auth.uid() AS uid))))));
 
 CREATE POLICY nodes_select ON public.nodes FOR SELECT USING (public.can_access_session(session_id));
+
+-- D113: 관리자 전역 읽기. can_access_session()을 고치지 않고 별도 정책으로 둔다 —
+-- 그 함수의 뜻은 "세션 소유자 또는 담임"이고, 거기에 admin을 섞으면 함수를 쓰는
+-- 다른 곳까지 조용히 넓어진다. sessions_select_admin과 같은 패턴.
+CREATE POLICY nodes_select_admin ON public.nodes FOR SELECT USING (public.is_admin());
 
 CREATE POLICY nodes_update_owner ON public.nodes FOR UPDATE USING ((EXISTS ( SELECT 1
    FROM public.sessions s
@@ -802,4 +828,7 @@ ALTER TABLE public.textbook_figures ENABLE ROW LEVEL SECURITY;
 CREATE POLICY textbook_figures_select ON public.textbook_figures FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.files f
   WHERE ((f.id = textbook_figures.file_id) AND ((f.owner_id = ( SELECT auth.uid() AS uid)) OR ((f.kind = 'textbook'::text) AND public.is_class_member(f.space_ref)))))));
+
+-- D113: 관리자 전역 읽기(도판 인제스트 상태 확인용, 읽기 전용).
+CREATE POLICY textbook_figures_select_admin ON public.textbook_figures FOR SELECT USING (public.is_admin());
 
