@@ -1,11 +1,11 @@
 # Nodi
 
-> 교실 학습용 AI 도우미. 학생이 질문하면 EXAONE이 **개념 카드**를 스트리밍하고,
+> 교실 학습용 AI 도우미. 학생이 질문하면 모델이 **개념 카드**를 스트리밍하고,
 > 무한 캔버스 위에 주제별로 묶어 배치한다. 선생님이 올린 수업 자료·교과서를
 > 근거로 답한다.
 
 Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
-**Qdrant**(벡터 1024d) · **Upstage**(임베딩 + 문서 파싱) · **EXAONE**(대화 생성).
+**Qdrant**(벡터 1024d) · **Upstage**(대화 생성 `solar-pro2` + 임베딩 + 문서 파싱).
 
 - 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](CLAUDE.md)** ← 이 저장소의 규범 문서
 - 작업 체계: [`docs/TASKS.md`](docs/TASKS.md) · [`docs/AGENTS.md`](docs/AGENTS.md) · [`docs/PROCESS.md`](docs/PROCESS.md)
@@ -21,10 +21,11 @@ Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
 - **Python 3.11+** (권장 3.12)
 - **Docker** — Postgres·Qdrant 컨테이너용
 - **[uv](https://docs.astral.sh/uv/)** — 파이썬 의존성 관리 (`pip install uv`)
-- 키: Upstage API 키, EXAONE(Friendli) 키 → 오너에게 요청
+- 키: **Upstage API 키 하나** → 오너에게 요청
 
-> 외부 서비스 의존은 **AI API 두 개뿐**이다(EXAONE·Upstage). 데이터·인증·파일은
-> 전부 로컬에서 돈다.
+> 외부 서비스 의존은 **Upstage 하나뿐**이다(D108: 대화 생성까지 Upstage로 모였다).
+> 데이터·인증·파일은 전부 로컬에서 돈다. 교과서 도판 비전 판정(`JUDGE_*`)은
+> 선택이며, 비워 두면 라벨 없는 도판만 처리되지 않는다.
 
 ### 1) 인프라
 
@@ -37,12 +38,16 @@ docker compose up -d      # postgres(5433) + qdrant(6333)
 | 파일 | 내용 |
 |---|---|
 | `00_bootstrap.sql` | `auth.uid()` · `public.users` · 역할(`nodi_app`/`nodi_worker`) |
-| `01_schema.sql` | 테이블 11 · RLS 정책 32 · 함수 19 |
+| `01_schema.sql` | 테이블 11 · RLS 정책 38 · 함수 26 |
 | `02_triggers.sql` | 가입 시 프로필 자동 생성 |
-| `03_app_settings.sql` | admin 튜너블 기본값 11종 |
+| `03_app_settings.sql` | admin 튜너블 기본값 13종 |
 | `04_seed.sql` | (계정을 넣지 않는다 — 아래 참조) |
 
 전부 다시 적용하려면 `docker compose down -v && docker compose up -d`.
+
+`db/migrations/`는 **자동 적용되지 않는다**(엔트리포인트가 하위 디렉터리를 건너뛴다).
+데이터가 이미 든 DB를 최신 스키마와 맞출 때만 손으로 적용한다 — 새로 시작하는
+환경은 `01_schema.sql`에 전부 반영돼 있으므로 볼 필요가 없다.
 
 ### 2) 환경 변수
 
@@ -57,9 +62,13 @@ copy backend\.env.example        backend\.env
 copy frontend\.env.local.example frontend\.env.local
 ```
 
-백엔드 필수 3종 — `DATABASE_URL` · `DATABASE_WORKER_URL` · `JWT_SECRET`
-(+ AI 키 `UPSTAGE_API_KEY`·`EXAONE_API_KEY`). 프론트는 `NEXT_PUBLIC_API_BASE_URL`
-하나뿐이다.
+백엔드 필수 4종 — `DATABASE_URL` · `DATABASE_WORKER_URL` · `JWT_SECRET` ·
+`UPSTAGE_API_KEY`. 프론트는 `NEXT_PUBLIC_API_BASE_URL` 하나뿐이다.
+
+> 팀에서 `.env`를 통째로 공유해도 된다 — DSN이 `localhost:5433`(docker compose와
+> 동일)이고 절대 경로가 없어 그대로 돈다. 다만 **`JWT_SECRET`은 각자 바꾸는 것을
+> 권한다**: 기본값이면 누구나 토큰을 위조할 수 있고, 공유된 값도 같은 문제를
+> 가진다(`/health/config`의 `secret_is_default`로 확인).
 
 > **⚠️ `.env` 위치**: 백엔드는 **`backend/.env`**를 읽는다 (저장소 루트 아님 —
 > `backend/app/config.py`의 `BACKEND_ENV`). 루트에 두면 값이 하나도 안 읽히는데
@@ -111,7 +120,13 @@ uv run python -m app.cli list-users
 
 - **개념 캔버스** — pan/zoom 무한 캔버스에 개념 카드를 손글씨 스타일로 배치.
   `(app)/space/[spaceId]`.
-- **태그 기반 배치** — EXAONE이 개념마다 자유 태그(단원·주제 수준)를 붙이고,
+- **ReAct 스킬 루프** — 모델이 필요할 때만 도구를 부른다(D109). 인사 한 마디에
+  임베딩·벡터 검색이 나가지 않는다. 스킬 9종은 `backend/app/ai/skills/`에 파일
+  하나씩이고, 노출 목록은 (공간·역할·세션 상태)로 먼저 좁힌다.
+- **운영 콘솔** — `/admin` (관리자 전용, 9탭). 개요·AI 흐름·대화 기록·턴 로그·
+  스킬·문서 인제스트·RAG 테스트·런타임 설정·데이터 백업/초기화. 턴마다 어떤
+  스킬을 어떤 인자로 불렀고 토큰을 얼마나 썼는지까지 본다(D113/D114).
+- **태그 기반 배치** — 모델이 개념마다 자유 태그(단원·주제 수준)를 붙이고,
   프론트가 태그 첫 등장 순서로 황금각 슬롯 앵커를 부여해 묶는다(D89/D90).
 - **선생님 워크스페이스** — 학급 개설, 수업 자료(`class_material`)·교과서
   (`textbook`) 업로드. 자료는 청킹 → 임베딩 → Qdrant로 RAG 구축.
@@ -130,16 +145,18 @@ uv run python -m app.cli list-users
 ```
 프론트(Next.js, (app)/space/[spaceId])
   ConceptCanvasWorkspace = NoteCanvas + ConceptCard + FigureNode
-  useConceptStream: (1) POST /retrieve  → 잠정 배치 + figure 추천 노드
-                    (2) POST /chat/stream(SSE, EXAONE) → 개념 스트리밍 → 재조정
-                    (3) PATCH /nodes/{id} → 위치·노드 영속(attachments.canvas)
+  useConceptStream: POST /chat/stream(SSE) 한 번 → 개념 스트리밍 → d3-force 배치
+                    (D111: 선행 /retrieve 호출 없음 — 검색은 서버가 판단해서 한다)
         │
 백엔드(FastAPI)
+  ai/                       ReAct 스킬 루프 — 도구 판단 → 스킬 실행 → 생성 (D109)
+    catalog.py              (공간·역할·세션 상태)로 노출 도구를 먼저 좁힌다
+    skills/                 스킬 하나가 파일 하나 (9종)
+  services/solar.py         대화 생성(Upstage solar-pro2, 스트리밍 + tool calling)
   services/upstage.py       임베딩(embedding-query/passage, 1024d) + 문서 파싱
-  services/qdrant_store.py  컬렉션 file_chunks / canvas_cards / textbook_figures
-  services/exaone.py        대화 생성(스트리밍)
+  services/qdrant_store.py  컬렉션 file_chunks / textbook_figures
   services/figure_*.py      교과서 도판 추출·비전 판정
-  routers/retrieve.py       질의 임베딩 + Qdrant 검색
+  services/worker/          업로드 → 청킹 → 임베딩 잡 (앱 프로세스 안에서 돈다)
         │
 Postgres(관계형 + RLS + 자체 인증 + 파일)  ·  Qdrant(벡터만; RLS 없음 → 앱이 스코프 강제)
 ```
@@ -164,10 +181,11 @@ Nodi/
 │     ├─ components/canvas/           NoteCanvas·ConceptCard·FigureNode …
 │     └─ lib/concept/                 useConceptStream·layout·useTagLayout …
 ├─ backend/                  FastAPI
-│  ├─ app/services/          upstage·qdrant_store·exaone·embedding_worker·figure_* …
-│  ├─ app/routers/           retrieve·chat·files·nodes·sessions·teacher·admin·me …
+│  ├─ app/ai/                ReAct 스킬 루프 (catalog·registry·orchestrator·skills/)
+│  ├─ app/services/          solar·upstage·qdrant_store·worker/·figure_*·admin_* …
+│  ├─ app/routers/           chat·files·sessions·teacher·admin·home·me·health
 │  └─ tests/                 pytest (전부 mock — 외부 호출·원격 DB 없음)
-├─ db/                       스키마·RLS 정책·함수 (00~04)
+├─ db/                       스키마·RLS 정책·함수 (00~04) + migrations/(수동 적용)
 ├─ docs/                     TASKS·AGENTS·PROCESS·DEPLOYMENT + superpowers/{specs,plans}
 └─ docker-compose.yml        qdrant 서비스
 ```
@@ -177,12 +195,16 @@ Nodi/
 ## 검증
 
 ```bash
-# 백엔드 테스트 (전부 mock — 키·네트워크 불필요)
-cd backend && uv run pytest tests/ -v
+# 백엔드 테스트 + 린트 (전부 mock — 키·네트워크 불필요)
+cd backend && uv run pytest tests/ -q && uv run ruff check app tests
 
-# 프론트 타입 + 빌드 스모크
-cd frontend && npx tsc --noEmit && npm run build
+# 프론트 테스트 + 타입 + 빌드 스모크
+cd frontend && npm test -- --run && npx tsc --noEmit && npm run lint && npm run build
 ```
+
+> ⚠️ **dev 서버를 띄운 채 `npm run build`를 돌리지 말 것.** 둘이 같은 `.next/`를
+> 쓰기 때문에 dev 쪽 청크가 깨져, 소스에 없는 식별자로 `ReferenceError`가 나는
+> 유령 증상이 생긴다. 빌드했으면 dev 서버를 재시작한다.
 
 두 가지는 CI(`.github/workflows/ci.yml`)에서도 돌지만, **PR 올리기 전에 로컬에서
 먼저 통과시킨다.**
@@ -198,7 +220,7 @@ cd frontend && npx tsc --noEmit && npm run build
 
 ### 권한은 DB가 강제한다
 
-RLS 정책 32개 + 함수 19개가 "누가 무엇에 접근 가능한가"를 정의한다. **앱 코드가
+RLS 정책 38개 + 함수 26개가 "누가 무엇에 접근 가능한가"를 정의한다. **앱 코드가
 실수해도 남의 데이터가 나오지 않는다.**
 
 동작 방식:
