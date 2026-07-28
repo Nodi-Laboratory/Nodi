@@ -20,6 +20,10 @@ from .skills.concepts import GetConceptSkill, ListSessionConceptsSkill
 from .skills.search_class_material import SearchClassMaterialSkill
 from .skills.search_textbook_figure import SearchTextbookFigureSkill
 from .skills.session_files import ListSessionFilesSkill, ReadSessionFileSkill
+from .skills.teacher import (
+    ListClassMaterialsSkill,
+    SummarizeClassQuestionsSkill,
+)
 from .skills.think import ThinkSkill
 
 __all__ = [
@@ -46,4 +50,6 @@ def get_orchestrator() -> Orchestrator:
     registry.register(GetConceptSkill())
     registry.register(ListSessionFilesSkill())
     registry.register(ReadSessionFileSkill())
+    registry.register(ListClassMaterialsSkill())
+    registry.register(SummarizeClassQuestionsSkill())
     return Orchestrator(registry)

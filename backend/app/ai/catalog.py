@@ -24,6 +24,10 @@ _CLASS_ONLY = ["search_class_material", "search_textbook_figure"]
 # 이 세션에서 만든 개념 조회 — 어디서나 가능하다(개인 세션도 카드를 만든다).
 _CONCEPTS = ["list_session_concepts", "get_concept"]
 
+# 교사 전용 — 학급 세션의 담임에게만. 권한은 스킬 안에서 is_class_teacher로
+# 한 번 더 확인한다(카탈로그는 1층 방어일 뿐이다).
+_TEACHER_ONLY = ["list_class_materials", "summarize_class_questions"]
+
 # 세션에 올린 파일 조회 — **파일이 실제로 있을 때만** 넣는다. 없는데 노출하면
 # 모델이 부르고, 빈 목록을 받고, "올리신 파일이 없네요"라는 군더더기를 답에
 # 붙인다(학생은 파일 얘기를 꺼낸 적도 없다).
@@ -50,6 +54,8 @@ def skills_for(
     names: list[str] = list(_CONCEPTS)
     if space_kind == "class":
         names += _CLASS_ONLY
+        if role in ("teacher", "admin"):
+            names += _TEACHER_ONLY
     if has_session_files:
         names += _SESSION_FILES
     if len(names) >= _PLANNER_MIN_TOOLS:

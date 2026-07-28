@@ -83,9 +83,12 @@ def test_학급세션에는_학급_도구가_보인다():
     assert "search_textbook_figure" in names
 
 
-def test_교사도_학생과_같은_도구를_본다_아직은():
-    # 교사 전용 스킬은 아직 없다. 생기면 이 테스트가 실패하며 알려 준다.
-    assert skills_for("class", "teacher") == skills_for("class", "student")
+def test_교사는_학생_도구를_전부_포함해_더_본다():
+    """교사 스킬은 추가일 뿐 — 학생이 쓰는 도구를 빼앗지 않는다."""
+    student = set(skills_for("class", "student"))
+    teacher = set(skills_for("class", "teacher"))
+    assert student < teacher
+    assert teacher - student == {"list_class_materials", "summarize_class_questions"}
 
 
 def test_카탈로그_상수에_중복이_없다():
@@ -378,3 +381,97 @@ async def test_깨진_인자_JSON도_턴을_죽이지_않는다(monkeypatch):
     )
     # 빈 인자로 실행된다 — 파싱 실패로 턴 전체가 죽는 것보다 낫다.
     assert outcome.used_skills == ["echo"]
+
+
+async def test_모든_스킬_결과가_생성_프롬프트에_닿는다(monkeypatch):
+    """전용 렌더가 없는 스킬의 결과도 생성 단계가 봐야 한다.
+
+    실측 회귀(2026-07-28): rag_sources·figures만 렌더하던 시절,
+    `summarize_class_questions`가 실제 질문 16건을 돌려줬는데도 생성 단계는
+    아무것도 못 봤고 모델이 "시험 범위 질문이 많다"를 지어냈다.
+    """
+
+    class _Questions(SkillBase):
+        name = "summarize"
+        description = "d"
+        parameters = {"type": "object", "properties": {}}
+
+        async def run(self, args, ctx):
+            return SkillResult(
+                ok=True, message="최근 질문 2건.",
+                data={"questions": ["광합성이 뭐야?", "지진은 왜 나?"]},
+            )
+
+    tc = [{"id": "c", "type": "function",
+           "function": {"name": "summarize", "arguments": "{}"}}]
+    calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
+    r = SkillRegistry()
+    r.register(_Questions())
+    await _drain(
+        Orchestrator(r),
+        ctx=_ctx(),
+        question="애들이 뭘 물어봐?",
+        history=[],
+        tool_names=["summarize"],
+        answer_system_prompt="BASE",
+        max_steps=3,
+    )
+    assert "광합성이 뭐야?" in calls["system"]
+    assert "지어내지 마세요" in calls["system"]
+
+
+async def test_실패한_스킬은_근거로_쓰이지_않는다(monkeypatch):
+    """ok=False는 모델에게 tool_result로만 전달되고, 근거 블록엔 안 들어간다."""
+
+    class _Fail(SkillBase):
+        name = "boom"
+        description = "d"
+        parameters = {"type": "object", "properties": {}}
+
+        async def run(self, args, ctx):
+            return SkillResult(ok=False, message="권한 없음", error_code="forbidden")
+
+    tc = [{"id": "c", "type": "function",
+           "function": {"name": "boom", "arguments": "{}"}}]
+    calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
+    r = SkillRegistry()
+    r.register(_Fail())
+    await _drain(
+        Orchestrator(r),
+        ctx=_ctx(),
+        question="q",
+        history=[],
+        tool_names=["boom"],
+        answer_system_prompt="BASE",
+        max_steps=3,
+    )
+    assert calls["system"] == "BASE"
+
+
+async def test_큰_결과는_잘라서_넣는다(monkeypatch):
+    """스킬이 큰 목록을 돌려줘도 프롬프트가 폭주하지 않는다."""
+
+    class _Big(SkillBase):
+        name = "big"
+        description = "d"
+        parameters = {"type": "object", "properties": {}}
+
+        async def run(self, args, ctx):
+            return SkillResult(ok=True, message="많음", data={"items": ["가" * 100] * 200})
+
+    tc = [{"id": "c", "type": "function",
+           "function": {"name": "big", "arguments": "{}"}}]
+    calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
+    r = SkillRegistry()
+    r.register(_Big())
+    await _drain(
+        Orchestrator(r),
+        ctx=_ctx(),
+        question="q",
+        history=[],
+        tool_names=["big"],
+        answer_system_prompt="BASE",
+        max_steps=3,
+    )
+    assert "생략" in calls["system"]
+    assert len(calls["system"]) < 6000

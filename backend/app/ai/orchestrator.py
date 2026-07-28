@@ -56,6 +56,15 @@ class TurnOutcome:
     figures: list[dict[str, Any]] = field(default_factory=list)
     # 실행된 스킬 이름(로그·관측성).
     used_skills: list[str] = field(default_factory=list)
+    # 스킬이 돌려준 내용 그대로 — 생성 단계 프롬프트에 근거로 붙는다.
+    # `(스킬 이름, 메시지, data)`.
+    findings: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
+
+
+# 전용 렌더가 이미 담는 키 — 일반 렌더에서 중복으로 싣지 않는다.
+_HANDLED_KEYS = frozenset({"sources", "figures", "captions", "chunks"})
+# 일반 렌더 1건의 길이 상한. 스킬이 큰 목록을 돌려줘도 프롬프트가 폭주하지 않게.
+_GENERIC_MAX_CHARS = 4000
 
 
 def _sse(event: str, data: dict) -> str:
@@ -147,7 +156,7 @@ class Orchestrator:
 
                     result = await self.registry.dispatch(name, args, ctx)
                     outcome.used_skills.append(name)
-                    self._collect(outcome, result)
+                    self._collect(outcome, name, result)
 
                     yield (
                         "sse",
@@ -179,9 +188,12 @@ class Orchestrator:
         yield ("outcome", outcome)
 
     @staticmethod
-    def _collect(outcome: TurnOutcome, result: Any) -> None:
-        """스킬 결과에서 라우터가 쓸 부산물을 뽑는다."""
-        if not result.ok or not result.data:
+    def _collect(outcome: TurnOutcome, name: str, result: Any) -> None:
+        """스킬 결과에서 라우터·생성 단계가 쓸 것을 뽑는다."""
+        if not result.ok:
+            return
+        outcome.findings.append((name, result.message, dict(result.data or {})))
+        if not result.data:
             return
         srcs = result.data.get("sources")
         if isinstance(srcs, list):
@@ -199,10 +211,13 @@ class Orchestrator:
 
     @staticmethod
     def _evidence_block(outcome: TurnOutcome) -> str:
-        """도구가 찾아온 근거를 생성 단계 프롬프트에 붙일 블록으로.
+        """도구가 찾아온 것을 생성 단계 프롬프트에 붙일 근거 블록으로.
 
-        기존 `_WRAP_RAG` 문안과 같은 취지다 — 자료를 우선 근거로 쓰되 없는 내용은
-        일반 지식으로 보완하고 출처를 구분하라는 지시.
+        **모든 스킬 결과가 여기를 통과해야 한다.** 예전에는 rag_sources와
+        figures만 렌더해서 그 외 스킬의 결과가 생성 단계에 도달하지 못했다 —
+        모델이 도구를 부르고도 아무것도 못 본 채 그럴듯한 답을 지어냈다
+        (2026-07-28 실측: `summarize_class_questions`가 실제 질문 16건을
+        돌려줬는데 답변은 "시험 범위 질문이 많다"는 창작이었다).
         """
         parts: list[str] = []
         if outcome.rag_sources:
@@ -226,4 +241,25 @@ class Orchestrator:
                     "참고하되, 본문에 이미지 링크나 파일명을 쓰지 마세요.\n\n"
                     + "\n".join(f"- {c}" for c in caps)
                 )
+
+        # 나머지 스킬 결과 — 전용 렌더가 이미 담은 키만 빼고 그대로 보여 준다.
+        generic: list[str] = []
+        for name, message, data in outcome.findings:
+            rest = {
+                k: v
+                for k, v in data.items()
+                if k not in _HANDLED_KEYS and v not in (None, [], "", {})
+            }
+            if not rest:
+                continue
+            body = json.dumps(rest, ensure_ascii=False, default=str)
+            if len(body) > _GENERIC_MAX_CHARS:
+                body = body[:_GENERIC_MAX_CHARS] + "…(생략)"
+            generic.append(f"[{name}] {message}\n{body}")
+        if generic:
+            parts.append(
+                "아래는 방금 도구로 확인한 **실제 데이터**입니다. 여기 있는 것만 "
+                "근거로 삼고 없는 내용을 지어내지 마세요. 비어 있으면 없다고 "
+                "솔직히 말하세요.\n\n" + "\n\n".join(generic)
+            )
         return "\n\n".join(parts)
