@@ -151,6 +151,19 @@ export interface ChatDoneEvent {
   };
   current_head_id: string | null;
   root_node_id: string | null;
+  /**
+   * D109: ReAct 경로에서 도판을 **스킬이** 찾는다. 예전에는 프론트가 SSE 전에
+   * `/retrieve`를 선행 호출해 미리 알고 있었지만, 이제 done에 실려 온다.
+   * (백엔드 `figures.figure_item()`의 snake_case 형태 그대로.)
+   */
+  figures?: Array<{
+    figure_id: string;
+    file_id: string;
+    page?: number | null;
+    caption?: string;
+    url?: string | null;
+    score?: number;
+  }> | null;
 }
 
 // ── Stage 4a: 홈 ─────────────────────────────────────────────────────

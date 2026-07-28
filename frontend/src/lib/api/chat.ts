@@ -36,6 +36,13 @@ export interface ChatStreamHandlers {
   onToken?: (delta: string) => void;
   onDone?: (data: ChatDoneEvent) => void;
   onError?: (detail: string) => void;
+  /**
+   * D109: ReAct가 도구를 부르기 시작했다. 첫 토큰까지 시간이 걸리는 구간이라
+   * 빈 화면 대신 "수업 자료를 찾고 있어요" 같은 진행 표시를 띄우는 신호다.
+   */
+  onToolCall?: (name: string) => void;
+  /** 도구가 끝났다. 실패해도 `ok: false`로 오고 턴은 계속된다. */
+  onToolResult?: (name: string, ok: boolean, message: string) => void;
 }
 
 interface SSEEvent {
@@ -146,6 +153,16 @@ export async function streamChat(
           break;
         case "token":
           handlers.onToken?.((ev.data.delta as string) ?? "");
+          break;
+        case "tool_call":
+          handlers.onToolCall?.((ev.data.name as string) ?? "");
+          break;
+        case "tool_result":
+          handlers.onToolResult?.(
+            (ev.data.name as string) ?? "",
+            Boolean(ev.data.ok),
+            (ev.data.message as string) ?? "",
+          );
           break;
         case "done":
           handlers.onDone?.(ev.data as unknown as ChatDoneEvent);

@@ -44,6 +44,14 @@ import type { CanvasLeafNode, Concept, ParserEvent } from "./types";
 // 자리로 확정한다(요구: figure ↔ 카드 무겹침).
 const LEAF_OFFSET_X = CARD_W + CARD_MARGIN; // 460
 
+// D109: 도구가 도는 동안 말풍선에 띄울 문구. 학생에게 "멈춘 게 아니라 뭔가
+// 하고 있다"를 알리는 용도라, 도구 이름을 그대로 노출하지 않고 행동으로 쓴다.
+const TOOL_LABELS: Record<string, string> = {
+  search_class_material: "수업 자료를 찾아보고 있어요…",
+  search_textbook_figure: "교과서에서 그림을 찾아보고 있어요…",
+  think: "어떻게 설명할지 생각하고 있어요…",
+};
+
 // C5: nodes.attachments.canvas 스키마(백엔드 병행 구축 — 계약 기준, 방어적 파싱).
 // D94: ebs/art 키 제거 — 구 노드에 잔존해도 읽지 않는다.
 interface PersistedCanvas {
@@ -399,6 +407,44 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
             parser.end();
             doneBox.current = data;
             headRef.current = data.current_head_id ?? headRef.current;
+            // D109: ReAct 경로에서는 도판을 스킬이 찾아 done에 실어 보낸다.
+            // 선행 /retrieve로 이미 놓은 것과 겹치지 않게 figureId로 거른다.
+            for (const f of data.figures ?? []) {
+              if (!f.figure_id || placedIds.has(f.figure_id)) continue;
+              placedIds.add(f.figure_id);
+              const d = LEAF_DIMS.figure;
+              const obstacles: Rect[] = [
+                ...conceptsRef.current.map(cardRect),
+                ...leafNodesRef.current.map(leafRect),
+              ];
+              const { x, y } = placeLeafClear(
+                nearXY.x + LEAF_OFFSET_X,
+                nearXY.y,
+                d.w,
+                d.h,
+                obstacles,
+              );
+              commitLeafNodes([
+                ...leafNodesRef.current,
+                {
+                  id: `figure-${f.figure_id}`,
+                  type: "figure",
+                  x,
+                  y,
+                  conceptId: pid,
+                  figure: {
+                    figureId: f.figure_id,
+                    url: f.url ?? "",
+                    caption: f.caption ?? "",
+                    page: f.page ?? undefined,
+                  },
+                },
+              ]);
+            }
+          },
+          onToolCall: (name) => {
+            // 첫 토큰까지 시간이 걸리는 구간 — 빈 화면 대신 진행 상황을 알린다.
+            setReply(TOOL_LABELS[name] ?? "잠시만요, 확인하고 있어요…");
           },
           onError: (msg) => {
             setReply(msg || "앗, 문제가 생겼어요. 다시 시도해 주세요.");
