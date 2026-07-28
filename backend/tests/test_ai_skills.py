@@ -178,13 +178,24 @@ def _patch_llm(monkeypatch, *, tool_calls_sequence, stream_text="답변"):
         calls["complete"] += 1
         calls["tools_seen"].append([t["function"]["name"] for t in (tools or [])])
         tc = seq.pop(0) if seq else None
-        return {"role": "assistant", "content": "", "tool_calls": tc}
+        # D113: 실물과 같은 Completion(message, usage)을 돌려준다. 대역이 계약을
+        # 다르게 인코딩하면 테스트가 통과해도 런타임이 깨진다(D112에서 실제로
+        # 겪었다 — insert가 list를 돌려주는 대역 때문에 파일 인제스트가 죽어
+        # 있었다).
+        return O.solar.Completion(
+            message={"role": "assistant", "content": "", "tool_calls": tc},
+            usage={"prompt": 10, "completion": 5, "total": 15, "cached": 0},
+        )
 
-    async def fake_stream(history, question, system):
+    async def fake_stream(history, question, system, *, usage_sink=None):
         calls["stream"] += 1
         calls["system"] = system
         for ch in stream_text:
             yield ch
+        if usage_sink is not None:
+            usage_sink.update(
+                {"prompt": 100, "completion": 20, "total": 120, "cached": 0}
+            )
 
     monkeypatch.setattr(O.solar, "complete", fake_complete)
     monkeypatch.setattr(O.solar, "stream_answer", fake_stream)
@@ -279,7 +290,7 @@ async def test_판단_호출이_실패해도_답변은_나온다(monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("upstream 503")
 
-    async def fake_stream(history, question, system):
+    async def fake_stream(history, question, system, *, usage_sink=None):
         yield "그래도 답한다"
 
     monkeypatch.setattr(O.solar, "complete", boom)

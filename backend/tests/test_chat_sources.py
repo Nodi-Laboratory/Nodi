@@ -6,6 +6,7 @@ import pytest
 
 from app.routers import chat as C
 from app.routers.chat import ChatStreamBody
+from app.services.turn_log import TurnLog
 
 
 class _FakeUser:
@@ -21,7 +22,7 @@ class _FakeClient:
         return []
 
 
-async def _fake_stream_answer(history, question, system_prompt):
+async def _fake_stream_answer(history, question, system_prompt, *, usage_sink=None):
     yield "@concept: 개념\n"
     yield "- 본문\n"
     yield "@end\n"
@@ -89,22 +90,10 @@ async def _consume(monkeypatch):
 
     monkeypatch.setattr(C.svc, "append_node", fake_append_node)
 
-    class _FakeTurnLog:
-        def __init__(self, *a, **k):
-            pass
-
-        def set_system(self, *a, **k):
-            pass
-
-        def set_contexts_structured(self, *a, **k):
-            pass
-
-        def set_final(self, *a, **k):
-            pass
-
-        def add_error(self, *a, **k):
-            pass
-
+    # 실물 TurnLog를 **상속**해 DB 쓰기만 막는다. 메서드를 손으로 나열한
+    # 대역은 라우터가 새 메서드를 부르는 순간 AttributeError로 깨지고, 더 나쁘게는
+    # 계약을 잘못 인코딩한 채 초록으로 남는다(D112에서 겪은 실패 방식).
+    class _FakeTurnLog(TurnLog):
         async def save(self, *a, **k):
             pass
 

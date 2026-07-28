@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -66,6 +67,13 @@ class TurnOutcome:
     # 어긋나지 않는다"는 계약이 ReAct 경로에서만 깨져 있었다. 라우터가 이 값으로
     # 덮어쓴다.
     final_system: str = ""
+    # D113: 스킬 호출 트레이스. `used_skills`는 이름만이라 "왜 그 답이 나왔나"를
+    # 되짚을 수 없었다 — 운영 콘솔이 인자·결과·소요시간까지 보여주려면 여기
+    # 담아야 한다. 스킬 **설명**은 담지 않는다: 매 턴 같은 문자열을 복제하는
+    # 낭비이고, 콘솔이 /admin/skills 카탈로그와 이름으로 이어 붙인다.
+    skill_traces: list[dict[str, Any]] = field(default_factory=list)
+    # D113: LLM 호출별 실측 usage — `[{stage, model, prompt, completion, ...}]`.
+    llm_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 # 전용 렌더가 이미 담는 키 — 일반 렌더에서 중복으로 싣지 않는다.
@@ -80,6 +88,29 @@ _HANDLED_KEYS = frozenset({"sources", "figures", "captions", "chunks"})
 _NOT_EVIDENCE = frozenset({"think"})
 # 일반 렌더 1건의 길이 상한. 스킬이 큰 목록을 돌려줘도 프롬프트가 폭주하지 않게.
 _GENERIC_MAX_CHARS = 4000
+
+# D113: 트레이스에 싣는 스킬 결과의 상한. 파일 전문을 돌려주는 스킬(read_session_file)이
+# 있어 상한이 없으면 로그 행 하나가 수만 자가 된다.
+_TRACE_MAX_CHARS = 4000
+
+
+def _trace_data(data: dict[str, Any] | None) -> dict[str, Any]:
+    """스킬 결과를 로그에 실을 형태로. 작으면 그대로, 크면 잘라서 알린다.
+
+    자른 사실을 `_truncated`로 남긴다 — 조용히 자르면 관리자가 "스킬이 이만큼만
+    돌려줬다"고 오해한다.
+    """
+    if not data:
+        return {}
+    body = json.dumps(data, ensure_ascii=False, default=str)
+    if len(body) <= _TRACE_MAX_CHARS:
+        return data
+    return {
+        "_truncated": True,
+        "_chars": len(body),
+        "_keys": sorted(data),
+        "_preview": body[:_TRACE_MAX_CHARS],
+    }
 
 
 def _sse(event: str, data: dict) -> str:
@@ -136,12 +167,18 @@ class Orchestrator:
         messages.append({"role": "user", "content": question})
 
         if catalog:
-            for _step in range(max_steps):
+            for step in range(max_steps):
                 try:
-                    msg = await solar.complete(messages, tools=catalog, max_tokens=512)
+                    completion = await solar.complete(
+                        messages, tools=catalog, max_tokens=512
+                    )
                 except Exception:  # noqa: BLE001 - 판단 실패가 턴을 죽이지 않는다
                     logger.exception("도구 판단 호출 실패 — 도구 없이 진행한다")
                     break
+                msg = completion.message
+                outcome.llm_calls.append(
+                    {"stage": "decide", "step": step, **completion.usage}
+                )
 
                 tool_calls = msg.get("tool_calls") or []
                 if not tool_calls:
@@ -175,6 +212,19 @@ class Orchestrator:
                     key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
                     if key in seen_calls:
                         logger.info("중복 도구 호출 생략: %s", name)
+                        # 생략도 트레이스에 남긴다 — 모델이 같은 호출을 반복하는
+                        # 버릇은 콘솔에서 보여야 고칠 수 있다.
+                        outcome.skill_traces.append(
+                            {
+                                "skill": name,
+                                "step": step,
+                                "args": args,
+                                "ok": True,
+                                "skipped": True,
+                                "message": "같은 요청이라 생략했습니다.",
+                                "duration_ms": 0,
+                            }
+                        )
                         # 모델이 결과를 기다리므로 tool_result는 반드시 돌려준다 —
                         # 빠뜨리면 대화 형식이 깨져 다음 호출이 실패한다.
                         messages.append(
@@ -192,8 +242,22 @@ class Orchestrator:
 
                     yield ("sse", _sse("tool_call", {"name": name, "args": args}))
 
+                    started = time.perf_counter()
                     result = await self.registry.dispatch(name, args, ctx)
+                    elapsed_ms = int((time.perf_counter() - started) * 1000)
                     outcome.used_skills.append(name)
+                    outcome.skill_traces.append(
+                        {
+                            "skill": name,
+                            "step": step,
+                            "args": args,
+                            "ok": result.ok,
+                            "message": result.message,
+                            "error_code": result.error_code,
+                            "duration_ms": elapsed_ms,
+                            "data": _trace_data(result.data),
+                        }
+                    )
                     self._collect(outcome, name, result)
 
                     yield (
@@ -222,8 +286,15 @@ class Orchestrator:
         # 라우터가 TurnLog에 **실제 보낸 것**을 남길 수 있게 넘긴다(D112).
         outcome.final_system = system
 
-        async for delta in solar.stream_answer(history, question, system):
+        answer_usage: dict[str, int] = {}
+        async for delta in solar.stream_answer(
+            history, question, system, usage_sink=answer_usage
+        ):
             yield ("token", delta)
+        # 스트림이 끊기면 usage 청크가 안 올 수 있다 — 빈 채로 두고 어림하지
+        # 않는다(실측 자리에 추정을 앉히면 둘을 구분할 수 없다).
+        if answer_usage:
+            outcome.llm_calls.append({"stage": "answer", **answer_usage})
 
         yield ("outcome", outcome)
 

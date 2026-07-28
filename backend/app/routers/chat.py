@@ -252,6 +252,9 @@ async def chat_stream(
         base_instruction=solar.CONCEPT_CARD_SYSTEM_PROMPT,
     )
     tlog = TurnLog(user.id, body.session_id, body.question)
+    # D113: 어느 경로로 돌았는지·어떤 모델이었는지를 로그만 보고 알 수 있어야
+    # 한다. react_enabled를 나중에 바꾸면 과거 로그의 해석이 달라지기 때문이다.
+    tlog.set_route("react" if react_on else "legacy", settings.upstage_chat_model)
     tlog.set_system(system_prompt)
     tlog.set_contexts_structured(
         blocks=context_blocks_list,
@@ -311,14 +314,21 @@ async def chat_stream(
                             # (D35의 "저장한 프롬프트 = 실제" 계약).
                             if payload.final_system:
                                 tlog.set_system(payload.final_system)
+                            # D113: 스킬 트레이스·실측 토큰을 로그로.
+                            tlog.set_skill_traces(payload.skill_traces)
+                            tlog.add_llm_calls(payload.llm_calls)
                 else:
+                    answer_usage: dict[str, int] = {}
                     async for delta in solar.stream_answer(
                         history,
                         body.question,
                         system_prompt,
+                        usage_sink=answer_usage,
                     ):
                         answer_parts.append(delta)
                         yield _sse("token", {"delta": delta})
+                    if answer_usage:
+                        tlog.add_llm_calls([{"stage": "answer", **answer_usage}])
 
             except Exception:  # noqa: BLE001 - details go to logs, not the client
                 logger.exception("채팅 스트리밍 실패")

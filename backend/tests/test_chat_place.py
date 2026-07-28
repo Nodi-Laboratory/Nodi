@@ -2,6 +2,7 @@ import pytest
 
 from app.routers import chat as C
 from app.routers.chat import ChatStreamBody, RetrievedBody
+from app.services.turn_log import TurnLog
 
 # ---------------------------------------------------------------------------
 # 카드 배치·좌표는 프론트 소유(d3-force) — 서버는 place/settle을 계산·전송하지 않는다.
@@ -23,7 +24,7 @@ class _FakeClient:
         return []
 
 
-async def _fake_stream_answer(history, question, system_prompt):
+async def _fake_stream_answer(history, question, system_prompt, *, usage_sink=None):
     for line in (
         "@concept: 첫째\n",
         "- 본문1\n",
@@ -77,22 +78,8 @@ async def _consume(monkeypatch, *, retrieved=None):
 
     monkeypatch.setattr(C.svc, "append_node", fake_append_node)
 
-    class _FakeTurnLog:
-        def __init__(self, *a, **k):
-            pass
-
-        def set_system(self, *a, **k):
-            pass
-
-        def set_contexts_structured(self, *a, **k):
-            pass
-
-        def set_final(self, *a, **k):
-            pass
-
-        def add_error(self, *a, **k):
-            pass
-
+    # 실물 TurnLog 상속 + DB 쓰기만 차단 (test_chat_sources.py와 같은 이유).
+    class _FakeTurnLog(TurnLog):
         async def save(self, *a, **k):
             pass
 

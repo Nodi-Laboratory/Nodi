@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -153,15 +154,54 @@ _STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
 _CALL_TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
 
 
+# ── 토큰 사용량 (D113) ────────────────────────────────────────────────
+# 예전에는 `token_estimate = 글자수/4` 어림뿐이라 과금·한도 판단에 쓸 수
+# 없었다. 공급자가 주는 실측 usage를 그대로 싣는다.
+def usage_of(raw: dict[str, Any] | None) -> dict[str, int]:
+    """OpenAI 형식 usage → 저장·합산용 평평한 dict.
+
+    `cached`(prompt_tokens_details.cached_tokens)까지 담는다 — 프리픽스 캐시가
+    실제로 먹고 있는지는 이 값 말고는 볼 방법이 없다(실측 2026-07-28: 같은
+    프롬프트 2회차에 22 중 16 히트).
+    """
+    raw = raw or {}
+    details = raw.get("prompt_tokens_details") or {}
+    return {
+        "prompt": int(raw.get("prompt_tokens") or 0),
+        "completion": int(raw.get("completion_tokens") or 0),
+        "total": int(raw.get("total_tokens") or 0),
+        "cached": int(details.get("cached_tokens") or 0),
+    }
+
+
+@dataclass
+class Completion:
+    """비스트리밍 호출 1회의 결과 — 메시지와 **실측** 토큰 사용량.
+
+    dict 하나로 합치지 않은 이유: 호출부가 `msg.get("tool_calls")`를 보는데
+    거기에 usage 키를 섞으면 모델 응답과 계측값의 경계가 흐려진다.
+    """
+
+    message: dict[str, Any] = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=dict)
+
+
 async def stream_answer(
     history: list[tuple[str, str]],
     question: str,
     system_prompt: str,
+    *,
+    usage_sink: dict[str, int] | None = None,
 ) -> AsyncIterator[str]:
     """SSE `token` 이벤트용 답변 텍스트 델타를 yield.
 
     `history` = root→parent 순서의 [(질문, 답변), ...].
     `system_prompt` = 이미 조립된 시스템 프롬프트(개념 카드 베이스 + 컨텍스트 블록).
+
+    `usage_sink`를 주면 실측 토큰 사용량을 **거기에 채워 넣는다**(D113).
+    yield 타입을 튜플로 바꾸지 않은 이유: 이 제너레이터의 소비자는 전부
+    "델타 문자열"을 기대하고, 형을 바꾸면 라우터·테스트가 다 흔들린다.
+    usage는 마지막 청크로 한 번 오는 곁다리 정보라 싱크가 더 맞는다.
     """
     url, model, key = _require_config()
     payload = {
@@ -171,6 +211,10 @@ async def stream_answer(
         "temperature": settings.chat_temperature,
         "max_tokens": settings.chat_max_tokens,
     }
+    if usage_sink is not None:
+        # 실측(2026-07-28): 이 옵션이 **없으면 스트리밍 응답에 usage가 아예
+        # 없다**. 있으면 마지막 청크에 실려 온다(400 아님 — 확인함).
+        payload["stream_options"] = {"include_usage": True}
 
     async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
         async with client.stream("POST", url, headers=_headers(key), json=payload) as resp:
@@ -189,6 +233,9 @@ async def stream_answer(
                     obj = json.loads(data)
                 except json.JSONDecodeError:
                     continue  # 부분/비JSON keep-alive 청크 무시
+                # usage 청크는 choices가 비어 있다 — choices 검사보다 먼저 본다.
+                if usage_sink is not None and obj.get("usage"):
+                    usage_sink.update(usage_of(obj["usage"]))
                 choices = obj.get("choices") or []
                 if not choices:
                     continue
@@ -202,12 +249,12 @@ async def complete(
     *,
     tools: list[dict[str, Any]] | None = None,
     max_tokens: int | None = None,
-) -> dict[str, Any]:
+) -> Completion:
     """비스트리밍 1회 호출 — ReAct 루프의 도구 판단 단계용(D109).
 
-    반환은 OpenAI 형식 assistant 메시지 그대로:
-    `{"role": "assistant", "content": str|None, "tool_calls": [...]|None}`.
-    호출부가 tool_calls 유무로 분기한다.
+    반환은 `Completion(message, usage)`. message는 OpenAI 형식 assistant 메시지
+    그대로 `{"role","content","tool_calls"}`이고, 호출부가 tool_calls 유무로
+    분기한다. usage는 실측 토큰 사용량이다(D113).
 
     스트리밍을 쓰지 않는 이유: 이 단계의 텍스트는 사용자에게 보내지 않는다.
     도구를 고르는 판단만 필요하므로 완성된 응답 하나면 충분하다.
@@ -228,7 +275,8 @@ async def complete(
         if resp.status_code != 200:
             logger.error("Upstage chat %s: %s", resp.status_code, resp.text[:500])
             raise RuntimeError(f"Upstage chat {resp.status_code}")
-        choices = resp.json().get("choices") or []
+        body = resp.json()
+        choices = body.get("choices") or []
         if not choices:
             raise RuntimeError("Upstage chat: 빈 choices")
         choice = choices[0]
@@ -241,4 +289,7 @@ async def complete(
                 "판단 응답이 max_tokens(%s)에서 잘렸다 — 도구 인자가 불완전할 수 있다",
                 payload["max_tokens"],
             )
-        return choice.get("message") or {}
+        return Completion(
+            message=choice.get("message") or {},
+            usage=usage_of(body.get("usage")),
+        )
