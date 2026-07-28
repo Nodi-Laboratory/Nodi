@@ -90,8 +90,6 @@ def test_tag_guide_after_session_files():
     tags = "판 구조론, 고대 국가의 성립"
     prompt, blocks = compose_system_structured(
         None,
-        None,
-        None,
         session_file_context="파일 전문",
         tag_context=tags,
         base_instruction="BASE",
@@ -108,27 +106,23 @@ def test_tag_guide_after_session_files():
 
 
 def test_tag_guide_after_system_base_when_no_session_files():
-    """session_files가 없으면 tag_guide가 system_base 직후·memory_link 앞."""
+    """session_files가 없으면 tag_guide가 system_base 직후·rag 앞."""
     tags = "이차방정식과 그래프"
     prompt, blocks = compose_system_structured(
-        "참조",
         "rag",
-        None,
         tag_context=tags,
         base_instruction="BASE",
     )
     kinds = [b["kind"] for b in blocks]
-    assert kinds == ["system_base", "tag_guide", "memory_link", "rag"]
+    assert kinds == ["system_base", "tag_guide", "rag"]
     s, e = blocks[1]["prompt_span"]
     assert prompt[s:e] == _WRAP_TAGS + tags
 
 
 def test_tag_guide_absent_when_none_is_regression():
     """tag_context=None이면 블록 부재이고 기본 경로 출력이 기존과 동일(회귀)."""
-    prompt_a, blocks_a = compose_system_structured("참조", "rag", "비교")
-    prompt_b, blocks_b = compose_system_structured(
-        "참조", "rag", "비교", tag_context=None
-    )
+    prompt_a, blocks_a = compose_system_structured("rag")
+    prompt_b, blocks_b = compose_system_structured("rag", tag_context=None)
     assert prompt_a == prompt_b
     assert [b["kind"] for b in blocks_a] == [b["kind"] for b in blocks_b]
     assert "tag_guide" not in [b["kind"] for b in blocks_a]

@@ -51,18 +51,10 @@ async def _consume(monkeypatch, *, retrieved=None):
     monkeypatch.setattr(C.svc, "get_session_nodes", fake_get_nodes)
     monkeypatch.setattr(C.svc, "ancestor_chain_nodes", lambda nodes, pid: [])
 
-    async def fake_reference(*a, **k):
-        return (None, [])
-
     async def fake_rag(*a, **k):
         return None
 
-    async def fake_comparison(*a, **k):
-        return (None, [], [])
-
-    monkeypatch.setattr(C.memory, "build_reference_context", fake_reference)
     monkeypatch.setattr(C.rag, "build_rag_context", fake_rag)
-    monkeypatch.setattr(C.memory, "build_comparison_context", fake_comparison)
 
     def fake_compose(*a, **k):
         return ("sys", [])

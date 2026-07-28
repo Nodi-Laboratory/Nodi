@@ -80,8 +80,6 @@ export interface NodeRow {
   answer: string;
   label: string | null;
   created_at: string;
-  /** Stage 3a: 이 노드가 가져온 source 노드 id들(기억 연결). */
-  connections?: string[] | null;
   /** D32: 이 답변이 RAG로 참고한 자료 출처들(없으면 빈 배열/누락). */
   rag_sources?: RagSource[] | null;
   /**
@@ -89,8 +87,6 @@ export interface NodeRow {
    * 전송 즉시 부모 아래에 반투명·점선으로 띄우고, done 시 실노드로 교체.
    */
   _provisional?: boolean;
-  /** D46: 이 답변이 이번 턴에 참조한 브랜치 출처들(구노드엔 없음). */
-  reference_sources?: ReferenceSource[] | null;
   /**
    * 캔버스 리프 노드 영속분(C5). `attachments.canvas`에 이 노드가 생성한
    * 교과서 figure 추천 노드를 담아 세션 재수화 때 복원한다(D94: ebs/art 제거 —
@@ -110,15 +106,6 @@ export interface NodeRow {
     } | null;
     [key: string]: unknown;
   } | null;
-}
-
-/** D46: 답변 노드의 참조 출처(비교참조 브랜치). */
-export interface ReferenceSource {
-  kind: "comparison" | string;
-  label: string;
-  node_ids: string[];
-  leaf_id: string;
-  session_id: string;
 }
 
 /** D32: RAG 답변의 출처 청크 메타. */
@@ -142,12 +129,6 @@ export interface ChunkContext {
   next_text: string | null;
 }
 
-/** Stage 3a: 연결 add/remove 응답(갱신된 connections 배열). */
-export interface ConnectionResponse {
-  node_id: string;
-  connections: string[];
-}
-
 export interface SessionDetail {
   session: SessionRow;
   nodes: NodeRow[];
@@ -165,8 +146,6 @@ export interface ChatDoneEvent {
     id: string;
     parent_id: string | null;
     label: string | null;
-    /** D57: 이번 턴 비교참조 출처(있으면). 리페치 전에도 참조 칩 즉시 표시. */
-    reference_sources?: ReferenceSource[] | null;
     /** D74: 이번 턴 RAG 출처(있으면). 리페치 전에도 첫 개념 카드 출처 칩 즉시 표시. */
     rag_sources?: RagSource[] | null;
   };

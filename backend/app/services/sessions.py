@@ -3,7 +3,7 @@
 Conversation model (architecture.md §3, §4):
   - 1 node = one (question, answer) pair.
   - Context for a turn = the ancestor chain ONLY (root -> ... -> parent),
-    siblings excluded. node.connections (LCA memory-link) is Stage 3, ignored.
+    siblings excluded.
 All writes go through the caller's RLS-scoped UserClient (owner-only).
 """
 
@@ -16,10 +16,8 @@ from fastapi import HTTPException, status
 from ..db.client import UserClient
 
 # Columns returned to the client for tree reconstruction.
-# `connections` (uuid[]) lists other-branch nodes imported into this node, so the
-# frontend can draw memory-link edges (Stage 3a).
-# `reference_sources` (D46/0019) carries which branches an answer referenced this
-# turn — without it the "참조 브랜치" chips/popup never render (D57).
+# D107: connections(기억 연결)·reference_sources(비교 참조)는 제거됐다 —
+# 캔버스 UI에 그 둘을 만드는 경로가 없어 항상 비어 있었다.
 # `attachments`(0001 jsonb)의 "canvas" 키는 캔버스 리프 노드(교과서 도판) 영속분 —
 # 세션 재수화 때 FigureNode를 복원하려면 함께 내려줘야 한다(C5).
 # D105: position_x/position_y는 select에서 뺐다 — 좌표의 소유자는 프론트
@@ -27,7 +25,7 @@ from ..db.client import UserClient
 # 실어 보내고 있었다.
 NODE_SELECT = (
     "id,session_id,parent_id,question,answer,label,"
-    "connections,rag_sources,reference_sources,attachments,created_at"
+    "rag_sources,attachments,created_at"
 )
 SESSION_SELECT = (
     "id,owner_id,space_kind,space_ref,title,emoji,root_node_id,"

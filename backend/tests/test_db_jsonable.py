@@ -55,7 +55,7 @@ def test_nested_list_and_dict():
 
 
 def test_uuid_array_column():
-    """connections uuid[] — 리스트 안 UUID도 문자열이 되어야 한다."""
+    """uuid[] 컬럼 — 리스트 안 UUID도 문자열이 되어야 한다."""
     out = _jsonable([UUID(UID), UUID(UID)])
     assert out == [UID, UID]
 

@@ -17,53 +17,6 @@
 SET check_function_bodies = false;
 
 
-CREATE FUNCTION public.add_node_connection(p_node_id uuid, p_source_node_id uuid) RETURNS uuid[]
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public'
-    AS $$
-declare
-    v_conn uuid[];
-begin
-    if p_node_id = p_source_node_id then
-        raise exception 'cannot connect a node to itself'
-            using errcode = 'check_violation';
-    end if;
-
-    -- Target must be owned by the caller (and lock it for the edit).
-    select n.connections
-      into v_conn
-      from public.nodes n
-      join public.sessions s on s.id = n.session_id
-     where n.id = p_node_id and s.owner_id = auth.uid()
-     for update of n;
-    if not found then
-        raise exception 'target node not found or not owned'
-            using errcode = 'insufficient_privilege';
-    end if;
-
-    -- Source must also be owned by the caller.
-    if not exists (
-        select 1
-          from public.nodes n2
-          join public.sessions s2 on s2.id = n2.session_id
-         where n2.id = p_source_node_id and s2.owner_id = auth.uid()
-    ) then
-        raise exception 'source node not found or not owned'
-            using errcode = 'insufficient_privilege';
-    end if;
-
-    v_conn := coalesce(v_conn, array[]::uuid[]);
-    if not (p_source_node_id = any (v_conn)) then
-        update public.nodes
-           set connections = array_append(connections, p_source_node_id)
-         where id = p_node_id
-         returning connections into v_conn;
-    end if;
-
-    return v_conn;
-end;
-$$;
-
 CREATE TABLE public.profiles (
     id uuid NOT NULL,
     email text,
@@ -113,11 +66,9 @@ CREATE TABLE public.nodes (
     question text,
     answer text,
     label text,
-    connections uuid[] DEFAULT '{}'::uuid[] NOT NULL,
     attachments jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    rag_sources jsonb DEFAULT '[]'::jsonb NOT NULL,
-    reference_sources jsonb DEFAULT '[]'::jsonb NOT NULL
+    rag_sources jsonb DEFAULT '[]'::jsonb NOT NULL
 );
 
 CREATE FUNCTION public.append_chat_node(p_session_id uuid, p_parent_id uuid, p_question text, p_answer text, p_label text DEFAULT NULL::text) RETURNS public.nodes
@@ -436,28 +387,6 @@ CREATE FUNCTION public.nodi_gen_join_code() RETURNS text
         ''
     )
     from generate_series(1, 6);
-$$;
-
-CREATE FUNCTION public.remove_node_connection(p_node_id uuid, p_source_node_id uuid) RETURNS uuid[]
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public'
-    AS $$
-declare
-    v_conn uuid[];
-begin
-    update public.nodes n
-       set connections = array_remove(n.connections, p_source_node_id)
-      from public.sessions s
-     where n.id = p_node_id
-       and s.id = n.session_id
-       and s.owner_id = auth.uid()
-     returning n.connections into v_conn;
-    if not found then
-        raise exception 'target node not found or not owned'
-            using errcode = 'insufficient_privilege';
-    end if;
-    return v_conn;
-end;
 $$;
 
 CREATE FUNCTION public.teacher_class_overview() RETURNS TABLE(id uuid, name text, join_code text, created_at timestamp with time zone, student_count bigint, material_count bigint, last_activity_at timestamp with time zone)

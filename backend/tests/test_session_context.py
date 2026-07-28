@@ -88,23 +88,22 @@ async def test_budget_double_guard_excludes_whole_file(monkeypatch):
 def test_compose_session_block_after_system_base():
     """⑤ D85 — session_files 블록이 system_base 직후, span 정합."""
     prompt, blocks = compose_system_structured(
-        "다른 분기 내용",
-        None,
         None,
         session_file_context="파일 전문",
         session_file_sources=[{"file_id": "f1", "name": "노트.pdf", "chars": 5}],
         base_instruction="BASE",
     )
     kinds = [b["kind"] for b in blocks]
-    assert kinds == ["system_base", "session_files", "memory_link"]
+    assert kinds == ["system_base", "session_files"]
     s, e = blocks[1]["prompt_span"]
     assert prompt[s:e].endswith("파일 전문")
     assert blocks[1]["sources"][0]["file_id"] == "f1"
 
 
 def test_compose_without_session_block_unchanged():
-    """⑥ 파라미터 미지정 시 기존 블록 구성 그대로 (하위 호환)."""
-    prompt, blocks = compose_system_structured("참조", "rag", "비교")
-    assert [b["kind"] for b in blocks] == [
-        "system_base", "memory_link", "rag", "comparison",
-    ]
+    """⑥ session_files 없이 rag만 있을 때의 블록 구성.
+
+    D107: memory_link·comparison 블록은 제거됐다 — 남는 것은 base와 rag뿐이다.
+    """
+    prompt, blocks = compose_system_structured("rag")
+    assert [b["kind"] for b in blocks] == ["system_base", "rag"]

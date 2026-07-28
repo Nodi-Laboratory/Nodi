@@ -61,9 +61,6 @@ async def _consume(monkeypatch):
     monkeypatch.setattr(C.svc, "get_session_nodes", fake_get_nodes)
     monkeypatch.setattr(C.svc, "ancestor_chain_nodes", lambda nodes, pid: [])
 
-    async def fake_reference(*a, **k):
-        return (None, [])
-
     rag_kwargs = {}
 
     async def fake_rag(client, query, **kwargs):
@@ -71,12 +68,7 @@ async def _consume(monkeypatch):
         rag_kwargs.update(kwargs)
         return {"block": "[학급 자료에서 참고]\n- x", "sources": SOURCES}
 
-    async def fake_comparison(*a, **k):
-        return (None, [], [])
-
-    monkeypatch.setattr(C.memory, "build_reference_context", fake_reference)
     monkeypatch.setattr(C.rag, "build_rag_context", fake_rag)
-    monkeypatch.setattr(C.memory, "build_comparison_context", fake_comparison)
     monkeypatch.setattr(
         C.gemini, "compose_system_structured", lambda *a, **k: ("sys", [])
     )

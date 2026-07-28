@@ -49,7 +49,6 @@ export {
   listStudentClassSessions,
 } from "./teacher";
 
-export { addConnection, removeConnection } from "./nodes";
 
 export type { ChatStreamBody, ChatStreamHandlers } from "./chat";
 export { streamChat } from "./chat";

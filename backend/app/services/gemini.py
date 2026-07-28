@@ -48,25 +48,19 @@ _WRAP_TAGS = (
 
 
 def compose_system_structured(
-    reference_context: str | None,
     rag_context: str | None = None,
-    comparison_context: str | None = None,
     *,
     session_file_context: str | None = None,
     session_file_sources: list[dict] | None = None,
     tag_context: str | None = None,
     rag_sources: list[dict] | None = None,
-    reference_node_ids: list[str] | None = None,
-    comparison_node_ids: list[str] | None = None,
     base_instruction: str | None = None,
 ) -> tuple[str, list[dict]]:
     """Single source of truth (D35): build the system prompt AND the per-block
     metadata (kind/order/source/raw_text/node_ids/sources/prompt_span) in one
     place, so the saved prompt and the highlight offsets can never drift.
 
-    - `reference_context`: imported other-branch content (Stage 3a memory link).
     - `rag_context`: chunks from files linked to the branch (Stage 3b-2 RAG).
-    - `comparison_context`: one-time referenced branches for comparison (D15).
     - session_file_context: 세션에 올린 학생 파일 전문(D83, TASK 3).
     - tag_context: 이 세션에서 이미 쓰인 분류 태그 목록 문자열(D89, TASK 5).
 
@@ -79,7 +73,7 @@ def compose_system_structured(
     ]
     # D85: 세션 파일 전문은 턴 간 불변(파일 추가/삭제 전까지) — system_base
     # 직후 고정 배치로 Friendli 프리픽스 캐시(입력 단가·TTFT)를 살린다.
-    # 턴마다 변하는 memory/rag/comparison은 뒤에 둔다.
+    # 턴마다 변하는 rag는 뒤에 둔다.
     if session_file_context:
         parts.append(
             (
@@ -93,7 +87,7 @@ def compose_system_structured(
         )
     # D89: 태그 연속성 블록. D85 프리픽스 캐시는 system_base+session_files의 턴 간
     # 불변 프리픽스로 성립하는데, tag_guide는 세션 태그가 쌓일수록 턴마다 변하므로
-    # 그 프리픽스 뒤, 턴 가변 블록들(memory/rag/comparison)의 선두에 둔다.
+    # 그 프리픽스 뒤, 턴 가변 블록(rag)의 앞에 둔다.
     if tag_context:
         parts.append(
             (
@@ -102,17 +96,6 @@ def compose_system_structured(
                 "분류 태그 연속성",
                 tag_context,
                 None,
-                None,
-            )
-        )
-    if reference_context:
-        parts.append(
-            (
-                "memory_link",
-                _WRAP_MEMORY + reference_context,
-                "다른 분기 노드(기억 연결)",
-                reference_context,
-                reference_node_ids or None,
                 None,
             )
         )
@@ -125,17 +108,6 @@ def compose_system_structured(
                 rag_context,
                 None,
                 rag_sources or [],
-            )
-        )
-    if comparison_context:
-        parts.append(
-            (
-                "comparison",
-                _WRAP_COMPARISON + comparison_context,
-                "이번 질문 한정 비교 참조",
-                comparison_context,
-                comparison_node_ids or None,
-                None,
             )
         )
 

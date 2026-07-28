@@ -21,7 +21,6 @@ from .routers import (
     health,
     home,
     me,
-    nodes,
     retrieve,
     sessions,
     teacher,
@@ -76,7 +75,6 @@ app.include_router(health.router)
 for _router in (
     me.router,
     sessions.router,
-    nodes.router,
     chat.router,
     home.router,
     admin.router,

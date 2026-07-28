@@ -18,7 +18,7 @@ SSE event schema:
   event: start   data: {"session_id","parent_node_id"}
   event: token   data: {"delta"}
   event: done    data: {"node":{"id","parent_id","label":null,
-                        "reference_sources":[...],"rag_sources":[...]},
+                        "rag_sources":[...]},
                         "current_head_id","root_node_id"}
   event: error   data: {"detail"}
 """
@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from ..auth.deps import CurrentUser, get_current_user
 from ..config import get_settings
 from ..db.client import UserClient
-from ..services import exaone, gemini, memory, rag, session_context
+from ..services import exaone, gemini, rag, session_context
 from ..services import sessions as svc
 from ..services.turn_log import TurnLog
 
@@ -74,9 +74,6 @@ class ChatStreamBody(BaseModel):
     session_id: str
     question: str = Field(min_length=1, max_length=QUESTION_MAX_CHARS)
     parent_node_id: str | None = None
-    # D15: one-time branch comparison — other nodes to reference for THIS turn
-    # only (not persisted, does not touch node.connections).
-    reference_node_ids: list[str] | None = Field(default=None, max_length=20)
     # 09 단일 writer: 프론트 retrieve 결과(figures)를 서버에 전달해 done 훅이
     # attachments.canvas에 저장. null이면 저장하지 않음(첫 질문 전 degraded
     # 케이스 등). 카드 좌표는 프론트 소유 — 서버는 저장하지 않음.
@@ -142,22 +139,16 @@ async def chat_stream(
 
     parent_id = body.parent_node_id or session.get("current_head_id")
     chain = svc.ancestor_chain_nodes(nodes, parent_id)
-    by_id = {n["id"]: n for n in nodes}
     history = [(n.get("question") or "", n.get("answer") or "") for n in chain]
-    # All three context builders read the same ancestor chain but are otherwise
-    # independent, and each is internally best-effort (own try/except, safe
-    # defaults on failure). Run them concurrently to cut first-token latency —
-    # the RAG builder's question-embedding Gemini call is the heaviest leg (D66).
-    #   - reference:  imported other-branch context (node connections, LCA-trimmed, 3a, D35)
-    #   - rag:        class_material chunks auto-scoped for THIS class session (D73/D82)
-    #   - comparison: one-time branch references for THIS turn (D15/D46, LCA-trimmed)
-    (
-        (reference_context, reference_node_ids),
-        rag_result,
-        (comparison_context, comparison_node_ids, comparison_sources),
-        session_file_result,
-    ) = await asyncio.gather(
-        memory.build_reference_context(client, body.session_id, chain, by_id),
+    # 두 컨텍스트 빌더는 서로 독립이고 각자 best-effort(자체 try/except, 실패 시
+    # 안전 기본값)다. 동시에 돌려 첫 토큰 지연을 줄인다 — RAG의 질의 임베딩이
+    # 가장 무거운 레그다(D66).
+    #   - rag:           이 학급 세션의 class_material 청크 자동 스코프 (D73/D82)
+    #   - session_files: 세션에 올린 학생 파일 전문, 임베딩 없음 (D83)
+    #
+    # D107: 기억 연결(memory_link)·비교 참조(comparison) 레그는 제거됐다 —
+    # 캔버스 UI에 그 둘을 만드는 경로가 없어 언제나 빈 결과였다.
+    rag_result, session_file_result = await asyncio.gather(
         rag.build_rag_context(
             client,
             body.question,
@@ -166,10 +157,6 @@ async def chat_stream(
             space_kind=session.get("space_kind"),
             space_ref=session.get("space_ref"),
         ),
-        memory.build_comparison_context(
-            client, body.reference_node_ids or [], chain, by_id
-        ),
-        # D83: 세션에 올린 학생 파일 전문(임베딩 없음) — best-effort.
         session_context.build_session_file_context(client, body.session_id),
     )
     rag_context = rag_result["block"] if rag_result else None
@@ -192,15 +179,11 @@ async def chat_stream(
     # is the SINGLE source of truth for both the system prompt string AND each
     # block's char span, so the saved prompt and the admin highlight never drift.
     system_prompt, context_blocks_list = gemini.compose_system_structured(
-        reference_context,
         rag_context,
-        comparison_context,
         session_file_context=session_file_block,
         session_file_sources=session_file_sources,
         tag_context=tag_context,
         rag_sources=rag_sources,
-        reference_node_ids=reference_node_ids,
-        comparison_node_ids=comparison_node_ids,
         base_instruction=exaone.CONCEPT_CARD_SYSTEM_PROMPT,
     )
     tlog = TurnLog(user.id, body.session_id, body.question)
@@ -261,8 +244,6 @@ async def chat_stream(
                 provenance: dict = {}
                 if rag_sources:
                     provenance["rag_sources"] = rag_sources
-                if comparison_sources:
-                    provenance["reference_sources"] = comparison_sources
                 if provenance:
                     try:
                         await client.update(
@@ -280,7 +261,6 @@ async def chat_stream(
                             "id": node["id"],
                             "parent_id": node.get("parent_id"),
                             "label": None,
-                            "reference_sources": comparison_sources or [],
                             # D74: 실시간 출처 칩 표시용(영속은 위 PATCH가 담당).
                             "rag_sources": rag_sources or [],
                         },
