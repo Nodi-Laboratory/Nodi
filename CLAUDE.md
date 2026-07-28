@@ -83,7 +83,7 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   `textbook_figures.status`로만 추적(D86/D88).
 - **채팅 턴** (`routers/chat.py` `chat_stream`) — 경로가 둘이다:
 
-  **ReAct 경로** (D109, `react_enabled` 튜너블·기본 off): 도구 판단 → 스킬 실행
+  **ReAct 경로** (D109, `react_enabled` 튜너블·**기본 on**): 도구 판단 → 스킬 실행
   → 생성. 스킬은 `app/ai/skills/`에 파일 하나씩이고, 노출 카탈로그는
   `ai/catalog.py`가 `(space_kind, role)`로 **먼저 좁힌다** — 개인 세션에 학급
   도구를 보여주면 모델이 부르고 빈 결과로 엉뚱한 답을 한다. 좁힌 뒤 모델이
@@ -92,7 +92,12 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   추론 누출 차단). 스킬 실패는 `SkillResult(ok=False)`로 모델에 전달되고
   턴을 죽이지 않는다.
 
-  **기존 단발 경로** (`react_enabled` off):
+  스킬 7종: think · search_class_material · search_textbook_figure ·
+  list_session_concepts · get_concept · list_session_files · read_session_file.
+  카탈로그는 스코프뿐 아니라 **세션 상태**로도 갈린다(파일이 없으면 파일 스킬을
+  노출하지 않는다 — 노출하면 모델이 부르고 빈 결과로 군더더기를 붙인다).
+
+  **기존 단발 경로** (`react_enabled` off, 롤백용):
   컨텍스트 빌더 병렬(gather): 기억 연결·파일 RAG·비교 참조·세션 파일 전문
   (D83, `session_context.py` — session_files 블록은 system_base 직후 고정,
   D85 Friendli 프리픽스 캐시) →
@@ -103,8 +108,8 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   **중·고등 전 교과 교사 페르소나 + 자유 분류 태그**(D89, `exaone.py`).
 - **캔버스 배치**: 개념 카드는 EXAONE 자유 태그로 클러스터링 — 태그 첫 등장
   순서로 황금각 슬롯 앵커를 영구 부여(D90, `useTagLayout`/`curriculumTags.ts`),
-  "기타"는 중앙. 교과서 figure 추천 노드는 `routers/retrieve.py`가 별도
-  검색(D94, 사용자 결정 2026-07-18: EBS 영상·SVG 아트 추천 기능 전면 제거 —
+  "기타"는 중앙. 교과서 도판은 `services/figure_search.py`가 검색한다(D111 — 프론트
+  선행 `/retrieve` 제거, ReAct 스킬과 레거시 경로가 같은 구현을 쓴다). (D94, 사용자 결정 2026-07-18: EBS 영상·SVG 아트 추천 기능 전면 제거 —
   `/art/search`·인제스트 스크립트·Qdrant ebs/art_assets 컬렉션·art_assets
   테이블 포함. 마이그레이션 0040은 2026-07-19 원격 적용 완료).
 
