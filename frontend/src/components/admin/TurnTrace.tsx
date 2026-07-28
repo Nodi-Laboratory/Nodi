@@ -11,6 +11,7 @@ import type {
   SkillTrace,
 } from "@/lib/types";
 import { Badge, Code, Collapse, CopyButton, ms, n } from "./ui";
+import { TurnFlow } from "./TurnFlow";
 
 /**
  * 한 턴이 어떻게 만들어졌는지 (D113).
@@ -39,6 +40,13 @@ export function TurnTrace({ log }: { log: AdminLog }) {
 
   return (
     <div className="flex flex-col gap-4">
+      {/*
+        맨 위에 흐름을 둔다. "무엇을 했나"를 먼저 보고 세부(토큰·프롬프트)로
+        내려가는 순서다. 스킬을 안 쓴 턴에서도 전체 파이프라인이 보이므로
+        "아무것도 안 나온다"와 "도구가 필요 없었다"가 구분된다.
+      */}
+      <TurnFlow log={log} />
+
       <TokenPanel log={log} />
 
       {traces.length > 0 && (

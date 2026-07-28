@@ -2,22 +2,20 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  ArrowDown,
-  Braces,
-  Brain,
-  Database,
-  Eye,
-  FileSearch,
-  GitBranch,
-  Layers,
-  MonitorPlay,
-  ShieldCheck,
-  Wrench,
-} from "lucide-react";
 import { getAdminFlow } from "@/lib/api";
 import type { AdminFlow, FlowNode } from "@/lib/types";
-import { Badge, C, Failed, Loading, Panel, n } from "./ui";
+import { Badge, Failed, Loading, Panel, n } from "./ui";
+import {
+  Arrow,
+  FLOW_HEAD,
+  FLOW_LEGACY,
+  FLOW_REACT,
+  FLOW_TAIL,
+  KIND_LABEL,
+  Legend,
+  NodeIcon,
+  nodeRouteLabel,
+} from "./flowView";
 
 /**
  * AI 흐름 탭 (D113) — 채팅 한 턴이 실제로 어떻게 도는지.
@@ -28,44 +26,10 @@ import { Badge, C, Failed, Loading, Panel, n } from "./ui";
  *
  * 꺼진 경로도 흐리게 함께 그린다. 지우면 "롤백하면 뭐가 도는지"를 화면만 봐서는
  * 알 수 없다.
+ *
+ * 노드 렌더(아이콘·색·배치)는 `flowView.tsx`에 있고 **턴별 흐름과 공유한다** —
+ * 두 화면이 같은 단계를 다르게 그리면 오갈 때 알아볼 수 없다.
  */
-
-const KIND_ICON: Record<string, typeof Brain> = {
-  io: MonitorPlay,
-  guard: ShieldCheck,
-  read: FileSearch,
-  decision: GitBranch,
-  logic: Braces,
-  llm: Brain,
-  skill: Wrench,
-  render: Eye,
-  store: Database,
-};
-
-const KIND_LABEL: Record<string, string> = {
-  io: "입출력",
-  guard: "권한",
-  read: "조회",
-  decision: "분기",
-  logic: "조립",
-  llm: "LLM 호출",
-  skill: "스킬",
-  render: "화면",
-  store: "저장",
-};
-
-const KIND_COLOR: Record<string, string> = {
-  io: "#8fa0bf",
-  guard: "#bd86c4",
-  read: "#3fb0aa",
-  decision: C.gold,
-  logic: "#b6b0a4",
-  llm: "#e0796a",
-  skill: "#9bbf6a",
-  render: "#7fb2c4",
-  store: "#d98a3d",
-};
-
 export function FlowTab() {
   const { data, isLoading, isError } = useQuery<AdminFlow>({
     queryKey: ["admin", "flow"],
@@ -80,11 +44,11 @@ export function FlowTab() {
   const byId = new Map(data.nodes.map((nd) => [nd.id, nd]));
   const detail = selected ? byId.get(selected) : null;
 
-  // 세로 흐름으로 그린다. 분기 구간(catalog…evidence / prefetch)만 두 열로 나눈다.
-  const head = ["question", "authz", "history", "route"];
-  const tail = ["compose", "answer", "parse", "layout", "persist", "log"];
-  const reactCol = ["catalog", "decide", "tools_needed", "skills", "evidence"];
-  const legacyCol = ["prefetch"];
+  // 세로 배치 순서는 flowView가 소유한다 — 턴별 흐름과 같은 배치여야 한다.
+  const head = FLOW_HEAD;
+  const tail = FLOW_TAIL;
+  const reactCol = FLOW_REACT;
+  const legacyCol = FLOW_LEGACY;
 
   return (
     <div className="flex flex-col gap-4">
@@ -137,9 +101,7 @@ export function FlowTab() {
               />
             </div>
 
-            <div className="flex justify-center py-0.5">
-              <ArrowDown size={14} className="text-[#9a948a]" />
-            </div>
+            <Arrow />
 
             {tail.map((id, i) => (
               <NodeRow
@@ -167,27 +129,12 @@ export function FlowTab() {
           </Panel>
 
           <Panel title="범례">
-            <div className="flex flex-wrap gap-1.5">
-              {Object.keys(KIND_LABEL).map((k) => {
-                const Icon = KIND_ICON[k] ?? Layers;
-                return (
-                  <span
-                    key={k}
-                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px]"
-                    style={{
-                      backgroundColor: `${KIND_COLOR[k]}22`,
-                      color: KIND_COLOR[k],
-                    }}
-                  >
-                    <Icon size={11} />
-                    {KIND_LABEL[k]}
-                  </span>
-                );
-              })}
-            </div>
+            <Legend />
             <p className="mt-2 text-[11px] leading-relaxed text-[#9a948a]">
               흐린 칸은 지금 꺼져 있는 경로입니다. 지우지 않고 남겨 둡니다 —
-              롤백했을 때 무엇이 도는지 화면에서 바로 보이도록.
+              롤백했을 때 무엇이 도는지 화면에서 바로 보이도록. 개별 턴이 이 중
+              어디를 탔는지는 <b className="text-[#cfc9bd]">턴 로그</b> 상세의
+              &quot;이 턴의 흐름&quot;에서 같은 그림으로 볼 수 있습니다.
             </p>
           </Panel>
         </div>
@@ -252,26 +199,19 @@ function NodeRow({
   arrow?: boolean;
 }) {
   if (!node) return null;
-  const Icon = KIND_ICON[node.kind] ?? Layers;
-  const color = KIND_COLOR[node.kind] ?? "#8fa0bf";
   const dim = node.route !== "both" && node.route !== active;
   return (
     <>
       <button
         type="button"
         onClick={() => onSelect(node.id)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors ${
+        className={`flex w-full cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors ${
           selected
             ? "border-[#e0a32e]/60 bg-[#2c2820]"
             : "border-white/10 bg-[#221e17] hover:border-white/25"
         } ${dim ? "opacity-45" : ""}`}
       >
-        <span
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded"
-          style={{ backgroundColor: `${color}22`, color }}
-        >
-          <Icon size={13} />
-        </span>
+        <NodeIcon kind={node.kind} />
         <span className="min-w-0 flex-1 truncate text-sm text-[#e7e3d8]">
           {node.label}
         </span>
@@ -282,11 +222,7 @@ function NodeRow({
         ) : null}
         {node.skills?.length ? <Badge tone="ok">스킬 {node.skills.length}</Badge> : null}
       </button>
-      {arrow && (
-        <div className="flex justify-center">
-          <ArrowDown size={12} className="text-[#5f5a52]" />
-        </div>
-      )}
+      {arrow && <Arrow small />}
     </>
   );
 }
@@ -296,9 +232,7 @@ function NodeDetail({ node }: { node: FlowNode }) {
     <div className="flex flex-col gap-2.5 text-xs">
       <div className="flex flex-wrap gap-1.5">
         <Badge tone="info">{KIND_LABEL[node.kind] ?? node.kind}</Badge>
-        <Badge>
-          {node.route === "both" ? "두 경로 공통" : node.route === "react" ? "ReAct 전용" : "레거시 전용"}
-        </Badge>
+        <Badge>{nodeRouteLabel(node)}</Badge>
       </div>
       {node.detail && (
         <p className="leading-relaxed text-[#cfc9bd]">{node.detail}</p>

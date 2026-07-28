@@ -201,10 +201,16 @@ function SettingRow({ item }: { item: AdminSettingItem }) {
         </div>
       )}
 
-      <div className="mt-2.5 flex items-center gap-2">
+      {/*
+        토글·슬라이더·셀렉트는 조작 즉시 저장되고, 숫자·JSON만 명시 저장이다
+        (타이핑 중간값이 저장되면 안 되기 때문). 그래서 저장 버튼은 **그 둘에만**
+        붙고, 저장할 것이 없으면 눌리지 않는다.
+      */}
+      <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
         {widget === "toggle" ? (
           <Toggle
             checked={!!draft}
+            disabled={saving}
             onChange={(v) => {
               setDraft(v);
               request(v);
@@ -213,11 +219,12 @@ function SettingRow({ item }: { item: AdminSettingItem }) {
         ) : widget === "select" ? (
           <select
             value={String(draft ?? "")}
+            disabled={saving}
             onChange={(e) => {
               setDraft(e.target.value);
               request(e.target.value);
             }}
-            className="flex-1 rounded border border-white/15 bg-[#1b1813] px-2 py-1.5 text-sm text-[#e7e3d8]"
+            className="min-w-40 flex-1 rounded border border-white/15 bg-[#1b1813] px-2 py-1.5 text-sm text-[#e7e3d8] disabled:opacity-50"
           >
             {(spec.options ?? []).map((o) => (
               <option key={String(o.value)} value={String(o.value)}>
@@ -232,51 +239,51 @@ function SettingRow({ item }: { item: AdminSettingItem }) {
             max={spec.max ?? 1}
             step={spec.step ?? 1}
             unit={spec.unit}
+            disabled={saving}
             onChange={setDraft}
             onCommit={request}
           />
         ) : widget === "number" ? (
-          <>
+          <div className="flex items-center gap-1.5">
             <input
               type="number"
               value={Number(draft ?? spec.min ?? 0)}
               min={spec.min}
               max={spec.max}
               step={spec.step}
+              disabled={saving}
               onChange={(e) => setDraft(Number(e.target.value))}
-              className="w-32 rounded border border-white/15 bg-[#1b1813] px-2 py-1.5 text-sm text-[#e7e3d8]"
+              className="w-28 rounded border border-white/15 bg-[#1b1813] px-2 py-1.5 text-right font-mono text-sm text-[#e7e3d8] disabled:opacity-50"
             />
             {spec.unit && <span className="text-xs text-[#9a948a]">{spec.unit}</span>}
             {spec.min != null && spec.max != null && (
-              <span className="text-[10px] text-[#9a948a]">
-                {spec.min}–{spec.max}
+              <span className="text-[10px] text-[#6f6a62]">
+                허용 {spec.min}–{spec.max}
               </span>
             )}
-          </>
+          </div>
         ) : (
           <input
             type="text"
             value={jsonDraft}
+            disabled={saving}
             onChange={(e) => setJsonDraft(e.target.value)}
             spellCheck={false}
-            className="flex-1 rounded border border-white/15 bg-[#1b1813] px-2 py-1.5 font-mono text-sm text-[#e7e3d8]"
+            className="min-w-40 flex-1 rounded border border-white/15 bg-[#1b1813] px-2 py-1.5 font-mono text-sm text-[#e7e3d8] disabled:opacity-50"
           />
         )}
 
         {(widget === "json" || widget === "number") && (
-          <button
-            type="button"
+          <SaveButton
+            dirty={dirty}
+            saving={saving}
             onClick={() => (widget === "json" ? saveJson() : request(draft))}
-            disabled={saving || !dirty}
-            className="rounded bg-[#e0a32e] px-3 py-1.5 text-sm font-medium text-[#2a2a24] hover:brightness-110 disabled:opacity-50"
-          >
-            저장
-          </button>
+          />
         )}
       </div>
 
-      {err && <p className="mt-1 text-xs text-[#e0796a]">{err}</p>}
-      {msg && <p className="mt-1 text-xs text-[#9bbf6a]">{msg}</p>}
+      {err && <p className="mt-1.5 text-xs text-[#e0796a]">{err}</p>}
+      {msg && <p className="mt-1.5 text-xs text-[#9bbf6a]">{msg}</p>}
 
       {confirmValue && (
         <ConfirmDialog
@@ -307,25 +314,80 @@ function ScopeBadge({ scope }: { scope: string }) {
 function Toggle({
   checked,
   onChange,
+  disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-        checked ? "bg-[#6e8a3c]" : "bg-white/20"
+      className={`group flex items-center gap-2 disabled:opacity-50 ${
+        disabled ? "" : "cursor-pointer"
       }`}
     >
       <span
-        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-          checked ? "translate-x-4" : "translate-x-0.5"
+        className={`relative block h-5 w-9 shrink-0 rounded-full transition-colors ${
+          checked ? "bg-[#6e8a3c]" : "bg-white/20"
         }`}
-      />
+      >
+        {/*
+          `left-0`이 **반드시 있어야 한다.** 없으면 절대 위치의 기준이 정적 위치가
+          되는데, button의 기본 `text-align: center` 때문에 그 값이 트랙 중앙
+          (18px)이 되고 거기에 translate가 더해져 손잡이가 트랙 밖으로 14px
+          삐져나온다(실측). 값도 트랙(36) − 손잡이(16) − 여백(2) = 18px로 못박아
+          양쪽 여백을 같게 한다.
+        */}
+        <span
+          className={`absolute top-0.5 left-0 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+            checked ? "translate-x-[18px]" : "translate-x-[2px]"
+          }`}
+        />
+      </span>
+      <span
+        className={`text-xs font-medium ${checked ? "text-[#9bbf6a]" : "text-[#9a948a]"}`}
+      >
+        {checked ? "켜짐" : "꺼짐"}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * 저장 버튼.
+ *
+ * 예전에는 비활성일 때도 금색 배경에 `opacity-50`만 걸어서, 눌리지 않는데도
+ * 주 동작처럼 보이는 탁한 금색 덩어리가 됐다(스크린샷으로 확인). 저장할 것이
+ * 있을 때만 금색이고, 없으면 테두리만 남는 중립 상태로 둔다.
+ */
+function SaveButton({
+  dirty,
+  saving,
+  onClick,
+}: {
+  dirty: boolean;
+  saving: boolean;
+  onClick: () => void;
+}) {
+  const disabled = saving || !dirty;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={dirty ? "변경값을 저장합니다" : "변경한 값이 없습니다"}
+      className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+        disabled
+          ? "cursor-not-allowed border border-white/10 bg-transparent text-[#6f6a62]"
+          : "cursor-pointer bg-[#e0a32e] text-[#2a2a24] hover:brightness-110"
+      }`}
+    >
+      {saving ? "저장 중…" : "저장"}
     </button>
   );
 }
@@ -336,6 +398,7 @@ function Slider({
   max,
   step,
   unit,
+  disabled,
   onChange,
   onCommit,
 }: {
@@ -344,6 +407,7 @@ function Slider({
   max: number;
   step: number;
   unit?: string;
+  disabled?: boolean;
   onChange: (v: number) => void;
   onCommit: (v: number) => void;
 }) {
@@ -351,13 +415,18 @@ function Slider({
   // 커밋한다. 키보드 조작은 드래그가 아니므로 즉시 커밋(접근성).
   const dragging = useRef(false);
   return (
-    <div className="flex flex-1 items-center gap-3">
+    <div className="flex min-w-64 flex-1 items-center gap-2.5">
+      {/* 눈금이 없으면 지금 값이 범위의 어디쯤인지 알 수 없다. */}
+      <span className="w-8 shrink-0 text-right font-mono text-[10px] text-[#6f6a62]">
+        {min}
+      </span>
       <input
         type="range"
         min={min}
         max={max}
         step={step}
         value={value}
+        disabled={disabled}
         onPointerDown={() => {
           dragging.current = true;
         }}
@@ -370,9 +439,10 @@ function Slider({
           dragging.current = false;
           onCommit(Number((e.target as HTMLInputElement).value));
         }}
-        className="flex-1 accent-[#e0a32e]"
+        className="h-1.5 flex-1 cursor-pointer accent-[#e0a32e] disabled:cursor-not-allowed disabled:opacity-50"
       />
-      <span className="w-16 text-right text-sm font-medium text-[#e7e3d8]">
+      <span className="w-8 shrink-0 font-mono text-[10px] text-[#6f6a62]">{max}</span>
+      <span className="w-20 shrink-0 rounded bg-[#1b1813] px-2 py-0.5 text-right font-mono text-sm font-semibold text-[#fcf58b]">
         {value}
         {unit ? ` ${unit}` : ""}
       </span>
