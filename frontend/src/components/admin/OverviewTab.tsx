@@ -1,9 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle } from "lucide-react";
-import { getAdminOverview } from "@/lib/api";
-import type { AdminOverview } from "@/lib/types";
+import { AlertTriangle, ShieldAlert } from "lucide-react";
+import { getAdminOverview, getHealthConfig } from "@/lib/api";
+import type { AdminOverview, HealthConfig } from "@/lib/types";
 import {
   Badge,
   Empty,
@@ -138,7 +138,82 @@ export function OverviewTab() {
           )}
         </Panel>
       </div>
+
+      <EnvironmentPanel />
     </div>
+  );
+}
+
+/**
+ * 환경 — 지금 이 서버가 무엇에 붙어 있는가.
+ *
+ * 설정(app_settings)이 "바꿀 수 있는 값"이라면 이건 "기동 시 정해진 값"이다.
+ * 둘을 섞으면 관리자가 콘솔에서 바꿀 수 있다고 오해한다. `/health/config`를
+ * 그대로 읽으며 **비밀값은 애초에 응답에 없다**(존재 여부와 모델명·URL만).
+ */
+function EnvironmentPanel() {
+  const { data, isLoading, isError } = useQuery<HealthConfig>({
+    queryKey: ["admin", "health-config"],
+    queryFn: getHealthConfig,
+    staleTime: 60_000,
+  });
+
+  if (isLoading) return <Panel title="환경"><Loading /></Panel>;
+  if (isError || !data) return <Panel title="환경"><Failed /></Panel>;
+
+  const rows: { label: string; value: string; tone?: "ok" | "warn" | "bad" }[] = [
+    { label: "환경", value: data.environment },
+    { label: "DB 호스트", value: data.database.host ?? "—", tone: data.database.configured ? "ok" : "bad" },
+    { label: "워커 DSN", value: data.database.worker_dsn_set ? "설정됨" : "없음 — 업로드·임베딩 비활성", tone: data.database.worker_dsn_set ? "ok" : "bad" },
+    { label: "대화 모델", value: data.chat.model, tone: data.chat.configured ? "ok" : "bad" },
+    { label: "임베딩(질의/문서)", value: `${data.upstage.embedding_query_model} / ${data.upstage.embedding_passage_model}`, tone: data.upstage.configured ? "ok" : "bad" },
+    { label: "Upstage 베이스", value: data.upstage.base_url },
+    { label: "Qdrant", value: data.qdrant.url, tone: data.qdrant.configured ? "ok" : "bad" },
+    { label: "파일 저장소", value: `${data.storage.bucket} @ ${data.storage.root}` },
+    { label: "토큰 만료", value: `${data.auth.expire_minutes}분 (${data.auth.jwt_algorithm})` },
+    {
+      label: "도판 비전 판정",
+      value: data.judge.configured
+        ? `${data.judge.model} @ ${data.judge.base_url}`
+        : `미설정 (${data.judge.missing.join(", ")}) — 라벨 없는 도판만 처리 안 됨`,
+      tone: data.judge.configured ? "ok" : "warn",
+    },
+  ];
+
+  return (
+    <Panel
+      title="환경 (기동 시 결정 — 콘솔에서 바꿀 수 없음)"
+      right={
+        <Badge tone={data.ready ? "ok" : "bad"}>
+          {data.ready ? "채팅 가능" : `막힘: ${data.blocking.join(", ")}`}
+        </Badge>
+      }
+    >
+      {data.auth.secret_is_default && (
+        <div className="mb-2 flex items-start gap-2 rounded border border-[#e0796a]/40 bg-[#e0796a]/10 px-2.5 py-2 text-[11px] text-[#e6a99e]">
+          <ShieldAlert size={13} className="mt-0.5 shrink-0" />
+          JWT 시크릿이 기본값입니다 — 누구나 토큰을 위조할 수 있습니다. 운영 전
+          반드시 교체하세요.
+        </div>
+      )}
+      <div className="grid grid-cols-1 gap-x-6 gap-y-1 md:grid-cols-2">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-baseline justify-between gap-3 text-[11px]">
+            <span className="shrink-0 text-[#9a948a]">{r.label}</span>
+            <span
+              className="min-w-0 truncate text-right font-mono"
+              title={r.value}
+              style={{
+                color:
+                  r.tone === "bad" ? "#e0796a" : r.tone === "warn" ? "#e0a86a" : "#cfc9bd",
+              }}
+            >
+              {r.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Panel>
   );
 }
 

@@ -635,6 +635,44 @@ export interface RagTestResult {
   notes: string[];
 }
 
+/**
+ * D97 `/health/config` — 환경 자가진단.
+ *
+ * **비밀값은 담기지 않는다** — 존재 여부(bool)와 비밀이 아닌 URL·모델명만.
+ */
+export interface HealthConfig {
+  ready: boolean;
+  blocking: string[];
+  environment: string;
+  database: { app_dsn_set: boolean; worker_dsn_set: boolean; host: string | null; configured: boolean };
+  auth: {
+    jwt_algorithm: string;
+    expire_minutes: number;
+    /** 기본 시크릿이면 누구나 토큰을 위조할 수 있다 — 운영 전 반드시 교체. */
+    secret_is_default: boolean;
+    configured: boolean;
+  };
+  chat: { api_key_set: boolean; model: string; base_url: string; configured: boolean };
+  upstage: {
+    api_key_set: boolean;
+    base_url: string;
+    embedding_query_model: string;
+    embedding_passage_model: string;
+    configured: boolean;
+  };
+  qdrant: { url: string; configured: boolean };
+  storage: { root: string; bucket: string };
+  judge: {
+    configured: boolean;
+    missing: string[];
+    base_url: string | null;
+    model: string | null;
+    pipeline_enabled: boolean;
+    role: string;
+    note: string;
+  };
+}
+
 export interface AdminClass {
   id: string;
   name: string | null;

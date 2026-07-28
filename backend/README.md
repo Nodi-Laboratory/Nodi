@@ -44,15 +44,31 @@ uvicorn app.main:app --reload --port 8000
 - `GET /home/suggestions` — 3 starter questions (click -> new personal session)
 - `POST /overseer/stream` — overseer (home) SSE; `done` carries action buttons
 
-Admin (all require app role `admin`; admin RLS / RPCs in migration 0008):
-- `GET /admin/users` · `POST /admin/users/{id}/role` (role change via RPC)
-- `GET /admin/settings` · `PUT /admin/settings/{key}` (runtime app_settings)
-- `GET /admin/usage` (per-user token totals — PARTIAL: skill-step tokens only)
-- `GET /admin/logs?user_id=&since=&until=&limit=&offset=` — chat turn logs
-  (`ai_logs`, D25: system prompt, Q/A, used contexts, skills, errors, tokens).
-  Frontend live-appends new turns via Supabase Realtime on `ai_logs`.
-- `GET /admin/traces?user_id=&limit=&offset=` — ReAct step traces
-  (`ai_sessions` + `ai_steps`) for navigator/overseer
+> **주의: 이 README는 Stage 0 시절 문서라 상당 부분이 낡았다.** Supabase·Gemini·
+> node-positions 등 이미 제거된 것들이 남아 있다. 현재 사실은 `CLAUDE.md`와
+> 코드가 기준이다. 아래 Admin 절만 D113 기준으로 갱신했다.
+
+Admin — 운영 콘솔 (전부 app role `admin` 필요. 관리자 **본인 JWT**로 admin RLS
+정책과 SECURITY DEFINER RPC를 탄다 — service_role을 쓰지 않는다):
+- `GET /admin/users` · `POST /admin/users/{id}/role` (RPC로 역할 변경)
+- `GET /admin/settings` — 튜너블 전체(현재값·기본값·변경여부·위젯 스펙).
+  스펙의 소유자는 서버(`services/admin_console.py`)다 — 기본값이 `config.py`에
+  있으니 라벨·범위도 옆에 둔다.
+- `PUT /admin/settings/{key}` · `POST /admin/settings/{key}/reset`
+  (reset은 행을 **지우지 않고** 기본값을 써 넣는다 — 지우면 노브가 사라진다)
+- `GET /admin/overview` — 전체 카운터 + 실측 토큰 합계 + 지연 p50/p95 (RPC 1회)
+- `GET /admin/flow` — 채팅 한 턴의 파이프라인 그래프(레지스트리·설정에서 생성)
+- `GET /admin/skills?days=` — 등록 스킬 + 노출 조합 + 사용 통계
+- `GET /admin/conversations?owner_id=&space_kind=&search=&limit=&offset=`
+- `GET /admin/conversations/{session_id}` — 노드(학생이 본 것) + 턴 로그(과정)
+- `GET /admin/documents?kind=&status=&search=` · `GET /admin/documents/{file_id}`
+  (청크 원문·잡 이력·도판까지 — "문서가 어떻게 올라갔는가")
+- `POST /admin/rag/test` — 실제 검색 경로를 태우되 게이트에 **차단된 청크도**
+  거리와 함께 돌려준다(게이트 조정의 근거)
+- `GET /admin/classes` — RAG 테스트 범위 선택용
+- `GET /admin/logs?user_id=&since=&until=&limit=&offset=` · `GET /admin/logs/{id}`
+  — 턴 로그(`ai_logs`). D113부터 실측 토큰(`tokens`)·경로(`route`)·모델·
+  소요시간과 스킬 트레이스(인자·결과·소요시간)가 함께 들어 있다.
 
 Files / RAG (Stage 3b-1; needs `SUPABASE_SERVICE_ROLE_KEY` for upload+worker):
 - `POST /files` (multipart: file, space_kind, space_ref?, session_id?,

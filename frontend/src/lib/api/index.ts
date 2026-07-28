@@ -68,6 +68,7 @@ export {
   getAdminLogDetail,
   // D113 운영 콘솔
   getAdminOverview,
+  getHealthConfig,
   getAdminFlow,
   getAdminSkills,
   listAdminClasses,

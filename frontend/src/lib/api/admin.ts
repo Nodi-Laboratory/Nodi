@@ -20,6 +20,7 @@ import type {
   AdminSettingsView,
   AdminSkillsResponse,
   AdminUser,
+  HealthConfig,
   Profile,
   RagTestResult,
   UserRole,
@@ -120,6 +121,18 @@ export async function getAdminLogDetail(logId: string): Promise<AdminLogDetail> 
 
 export async function getAdminOverview(): Promise<AdminOverview> {
   return getJson<AdminOverview>("/admin/overview");
+}
+
+/**
+ * 환경 자가진단 (D97의 `/health/config`).
+ *
+ * 이 경로만 `/api` 접두사 **밖**이다 — 인프라 liveness 계약이라 그렇다.
+ * 비밀값은 담기지 않는다(존재 여부와 비밀이 아닌 URL·모델명만).
+ */
+export async function getHealthConfig(): Promise<HealthConfig> {
+  const root = API_BASE.replace(/\/api$/, "");
+  const res = await ensureOk(await fetch(`${root}/health/config`));
+  return res.json();
 }
 
 export async function getAdminFlow(): Promise<AdminFlow> {
