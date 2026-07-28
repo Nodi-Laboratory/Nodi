@@ -78,10 +78,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# 프롬프트 문안은 labs 실측으로 확정된 값이고 형식 변경이 금지돼 있다
-# (exaone.py 상단 주석 · figure_judge.py docstring). 줄바꿈을 넣으면 모델에
+# 프롬프트 문안은 실측으로 확정된 값이고 형식 변경이 금지돼 있다
+# (solar.py 상단 주석 · figure_judge.py docstring). 줄바꿈을 넣으면 모델에
 # 가는 문자열이 바뀌므로 이 두 파일만 길이 규칙에서 제외한다.
-"app/services/exaone.py" = ["E501"]
+# D108: exaone.py → solar.py 이름 변경 시 이 예외가 함께 안 옮겨져 린트가
+# 깨졌다 — 파일명을 바꿀 때 per-file-ignores도 같이 봐야 한다.
+"app/services/solar.py" = ["E501"]
 "app/services/figure_judge.py" = ["E501"]
 # 테스트에서 `pytest.raises(Exception)`은 "어떤 예외든 난다"를 검증하는
 # 의도적 표현이다(호출부가 best-effort로 삼키는 경로).

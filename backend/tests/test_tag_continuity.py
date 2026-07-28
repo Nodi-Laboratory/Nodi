@@ -6,8 +6,8 @@
 """
 
 
-from app.services.solar import extract_used_tags
 from app.services.gemini import _WRAP_TAGS, compose_system_structured
+from app.services.solar import extract_used_tags
 
 # --- extract_used_tags -----------------------------------------------------
 
