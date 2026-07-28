@@ -59,6 +59,13 @@ class TurnOutcome:
     # 스킬이 돌려준 내용 그대로 — 생성 단계 프롬프트에 근거로 붙는다.
     # `(스킬 이름, 메시지, data)`.
     findings: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
+    # 생성 단계에 **실제로 보낸** 시스템 프롬프트(근거 블록 포함).
+    #
+    # D112: 라우터의 TurnLog는 근거 블록이 붙기 전 프롬프트를 저장한다. 그러면
+    # admin 로그가 실제 보낸 것과 달라진다 — D35의 "저장한 프롬프트와 실제가
+    # 어긋나지 않는다"는 계약이 ReAct 경로에서만 깨져 있었다. 라우터가 이 값으로
+    # 덮어쓴다.
+    final_system: str = ""
 
 
 # 전용 렌더가 이미 담는 키 — 일반 렌더에서 중복으로 싣지 않는다.
@@ -150,15 +157,38 @@ class Orchestrator:
                     }
                 )
 
+                # D112: 한 스텝에 **같은 호출이 여러 번** 오는 일이 있다(모델이
+                # 같은 도구를 중복 요청). 그대로 실행하면 임베딩·검색 비용이
+                # 그만큼 늘어난다. 이름+인자가 같으면 한 번만 돌린다.
+                seen_calls: set[tuple[str, str]] = set()
                 for call in tool_calls:
                     fn = call.get("function") or {}
                     name = fn.get("name") or ""
+                    raw_args = fn.get("arguments") or "{}"
                     try:
-                        args = json.loads(fn.get("arguments") or "{}")
+                        args = json.loads(raw_args)
                     except json.JSONDecodeError:
                         args = {}
                     if not isinstance(args, dict):
                         args = {}
+
+                    key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+                    if key in seen_calls:
+                        logger.info("중복 도구 호출 생략: %s", name)
+                        # 모델이 결과를 기다리므로 tool_result는 반드시 돌려준다 —
+                        # 빠뜨리면 대화 형식이 깨져 다음 호출이 실패한다.
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call.get("id") or name,
+                                "content": json.dumps(
+                                    {"ok": True, "message": "같은 요청이라 생략했습니다."},
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        )
+                        continue
+                    seen_calls.add(key)
 
                     yield ("sse", _sse("tool_call", {"name": name, "args": args}))
 
@@ -189,6 +219,8 @@ class Orchestrator:
         evidence = self._evidence_block(outcome)
         if evidence:
             system = f"{system}\n\n{evidence}"
+        # 라우터가 TurnLog에 **실제 보낸 것**을 남길 수 있게 넘긴다(D112).
+        outcome.final_system = system
 
         async for delta in solar.stream_answer(history, question, system):
             yield ("token", delta)

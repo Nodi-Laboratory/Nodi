@@ -525,3 +525,85 @@ async def test_think_결과는_근거로_쓰이지_않는다(monkeypatch):
     )
     assert calls["system"] == "BASE"
     assert "자료를 먼저 찾고" not in calls["system"]
+
+
+async def test_같은_도구_중복_호출은_한_번만_돈다(monkeypatch):
+    """모델이 같은 호출을 여러 번 요청해도 검색을 그만큼 반복하지 않는다.
+
+    임베딩·Qdrant 왕복이 곱절로 드는 낭비다. 다만 tool_result는 호출 수만큼
+    돌려줘야 한다 — 빠뜨리면 대화 형식이 깨져 다음 호출이 실패한다.
+    """
+    ran = []
+
+    class _Count(SkillBase):
+        name = "echo"
+        description = "d"
+        parameters = {"type": "object", "properties": {}}
+
+        async def run(self, args, ctx):
+            ran.append(args)
+            return SkillResult(ok=True, message="ok", data={"v": 1})
+
+    dup = [
+        {"id": "c1", "type": "function",
+         "function": {"name": "echo", "arguments": '{"q":"같음"}'}},
+        {"id": "c2", "type": "function",
+         "function": {"name": "echo", "arguments": '{"q":"같음"}'}},
+        {"id": "c3", "type": "function",
+         "function": {"name": "echo", "arguments": '{"q":"다름"}'}},
+    ]
+    _patch_llm(monkeypatch, tool_calls_sequence=[dup, None])
+    r = SkillRegistry()
+    r.register(_Count())
+    kinds, _, outcome = await _drain(
+        Orchestrator(r),
+        ctx=_ctx(),
+        question="q",
+        history=[],
+        tool_names=["echo"],
+        answer_system_prompt="BASE",
+        max_steps=3,
+    )
+    assert len(ran) == 2                    # 중복 하나는 생략
+    assert outcome.used_skills == ["echo", "echo"]
+    assert kinds.count("sse") == 4          # 실행된 2건의 call+result
+
+
+async def test_실제_전송_프롬프트를_돌려준다(monkeypatch):
+    """admin 로그가 실제와 어긋나지 않도록 최종 프롬프트를 outcome에 싣는다."""
+
+    class _Rag(SkillBase):
+        name = "rag"
+        description = "d"
+        parameters = {"type": "object", "properties": {}}
+
+        async def run(self, args, ctx):
+            return SkillResult(
+                ok=True, message="ok",
+                data={"sources": [{"name": "자료.pdf", "snippet": "엽록체"}]},
+            )
+
+    tc = [{"id": "c", "type": "function",
+           "function": {"name": "rag", "arguments": "{}"}}]
+    calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
+    r = SkillRegistry()
+    r.register(_Rag())
+    _, _, outcome = await _drain(
+        Orchestrator(r),
+        ctx=_ctx(),
+        question="q",
+        history=[],
+        tool_names=["rag"],
+        answer_system_prompt="BASE",
+        max_steps=3,
+    )
+    assert outcome.final_system == calls["system"]
+    assert "엽록체" in outcome.final_system
+
+
+def test_카탈로그와_레지스트리가_일치한다():
+    """오타 하나로 스킬이 조용히 사라지는 것을 부팅 때 막는다."""
+    from app import ai
+    from app.ai.catalog import ALL_DECLARED
+
+    assert set(ai.get_orchestrator().registry.names()) == set(ALL_DECLARED)

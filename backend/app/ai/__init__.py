@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from . import catalog
 from .base import SkillContext, SkillResult
 from .catalog import skills_for
 from .orchestrator import Orchestrator, TurnOutcome
@@ -52,4 +53,19 @@ def get_orchestrator() -> Orchestrator:
     registry.register(ReadSessionFileSkill())
     registry.register(ListClassMaterialsSkill())
     registry.register(SummarizeClassQuestionsSkill())
+
+    # 카탈로그가 이름으로 부르는 스킬이 전부 등록됐는지 확인한다. 레지스트리는
+    # 모르는 이름을 조용히 건너뛰므로(그게 옳다 — 런타임에 죽으면 안 된다),
+    # 오타는 "그 스킬만 영영 안 뜨는" 형태로 숨는다. 부팅 때 드러내는 게 낫다.
+    # 모듈 한정으로 읽는다 — `from .catalog import ALL_DECLARED`로 당겨오면
+    # 바인딩이 임포트 시점에 고정돼 테스트가 이 가드를 흔들 수 없다(스킬 교차
+    # 호출에서 같은 이유로 모듈을 임포트하는 것과 같은 규칙).
+    declared = catalog.ALL_DECLARED
+    registered = set(registry.names())
+    missing = declared - registered
+    if missing:
+        raise RuntimeError(f"카탈로그에 선언됐지만 등록되지 않은 스킬: {sorted(missing)}")
+    unused = registered - declared
+    if unused:
+        raise RuntimeError(f"등록됐지만 어느 카탈로그에도 없는 스킬: {sorted(unused)}")
     return Orchestrator(registry)

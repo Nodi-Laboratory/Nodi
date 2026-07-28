@@ -231,4 +231,14 @@ async def complete(
         choices = resp.json().get("choices") or []
         if not choices:
             raise RuntimeError("Upstage chat: 빈 choices")
-        return choices[0].get("message") or {}
+        choice = choices[0]
+        # D112: max_tokens에 걸려 잘리면 `tool_calls`의 arguments JSON이 중간에서
+        # 끊긴다. 호출부는 파싱 실패를 빈 인자로 처리하므로 **조용히 엉뚱한
+        # 도구 호출**이 된다(검색어 없는 검색 등). 잘렸다는 사실을 로그로 남겨
+        # 원인 추적이 가능하게 한다 — 상한을 올릴지 판단하는 근거가 된다.
+        if choice.get("finish_reason") == "length":
+            logger.warning(
+                "판단 응답이 max_tokens(%s)에서 잘렸다 — 도구 인자가 불완전할 수 있다",
+                payload["max_tokens"],
+            )
+        return choice.get("message") or {}

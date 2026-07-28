@@ -44,6 +44,13 @@ _SESSION_FILES = ["list_session_files", "read_session_file"]
 _PLANNER = "think"
 _PLANNER_MIN_TOOLS = 2
 
+# 이 모듈이 이름으로 부르는 스킬 전부. 레지스트리 등록과 대조하는 데 쓴다 —
+# 오타 하나로 스킬이 **조용히 사라지는** 것을 막는다(레지스트리는 모르는 이름을
+# 그냥 건너뛴다).
+ALL_DECLARED: frozenset[str] = frozenset(
+    [*_CLASS_ONLY, *_CONCEPTS, *_TEACHER_ONLY, *_SESSION_FILES, _PLANNER]
+)
+
 
 def skills_for(
     space_kind: str,

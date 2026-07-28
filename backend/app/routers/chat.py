@@ -306,6 +306,11 @@ async def chat_stream(
                             # 스킬이 찾아온 출처·도판을 아래 영속 경로가 쓴다.
                             rag_sources = payload.rag_sources
                             skill_figures = payload.figures
+                            # D112: 근거 블록이 붙은 **실제 전송 프롬프트**로
+                            # 덮어쓴다. 안 하면 admin 로그가 실제와 달라진다
+                            # (D35의 "저장한 프롬프트 = 실제" 계약).
+                            if payload.final_system:
+                                tlog.set_system(payload.final_system)
                 else:
                     async for delta in solar.stream_answer(
                         history,
