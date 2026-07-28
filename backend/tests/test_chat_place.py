@@ -47,6 +47,14 @@ async def _consume(monkeypatch, *, retrieved=None):
     async def fake_get_nodes(client, sid):
         return []
 
+    # D109: 이 테스트들은 **기존 단발 경로**를 검증한다. 오버레이를 고정하지
+    # 않으면 실 DB의 app_settings(react_enabled)를 읽어 ReAct 분기로 새고,
+    # 결과가 로컬 DB 상태에 따라 달라진다 — 실제로 그렇게 깨졌다.
+    async def _no_overlay():
+        return {}
+
+    monkeypatch.setattr(C.app_settings, "get_overlay", _no_overlay)
+
     monkeypatch.setattr(C.svc, "get_session", fake_get_session)
     monkeypatch.setattr(C.svc, "get_session_nodes", fake_get_nodes)
     monkeypatch.setattr(C.svc, "ancestor_chain_nodes", lambda nodes, pid: [])

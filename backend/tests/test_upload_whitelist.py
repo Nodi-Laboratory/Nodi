@@ -20,7 +20,9 @@ class _FakeService:
 
     async def insert(self, table, row, returning=True):
         self.inserted.append((table, row))
-        return [dict(row)] if returning and isinstance(row, dict) else None
+        # D110: 실제 insert는 **단건이면 dict**를 돌려준다. 대역이 list를
+        # 돌려주던 탓에 `rows[0]` 버그(업로드 500)가 테스트를 통과했다.
+        return dict(row) if returning and isinstance(row, dict) else None
 
 
 class _FakeUserClient:

@@ -268,7 +268,12 @@ async def upload_file(
             detail="저장소 업로드에 실패했습니다.",
         ) from exc
 
-    rows = await service.insert(
+    # D110: `insert`에 dict를 주면 **dict를 돌려준다**(list가 아니다).
+    # PostgREST 시절에는 항상 list라 `rows[0]`이 맞았는데, D104에서 asyncpg로
+    # 갈아끼우며 단건 인서트가 dict를 반환하게 바뀌었다. 그 뒤로 이 줄이
+    # `KeyError: 0`으로 터져 **교사 자료 업로드가 계속 500이었다** — 업로드
+    # happy path를 실제로 태우는 테스트가 없어 아무도 몰랐다.
+    file_row = await service.insert(
         "files",
         {
             "id": file_id,
@@ -284,7 +289,6 @@ async def upload_file(
             "status": "uploaded",
         },
     )
-    file_row = rows[0]
 
     # Enqueue the split job (worker picks it up).
     await service.insert(

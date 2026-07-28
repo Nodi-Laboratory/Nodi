@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -99,6 +100,45 @@ def _fail(exc: Exception, op: str) -> None:
     ) from exc
 
 
+# Postgres가 알려주는 파라미터 타입 → 파이썬 변환기.
+_COERCE: dict[str, Any] = {
+    "int2": int, "int4": int, "int8": int,
+    "float4": float, "float8": float,
+    "numeric": lambda v: Decimal(str(v)),
+    "bool": lambda v: str(v).strip().lower() in ("t", "true", "1", "yes"),
+}
+
+
+async def _fetch(conn: asyncpg.Connection, sql: str, args: list[Any]) -> list[asyncpg.Record]:
+    """파라미터를 **서버가 기대하는 타입으로 맞춰** 실행한다 (D110).
+
+    PostgREST는 필터 값을 전부 문자열로 받아 컬럼 타입에 맞게 캐스팅해 줬다.
+    asyncpg는 캐스팅하지 않고 `DataError`를 던진다 — 예컨대 `seq >= $1`에
+    `'0'`(문자열)을 주면 "'str' object cannot be interpreted as an integer".
+    질의 파라미터는 PostgREST 문법 번역기(db/query.py)가 만들기 때문에 값이
+    항상 문자열이고, 그래서 **정수 컬럼을 거르는 모든 질의가 502였다.**
+    실제 피해: 임베딩 배치 잡이 청크를 못 읽어 파일 인제스트가 전부 실패.
+
+    타입을 추측하지 않는다 — 준비된 구문에서 서버가 선언한 타입을 읽어 그대로
+    변환한다. 컬럼이 text면 문자열이 그대로 가고, int면 int로 바뀐다.
+    asyncpg가 구문을 캐시하므로 반복 비용은 사실상 없다.
+    """
+    stmt = await conn.prepare(sql)
+    params = stmt.get_parameters()
+    if len(params) == len(args):
+        coerced: list[Any] = []
+        for value, ptype in zip(args, params, strict=True):
+            fn = _COERCE.get(getattr(ptype, "name", ""))
+            if fn is not None and isinstance(value, str):
+                try:
+                    value = fn(value)
+                except (ValueError, ArithmeticError):
+                    pass  # 변환 실패는 그대로 넘겨 서버가 판정하게 둔다
+            coerced.append(value)
+        args = coerced
+    return await stmt.fetch(*args)
+
+
 class _BaseClient:
     """공통 SQL 조립·실행. 커넥션 획득 방식만 하위 클래스가 정한다."""
 
@@ -113,7 +153,7 @@ class _BaseClient:
             sql, args, embeds = Q.build_select(table, params)
             async with self._conn() as conn:
                 await _prepare(conn)
-                rows = _rows(await conn.fetch(sql, *args))
+                rows = _rows(await _fetch(conn, sql, args))
                 if embeds:
                     await self._fill_embeds(conn, rows, embeds)
                 return rows
@@ -199,7 +239,7 @@ class _BaseClient:
                 if not returning:
                     await conn.execute(sql, *args)
                     return []
-                out = _rows(await conn.fetch(sql, *args))
+                out = _rows(await _fetch(conn, sql, args))
                 if not out:
                     logger.error("insert %s가 행을 반환하지 않았다(RLS?)", table)
                     raise HTTPException(
@@ -229,7 +269,7 @@ class _BaseClient:
             )
             async with self._conn() as conn:
                 await _prepare(conn)
-                return _rows(await conn.fetch(sql, *args, *wargs))
+                return _rows(await _fetch(conn, sql, [*args, *wargs]))
         except Exception as exc:
             _fail(exc, f"update {table}")
 
@@ -255,7 +295,7 @@ class _BaseClient:
             args = [_encode(row[c]) for c in cols]
             async with self._conn() as conn:
                 await _prepare(conn)
-                out = _rows(await conn.fetch(sql, *args))
+                out = _rows(await _fetch(conn, sql, args))
                 if not out:
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
@@ -275,7 +315,7 @@ class _BaseClient:
             sql = f"DELETE FROM {Q._ident(table)}{where} RETURNING *"
             async with self._conn() as conn:
                 await _prepare(conn)
-                return _rows(await conn.fetch(sql, *args))
+                return _rows(await _fetch(conn, sql, args))
         except Exception as exc:
             _fail(exc, f"delete {table}")
 
@@ -291,7 +331,7 @@ class _BaseClient:
             values = [_encode(args[n]) for n in names]
             async with self._conn() as conn:
                 await _prepare(conn)
-                out = _rows(await conn.fetch(sql, *values))
+                out = _rows(await _fetch(conn, sql, values))
             if not out:
                 return None
             # 스칼라 반환(is_admin 등)은 컬럼 1개 행 1개 — 값만 돌려준다.
@@ -303,8 +343,31 @@ class _BaseClient:
             _fail(exc, f"rpc {fn}")
 
 
+# ISO 8601 타임스탬프 문자열. 초 단위 이상 + 타임존이 있으면 받아들인다.
+_ISO_DT = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?"
+    r"(Z|[+-]\d{2}:?\d{2})?$"
+)
+
+
 def _encode(value: Any) -> Any:
-    """dict/list는 jsonb로 넘긴다(코덱이 처리). 그 외는 그대로."""
+    """쓰기 파라미터를 asyncpg가 받는 타입으로 맞춘다.
+
+    D110: PostgREST는 timestamptz에 ISO **문자열**을 받아 줬다. asyncpg는 안 받고
+    `DataError: expected a datetime, got 'str'`을 던진다. 코드베이스 곳곳이
+    `datetime.now(UTC).isoformat()`을 그대로 넘기던 터라, D104 이후
+    **워커의 잡 클레임 UPDATE가 통째로 502였다** — 파일 인제스트가 큐에 쌓인 채
+    한 건도 처리되지 않았다는 뜻이다.
+
+    호출부 수십 곳을 고치는 대신 여기서 되돌린다(읽기 쪽 `_jsonable`과 대칭).
+    ISO 형태의 문자열만 datetime으로 승격하고, 그 외 문자열은 건드리지 않는다 —
+    "2026년 여름" 같은 평범한 텍스트를 날짜로 오해하면 안 된다.
+    """
+    if isinstance(value, str) and _ISO_DT.match(value):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
     return value
 
 
