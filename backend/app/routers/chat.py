@@ -33,10 +33,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from .. import ai
 from ..auth.deps import CurrentUser, get_current_user
 from ..config import get_settings
 from ..db.client import UserClient
-from ..services import gemini, rag, session_context, solar
+from ..services import app_settings, gemini, rag, session_context, solar
 from ..services import sessions as svc
 from ..services.turn_log import TurnLog
 
@@ -148,18 +149,47 @@ async def chat_stream(
     #
     # D107: 기억 연결(memory_link)·비교 참조(comparison) 레그는 제거됐다 —
     # 캔버스 UI에 그 둘을 만드는 경로가 없어 언제나 빈 결과였다.
-    rag_result, session_file_result = await asyncio.gather(
-        rag.build_rag_context(
-            client,
-            body.question,
-            # D73/D82: 학급 세션이면 class_material 자동 스코프 — 세션 행에 이미
-            # space_kind/space_ref가 있어 추가 조회 없음(SESSION_SELECT).
-            space_kind=session.get("space_kind"),
-            space_ref=session.get("space_ref"),
-        ),
-        session_context.build_session_file_context(client, body.session_id),
+    #
+    # D109: ReAct가 켜지면 **자료 검색 레그를 걷어낸다** — 그 일은
+    # `search_class_material` 스킬이 필요할 때만 한다. 세션 파일 전문은 아직
+    # 블록 주입 그대로다(설계 1단계: 한 번에 다 바꾸지 않는다).
+    overlay = await app_settings.get_overlay()
+    react_on = app_settings.as_bool(overlay, "react_enabled", settings.react_enabled)
+    react_steps = app_settings.as_int(
+        overlay, "react_max_steps", settings.react_max_steps, 1, 8
     )
+
+    react_role = "student"
+    if react_on:
+        rag_result = None
+        session_file_result = await session_context.build_session_file_context(
+            client, body.session_id
+        )
+        # 카탈로그가 역할로 갈릴 수 있으므로 프로필을 한 번 읽는다. ReAct가 꺼져
+        # 있으면 이 조회 자체가 없다 — 기존 경로에 비용을 얹지 않는다.
+        try:
+            rows = await client.select(
+                "profiles",
+                {"id": f"eq.{user.id}", "select": "role", "limit": "1"},
+            )
+            if rows:
+                react_role = rows[0].get("role") or "student"
+        except Exception:  # noqa: BLE001 - 역할 조회 실패는 학생으로 강등
+            logger.warning("역할 조회 실패 — student 카탈로그로 진행", exc_info=True)
+    else:
+        rag_result, session_file_result = await asyncio.gather(
+            rag.build_rag_context(
+                client,
+                body.question,
+                # D73/D82: 학급 세션이면 class_material 자동 스코프 — 세션 행에 이미
+                # space_kind/space_ref가 있어 추가 조회 없음(SESSION_SELECT).
+                space_kind=session.get("space_kind"),
+                space_ref=session.get("space_ref"),
+            ),
+            session_context.build_session_file_context(client, body.session_id),
+        )
     rag_context = rag_result["block"] if rag_result else None
+    # ReAct 경로에서는 스킬이 찾아낸 출처가 나중에 채운다.
     rag_sources = rag_result["sources"] if rag_result else []
     session_file_block = session_file_result["block"] if session_file_result else None
     session_file_sources = session_file_result["files"] if session_file_result else []
@@ -195,21 +225,53 @@ async def chat_stream(
     )
 
     async def event_stream():
+        nonlocal rag_sources
         yield _sse(
             "start",
             {"session_id": body.session_id, "parent_node_id": parent_id},
         )
         answer_parts: list[str] = []
+        skill_figures: list[dict] = []
 
         try:
             try:
-                async for delta in solar.stream_answer(
-                    history,
-                    body.question,
-                    system_prompt,
-                ):
-                    answer_parts.append(delta)
-                    yield _sse("token", {"delta": delta})
+                if react_on:
+                    # D109: 도구 판단 → 스킬 → 생성. 중간 단계는 tool_call /
+                    # tool_result SSE로 흘러 프론트가 "자료 찾는 중"을 띄운다.
+                    ctx = ai.SkillContext(
+                        user_id=user.id,
+                        client=client,
+                        session_id=body.session_id,
+                        space_kind=session.get("space_kind") or "personal",
+                        space_ref=session.get("space_ref"),
+                        role=react_role,
+                    )
+                    tool_names = ai.skills_for(ctx.space_kind, ctx.role)
+                    async for kind, payload in ai.get_orchestrator().run(
+                        ctx=ctx,
+                        question=body.question,
+                        history=history,
+                        tool_names=tool_names,
+                        answer_system_prompt=system_prompt,
+                        max_steps=react_steps,
+                    ):
+                        if kind == "sse":
+                            yield payload
+                        elif kind == "token":
+                            answer_parts.append(payload)
+                            yield _sse("token", {"delta": payload})
+                        elif kind == "outcome":
+                            # 스킬이 찾아온 출처·도판을 아래 영속 경로가 쓴다.
+                            rag_sources = payload.rag_sources
+                            skill_figures = payload.figures
+                else:
+                    async for delta in solar.stream_answer(
+                        history,
+                        body.question,
+                        system_prompt,
+                    ):
+                        answer_parts.append(delta)
+                        yield _sse("token", {"delta": delta})
 
             except Exception:  # noqa: BLE001 - details go to logs, not the client
                 logger.exception("채팅 스트리밍 실패")
@@ -266,15 +328,33 @@ async def chat_stream(
                         },
                         "current_head_id": node["id"],
                         "root_node_id": existing_root or node["id"],
+                        # D109: ReAct 경로에서는 도판을 스킬이 찾으므로 프론트가
+                        # 선행 호출하지 않는다. done에 실어 캔버스가 바로 띄운다.
+                        "figures": skill_figures,
                     },
                 )
 
                 # attachments.canvas 저장(figures만) — 카드 좌표는 프론트 소유.
                 # 자체 격리: 저장이 실패해도 스트림/저장 완료된 턴은 무영향(warning만).
-                # retrieved 없으면 _patch_canvas_unified가 조기 반환.
-                if body.retrieved is not None:
+                retrieved = body.retrieved
+                if skill_figures:
+                    # ReAct 경로: 스킬 결과를 영속 형태로 변환(D87 — url 제외).
+                    retrieved = RetrievedBody(
+                        figures=[
+                            RetrievedFigureItem(
+                                figure_id=str(f["figure_id"]),
+                                file_id=str(f["file_id"]),
+                                page=f.get("page"),
+                                caption=f.get("caption") or "",
+                                score=float(f.get("score") or 0.0),
+                            )
+                            for f in skill_figures
+                            if f.get("figure_id") and f.get("file_id")
+                        ]
+                    )
+                if retrieved is not None:
                     asyncio.create_task(
-                        _patch_canvas_unified(client, node["id"], body.retrieved)
+                        _patch_canvas_unified(client, node["id"], retrieved)
                     )
 
             except Exception:  # noqa: BLE001 - details to logs, not the client

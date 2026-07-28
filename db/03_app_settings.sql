@@ -24,5 +24,8 @@ insert into public.app_settings (key, value) values
     -- 교과서 figure (D86~D88, D103)
     ('figure_pipeline_enabled',         'true'),
     ('figure_retrieve_max_distance',    '0.60'),
-    ('figure_judge_concurrency',        '4')
+    ('figure_judge_concurrency',        '4'),
+    -- ReAct 스킬 루프 (D109)
+    ('react_enabled',                   'false'),
+    ('react_max_steps',                 '3')
 on conflict (key) do nothing;

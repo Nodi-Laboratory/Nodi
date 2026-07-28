@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     chat_temperature: float = 0.5
     chat_max_tokens: int = 2048
 
+    # --- ReAct 스킬 루프 (D109) ---
+    # 켜면 채팅 턴이 "도구 판단 → 스킬 실행 → 생성" 2단계로 돈다. 끄면 기존
+    # 단발 경로 그대로 — 되돌릴 수 있어야 실험이 가능하다.
+    # 인사 같은 턴에서 질의 임베딩·Qdrant 검색이 사라지는 대신, 자료를 찾는
+    # 턴은 LLM 왕복이 한 번 더 든다(설계 문서 §6-2의 트레이드).
+    react_enabled: bool = False
+    # 도구 호출 라운드 상한. 넘으면 가진 것으로 생성 단계에 넘어간다.
+    react_max_steps: int = 3
+
     # --- Qdrant (벡터 저장소 — pgvector 대체) ---
     # 컬렉션: file_chunks / textbook_figures (전부 upstage.EMBED_DIM, Cosine).
     # Qdrant엔 RLS가 없다 — 스코핑은 백엔드 페이로드 필터로 강제(qdrant_store).

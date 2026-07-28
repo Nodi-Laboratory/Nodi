@@ -146,7 +146,7 @@ def build_sources(
     return sources
 
 
-async def _file_names(
+async def file_names(
     client: UserClient, file_ids: list[str]
 ) -> dict[str, str]:
     """Map file_id -> 표시명 in one query. D79: files.name(원본 표시명) 우선,
@@ -258,7 +258,7 @@ async def build_rag_context(
         if not chunks:
             return None
         hit_ids = list({c.get("file_id") for c in chunks if c.get("file_id")})
-        names = await _file_names(client, hit_ids)
+        names = await file_names(client, hit_ids)
         block = build_block(chunks, names)
         if not block:
             return None
