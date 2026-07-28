@@ -17,9 +17,25 @@ from typing import Any
 
 import pytest
 
+from app.routers.admin import _LOG_SELECT
 from app.services import admin_console
+from app.services.turn_log import TurnLog
 
 pytestmark = pytest.mark.asyncio
+
+
+# ── 0) 로그가 기록한 것은 전부 읽혀야 한다 ────────────────────────────
+def test_턴로그가_쓰는_컬럼은_모두_조회된다():
+    """D113에서 실제로 겪은 회귀.
+
+    ai_logs에 tokens·route·model·duration_ms를 추가했는데 조회 select 문자열을
+    같이 늘리지 않아, **DB에는 있는데 콘솔에는 안 보이는** 상태가 됐다. 기록하는
+    쪽(TurnLog.to_row)이 진실이므로 거기서 컬럼을 뽑아 대조한다.
+    """
+    written = set(TurnLog("u", "s", "q").to_row())
+    selected = set(_LOG_SELECT.split(","))
+    missing = written - selected
+    assert not missing, f"기록은 하는데 조회하지 않는 컬럼: {sorted(missing)}"
 
 
 class _FakeClient:

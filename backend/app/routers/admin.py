@@ -169,10 +169,7 @@ async def list_logs(
     through this endpoint."""
     client = UserClient.from_user(user)
     params: dict[str, str] = {
-        "select": (
-            "id,owner_id,session_id,node_id,kind,system_prompt,question,answer,"
-            "contexts,skill_calls,errors,token_estimate,created_at"
-        ),
+        "select": _LOG_SELECT,
         "order": "created_at.desc",
         "limit": str(limit),
         "offset": str(offset),
@@ -188,9 +185,13 @@ async def list_logs(
     return {"limit": limit, "offset": offset, "logs": logs}
 
 
+# 목록·상세·대화 상세가 **같은 컬럼 집합**을 쓴다. 예전에는 목록이 자기 문자열을
+# 따로 들고 있어서, D113으로 컬럼을 늘렸을 때 상세에만 반영되고 목록에는 빠졌다
+# (실측: 콘솔에 route·토큰이 안 뜸). 한 곳으로 모아 다시 갈라지지 않게 한다.
 _LOG_SELECT = (
     "id,owner_id,session_id,node_id,kind,system_prompt,question,answer,"
-    "contexts,skill_calls,errors,token_estimate,created_at"
+    "contexts,skill_calls,errors,token_estimate,tokens,route,model,"
+    "duration_ms,created_at"
 )
 
 

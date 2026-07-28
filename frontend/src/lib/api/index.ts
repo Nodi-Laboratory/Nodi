@@ -63,7 +63,18 @@ export {
   setUserRole,
   listAdminSettings,
   putAdminSetting,
+  resetAdminSetting,
   getAdminLogs,
   getAdminLogDetail,
+  // D113 운영 콘솔
+  getAdminOverview,
+  getAdminFlow,
+  getAdminSkills,
+  listAdminClasses,
+  getAdminConversations,
+  getAdminConversation,
+  getAdminDocuments,
+  getAdminDocument,
+  runRagTest,
 } from "./admin";
 

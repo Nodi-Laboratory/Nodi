@@ -274,6 +274,47 @@ export interface LogContexts {
   [key: string]: unknown;
 }
 
+/**
+ * D113: 스킬 호출 1건의 트레이스.
+ *
+ * 스킬 **설명**은 여기 없다 — 매 턴 같은 문자열을 복제할 이유가 없어 서버가
+ * 담지 않는다. 콘솔이 /admin/skills 카탈로그와 `skill` 이름으로 이어 붙인다.
+ */
+export interface SkillTrace {
+  skill: string;
+  step?: number;
+  args?: Record<string, unknown> | null;
+  ok?: boolean;
+  skipped?: boolean;
+  message?: string | null;
+  error_code?: string | null;
+  duration_ms?: number | null;
+  /** 스킬이 돌려준 데이터. 4000자를 넘으면 `_truncated`가 붙는다. */
+  data?: Record<string, unknown> | null;
+}
+
+/** D113: LLM 호출 1회의 실측 사용량. */
+export interface LlmCallUsage {
+  stage: "decide" | "answer" | string;
+  step?: number;
+  prompt?: number;
+  completion?: number;
+  total?: number;
+  cached?: number;
+}
+
+/**
+ * D113: 턴의 **실측** 토큰. 측정된 호출이 하나도 없으면 `{}`다 —
+ * 그 자리에 어림값(token_estimate)을 채우지 않는다.
+ */
+export interface TurnTokens {
+  prompt?: number;
+  completion?: number;
+  total?: number;
+  cached?: number;
+  calls?: LlmCallUsage[];
+}
+
 /** D25: 채팅 턴 단위 로그(ai_logs 1행 = 1턴). */
 export interface AdminLog {
   id: string;
@@ -285,9 +326,15 @@ export interface AdminLog {
   question: string | null;
   answer: string | null;
   contexts: LogContexts | null;
-  skill_calls: unknown[] | null;
+  skill_calls: SkillTrace[] | null;
   errors: unknown[] | null;
+  /** 글자수/4 어림. 실측이 아니다 — 실측은 `tokens`. */
   token_estimate: number | null;
+  tokens?: TurnTokens | null;
+  /** 'react' | 'legacy'. D113 이전 로그는 null. */
+  route?: string | null;
+  model?: string | null;
+  duration_ms?: number | null;
   created_at: string;
 }
 
@@ -300,6 +347,300 @@ export interface AdminLogsResponse {
 /** D34: GET /admin/logs/{id} 응답(턴 본체). */
 export interface AdminLogDetail {
   log: AdminLog;
+}
+
+// ── D113: 운영 콘솔 ──────────────────────────────────────────────────
+
+type CountMap = Record<string, number>;
+
+export interface AdminOverview {
+  users: { total: number; by_role: CountMap };
+  classes: number;
+  sessions: { total: number; by_space: CountMap };
+  nodes: number;
+  files: { total: number; bytes: number; by_status: CountMap; by_kind: CountMap };
+  chunks: { total: number; by_status: CountMap };
+  figures: { total: number; by_status: CountMap };
+  jobs: { by_status: CountMap };
+  turns: {
+    total: number;
+    last_7d: number;
+    with_errors: number;
+    by_route: CountMap;
+  };
+  tokens: {
+    measured_turns: number;
+    prompt: number;
+    completion: number;
+    total: number;
+    cached: number;
+    /** 어림 합계. 실측과 **나란히** 보여 주기 위한 값이지 대체재가 아니다. */
+    estimate_total: number;
+  };
+  latency: { p50: number; p95: number };
+}
+
+/** 튜너블 하나의 위젯·설명 스펙. 서버가 소유한다(코드 기본값 옆에 있어야 안 어긋난다). */
+export interface AdminSettingSpec {
+  key: string;
+  label: string;
+  group: string;
+  widget: "toggle" | "number" | "slider" | "select" | "json";
+  /** live=다음 요청부터 / new-only=신규 처리분부터 / danger=재인덱싱 필요 */
+  scope: "live" | "new-only" | "danger";
+  description: string;
+  effect: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  options?: { value: string | number; label: string }[];
+}
+
+export interface AdminSettingItem {
+  key: string;
+  value: unknown;
+  default: unknown;
+  modified: boolean;
+  /** app_settings에 행이 없다 — 조정 자체가 불가능한 상태(D62). */
+  missing_row: boolean;
+  updated_at: string | null;
+  updated_by: string | null;
+  spec: AdminSettingSpec;
+}
+
+export interface AdminSettingsView {
+  groups: string[];
+  items: AdminSettingItem[];
+  /** 오버레이 캐시 TTL — "몇 초 안에 반영되는지"를 화면 문구에 그대로 쓴다. */
+  ttl_seconds: number;
+}
+
+export interface FlowNode {
+  id: string;
+  label: string;
+  kind: "io" | "guard" | "read" | "decision" | "logic" | "llm" | "skill" | "render" | "store";
+  route: "both" | "react" | "legacy";
+  where?: string;
+  detail?: string;
+  tunables?: string[];
+  skills?: string[];
+  params?: Record<string, unknown>;
+}
+
+export interface FlowEdge {
+  from: string;
+  to: string;
+  label?: string;
+  route?: "react" | "legacy";
+}
+
+export interface AdminFlow {
+  active_route: "react" | "legacy";
+  react_max_steps: number;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  /** 로그가 말하는 실제 경로 분포 — 설정과 어긋나면 여기서 드러난다. */
+  observed_routes: CountMap;
+}
+
+export interface AdminSkillUsage {
+  skill: string;
+  calls: number;
+  failures: number;
+  skipped: number;
+  turns: number;
+  avg_ms: number | null;
+  max_ms: number | null;
+  last_used: string | null;
+}
+
+export interface AdminSkill {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  /** 어느 (공간/역할/세션상태) 조합에서 노출되는지. 코드를 실제로 호출해 계산한다. */
+  exposed_in: string[];
+  usage: AdminSkillUsage | null;
+}
+
+export interface AdminSkillsResponse {
+  days: number;
+  skills: AdminSkill[];
+}
+
+export interface AdminConversation {
+  session_id: string;
+  title: string | null;
+  space_kind: string;
+  space_ref: string | null;
+  class_name: string | null;
+  owner_id: string;
+  owner_email: string | null;
+  owner_role: string | null;
+  node_count: number;
+  turn_count: number;
+  token_total: number;
+  error_turns: number;
+  created_at: string;
+  updated_at: string;
+  last_activity: string;
+}
+
+export interface AdminConversationsResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  conversations: AdminConversation[];
+}
+
+export interface AdminConversationNode {
+  id: string;
+  parent_id: string | null;
+  question: string | null;
+  answer: string | null;
+  label: string | null;
+  attachments: Record<string, unknown> | null;
+  rag_sources: RagSource[] | null;
+  created_at: string;
+}
+
+export interface AdminConversationDetail {
+  session: {
+    id: string;
+    owner_id: string;
+    space_kind: string;
+    space_ref: string | null;
+    title: string | null;
+    emoji: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  owner: { id: string; email: string | null; role: string | null; display_name: string | null } | null;
+  nodes: AdminConversationNode[];
+  logs: AdminLog[];
+}
+
+export interface AdminDocument {
+  file_id: string;
+  name: string | null;
+  kind: string;
+  space_kind: string;
+  space_ref: string | null;
+  class_name: string | null;
+  owner_id: string;
+  owner_email: string | null;
+  status: string;
+  mime: string | null;
+  size_bytes: number | null;
+  /** 워커가 갱신하는 진행률. 실제 청크 행 수(chunks_rows)와 어긋날 수 있다. */
+  chunk_total: number;
+  chunk_done: number;
+  context_chars: number | null;
+  error: string | null;
+  session_id: string | null;
+  chunks_rows: number;
+  chunks_embedded: number;
+  chunks_stored: number;
+  chunks_failed: number;
+  chunk_chars: number;
+  figures_total: number;
+  figures_ok: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminDocumentsResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  documents: AdminDocument[];
+}
+
+export interface AdminChunk {
+  id: string;
+  seq: number;
+  status: string;
+  chunk_text: string;
+  created_at: string;
+}
+
+export interface AdminJob {
+  id: string;
+  kind: string;
+  status: string;
+  progress: number;
+  attempts: number;
+  error: string | null;
+  batch_range: Record<string, unknown> | null;
+  parent_job_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminDocumentDetail {
+  file: Record<string, unknown> & {
+    id: string;
+    name: string | null;
+    kind: string;
+    status: string;
+    chunk_total: number;
+    chunk_done: number;
+    error: string | null;
+    size_bytes: number | null;
+    mime: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  owner: { id: string; email: string | null; role: string | null } | null;
+  chunks: AdminChunk[];
+  chunk_offset: number;
+  jobs: AdminJob[];
+  figures: {
+    id: string;
+    seq: number;
+    page: number | null;
+    caption: string;
+    figure_type: string;
+    status: string;
+    selected_index: number | null;
+  }[];
+}
+
+export interface RagTestHit {
+  file_id: string;
+  name: string;
+  chunk_id: string | null;
+  seq: number | null;
+  distance: number | null;
+  score: number | null;
+  /** 게이트 통과 여부. **차단된 것도 목록에 남는다** — 게이트 조정의 근거다. */
+  passed: boolean;
+  text: string;
+}
+
+export interface RagTestResult {
+  query: string;
+  top_k: number;
+  max_distance: number;
+  scope: { class_id: string | null; file_ids: string[]; file_count: number };
+  embedding: { model: string; collection: string; ms?: number; dim?: number };
+  search_ms?: number;
+  hits: RagTestHit[];
+  passed: number;
+  blocked: number;
+  /** 통과분만으로 만든, 실제로 주입될 블록 원문. */
+  block: string;
+  figures: { figure_id: string; caption: string; score: number; url?: string }[];
+  notes: string[];
+}
+
+export interface AdminClass {
+  id: string;
+  name: string | null;
+  join_code: string | null;
+  teacher_id: string | null;
+  created_at: string;
 }
 
 /** D33: POST /teacher/classes 생성 응답(student_count 없음). */
