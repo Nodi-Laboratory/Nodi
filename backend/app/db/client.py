@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -100,35 +99,67 @@ def _fail(exc: Exception, op: str) -> None:
     ) from exc
 
 
+def _to_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 # Postgres가 알려주는 파라미터 타입 → 파이썬 변환기.
+# **문자열로 들어온 값만** 이 표를 탄다(이미 올바른 타입이면 건드리지 않는다).
 _COERCE: dict[str, Any] = {
     "int2": int, "int4": int, "int8": int,
     "float4": float, "float8": float,
     "numeric": lambda v: Decimal(str(v)),
     "bool": lambda v: str(v).strip().lower() in ("t", "true", "1", "yes"),
+    # D112: 시각 컬럼도 여기서 처리한다. 예전에는 `_encode`가 "ISO처럼 생긴
+    # 문자열"을 무조건 datetime으로 바꿨는데, 그러면 **text 컬럼에 저장하려던
+    # 값까지 바뀌어** DataError가 났다(파일명이 "2026-07-28T10:00:00"이면 업로드
+    # 실패). 컬럼 타입을 아는 이 자리에서만 바꾸는 것이 옳다.
+    "timestamptz": _to_datetime,
+    "timestamp": _to_datetime,
+    "date": lambda v: _to_datetime(v).date(),
 }
 
+# SQL 문자열 → 서버가 선언한 파라미터 타입 이름. 같은 질의가 반복되므로 한 번만
+# 물어보면 된다. 실측(2026-07-28): 매번 `conn.prepare()`를 부르면 일반 `fetch()`
+# 대비 **3.09배** 느렸다(50회 131ms vs 42ms). 커넥션마다 다시 물어볼 필요는
+# 없다 — 타입은 스키마가 정하지 커넥션이 정하지 않는다.
+_PARAM_TYPES: dict[str, tuple[str, ...]] = {}
+_PARAM_TYPES_MAX = 512  # 무한 증가 방지(질의 형태는 유한하다)
 
-async def _fetch(conn: asyncpg.Connection, sql: str, args: list[Any]) -> list[asyncpg.Record]:
+
+async def _param_types(conn: asyncpg.Connection, sql: str) -> tuple[str, ...]:
+    cached = _PARAM_TYPES.get(sql)
+    if cached is not None:
+        return cached
+    stmt = await conn.prepare(sql)
+    types = tuple(getattr(p, "name", "") for p in stmt.get_parameters())
+    if len(_PARAM_TYPES) < _PARAM_TYPES_MAX:
+        _PARAM_TYPES[sql] = types
+    return types
+
+
+async def _fetch(
+    conn: asyncpg.Connection, sql: str, args: list[Any]
+) -> list[asyncpg.Record]:
     """파라미터를 **서버가 기대하는 타입으로 맞춰** 실행한다 (D110).
 
-    PostgREST는 필터 값을 전부 문자열로 받아 컬럼 타입에 맞게 캐스팅해 줬다.
-    asyncpg는 캐스팅하지 않고 `DataError`를 던진다 — 예컨대 `seq >= $1`에
-    `'0'`(문자열)을 주면 "'str' object cannot be interpreted as an integer".
-    질의 파라미터는 PostgREST 문법 번역기(db/query.py)가 만들기 때문에 값이
-    항상 문자열이고, 그래서 **정수 컬럼을 거르는 모든 질의가 502였다.**
-    실제 피해: 임베딩 배치 잡이 청크를 못 읽어 파일 인제스트가 전부 실패.
+    PostgREST는 값을 전부 문자열로 받아 컬럼 타입에 맞게 캐스팅해 줬다. asyncpg는
+    캐스팅하지 않고 `DataError`를 던진다 — `seq >= $1`에 `'0'`(문자열)을 주면
+    "'str' object cannot be interpreted as an integer". 질의 파라미터는 PostgREST
+    문법 번역기(db/query.py)가 만들기 때문에 값이 항상 문자열이고, 그래서
+    **정수·시각 컬럼을 다루는 모든 질의가 502였다.**
 
-    타입을 추측하지 않는다 — 준비된 구문에서 서버가 선언한 타입을 읽어 그대로
-    변환한다. 컬럼이 text면 문자열이 그대로 가고, int면 int로 바뀐다.
-    asyncpg가 구문을 캐시하므로 반복 비용은 사실상 없다.
+    타입을 추측하지 않는다 — 서버가 선언한 파라미터 타입을 읽어 그대로 변환한다.
+    컬럼이 text면 문자열이 그대로 가고, int면 int로, timestamptz면 datetime으로
+    바뀐다. 타입 조회는 SQL별로 한 번만 하고 캐시한다.
     """
-    stmt = await conn.prepare(sql)
-    params = stmt.get_parameters()
-    if len(params) == len(args):
+    if not args:
+        return await conn.fetch(sql)
+    types = await _param_types(conn, sql)
+    if len(types) == len(args):
         coerced: list[Any] = []
-        for value, ptype in zip(args, params, strict=True):
-            fn = _COERCE.get(getattr(ptype, "name", ""))
+        for value, tname in zip(args, types, strict=True):
+            fn = _COERCE.get(tname)
             if fn is not None and isinstance(value, str):
                 try:
                     value = fn(value)
@@ -136,7 +167,7 @@ async def _fetch(conn: asyncpg.Connection, sql: str, args: list[Any]) -> list[as
                     pass  # 변환 실패는 그대로 넘겨 서버가 판정하게 둔다
             coerced.append(value)
         args = coerced
-    return await stmt.fetch(*args)
+    return await conn.fetch(sql, *args)
 
 
 class _BaseClient:
@@ -344,30 +375,16 @@ class _BaseClient:
 
 
 # ISO 8601 타임스탬프 문자열. 초 단위 이상 + 타임존이 있으면 받아들인다.
-_ISO_DT = re.compile(
-    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?"
-    r"(Z|[+-]\d{2}:?\d{2})?$"
-)
-
-
 def _encode(value: Any) -> Any:
-    """쓰기 파라미터를 asyncpg가 받는 타입으로 맞춘다.
+    """쓰기 파라미터 전처리.
 
-    D110: PostgREST는 timestamptz에 ISO **문자열**을 받아 줬다. asyncpg는 안 받고
-    `DataError: expected a datetime, got 'str'`을 던진다. 코드베이스 곳곳이
-    `datetime.now(UTC).isoformat()`을 그대로 넘기던 터라, D104 이후
-    **워커의 잡 클레임 UPDATE가 통째로 502였다** — 파일 인제스트가 큐에 쌓인 채
-    한 건도 처리되지 않았다는 뜻이다.
+    D112: 여기서 하던 "ISO처럼 생긴 문자열 → datetime" 승격을 **없앴다.**
+    형태만 보고 바꾸다 보니 text 컬럼에 저장하려던 값까지 바뀌었다 — 파일명이
+    "2026-07-28T10:00:00"이면 업로드가 DataError로 죽었다(실측). 시각 변환은
+    컬럼 타입을 아는 `_fetch`가 서버 선언 타입을 보고 한다.
 
-    호출부 수십 곳을 고치는 대신 여기서 되돌린다(읽기 쪽 `_jsonable`과 대칭).
-    ISO 형태의 문자열만 datetime으로 승격하고, 그 외 문자열은 건드리지 않는다 —
-    "2026년 여름" 같은 평범한 텍스트를 날짜로 오해하면 안 된다.
+    dict/list는 jsonb 코덱이 처리하므로 그대로 넘긴다.
     """
-    if isinstance(value, str) and _ISO_DT.match(value):
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return value
     return value
 
 

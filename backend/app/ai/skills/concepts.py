@@ -22,7 +22,8 @@ from ..base import SkillBase, SkillContext, SkillResult
 logger = logging.getLogger("nodi.ai.skill.concepts")
 
 _CONCEPT = "@concept:"
-_END_TOKENS = {"@end", "/end", "[end]", "(end)"}
+# 프론트 파서(conceptParser.ts)와 같은 관용성 — 모델이 표기를 흔든다.
+_END_TOKENS = {"@end", "/end", "[end]", "(end)", r"\end"}
 # 목록이 길어지면 프롬프트만 부풀린다. 최근 것 위주로 잘라 준다.
 _MAX_LIST = 40
 

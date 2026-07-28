@@ -283,8 +283,11 @@ async def chat_stream(
                         role=react_role,
                     )
                     tool_names = ai.skills_for(
-                        ctx.space_kind, ctx.role,
+                        ctx.space_kind,
+                        ctx.role,
                         has_session_files=react_has_files,
+                        # 이미 읽어 둔 세션 노드로 판단 — 추가 조회 없음.
+                        has_concepts=bool(nodes),
                     )
                     async for kind, payload in ai.get_orchestrator().run(
                         ctx=ctx,

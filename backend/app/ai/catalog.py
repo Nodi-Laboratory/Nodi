@@ -21,7 +21,9 @@ from __future__ import annotations
 # 실제로 데이터를 가져오는 도구 — 스코프가 결정한다.
 _CLASS_ONLY = ["search_class_material", "search_textbook_figure"]
 
-# 이 세션에서 만든 개념 조회 — 어디서나 가능하다(개인 세션도 카드를 만든다).
+# 이 세션에서 만든 개념 조회 — 어디서나 가능하지만 **카드가 있을 때만** 넣는다.
+# 첫 질문(카드 0장)에 노출하면 모델이 부르고 빈 목록을 받는다. think가 도구
+# 0개인 세션에서 헛돌던 것과 같은 낭비다(2026-07-28 실측).
 _CONCEPTS = ["list_session_concepts", "get_concept"]
 
 # 교사 전용 — 학급 세션의 담임에게만. 권한은 스킬 안에서 is_class_teacher로
@@ -44,14 +46,18 @@ _PLANNER_MIN_TOOLS = 2
 
 
 def skills_for(
-    space_kind: str, role: str, *, has_session_files: bool = False
+    space_kind: str,
+    role: str,
+    *,
+    has_session_files: bool = False,
+    has_concepts: bool = False,
 ) -> list[str]:
     """(공간 종류, 앱 역할, 세션 상태) → 노출할 스킬 이름 목록.
 
-    role은 지금 카탈로그를 가르지 않지만(교사 전용 스킬은 아직 없다) 시그니처에
-    남겨 둔다 — 교사 스킬이 생길 때 호출부를 바꾸지 않으려는 것이다.
+    세션 상태(파일·개념 유무)까지 보는 이유는 하나다 — **빈 도구를 보여주면
+    모델이 부른다.** 부르고, 빈 결과를 받고, 묻지도 않은 얘기를 답에 붙인다.
     """
-    names: list[str] = list(_CONCEPTS)
+    names: list[str] = list(_CONCEPTS) if has_concepts else []
     if space_kind == "class":
         names += _CLASS_ONLY
         if role in ("teacher", "admin"):

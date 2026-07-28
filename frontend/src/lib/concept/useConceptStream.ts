@@ -202,6 +202,9 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
   const pendingIdRef = useRef<string | null>(null);
   // 자동 포커싱 트리거 카운터(Date.now 금지 — 결정론). send마다 ++.
   const focusKeyRef = useRef(0);
+  // 지금 말풍선이 도구 진행 문구인지(D109). 진짜 답변이 시작되거나 턴이 끝나면
+  // 지워야 한다 — 안 지우면 진행 문구가 최종 답으로 남는다.
+  const toolLabelRef = useRef(false);
   // 리프 계단식 스폰 타이머(언마운트 시 일괄 취소).
   const spawnTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   useEffect(
@@ -232,6 +235,7 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
         setLoading(false);
       }
       if (ev.t === "reply-start") {
+        toolLabelRef.current = false;
         setReply("");
         return;
       }
@@ -360,6 +364,13 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           onToken: (delta) => parser.push(delta),
           onDone: (data: ChatDoneEvent) => {
             parser.end();
+            // 답변에 `CHAT:` 줄이 없으면 reply-start가 안 와서 진행 문구가 그대로
+            // 남는다("수업 자료를 찾아보고 있어요…"가 최종 말풍선이 되는 것).
+            // 모델이 형식을 흔드는 일은 실제로 있으므로 여기서 확실히 지운다.
+            if (toolLabelRef.current) {
+              toolLabelRef.current = false;
+              setReply("");
+            }
             doneBox.current = data;
             headRef.current = data.current_head_id ?? headRef.current;
             // D109: ReAct 경로에서는 도판을 스킬이 찾아 done에 실어 보낸다.
@@ -399,6 +410,7 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           },
           onToolCall: (name) => {
             // 첫 토큰까지 시간이 걸리는 구간 — 빈 화면 대신 진행 상황을 알린다.
+            toolLabelRef.current = true;
             setReply(TOOL_LABELS[name] ?? "잠시만요, 확인하고 있어요…");
           },
           onError: (msg) => {

@@ -49,20 +49,22 @@ def _ctx(client, space_kind="class", role="teacher") -> SkillContext:
 
 
 def test_학생에게는_교사_스킬이_안_보인다():
-    names = skills_for("class", "student")
+    names = skills_for("class", "student", has_concepts=True)
     assert "list_class_materials" not in names
     assert "summarize_class_questions" not in names
 
 
 def test_교사에게는_보인다():
-    names = skills_for("class", "teacher")
+    names = skills_for("class", "teacher", has_concepts=True)
     assert "list_class_materials" in names
     assert "summarize_class_questions" in names
 
 
 def test_교사라도_개인_공간에는_안_보인다():
     # 개인 세션엔 학급이라는 대상 자체가 없다.
-    assert "list_class_materials" not in skills_for("personal", "teacher")
+    assert "list_class_materials" not in skills_for(
+        "personal", "teacher", has_concepts=True
+    )
 
 
 # --- 실행 시점 (3층) -------------------------------------------------------

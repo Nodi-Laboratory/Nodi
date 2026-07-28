@@ -63,6 +63,14 @@ class TurnOutcome:
 
 # 전용 렌더가 이미 담는 키 — 일반 렌더에서 중복으로 싣지 않는다.
 _HANDLED_KEYS = frozenset({"sources", "figures", "captions", "chunks"})
+
+# 근거가 **아닌** 스킬. 결과가 조회한 사실이 아니라 모델 자신의 산출물이다.
+#
+# `think`는 모델이 세운 계획을 그대로 돌려준다. 그걸 근거 블록에 실으면
+# "방금 도구로 확인한 실제 데이터"라는 문구와 함께 자기 추측이 되돌아온다 —
+# 모델이 자기 계획을 검증된 사실로 취급하게 만드는 셈이다. 계획은 판단 단계의
+# 대화 이력(tool_result)에만 남기면 충분하다.
+_NOT_EVIDENCE = frozenset({"think"})
 # 일반 렌더 1건의 길이 상한. 스킬이 큰 목록을 돌려줘도 프롬프트가 폭주하지 않게.
 _GENERIC_MAX_CHARS = 4000
 
@@ -245,6 +253,8 @@ class Orchestrator:
         # 나머지 스킬 결과 — 전용 렌더가 이미 담은 키만 빼고 그대로 보여 준다.
         generic: list[str] = []
         for name, message, data in outcome.findings:
+            if name in _NOT_EVIDENCE:
+                continue
             rest = {
                 k: v
                 for k, v in data.items()

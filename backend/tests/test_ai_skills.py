@@ -52,11 +52,25 @@ class _Boom(SkillBase):
 
 def test_개인세션에는_학급_도구가_없다():
     """개인 공간엔 학급 자료도 교과서도 없다 — 노출하면 헛물을 켠다."""
-    names = skills_for("personal", "student")
+    names = skills_for("personal", "student", has_concepts=True)
     assert "search_class_material" not in names
     assert "search_textbook_figure" not in names
     # 개념 조회는 개인 세션에도 있다(개인 공간에서도 카드를 만든다).
     assert "list_session_concepts" in names
+
+
+def test_빈_세션에는_도구를_하나도_주지_않는다():
+    """첫 질문 — 카드도 파일도 없다. 부를 게 없으면 카탈로그도 비어야 한다.
+
+    빈 도구를 보여주면 모델이 부르고, 빈 결과를 받고, 묻지도 않은 얘기를
+    답에 붙인다(think가 도구 0개 세션에서 헛돌던 것과 같은 낭비).
+    """
+    assert skills_for("personal", "student") == []
+
+
+def test_개념이_생기면_개념_스킬이_열린다():
+    assert "list_session_concepts" not in skills_for("class", "student")
+    assert "list_session_concepts" in skills_for("class", "student", has_concepts=True)
 
 
 def test_세션_파일_스킬은_파일이_있을_때만_보인다():
@@ -74,19 +88,19 @@ def test_도구가_부족하면_계획_도구도_빼는다():
     실측(2026-07-28): 실도구 0개인 개인 세션에 think만 노출했더니 모델이 그걸
     불렀다. 계획을 세울 대상이 없는데 계획만 세우고 왕복 한 번을 버린 셈이다.
     """
-    assert "think" in skills_for("class", "student")
+    assert "think" in skills_for("class", "student", has_concepts=True)
 
 
 def test_학급세션에는_학급_도구가_보인다():
-    names = skills_for("class", "student")
+    names = skills_for("class", "student", has_concepts=True)
     assert "search_class_material" in names
     assert "search_textbook_figure" in names
 
 
 def test_교사는_학생_도구를_전부_포함해_더_본다():
     """교사 스킬은 추가일 뿐 — 학생이 쓰는 도구를 빼앗지 않는다."""
-    student = set(skills_for("class", "student"))
-    teacher = set(skills_for("class", "teacher"))
+    student = set(skills_for("class", "student", has_concepts=True))
+    teacher = set(skills_for("class", "teacher", has_concepts=True))
     assert student < teacher
     assert teacher - student == {"list_class_materials", "summarize_class_questions"}
 
@@ -475,3 +489,39 @@ async def test_큰_결과는_잘라서_넣는다(monkeypatch):
     )
     assert "생략" in calls["system"]
     assert len(calls["system"]) < 6000
+
+
+async def test_think_결과는_근거로_쓰이지_않는다(monkeypatch):
+    """계획은 모델 자신의 산출물이지 조회한 사실이 아니다.
+
+    근거 블록에 넣으면 "방금 도구로 확인한 실제 데이터"라는 문구와 함께 자기
+    추측이 되돌아온다 — 모델이 자기 계획을 검증된 사실로 취급하게 된다.
+    """
+
+    class _Think(SkillBase):
+        name = "think"
+        description = "d"
+        parameters = {"type": "object", "properties": {}}
+
+        async def run(self, args, ctx):
+            return SkillResult(
+                ok=True, message="계획 완료",
+                data={"reasoning": "자료를 먼저 찾고 그 다음에 설명한다"},
+            )
+
+    tc = [{"id": "c", "type": "function",
+           "function": {"name": "think", "arguments": "{}"}}]
+    calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
+    r = SkillRegistry()
+    r.register(_Think())
+    await _drain(
+        Orchestrator(r),
+        ctx=_ctx(),
+        question="q",
+        history=[],
+        tool_names=["think"],
+        answer_system_prompt="BASE",
+        max_steps=3,
+    )
+    assert calls["system"] == "BASE"
+    assert "자료를 먼저 찾고" not in calls["system"]

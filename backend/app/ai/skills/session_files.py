@@ -17,10 +17,9 @@ from ..base import SkillBase, SkillContext, SkillResult
 
 logger = logging.getLogger("nodi.ai.skill.session_files")
 
-# 한 번에 읽어 줄 수 있는 최대 글자 수. 이보다 크게 요청해도 잘라서 준다 —
-# 전문을 통째로 tool_result에 실으면 예전의 "매 턴 15만 자"와 다를 게 없다.
-_MAX_READ_CHARS = 6000
-_DEFAULT_READ_CHARS = 3000
+# 한 번에 읽어 줄 글자 수. 전문을 통째로 tool_result에 실으면 예전의
+# "매 턴 15만 자"와 다를 게 없다. 더 필요하면 from_char를 옮겨 다시 부른다.
+_READ_CHARS = 3000
 
 
 async def _session_files(ctx: SkillContext) -> list[dict[str, Any]]:
@@ -128,7 +127,7 @@ class ReadSessionFileSkill(SkillBase):
                 data={"text": "", "eof": True},
             )
 
-        body = full[start : start + _DEFAULT_READ_CHARS]
+        body = full[start : start + _READ_CHARS]
         end = start + len(body)
         return SkillResult(
             ok=True,
