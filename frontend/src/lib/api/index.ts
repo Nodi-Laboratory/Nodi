@@ -53,12 +53,8 @@ export {
 export type { ChatStreamBody, ChatStreamHandlers } from "./chat";
 export { streamChat } from "./chat";
 
-export type {
-  RetrieveFigureHit,
-  RetrieveResult,
-  NodeCanvasAttachment,
-} from "./retrieve";
-export { retrieve, getFigure } from "./retrieve";
+export type { NodeCanvasAttachment } from "./retrieve";
+export { getFigure } from "./retrieve";
 
 export { getHomeSummary } from "./home";
 

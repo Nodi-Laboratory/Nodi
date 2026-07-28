@@ -1,9 +1,11 @@
-"""TASK 4 — /retrieve figures 레그 + signed URL 서빙 + RAG·교사 목록 textbook 합류 (D87).
+"""TASK 4 — 교과서 도판 검색 + signed URL 서빙 + RAG·교사 목록 textbook 합류 (D87).
 
 외부 의존(qdrant/upstage/app_settings/service_client.storage_sign)은 전부
-monkeypatch — 학급 스코프 검색·RLS 재조회·캡션 선택 규칙·부분 성공(레그 격리)을
-단위로 검증한다. 실제 라우터 핸들러 함수를 직접 호출하는 기존 관례(test_chat_*)를
-따른다.
+monkeypatch — 학급 스코프 검색·RLS 재조회·캡션 선택 규칙을 단위로 검증한다.
+
+D111: 검색 구현이 `routers/retrieve.py`에서 `services/figure_search.py`로 옮겼다.
+프론트가 SSE 전에 부르던 `POST /retrieve`는 사라졌고, 도판은 서버가 찾아
+chat done 이벤트로 보낸다. 검증 대상은 라우터가 아니라 그 서비스 함수다.
 """
 
 import pytest
@@ -11,9 +13,8 @@ from fastapi import HTTPException
 
 from app.config import get_settings
 from app.routers import files as F
-from app.routers import retrieve as R
 from app.routers import teacher as T
-from app.routers.retrieve import RetrieveBody
+from app.services import figure_search as R
 from app.services import figures as FIG
 from app.services import qdrant_store, rag
 
@@ -178,9 +179,6 @@ def _patch_figures_infra(
     sign="https://signed",
     capture=None,
 ):
-    async def fake_get_session(client, sid):
-        return {"space_kind": space_kind, "space_ref": space_ref}
-
     async def fake_textbook_ids(client, ref):
         return list(file_ids)
 
@@ -200,22 +198,19 @@ def _patch_figures_infra(
     async def fake_sign(row):
         return sign
 
-    monkeypatch.setattr(R.sessions, "get_session", fake_get_session)
     monkeypatch.setattr(R.rag, "textbook_file_ids", fake_textbook_ids)
     monkeypatch.setattr(R.app_settings, "get_overlay", fake_overlay)
     monkeypatch.setattr(R.qdrant_store, "search", fake_search)
     monkeypatch.setattr(R.figures, "sign_figure_url", fake_sign)
-    client = _FakeClient({"textbook_figures": lambda p: list(rows or [])})
-    monkeypatch.setattr(R.UserClient, "from_user", classmethod(lambda cls, u: client))
-    return client
+    return _FakeClient({"textbook_figures": lambda p: list(rows or [])})
 
 
 @pytest.mark.asyncio
 async def test_search_figures_class_hit_returns_item(monkeypatch):
-    _patch_figures_infra(
+    client = _patch_figures_infra(
         monkeypatch, hits=[{"id": "fig1", "score": 0.9}], rows=[FIG_ROW]
     )
-    out = await R._search_figures(_FakeUser(), "s1", [0.1] * 4)
+    out = await R.search_class_figures(client, "c1", "광합성")
     assert len(out) == 1
     assert out[0]["figure_id"] == "fig1"
     assert out[0]["caption"] == "광합성 그림"  # candidates[selected_index]
@@ -226,55 +221,53 @@ async def test_search_figures_class_hit_returns_item(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_search_figures_personal_returns_empty(monkeypatch):
-    _patch_figures_infra(
-        monkeypatch,
-        space_kind="personal",
-        space_ref="u1",
-        hits=[{"id": "fig1", "score": 0.9}],
-        rows=[FIG_ROW],
+    """개인 공간은 space_ref가 없다 — 조회 전에 빈 목록으로 끝난다."""
+    client = _patch_figures_infra(
+        monkeypatch, hits=[{"id": "fig1", "score": 0.9}], rows=[FIG_ROW]
     )
-    out = await R._search_figures(_FakeUser(), "s1", [0.1] * 4)
-    assert out == []
+    assert await R.search_class_figures(client, None, "광합성") == []
 
 
 @pytest.mark.asyncio
 async def test_search_figures_no_textbook_files_returns_empty(monkeypatch):
-    _patch_figures_infra(
+    client = _patch_figures_infra(
         monkeypatch, file_ids=(), hits=[{"id": "fig1", "score": 0.9}], rows=[FIG_ROW]
     )
-    out = await R._search_figures(_FakeUser(), "s1", [0.1] * 4)
+    out = await R.search_class_figures(client, "c1", "광합성")
     assert out == []
 
 
 @pytest.mark.asyncio
 async def test_search_figures_rls_dropped_hit(monkeypatch):
     # 히트는 있으나 RLS 재조회에서 행 안 보임(타 학급) → 조용히 탈락 → []
-    _patch_figures_infra(monkeypatch, hits=[{"id": "fig1", "score": 0.9}], rows=[])
-    out = await R._search_figures(_FakeUser(), "s1", [0.1] * 4)
+    client = _patch_figures_infra(
+        monkeypatch, hits=[{"id": "fig1", "score": 0.9}], rows=[]
+    )
+    out = await R.search_class_figures(client, "c1", "광합성")
     assert out == []
 
 
 @pytest.mark.asyncio
 async def test_search_figures_unsigned_dropped(monkeypatch):
     # signed URL 실패(None) → url 없는 figure 노드 방지 → 탈락
-    _patch_figures_infra(
+    client = _patch_figures_infra(
         monkeypatch, hits=[{"id": "fig1", "score": 0.9}], rows=[FIG_ROW], sign=None
     )
-    out = await R._search_figures(_FakeUser(), "s1", [0.1] * 4)
+    out = await R.search_class_figures(client, "c1", "광합성")
     assert out == []
 
 
 @pytest.mark.asyncio
 async def test_search_figures_score_threshold_from_overlay(monkeypatch):
     cap = {}
-    _patch_figures_infra(
+    client = _patch_figures_infra(
         monkeypatch,
         hits=[],
         rows=[],
         overlay={"figure_retrieve_max_distance": 0.40},
         capture=cap,
     )
-    await R._search_figures(_FakeUser(), "s1", [0.1] * 4)
+    await R.search_class_figures(client, "c1", "광합성")
     assert cap["collection"] == qdrant_store.COL_TEXTBOOK_FIGURES
     # distance = 1 - score 규약 → score_threshold = 1 - max_distance
     assert cap["score_threshold"] == pytest.approx(1.0 - 0.40)
@@ -282,78 +275,31 @@ async def test_search_figures_score_threshold_from_overlay(monkeypatch):
     assert cap["k"] == get_settings().figure_retrieve_top_k
 
 
-# --- retrieve 핸들러: 레그 격리(부분 성공) ----------------------------------
+# --- 검색 실패 격리 ---------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_retrieve_figure_leg_isolated(monkeypatch):
-    """figure 레그 내부 예외 → figures [] + degraded 불변(임베딩 성공이면 False)."""
+async def test_search_figures_swallows_internal_error(monkeypatch):
+    """검색 내부 예외는 빈 목록으로 강등된다 — 도판 실패가 채팅을 막지 않는다.
 
-    async def fake_embed(q):
-        return [0.1] * 4
+    D111: 예전에는 /retrieve 라우터가 이 격리를 했다. 라우터가 사라지면서
+    책임이 서비스로 내려왔으므로 계약도 여기서 고정한다.
+    """
 
-    async def boom_session(client, sid):
+    async def boom(client, ref):
         raise RuntimeError("figure leg boom")
 
-    monkeypatch.setattr(R.upstage, "embed_query", fake_embed)
-    monkeypatch.setattr(R.sessions, "get_session", boom_session)
-    monkeypatch.setattr(R.UserClient, "from_user", classmethod(lambda cls, u: _FakeClient()))
-
-    body = RetrieveBody(question="질문", session_id="s1")
-    out = await R.retrieve(body, user=_FakeUser())
-    assert out["degraded"] is False
-    assert out["figures"] == []
+    monkeypatch.setattr(R.rag, "textbook_file_ids", boom)
+    assert await R.search_class_figures(_FakeClient(), "c1", "질문") == []
 
 
 @pytest.mark.asyncio
-async def test_retrieve_embed_failure_degraded(monkeypatch):
-    """질의 임베딩 실패 → {figures: [], degraded: true} (D94 응답 shape)."""
+async def test_search_figures_empty_query_skips_work(monkeypatch):
+    async def boom(client, ref):
+        raise AssertionError("빈 질의에 조회가 나가면 안 된다")
 
-    async def boom_embed(q):
-        raise RuntimeError("upstage down")
-
-    monkeypatch.setattr(R.upstage, "embed_query", boom_embed)
-    body = RetrieveBody(question="질문", session_id="s1")
-    out = await R.retrieve(body, user=_FakeUser())
-    assert out == {"figures": [], "degraded": True}
-
-
-@pytest.mark.asyncio
-async def test_retrieve_includes_figures_on_happy_path(monkeypatch):
-    async def fake_embed(q):
-        return [0.1] * 4
-
-    async def fake_search(collection, vector, k, score_threshold=None, file_ids=None):
-        if collection == qdrant_store.COL_TEXTBOOK_FIGURES:
-            return [{"id": "fig1", "score": 0.9}]
-        return []
-
-    async def fake_get_session(client, sid):
-        return {"space_kind": "class", "space_ref": "c1"}
-
-    async def fake_textbook_ids(client, ref):
-        return ["tb1"]
-
-    async def fake_overlay():
-        return {}
-
-    async def fake_sign(row):
-        return "https://signed"
-
-    monkeypatch.setattr(R.upstage, "embed_query", fake_embed)
-    monkeypatch.setattr(R.qdrant_store, "search", fake_search)
-    monkeypatch.setattr(R.sessions, "get_session", fake_get_session)
-    monkeypatch.setattr(R.rag, "textbook_file_ids", fake_textbook_ids)
-    monkeypatch.setattr(R.app_settings, "get_overlay", fake_overlay)
-    monkeypatch.setattr(R.figures, "sign_figure_url", fake_sign)
-    client = _FakeClient({"textbook_figures": lambda p: [FIG_ROW]})
-    monkeypatch.setattr(R.UserClient, "from_user", classmethod(lambda cls, u: client))
-
-    body = RetrieveBody(question="질문", session_id="s1")
-    out = await R.retrieve(body, user=_FakeUser())
-    assert out["degraded"] is False
-    assert len(out["figures"]) == 1
-    assert out["figures"][0]["figure_id"] == "fig1"
+    monkeypatch.setattr(R.rag, "textbook_file_ids", boom)
+    assert await R.search_class_figures(_FakeClient(), "c1", "   ") == []
 
 
 # --- GET /files/figures/{id} 재수화 -----------------------------------------

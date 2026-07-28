@@ -1,84 +1,9 @@
-/** 질의 임베딩 검색(교과서 figure) + signed URL 재발급. api.ts(806줄)에서 분리 — D102. */
-import { API_BASE, authHeaders, ensureOk } from "./_core";
-
-// ── 임베딩 검색 + 캔버스 영속 (Upstage /retrieve · PATCH /nodes, C4/C5) ──
-
-/** D87: 교과서 figure 히트. url은 signed(만료 有) — 라이브 배치엔 쓰되 서버로는
- *  전달하지 않고(ChatStreamBody figures는 url 제외), 재수화 시 getFigure로 재발급. */
-export interface RetrieveFigureHit {
-  figureId: string;
-  fileId: string;
-  page?: number;
-  caption: string;
-  url: string;
-  score: number;
-}
-
-export interface RetrieveResult {
-  figures: RetrieveFigureHit[];
-  /** 백엔드 임베딩/Qdrant 실패 — 프론트는 여전히 로컬 폴백으로 배치(09 계약). */
-  degraded: boolean;
-}
-
-const RETRIEVE_TIMEOUT_MS = 4000;
-
-/** retrieve 자체가 네트워크 실패/타임아웃일 때 — 좌표는 프론트 sim이 배치. */
-function degradedRetrieve(): RetrieveResult {
-  return { figures: [], degraded: true };
-}
-
-/**
- * POST /retrieve (09) — 교과서 figure 추천(D94: EBS/아트 제거). SSE 선행
- * 호출이므로 절대 reject하지 않고, 타임아웃(4s)·오류 모두 degraded로 resolve
- * 한다. session_id는 서버 kNN 계산용.
+/** 교과서 도판 signed URL 재발급 (D102 분리).
+ *
+ * D111: 질의 검색(POST /retrieve)은 이 파일에서 사라졌다 — 도판은 서버가
+ * 찾아 chat done 이벤트로 보낸다. 남은 것은 만료된 URL을 다시 받는 창구뿐이다.
  */
-export async function retrieve(
-  question: string,
-  sessionId: string,
-): Promise<RetrieveResult> {
-  const q = question.trim();
-  if (!q) return degradedRetrieve();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), RETRIEVE_TIMEOUT_MS);
-  try {
-    const res = await fetch(`${API_BASE}/retrieve`, {
-      method: "POST",
-      headers: await authHeaders(true),
-      body: JSON.stringify({ question: q.slice(0, 2000), session_id: sessionId }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return degradedRetrieve();
-    const body = (await res.json()) as {
-      figures?: Array<{
-        figure_id?: string;
-        file_id?: string;
-        page?: number;
-        caption?: string;
-        url?: string;
-        score?: number;
-      }>;
-      degraded?: boolean;
-    };
-    return {
-      // D87: 방어적 파싱(figure_id/url 없으면 drop, snake→camel).
-      figures: (body?.figures ?? [])
-        .filter((f) => f?.figure_id && f?.url)
-        .map((f) => ({
-          figureId: String(f.figure_id),
-          fileId: String(f.file_id ?? ""),
-          page: typeof f.page === "number" ? f.page : undefined,
-          caption: f.caption ?? "",
-          url: String(f.url),
-          score: f.score ?? 0,
-        })),
-      degraded: !!body?.degraded,
-    };
-  } catch {
-    return degradedRetrieve();
-  } finally {
-    clearTimeout(timer);
-  }
-}
+import { API_BASE, authHeaders, ensureOk } from "./_core";
 
 /** C5/09: nodes.attachments.canvas에 병합 저장되는 형태(figures — snake_case).
  *  D87: figures는 url 제외 영속 — 재수화 시 getFigure로 fresh signed URL 재발급.

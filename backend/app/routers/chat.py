@@ -37,7 +37,14 @@ from .. import ai
 from ..auth.deps import CurrentUser, get_current_user
 from ..config import get_settings
 from ..db.client import UserClient
-from ..services import app_settings, gemini, rag, session_context, solar
+from ..services import (
+    app_settings,
+    figure_search,
+    gemini,
+    rag,
+    session_context,
+    solar,
+)
 from ..services import sessions as svc
 from ..services.turn_log import TurnLog
 
@@ -150,9 +157,9 @@ async def chat_stream(
     # D107: 기억 연결(memory_link)·비교 참조(comparison) 레그는 제거됐다 —
     # 캔버스 UI에 그 둘을 만드는 경로가 없어 언제나 빈 결과였다.
     #
-    # D109: ReAct가 켜지면 **자료 검색 레그를 걷어낸다** — 그 일은
-    # `search_class_material` 스킬이 필요할 때만 한다. 세션 파일 전문은 아직
-    # 블록 주입 그대로다(설계 1단계: 한 번에 다 바꾸지 않는다).
+    # D109: ReAct가 켜지면 **컨텍스트 선주입을 전부 걷어낸다.** 자료 검색·파일
+    # 전문·태그 목록은 각각 스킬이 되어 필요할 때만 돈다. 예전에는 인사 한
+    # 마디에도 질의 임베딩 + Qdrant 검색 + 최대 15만 자 주입이 나갔다.
     overlay = await app_settings.get_overlay()
     react_on = app_settings.as_bool(overlay, "react_enabled", settings.react_enabled)
     react_steps = app_settings.as_int(
@@ -160,13 +167,13 @@ async def chat_stream(
     )
 
     react_role = "student"
+    react_has_files = False
+    legacy_figures: list[dict] = []
     if react_on:
         rag_result = None
-        session_file_result = await session_context.build_session_file_context(
-            client, body.session_id
-        )
-        # 카탈로그가 역할로 갈릴 수 있으므로 프로필을 한 번 읽는다. ReAct가 꺼져
-        # 있으면 이 조회 자체가 없다 — 기존 경로에 비용을 얹지 않는다.
+        session_file_result = None
+        # 카탈로그가 역할·세션 상태로 갈리므로 두 가지를 미리 확인한다. 둘 다
+        # 인덱스 조회 한 번이고, ReAct가 꺼져 있으면 아예 돌지 않는다.
         try:
             rows = await client.select(
                 "profiles",
@@ -176,8 +183,27 @@ async def chat_stream(
                 react_role = rows[0].get("role") or "student"
         except Exception:  # noqa: BLE001 - 역할 조회 실패는 학생으로 강등
             logger.warning("역할 조회 실패 — student 카탈로그로 진행", exc_info=True)
+        try:
+            # 파일이 없는데 파일 스킬을 노출하면, 모델이 부르고 빈 목록을 받고
+            # "올리신 파일이 없네요" 같은 군더더기를 답에 붙인다.
+            frows = await client.select(
+                "files",
+                {
+                    "session_id": f"eq.{body.session_id}",
+                    "kind": "eq.user_upload",
+                    "status": "eq.indexed",
+                    "select": "id",
+                    "limit": "1",
+                },
+            )
+            react_has_files = bool(frows)
+        except Exception:  # noqa: BLE001 - 확인 실패는 "없음"으로 강등
+            logger.warning("세션 파일 확인 실패 — 파일 스킬 미노출", exc_info=True)
     else:
-        rag_result, session_file_result = await asyncio.gather(
+        # D111: 도판 검색도 여기서 한다. 예전에는 **프론트가** SSE 전에
+        # /retrieve를 따로 불렀는데, 그러면 검색 오케스트레이션이 클라이언트에
+        # 남고 ReAct 경로와 중복된다(학급 세션에서 두 번 검색됐다).
+        rag_result, session_file_result, legacy_figures = await asyncio.gather(
             rag.build_rag_context(
                 client,
                 body.question,
@@ -187,6 +213,11 @@ async def chat_stream(
                 space_ref=session.get("space_ref"),
             ),
             session_context.build_session_file_context(client, body.session_id),
+            figure_search.search_class_figures(
+                client,
+                session.get("space_ref") if session.get("space_kind") == "class" else None,
+                body.question,
+            ),
         )
     rag_context = rag_result["block"] if rag_result else None
     # ReAct 경로에서는 스킬이 찾아낸 출처가 나중에 채운다.
@@ -199,11 +230,15 @@ async def chat_stream(
     # 새 개념이 기존 태그를 재사용하게 한다. 이미 로드된 nodes(created_at.asc)를
     # 재사용 — 추가 DB 조회 없음. 순수 함수라 예외 여지가 거의 없지만 컨텍스트
     # 빌더 best-effort 불변식에 맞춰 방어적으로 None 폴백.
-    try:
-        used_tags = solar.extract_used_tags(nodes)
-        tag_context = ", ".join(used_tags) if used_tags else None
-    except Exception:
-        tag_context = None
+    # D109: ReAct에서는 `list_session_concepts` 스킬이 이 일을 대신한다 —
+    # 첫 질문이나 분류가 자명한 턴에는 아예 조회하지 않는다.
+    tag_context = None
+    if not react_on:
+        try:
+            used_tags = solar.extract_used_tags(nodes)
+            tag_context = ", ".join(used_tags) if used_tags else None
+        except Exception:
+            tag_context = None
 
     # Turn log (D25) + structured prompt composition (D35). compose_system_structured
     # is the SINGLE source of truth for both the system prompt string AND each
@@ -231,7 +266,8 @@ async def chat_stream(
             {"session_id": body.session_id, "parent_node_id": parent_id},
         )
         answer_parts: list[str] = []
-        skill_figures: list[dict] = []
+        # ReAct는 스킬이, 레거시는 위 gather가 채운다 — 이후 경로는 동일하다.
+        skill_figures: list[dict] = list(legacy_figures)
 
         try:
             try:
@@ -246,7 +282,10 @@ async def chat_stream(
                         space_ref=session.get("space_ref"),
                         role=react_role,
                     )
-                    tool_names = ai.skills_for(ctx.space_kind, ctx.role)
+                    tool_names = ai.skills_for(
+                        ctx.space_kind, ctx.role,
+                        has_session_files=react_has_files,
+                    )
                     async for kind, payload in ai.get_orchestrator().run(
                         ctx=ctx,
                         question=body.question,

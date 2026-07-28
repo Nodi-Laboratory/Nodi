@@ -65,7 +65,10 @@ class Settings(BaseSettings):
     # 단발 경로 그대로 — 되돌릴 수 있어야 실험이 가능하다.
     # 인사 같은 턴에서 질의 임베딩·Qdrant 검색이 사라지는 대신, 자료를 찾는
     # 턴은 LLM 왕복이 한 번 더 든다(설계 문서 §6-2의 트레이드).
-    react_enabled: bool = False
+    #
+    # 기본값을 켬으로 올렸다(2026-07-28) — 실기동 검증을 마쳤다. 끄는 경로는
+    # 롤백 수단으로 남긴다.
+    react_enabled: bool = True
     # 도구 호출 라운드 상한. 넘으면 가진 것으로 생성 단계에 넘어간다.
     react_max_steps: int = 3
 

@@ -7,11 +7,11 @@
 //
 // 배치: 카드 좌표는 프론트 d3-force sim(useTagLayout)이 소유한다. 여기서 부여하는
 //   좌표는 CENTER 기본값일 뿐이며, 서버 place/near/place_hint는 무시한다(서버는
-//   여전히 전송하지만 프론트가 위치에 쓰지 않는다). send는 SSE 전 POST /retrieve로
-//   figure만 받고, pending 플레이스홀더를 CENTER에 표시한다. 카메라는 focusSignal의
-//   id로 sim 위치를 추종한다. 리프(figure)는 앵커 곁 오프셋 후보 위치를 쓴다.
-// 영속(§8, C5): done 후 서버 done 훅이 retrieve 결과(figures)를 attachments.canvas에
-//   저장(단일 writer). 카드 좌표는 저장/재적용하지 않는다(sim이 매 로드 재배치).
+//   여전히 전송하지만 프론트가 위치에 쓰지 않는다). send는 pending 플레이스홀더를
+//   CENTER에 표시하고, 도판은 **서버가 done 이벤트로 보내 준다**(D111 — 선행
+//   POST /retrieve 제거). 카메라는 focusSignal의 id로 sim 위치를 추종한다.
+// 영속(§8, C5): done 후 서버 훅이 도판 검색 결과를 attachments.canvas에 저장
+//   (단일 writer). 카드 좌표는 저장/재적용하지 않는다(sim이 매 로드 재배치).
 // 재수화: replay로 카드 내용만 복원하고, 좌표는 CENTER 기본값(sim이 배치).
 //   attachments.canvas.figures로 figure 리프를 전부 재생성한다(D95: figureId
 //   중복 제거 — 같은 figure는 최고 스코어 턴의 개념에 앵커).
@@ -21,7 +21,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   createSession,
   getFigure,
-  retrieve,
   streamChat,
   type SpaceTarget,
 } from "@/lib/api";
@@ -306,10 +305,10 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       busyRef.current = true;
       setLoading(true);
 
-      // (a) SSE 전 선행 검색 — retrieve는 4s 타임아웃 포함, 절대 reject하지 않음.
-      // 09: session_id 전달 필수(서버 kNN 유사도 계산).
-      const r = await retrieve(q, sid);
-
+      // D111: SSE 전 선행 검색(POST /retrieve)이 사라졌다. 도판은 이제 **서버가**
+      // 찾아 done 이벤트에 실어 보낸다 — ReAct 경로는 스킬이, 레거시 경로는
+      // chat_stream이 직접. 검색 오케스트레이션이 클라이언트에 있을 이유가 없고,
+      // 남겨 두면 학급 세션에서 같은 검색이 두 번 나간다.
       let placeholderId: string | null = null;
 
       // (b) 잠정 플레이스홀더 — 항상 표시. 좌표는 CENTER 기본값일 뿐이며, 실제
@@ -336,48 +335,15 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
       // 자동 포커싱: 이번 답변 첫 개념(pid). 워크스페이스가 이 id의 sim 위치를 추종한다.
       setFocusSignal({ x: nearXY.x, y: nearXY.y, key: ++focusKeyRef.current, id: pid });
 
-      // (c) D95: 교과서 figure 다중 표시 — 이번 턴 히트(게이트 통과분)를 전부
-      // 배치하되 figureId로 중복 제거(이미 캔버스에 있는 figure는 다시 놓지
-      // 않는다 — 세션 동안 누적). 스트림 실패 시 되돌리기 위한 스냅샷.
+      // (c) D95: 교과서 도판 다중 표시 — figureId로 중복 제거해 세션 동안
+      // 누적한다. 실제 배치는 done 이벤트에서 일어난다(D111).
+      // 스트림 실패 시 되돌리기 위한 스냅샷.
       const leafSnapshot = leafNodesRef.current;
       const placedIds = new Set(
         leafNodesRef.current
           .map((n) => n.figure?.figureId)
           .filter((v): v is string => !!v),
       );
-      for (const f of r.figures) {
-        if (placedIds.has(f.figureId)) continue;
-        placedIds.add(f.figureId);
-        const d = LEAF_DIMS.figure;
-        const obstacles: Rect[] = [
-          ...conceptsRef.current.map(cardRect),
-          ...leafNodesRef.current.map(leafRect),
-        ];
-        const { x, y } = placeLeafClear(
-          nearXY.x + LEAF_OFFSET_X,
-          nearXY.y,
-          d.w,
-          d.h,
-          obstacles,
-        );
-        commitLeafNodes([
-          ...leafNodesRef.current,
-          {
-            id: `figure-${f.figureId}`,
-            type: "figure",
-            x,
-            y,
-            conceptId: pid,
-            figure: {
-              figureId: f.figureId,
-              url: f.url,
-              caption: f.caption,
-              page: f.page,
-            },
-          },
-        ]);
-      }
-
       const controller = new AbortController();
       abortRef.current = controller;
       const parser = createConceptParser(applyEvent);
@@ -389,17 +355,6 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
           session_id: sid,
           question: q,
           parent_node_id: headRef.current ?? undefined,
-          // 09 단일 writer: figures를 서버에 전달해 done 훅이 단일 PATCH로 저장.
-          retrieved: r.figures.length > 0 ? {
-            // D87: figure는 url 제외(signed·만료) — 재수화 시 getFigure로 재발급.
-            figures: r.figures.map((f) => ({
-              figure_id: f.figureId,
-              file_id: f.fileId,
-              page: f.page,
-              caption: f.caption,
-              score: f.score,
-            })),
-          } : null,
         },
         {
           onToken: (delta) => parser.push(delta),
@@ -408,7 +363,7 @@ export function useConceptStream(target: SpaceTarget): ConceptStream {
             doneBox.current = data;
             headRef.current = data.current_head_id ?? headRef.current;
             // D109: ReAct 경로에서는 도판을 스킬이 찾아 done에 실어 보낸다.
-            // 선행 /retrieve로 이미 놓은 것과 겹치지 않게 figureId로 거른다.
+            // 재수화로 이미 놓인 것과 겹치지 않게 figureId로 거른다.
             for (const f of data.figures ?? []) {
               if (!f.figure_id || placedIds.has(f.figure_id)) continue;
               placedIds.add(f.figure_id);

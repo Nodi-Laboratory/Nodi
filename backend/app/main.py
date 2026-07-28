@@ -21,7 +21,6 @@ from .routers import (
     health,
     home,
     me,
-    retrieve,
     sessions,
     teacher,
 )
@@ -80,7 +79,6 @@ for _router in (
     admin.router,
     files.router,
     teacher.router,
-    retrieve.router,
 ):
     app.include_router(_router, prefix="/api")
 

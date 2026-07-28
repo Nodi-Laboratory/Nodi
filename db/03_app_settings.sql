@@ -26,6 +26,6 @@ insert into public.app_settings (key, value) values
     ('figure_retrieve_max_distance',    '0.60'),
     ('figure_judge_concurrency',        '4'),
     -- ReAct 스킬 루프 (D109)
-    ('react_enabled',                   'false'),
+    ('react_enabled',                   'true'),
     ('react_max_steps',                 '3')
 on conflict (key) do nothing;
