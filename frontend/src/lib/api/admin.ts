@@ -7,6 +7,8 @@
  */
 import { API_BASE, authHeaders, ensureOk } from "./_core";
 import type {
+  AdminBackup,
+  AdminBackupsResponse,
   AdminClass,
   AdminConversationDetail,
   AdminConversationsResponse,
@@ -21,6 +23,8 @@ import type {
   AdminSkillsResponse,
   AdminUser,
   HealthConfig,
+  AdminPurgeResult,
+  AdminRestoreResult,
   Profile,
   RagTestResult,
   UserRole,
@@ -194,6 +198,90 @@ export async function getAdminDocument(
   return getJson<AdminDocumentDetail>(
     `/admin/documents/${encodeURIComponent(fileId)}?chunk_offset=${chunkOffset}`,
   );
+}
+
+// ── D114: 백업 · 복원 · 초기화 ───────────────────────────────────────
+
+export async function getAdminBackups(): Promise<AdminBackupsResponse> {
+  return getJson<AdminBackupsResponse>("/admin/backups");
+}
+
+export async function createAdminBackup(body: {
+  scopes: string[];
+  note?: string;
+}): Promise<AdminBackup> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/backups`, {
+      method: "POST",
+      headers: await authHeaders(true),
+      body: JSON.stringify({ scopes: body.scopes, note: body.note ?? "" }),
+    }),
+  );
+  return res.json();
+}
+
+export async function deleteAdminBackup(name: string): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/admin/backups/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      headers: await authHeaders(),
+    }),
+  );
+}
+
+/**
+ * 스냅샷 내려받기.
+ *
+ * `<a download>`로 바로 걸지 않는 이유: 이 경로는 Authorization 헤더가 필요한데
+ * 브라우저의 일반 내비게이션에는 헤더를 붙일 수 없다. fetch로 받아 Blob으로
+ * 저장한다.
+ */
+export async function downloadAdminBackup(name: string): Promise<void> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/backups/${encodeURIComponent(name)}/download`, {
+      headers: await authHeaders(),
+    }),
+  );
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function restoreAdminBackup(
+  name: string,
+  scopes: string[],
+): Promise<AdminRestoreResult> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/backups/${encodeURIComponent(name)}/restore`, {
+      method: "POST",
+      headers: await authHeaders(true),
+      body: JSON.stringify({ scopes }),
+    }),
+  );
+  return res.json();
+}
+
+/** 되돌릴 수 없다. `confirm`은 서버가 요구하는 문구와 정확히 같아야 한다. */
+export async function purgeAdminData(body: {
+  scopes: string[];
+  confirm: string;
+  owner_id?: string | null;
+  backup_first: boolean;
+}): Promise<AdminPurgeResult> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/purge`, {
+      method: "POST",
+      headers: await authHeaders(true),
+      body: JSON.stringify(body),
+    }),
+  );
+  return res.json();
 }
 
 export async function runRagTest(body: {

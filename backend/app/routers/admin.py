@@ -10,18 +10,21 @@ D113에서 이 콘솔이 서비스 전체를 관측하는 창구가 됐다:
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .. import ai
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
 from ..config import get_settings
-from ..db.client import UserClient
-from ..services import admin_console, app_settings
+from ..db.client import UserClient, get_service_client
+from ..services import admin_backup, admin_console, app_settings
 
+logger = logging.getLogger("nodi.admin")
 router = APIRouter(prefix="/admin", tags=["admin"])
 settings = get_settings()
 
@@ -566,6 +569,141 @@ async def list_all_classes(
         "classes",
         {"select": "id,name,join_code,teacher_id,created_at", "order": "created_at.desc"},
     )
+
+
+# ---------------------------------------------------------------------------
+# 백업 · 복원 · 초기화 (D114)
+# ---------------------------------------------------------------------------
+class BackupBody(BaseModel):
+    scopes: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
+@router.get("/backups")
+async def list_backups(
+    _u: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """저장된 스냅샷 목록 + 이 서버가 지원하는 스코프."""
+    return {
+        "backups": admin_backup.list_backups(),
+        "scopes": {
+            "all": list(admin_backup.ALL_SCOPES),
+            "restorable": list(admin_backup.RESTORABLE_SCOPES),
+            "purgeable": list(admin_backup.PURGEABLE_SCOPES),
+        },
+    }
+
+
+@router.post("/backups", status_code=status.HTTP_201_CREATED)
+async def create_backup(
+    body: BackupBody,
+    user: CurrentUser = Depends(get_current_user),
+    profile: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """스냅샷 생성. 스코프를 비우면 전부 담는다."""
+    client = UserClient.from_user(user)
+    return await admin_backup.create_backup(
+        client,
+        scopes=body.scopes,
+        note=body.note,
+        actor=getattr(profile, "email", "") or user.id,
+    )
+
+
+@router.get("/backups/{name}/download")
+async def download_backup(
+    name: str,
+    _u: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> FileResponse:
+    """스냅샷 원본 내려받기.
+
+    **이 파일에는 학생 대화 원문이 들어 있다.** 밖으로 옮기면 그 내용도 함께 나간다.
+    """
+    path = admin_backup.backup_path(name)
+    return FileResponse(path, media_type="application/json", filename=name)
+
+
+@router.delete("/backups/{name}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_backup(
+    name: str,
+    _u: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> None:
+    admin_backup.delete_backup(name)
+
+
+class RestoreBody(BaseModel):
+    scopes: list[str] = Field(default_factory=lambda: ["conversations"])
+
+
+@router.post("/backups/{name}/restore")
+async def restore_backup(
+    name: str,
+    body: RestoreBody,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """스냅샷에서 복원. 이미 있는 행은 건너뛴다(설정만 덮어쓴다)."""
+    client = UserClient.from_user(user)
+    return await admin_backup.restore_backup(client, name, body.scopes)
+
+
+# 되돌릴 수 없는 동작이라 **문장을 그대로 입력**해야 실행된다. 버튼 한 번으로
+# 전체 대화가 사라지면 안 된다.
+PURGE_PHRASE = "초기화합니다"
+
+
+class PurgeBody(BaseModel):
+    scopes: list[str]
+    confirm: str = Field(description=f"정확히 '{PURGE_PHRASE}' 여야 한다")
+    owner_id: str | None = None
+    # 기본적으로 지우기 전에 백업을 뜬다. 끄려면 명시해야 한다.
+    backup_first: bool = True
+
+
+@router.post("/purge")
+async def purge_data(
+    body: PurgeBody,
+    user: CurrentUser = Depends(get_current_user),
+    profile: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """스코프별 데이터 초기화 — **되돌릴 수 없다.**
+
+    기본값이 "지우기 전에 백업"인 이유는 하나다. 백업 없는 초기화는 기능이
+    아니라 사고다. 끄고 싶으면 호출부가 명시적으로 꺼야 한다.
+    """
+    if body.confirm != PURGE_PHRASE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"확인 문구가 다릅니다. '{PURGE_PHRASE}'를 정확히 입력하세요.",
+        )
+    client = UserClient.from_user(user)
+    actor = getattr(profile, "email", "") or user.id
+
+    backup: dict[str, Any] | None = None
+    if body.backup_first:
+        # 백업이 실패하면 **지우지 않는다.** 여기서 계속 진행하면 되돌릴 수단 없이
+        # 데이터가 사라진다.
+        backup = await admin_backup.create_backup(
+            client,
+            scopes=list(admin_backup.ALL_SCOPES),
+            note=f"초기화 직전 자동 백업 ({', '.join(body.scopes)})",
+            actor=actor,
+        )
+
+    service = get_service_client()
+    if service is None and "documents" in body.scopes:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="문서 삭제에는 워커 DSN이 필요합니다(원본·벡터 정리).",
+        )
+    result = await admin_backup.purge(
+        client, service, scopes=body.scopes, owner_id=body.owner_id
+    )
+    logger.warning("ADMIN_PURGE actor=%s scopes=%s", actor, body.scopes)
+    return {**result, "backup": backup}
 
 
 def _as_list(rows: Any) -> list[dict[str, Any]]:

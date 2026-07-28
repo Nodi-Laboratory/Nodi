@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  Archive,
   FlaskConical,
   GitBranch,
   LayoutDashboard,
@@ -25,6 +26,7 @@ import { SkillsTab } from "@/components/admin/SkillsTab";
 import { ConversationsTab } from "@/components/admin/ConversationsTab";
 import { DocumentsTab } from "@/components/admin/DocumentsTab";
 import { RagLabTab } from "@/components/admin/RagLabTab";
+import { DataTab } from "@/components/admin/DataTab";
 
 /**
  * 관리자 운영 콘솔 (Stage 4c → D113).
@@ -44,6 +46,7 @@ type Tab =
   | "documents"
   | "rag"
   | "settings"
+  | "data"
   | "users";
 
 const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
@@ -55,6 +58,7 @@ const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: "documents", label: "문서", icon: FileText },
   { id: "rag", label: "RAG 테스트", icon: FlaskConical },
   { id: "settings", label: "설정", icon: Sliders },
+  { id: "data", label: "데이터", icon: Archive },
   { id: "users", label: "권한", icon: Users },
 ];
 
@@ -114,6 +118,7 @@ function AdminConsole() {
         {tab === "documents" && <DocumentsTab />}
         {tab === "rag" && <RagLabTab />}
         {tab === "settings" && <SettingsTab />}
+        {tab === "data" && <DataTab />}
         {tab === "users" && <UsersTab currentUserId={profile?.id ?? ""} />}
       </main>
     </div>

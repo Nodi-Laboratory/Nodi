@@ -673,6 +673,53 @@ export interface HealthConfig {
   };
 }
 
+// ── D114: 백업 · 복원 · 초기화 ───────────────────────────────────────
+
+export interface AdminBackup {
+  name: string;
+  created_at: string | null;
+  created_by: string;
+  note: string;
+  scopes: string[];
+  /** 테이블별 행 수. 무엇이 담겼는지 목록에서 바로 보인다. */
+  counts: Record<string, number>;
+  size_bytes: number;
+}
+
+export interface AdminBackupsResponse {
+  backups: AdminBackup[];
+  scopes: {
+    all: string[];
+    /** 복원 가능한 스코프. documents는 원본 바이트·벡터가 없어 빠져 있다. */
+    restorable: string[];
+    purgeable: string[];
+  };
+}
+
+export interface AdminPurgeResult {
+  scopes: string[];
+  deleted: {
+    conversations?: { ai_logs: number; nodes: number; sessions: number };
+    documents?: { files: number; failed: string[] };
+  };
+  /** 지우기 전에 자동으로 뜬 백업(끄지 않았다면). */
+  backup: AdminBackup | null;
+}
+
+export interface AdminRestoreResult {
+  name: string;
+  scopes: string[];
+  restored: {
+    conversations?: {
+      sessions: number;
+      nodes: number;
+      ai_logs: number;
+      heads_relinked: number;
+    };
+    settings?: { app_settings: number };
+  };
+}
+
 export interface AdminClass {
   id: string;
   name: string | null;

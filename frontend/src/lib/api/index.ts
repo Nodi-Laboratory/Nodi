@@ -77,5 +77,12 @@ export {
   getAdminDocuments,
   getAdminDocument,
   runRagTest,
+  // D114 백업·복원·초기화
+  getAdminBackups,
+  createAdminBackup,
+  deleteAdminBackup,
+  downloadAdminBackup,
+  restoreAdminBackup,
+  purgeAdminData,
 } from "./admin";
 

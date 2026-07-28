@@ -320,16 +320,30 @@ async def _assert_file_owner(
 
 
 async def delete_file(
-    service: ServiceClient, client: UserClient, owner_id: str, file_id: str
+    service: ServiceClient,
+    client: UserClient,
+    owner_id: str,
+    file_id: str,
+    *,
+    as_admin: bool = False,
 ) -> None:
-    """Delete a file (owner only): Storage object + files row (cascades chunks).
+    """Delete a file: Storage object + files row (cascades chunks).
 
     The row delete runs inside the `delete_file_cascade` RPC (SECURITY DEFINER,
-    owner-checked) under the caller's JWT. Storage object removal stays here on
-    the service client. The file's Qdrant points (벡터 저장소 — RPC 밖) are pruned
-    best-effort afterwards to avoid orphan leak.
+    owner-or-admin checked) under the caller's JWT. Storage object removal stays
+    here on the service client. The file's Qdrant points (벡터 저장소 — RPC 밖) are
+    pruned best-effort afterwards to avoid orphan leak.
+
+    D114: `as_admin`은 앱 단의 소유자 확인만 건너뛴다 — **권한은 여전히 RPC 안의
+    `is_admin()`이 판정한다.** 운영 콘솔의 문서 초기화가 이 함수를 그대로 써야
+    Storage·Qdrant 정리 경로가 하나로 유지된다. 별도 삭제 경로를 만들면 그쪽만
+    오펀 벡터를 남긴다.
     """
-    file_row = await _assert_file_owner(client, owner_id, file_id)
+    file_row = (
+        await get_file(client, file_id)
+        if as_admin
+        else await _assert_file_owner(client, owner_id, file_id)
+    )
     storage_path = file_row.get("storage_path")
     is_textbook = file_row.get("kind") == "textbook"
     # D86: textbook은 figure 크롭(Storage)도 함께 지운다. 경로 목록은

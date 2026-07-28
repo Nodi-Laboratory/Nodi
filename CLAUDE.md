@@ -125,7 +125,7 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
 - **튜너블(D62)**: admin 오버레이(`app_settings`) > config 기본값. 새 노브는
   `app_settings.as_*` + clamp로 읽고 `db/03_app_settings.sql`에 기본값을 추가해야
   admin 콘솔에 뜬다.
-- **권한은 DB가 강제한다(D104)** — RLS 정책 38개 + 함수 23개. 앱 코드로 옮기지
+- **권한은 DB가 강제한다(D104)** — RLS 정책 38개 + 함수 26개. 앱 코드로 옮기지
   않는다. 사용자 요청은 `nodi_app` 역할 + `SET LOCAL app.user_id`로 돌고,
   `auth.uid()`가 그 값을 읽어 정책이 판정한다. **직접 커넥션을 얻지 말 것** —
   `db/pool.py`의 `user_conn()`이 트랜잭션과 컨텍스트 주입을 한 묶음으로 보장한다
