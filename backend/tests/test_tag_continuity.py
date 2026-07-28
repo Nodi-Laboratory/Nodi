@@ -1,12 +1,12 @@
 """D89 — 태그 연속성: extract_used_tags 수집 + tag_guide 블록 주입 테스트.
 
-세션 노드 answer의 개념 카드 분류 태그를 첫 등장 순서로 모아(exaone), 시스템
+세션 노드 answer의 개념 카드 분류 태그를 첫 등장 순서로 모아(solar), 시스템
 프롬프트에 tag_guide 블록으로 주입(gemini)해 같은 주제 새 개념이 기존 태그를
 재사용하게 한다.
 """
 
 
-from app.services.exaone import extract_used_tags
+from app.services.solar import extract_used_tags
 from app.services.gemini import _WRAP_TAGS, compose_system_structured
 
 # --- extract_used_tags -----------------------------------------------------

@@ -14,7 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # backend/app/config.py -> parents[0]=app, [1]=backend, [2]=repo root
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # 설정은 backend 폴더 내부의 .env를 읽는다(루트 .env 아님). 전체 설정(Supabase·
-# EXAONE·EXAONE_ENDPOINT_ID·Upstage·Qdrant 등)이 backend/.env에 있다.
+# Upstage·Qdrant·JUDGE 등)이 backend/.env에 있다.
 BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 
@@ -40,27 +40,25 @@ class Settings(BaseSettings):
     # signed URL 서명 키(HMAC). 비면 jwt_secret을 쓴다.
     storage_sign_secret: str = ""
 
-    # --- AI (EXAONE / Friendli) — chat-answer generation ---
-    # Friendli serverless endpoint (OpenAI-compatible chat completions). Replaces
-    # Gemini for the streamed chat answer. Embeddings now run on Upstage
-    # (Qdrant, 차원은 upstage.EMBED_DIM) — see the Upstage/Qdrant sections below.
-    exaone_api_key: str = ""  # Friendli API key (starts with flp_)
-    exaone_model: str = "LGAI-EXAONE/K-EXAONE-236B-A23B"  # serverless model id
-    # 전용 엔드포인트 ID. 설정되면 dedicated(/dedicated/v1, model=endpoint_id, 예약 GPU →
-    # 공유 rate limit 없음)로, 비어 있으면 serverless(/serverless/v1, model=exaone_model)로 요청.
-    exaone_endpoint_id: str = ""
-    friendli_base_url: str = "https://api.friendli.ai"
-    exaone_temperature: float = 0.5
-    exaone_max_tokens: int = 2048
-
-    # --- AI (Upstage) — 임베딩(1024d, D106) + 문서 파싱(Document Parse) ---
+    # --- AI (Upstage) — 대화 생성 + 임베딩 + 문서 파싱 ---
+    #
+    # D108: 대화 생성이 EXAONE(Friendli) → Upstage solar로 옮겨졌다.
+    # 실측 근거(2026-07-28, 각 3회 중앙값):
+    #   도구 판단 1회 왕복  EXAONE 2.73s  vs  solar-pro2 0.78s (3.5배)
+    #   개념 카드 형식 준수  둘 다 통과. 다만 EXAONE은 응답에 추론 과정을
+    #                        흘렸고(포르투갈어 조각 포함) solar는 깨끗했다.
+    # 임베딩·문서 파싱이 이미 Upstage라 벤더가 하나로 줄어드는 효과도 있다.
+    # 교과서 도판 비전 판정은 별도 계열(judge_* 노브) — 아직 미구현이다.
+    #
     # 비대칭 임베딩: 질의 embedding-query / 문서 embedding-passage (혼용 금지).
-    # PDF/이미지 텍스트 추출은 document-parse가 기존 Gemini OCR을 대체.
     upstage_api_key: str = ""
     upstage_base_url: str = "https://api.upstage.ai/v1"
+    upstage_chat_model: str = "solar-pro2"
     upstage_embedding_query_model: str = "embedding-query"
     upstage_embedding_passage_model: str = "embedding-passage"
     upstage_document_parse_model: str = "document-parse"
+    chat_temperature: float = 0.5
+    chat_max_tokens: int = 2048
 
     # --- Qdrant (벡터 저장소 — pgvector 대체) ---
     # 컬렉션: file_chunks / textbook_figures (전부 upstage.EMBED_DIM, Cosine).
@@ -69,12 +67,6 @@ class Settings(BaseSettings):
 
     # /retrieve의 EBS·아트 검색 노브는 D94(기능 제거)로 삭제됨.
     # 카드 배치·좌표는 프론트 소유(d3-force) — 서버 위치 계산 상수는 제거됨.
-
-    # --- Memory linking (Stage 3a) ---
-    # Cap imported (other-branch) nodes injected as reference context per turn.
-    memory_max_imported_nodes: int = 12
-    # Truncate each imported answer in the reference block (char budget).
-    memory_answer_char_cap: int = 400
 
     # 임베딩은 Upstage embedding-passage/query + Qdrant로 완전 이전됨
     # (D80: 구 Gemini 임베딩 모델·차원 설정 키 제거).
@@ -111,7 +103,7 @@ class Settings(BaseSettings):
     class_material_rag_max_distance: float = 0.60
 
     # --- D84: 학생 세션 파일 전문 주입 예산 (TASK 3) ---
-    # 한 세션에 주입 가능한 파일 전문의 합산 문자 상한. K-EXAONE 256K 토큰
+    # 한 세션에 주입 가능한 파일 전문의 합산 문자 상한. 모델 컨텍스트
     # 윈도우에 무트리밍 히스토리·RAG·답변 여유를 남기는 보수 기본값
     # (150K자 ≈ 한국어 75K~150K 토큰). 판정은 워커 저장 시점(초과 거부) +
     # 주입 시점 이중 방어. clamp 10_000~300_000 (as_int 호출부와 동기).

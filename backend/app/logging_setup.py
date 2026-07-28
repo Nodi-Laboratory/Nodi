@@ -55,9 +55,9 @@ def log_config_summary() -> None:
     logger.info("--- nodi 설정 점검 (environment=%s) ---", s.environment)
     logger.info("  Postgres      : %s (worker=%s)",
                 mark(db_ok), mark(bool(s.database_worker_url)))
-    logger.info("  EXAONE        : %s (%s)", mark(bool(s.exaone_api_key)),
-                "dedicated" if s.exaone_endpoint_id else "serverless")
-    logger.info("  Upstage       : %s", mark(bool(s.upstage_api_key)))
+    logger.info("  대화 생성     : %s (%s)", mark(bool(s.upstage_api_key)),
+                s.upstage_chat_model)
+    logger.info("  Upstage 임베딩: %s", mark(bool(s.upstage_api_key)))
     logger.info("  Qdrant        : %s", s.qdrant_url or "MISSING")
     logger.info("  파일 저장     : %s", s.storage_root)
     logger.info("  figure 판정   : %s", mark(figure_judge.is_configured()))
@@ -77,12 +77,12 @@ def log_config_summary() -> None:
             "JWT_SECRET이 기본값이다 — 운영에서는 반드시 교체해야 한다. "
             "누구나 토큰을 위조할 수 있다."
         )
-    if not s.exaone_api_key:
-        logger.warning("EXAONE_API_KEY 미설정 — 채팅 스트리밍이 503.")
     if not s.upstage_api_key:
+        # D108: 대화 생성까지 Upstage로 옮겨져 이 키 하나가 빠지면 채팅도 RAG도
+        # 전부 멈춘다 — 예전에는 EXAONE 키와 나뉘어 있어 한쪽만 죽었다.
         logger.warning(
-            "UPSTAGE_API_KEY 미설정 — 임베딩·문서 파싱 불가로 RAG 전체가 동작하지 "
-            "않는다."
+            "UPSTAGE_API_KEY 미설정 — 채팅 스트리밍 503 + 임베딩·문서 파싱 불가로 "
+            "RAG 전체가 동작하지 않는다."
         )
 
     missing_judge = figure_judge.missing_config()

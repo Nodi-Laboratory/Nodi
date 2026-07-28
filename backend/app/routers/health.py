@@ -47,7 +47,7 @@ async def health() -> dict:
 async def health_config() -> dict:
     """설정 자가진단 — 신규 환경에서 무엇이 빠졌는지 한눈에 본다.
 
-    `ready`는 **채팅 한 턴이 성립하는 최소 조건**이다(DB + EXAONE + Upstage).
+    `ready`는 **채팅 한 턴이 성립하는 최소 조건**이다(DB + Upstage).
     파일 업로드는 worker DSN이, 교과서는 judge가 추가로 필요하므로 각 블록의
     `configured`를 따로 본다.
     """
@@ -67,17 +67,20 @@ async def health_config() -> dict:
         "configured": bool(settings.jwt_secret),
     }
 
-    exaone = {
-        "api_key_set": bool(settings.exaone_api_key),
-        "mode": "dedicated" if settings.exaone_endpoint_id else "serverless",
-        "model": settings.exaone_endpoint_id or settings.exaone_model,
-        "base_url": settings.friendli_base_url,
+    # D108: 대화 생성도 Upstage로 옮겨져 키가 하나다. 그래도 블록은 둘로
+    # 나눠 둔다 — 무엇이 안 되는지(생성인지 임베딩인지)가 진단에서 갈린다.
+    chat = {
+        "api_key_set": bool(settings.upstage_api_key),
+        "model": settings.upstage_chat_model,
+        "base_url": settings.upstage_base_url,
     }
-    exaone["configured"] = exaone["api_key_set"]
+    chat["configured"] = chat["api_key_set"]
 
     upstage = {
         "api_key_set": bool(settings.upstage_api_key),
         "base_url": settings.upstage_base_url,
+        "embedding_query_model": settings.upstage_embedding_query_model,
+        "embedding_passage_model": settings.upstage_embedding_passage_model,
     }
     upstage["configured"] = upstage["api_key_set"]
 
@@ -104,8 +107,8 @@ async def health_config() -> dict:
     blocking: list[str] = []
     if not database["configured"]:
         blocking.append("database")
-    if not exaone["configured"]:
-        blocking.append("exaone")
+    if not chat["configured"]:
+        blocking.append("chat")
     if not upstage["configured"]:
         blocking.append("upstage")
 
@@ -115,7 +118,7 @@ async def health_config() -> dict:
         "environment": settings.environment,
         "database": database,
         "auth": auth,
-        "exaone": exaone,
+        "chat": chat,
         "upstage": upstage,
         "qdrant": qdrant,
         "storage": storage,

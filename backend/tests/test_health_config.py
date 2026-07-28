@@ -16,7 +16,6 @@ from app.main import app
 from app.routers import health as H
 
 SECRETS = {
-    "exaone_api_key": "flp_SECRET_EXAONE",
     "upstage_api_key": "up_SECRET_UPSTAGE",
     "judge_api_key": "SECRET_JUDGE",
     "jwt_secret": "SUPER_SECRET_SIGNING_KEY",
@@ -52,11 +51,13 @@ def test_config_never_leaks_secret_values(monkeypatch):
 
 
 def test_config_reports_ready_when_core_set(monkeypatch):
-    """채팅 한 턴의 최소 조건(database+exaone+upstage)이 갖춰지면 ready."""
+    """채팅 한 턴의 최소 조건(database+upstage)이 갖춰지면 ready.
+
+    D108: 대화 생성이 Upstage로 옮겨져 키가 하나로 줄었다.
+    """
     _set(
         monkeypatch,
         database_url="postgresql://a:b@localhost/nodi",
-        exaone_api_key="flp_x",
         upstage_api_key="up_x",
     )
     d = TestClient(app).get("/health/config").json()
@@ -65,17 +66,21 @@ def test_config_reports_ready_when_core_set(monkeypatch):
 
 
 def test_config_flags_missing_upstage(monkeypatch):
-    """UPSTAGE_API_KEY 누락 — .env.example이 이 키를 빠뜨려 생기던 대표 사고."""
+    """UPSTAGE_API_KEY 누락 — .env.example이 이 키를 빠뜨려 생기던 대표 사고.
+
+    D108 이후 이 키 하나가 채팅과 임베딩을 **동시에** 막는다. blocking에 두 항목이
+    같이 뜨는 것이 정상이고, 그래야 무엇이 죽었는지 진단에서 갈린다.
+    """
     _set(
         monkeypatch,
         database_url="postgresql://a:b@localhost/nodi",
-        exaone_api_key="flp_x",
         upstage_api_key="",
     )
     d = TestClient(app).get("/health/config").json()
     assert d["ready"] is False
-    assert d["blocking"] == ["upstage"]
+    assert d["blocking"] == ["chat", "upstage"]
     assert d["upstage"]["configured"] is False
+    assert d["chat"]["configured"] is False
 
 
 def test_config_judge_missing_lists_gaps(monkeypatch):
@@ -93,7 +98,6 @@ def test_config_judge_is_not_blocking(monkeypatch):
     _set(
         monkeypatch,
         database_url="postgresql://a:b@localhost/nodi",
-        exaone_api_key="flp_x",
         upstage_api_key="up_x",
     )
     monkeypatch.setattr(H.figure_judge.settings, "judge_api_key", "")
@@ -102,16 +106,13 @@ def test_config_judge_is_not_blocking(monkeypatch):
     assert d["judge"]["configured"] is False
 
 
-def test_config_exaone_mode_reflects_endpoint_id(monkeypatch):
-    """dedicated/serverless 분기를 그대로 보여준다 — 어느 경로로 나가는지 확인용."""
-    _set(monkeypatch, exaone_endpoint_id="ep123", exaone_api_key="flp_x")
+def test_config_reports_chat_model(monkeypatch):
+    """어떤 생성 모델로 나가는지 보여준다 — 모델 교체 사고를 눈으로 잡는 창구."""
+    _set(monkeypatch, upstage_api_key="up_x", upstage_chat_model="solar-pro2")
     d = TestClient(app).get("/health/config").json()
-    assert d["exaone"]["mode"] == "dedicated"
-    assert d["exaone"]["model"] == "ep123"
-
-    _set(monkeypatch, exaone_endpoint_id="", exaone_model="LGAI/K-EXAONE")
-    d = TestClient(app).get("/health/config").json()
-    assert d["exaone"]["mode"] == "serverless"
-    assert d["exaone"]["model"] == "LGAI/K-EXAONE"
+    assert d["chat"]["model"] == "solar-pro2"
+    assert d["chat"]["base_url"].startswith("https://")
+    # 생성과 임베딩이 같은 벤더가 됐지만 진단 블록은 분리 유지.
+    assert "upstage" in d and "chat" in d
 
 

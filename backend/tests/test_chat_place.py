@@ -60,8 +60,8 @@ async def _consume(monkeypatch, *, retrieved=None):
         return ("sys", [])
 
     monkeypatch.setattr(C.gemini, "compose_system_structured", fake_compose)
-    monkeypatch.setattr(C.exaone, "CONCEPT_CARD_SYSTEM_PROMPT", "base", raising=False)
-    monkeypatch.setattr(C.exaone, "stream_answer", _fake_stream_answer)
+    monkeypatch.setattr(C.solar, "CONCEPT_CARD_SYSTEM_PROMPT", "base", raising=False)
+    monkeypatch.setattr(C.solar, "stream_answer", _fake_stream_answer)
 
     async def fake_append_node(client, sid, pid, q, a, label):
         return {"id": "node-1", "parent_id": None}

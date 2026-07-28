@@ -1,18 +1,24 @@
-"""EXAONE (Friendli serverless endpoint) streaming chat client.
+"""Upstage solar 채팅 클라이언트 — 개념 카드 스트리밍 생성.
 
-Replaces Gemini for chat-answer generation. Friendli exposes an OpenAI-compatible
-chat completions API; we stream `choices[0].delta.content` tokens over SSE.
-Ported from Nodi-figma/lib/kexaone.js. Uses httpx (already a dependency) — no
-new package required.
+D108: 대화 생성이 EXAONE(Friendli)에서 Upstage solar로 옮겨졌다. 임베딩·문서
+파싱이 이미 Upstage라 벤더가 하나로 줄고, 실측에서 왕복 지연이 2.73s → 0.78s로
+줄었다(2026-07-28, 각 3회 중앙값). 응답 위생도 나았다 — EXAONE은 추론 과정을
+content에 흘렸는데(포르투갈어 조각 포함) solar는 깨끗한 한국어만 냈다.
 
-The model is instructed (CONCEPT_CARD_SYSTEM_PROMPT) to emit a line-oriented
-concept-card format that the frontend parser turns into cards:
+교과서 도판 비전 판정은 이 모듈이 아니라 별도 계열(judge_* 노브)이며 아직
+구현하지 않았다.
 
-    CHAT: <one-line chat bubble>
-    @concept: <title> | <category>
-    - <body line>            (**bold**, ==highlight==)
-    @related: a, b           (optional)
+모델은 OpenAI 호환 chat completions를 쓴다 — 스트리밍과 tool calling 모두
+지원한다(실측). 개념 카드 줄 형식의 소유자는 이 모듈이다:
+
+    CHAT: <한 줄 채팅 말풍선>
+    @concept: <제목> | <분류>
+    - <본문 줄>            (**굵게**, ==형광펜==)
+    @related: a, b         (선택)
     @end
+
+이 형식은 프론트 파서(lib/concept/conceptParser.ts)와 1:1이다 — 바꾸면 양쪽을
+같이 바꿔야 한다.
 """
 
 from __future__ import annotations
@@ -20,22 +26,16 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 from fastapi import HTTPException, status
 
 from ..config import get_settings
 
-logger = logging.getLogger("nodi.exaone")
+logger = logging.getLogger("nodi.solar")
 settings = get_settings()
 
-# Concept-card system prompt. Generalized from Nodi-figma/lib/prompt.js: the
-# fixed earth-science scope + the 7 pinned clusters and the [art:key]/[svg]
-# catalog are dropped — 노디는 중·고등 전 교과 교사 페르소나이고, 분류는 자유
-# 태그(단원·주제 수준)다. 줄 형식
-# + **bold** / ==highlight== 은 클라이언트 파서(lib/concept/conceptParser.ts)와
-# 1:1로 유지한다 — 형식을 바꾸는 어떤 변경도 금지. (프롬프트의 [art:...]/[svg]
-# 태그 금지 문구는 구 프롬프트 유산 억제용 가드로 존치 — D94와 무관.)
 CONCEPT_CARD_SYSTEM_PROMPT = """너는 "노디"라는 중·고등학교 선생님이다. 국어·수학·영어·사회·역사·도덕·과학·기술가정·정보·예술 등 모든 교과를 학생 눈높이에 맞춰 가르친다. 밝고 다정한 교실 말투로, 군더더기 없이 핵심만 짚어 설명한다.
 
 # 응답 원칙 (매우 중요)
@@ -115,29 +115,24 @@ def extract_used_tags(nodes: list[dict], cap: int = 40) -> list[str]:
 
 
 def _require_config() -> tuple[str, str, str]:
-    """Resolve (url, model, api_key) or raise 503 if unconfigured.
+    """(url, model, api_key) 해석 — 미설정이면 503.
 
-    EXAONE_ENDPOINT_ID가 설정되면 **전용(dedicated) 엔드포인트**로 요청한다
-    (`/dedicated/v1/chat/completions`, model=endpoint_id — 예약 GPU라 공유 serverless
-    RPM 티어 제한을 받지 않는다). 비어 있으면 기존 **serverless**로 요청한다
-    (`/serverless/v1/chat/completions`, model=exaone_model). 어느 쪽이든 Bearer 인증 동일.
+    Upstage는 단일 베이스 URL에 OpenAI 호환 `/chat/completions`를 제공한다.
+    EXAONE 시절의 serverless/dedicated 분기는 사라졌다(D108).
     """
-    if not settings.exaone_api_key:
+    if not settings.upstage_api_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="EXAONE_API_KEY is not configured.",
+            detail="UPSTAGE_API_KEY is not configured.",
         )
-    base = (settings.friendli_base_url or "https://api.friendli.ai").rstrip("/")
-    endpoint_id = (settings.exaone_endpoint_id or "").strip()
-    if endpoint_id:
-        return f"{base}/dedicated/v1/chat/completions", endpoint_id, settings.exaone_api_key
-    return f"{base}/serverless/v1/chat/completions", settings.exaone_model, settings.exaone_api_key
+    base = settings.upstage_base_url.rstrip("/")
+    return f"{base}/chat/completions", settings.upstage_chat_model, settings.upstage_api_key
 
 
 def _build_messages(
     system_prompt: str, history: list[tuple[str, str]], question: str
 ) -> list[dict[str, str]]:
-    """OpenAI chat `messages`: system + alternating history + latest question."""
+    """OpenAI chat `messages`: system + 히스토리 교대 + 마지막 질문."""
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     for q, a in history:
         if q:
@@ -148,44 +143,44 @@ def _build_messages(
     return messages
 
 
+def _headers(key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+
+# 긴 스트리밍 답변을 위해 read는 넉넉히, connect/write는 짧게.
+_STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
+# 도구 판단처럼 스트리밍이 아닌 호출은 더 짧아도 된다.
+_CALL_TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
+
+
 async def stream_answer(
     history: list[tuple[str, str]],
     question: str,
     system_prompt: str,
 ) -> AsyncIterator[str]:
-    """Yield answer text deltas for the SSE `token` events.
+    """SSE `token` 이벤트용 답변 텍스트 델타를 yield.
 
-    `history` = ordered [(question, answer), ...] from root to parent.
-    `system_prompt` = the already-composed system prompt (concept-card base +
-    any context blocks) built by gemini.compose_system_structured in the router.
+    `history` = root→parent 순서의 [(질문, 답변), ...].
+    `system_prompt` = 이미 조립된 시스템 프롬프트(개념 카드 베이스 + 컨텍스트 블록).
     """
     url, model, key = _require_config()
     payload = {
         "model": model,
         "messages": _build_messages(system_prompt, history, question),
         "stream": True,
-        "stream_options": {"include_usage": True},
-        # Speed first: EXAONE reasoning off (matches the figma prototype).
-        "chat_template_kwargs": {"enable_thinking": False},
-        "temperature": settings.exaone_temperature,
-        "max_tokens": settings.exaone_max_tokens,
+        "temperature": settings.chat_temperature,
+        "max_tokens": settings.chat_max_tokens,
     }
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-    }
-    # Generous read timeout for long streamed answers; short connect/pool.
-    timeout = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        async with client.stream("POST", url, headers=headers, json=payload) as resp:
+    async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+        async with client.stream("POST", url, headers=_headers(key), json=payload) as resp:
             if resp.status_code != 200:
                 body = (await resp.aread()).decode("utf-8", "replace")
-                logger.error("EXAONE %s: %s", resp.status_code, body[:500])
-                raise RuntimeError(f"EXAONE {resp.status_code}")
+                logger.error("Upstage chat %s: %s", resp.status_code, body[:500])
+                raise RuntimeError(f"Upstage chat {resp.status_code}")
             async for line in resp.aiter_lines():
                 line = line.strip()
-                if not line.startswith("data:"):  # SSE comments / blank lines
+                if not line.startswith("data:"):  # SSE 주석·빈 줄
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
@@ -193,10 +188,47 @@ async def stream_answer(
                 try:
                     obj = json.loads(data)
                 except json.JSONDecodeError:
-                    continue  # ignore partial/non-JSON keep-alive chunks
+                    continue  # 부분/비JSON keep-alive 청크 무시
                 choices = obj.get("choices") or []
                 if not choices:
                     continue
                 delta = (choices[0].get("delta") or {}).get("content")
                 if delta:
                     yield delta
+
+
+async def complete(
+    messages: list[dict[str, Any]],
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    """비스트리밍 1회 호출 — ReAct 루프의 도구 판단 단계용(D109).
+
+    반환은 OpenAI 형식 assistant 메시지 그대로:
+    `{"role": "assistant", "content": str|None, "tool_calls": [...]|None}`.
+    호출부가 tool_calls 유무로 분기한다.
+
+    스트리밍을 쓰지 않는 이유: 이 단계의 텍스트는 사용자에게 보내지 않는다.
+    도구를 고르는 판단만 필요하므로 완성된 응답 하나면 충분하다.
+    """
+    url, model, key = _require_config()
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": settings.chat_temperature,
+        "max_tokens": max_tokens or settings.chat_max_tokens,
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+
+    async with httpx.AsyncClient(timeout=_CALL_TIMEOUT) as client:
+        resp = await client.post(url, headers=_headers(key), json=payload)
+        if resp.status_code != 200:
+            logger.error("Upstage chat %s: %s", resp.status_code, resp.text[:500])
+            raise RuntimeError(f"Upstage chat {resp.status_code}")
+        choices = resp.json().get("choices") or []
+        if not choices:
+            raise RuntimeError("Upstage chat: 빈 choices")
+        return choices[0].get("message") or {}

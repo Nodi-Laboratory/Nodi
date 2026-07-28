@@ -3,7 +3,7 @@
 compose_system_structured가 시스템 프롬프트 문자열과 블록별 span 메타데이터를
 한 곳에서 만들어, 저장된 프롬프트와 하이라이트 오프셋이 절대 어긋나지 않게 한다.
 Gemini API 경로(OCR·라벨·태깅)는 배포 환경에 키가 없어 한 번도 동작한 적 없어
-D80에서 제거했다 — 채팅 답변은 EXAONE, 임베딩·문서 파싱은 Upstage가 담당한다.
+D80에서 제거했다 — D108 이후 채팅·임베딩·문서 파싱이 전부 Upstage다.
 """
 
 from __future__ import annotations

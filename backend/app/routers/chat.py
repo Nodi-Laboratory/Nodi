@@ -1,9 +1,9 @@
-"""Chat (SSE) — concept-card conversation core (EXAONE).
+"""Chat (SSE) — concept-card conversation core (Upstage solar, D108).
 
 Flow:
   1. Resolve parent (body.parent_node_id or session.current_head_id).
   2. Assemble ancestor-chain context (siblings excluded).
-  3. Stream the EXAONE answer as SSE: start -> token* -> done (error on failure).
+  3. Stream the model answer as SSE: start -> token* -> done (error on failure).
      The answer is the structured concept-card format (CHAT:/@concept/…/@end);
      the frontend parser turns the token stream into cards. Card layout + camera
      are owned by the frontend (d3-force) — the server no longer computes/sends
@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from ..auth.deps import CurrentUser, get_current_user
 from ..config import get_settings
 from ..db.client import UserClient
-from ..services import exaone, gemini, rag, session_context
+from ..services import gemini, rag, session_context, solar
 from ..services import sessions as svc
 from ..services.turn_log import TurnLog
 
@@ -170,7 +170,7 @@ async def chat_stream(
     # 재사용 — 추가 DB 조회 없음. 순수 함수라 예외 여지가 거의 없지만 컨텍스트
     # 빌더 best-effort 불변식에 맞춰 방어적으로 None 폴백.
     try:
-        used_tags = exaone.extract_used_tags(nodes)
+        used_tags = solar.extract_used_tags(nodes)
         tag_context = ", ".join(used_tags) if used_tags else None
     except Exception:
         tag_context = None
@@ -184,7 +184,7 @@ async def chat_stream(
         session_file_sources=session_file_sources,
         tag_context=tag_context,
         rag_sources=rag_sources,
-        base_instruction=exaone.CONCEPT_CARD_SYSTEM_PROMPT,
+        base_instruction=solar.CONCEPT_CARD_SYSTEM_PROMPT,
     )
     tlog = TurnLog(user.id, body.session_id, body.question)
     tlog.set_system(system_prompt)
@@ -203,7 +203,7 @@ async def chat_stream(
 
         try:
             try:
-                async for delta in exaone.stream_answer(
+                async for delta in solar.stream_answer(
                     history,
                     body.question,
                     system_prompt,
@@ -212,7 +212,7 @@ async def chat_stream(
                     yield _sse("token", {"delta": delta})
 
             except Exception:  # noqa: BLE001 - details go to logs, not the client
-                logger.exception("EXAONE streaming failed")
+                logger.exception("채팅 스트리밍 실패")
                 tlog.add_error("ai_streaming_failed")
                 yield _sse("error", {"detail": "AI 응답 생성에 실패했습니다."})
                 return
