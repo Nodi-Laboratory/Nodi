@@ -7,17 +7,14 @@
 Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
 **Qdrant**(벡터 1024d) · **Upstage**(대화 생성 `solar-pro2` + 임베딩 + 문서 파싱).
 
-> ## 📌 최근 변경 — 먼저 읽으세요
+> ## 📌 변경 보고서 — 먼저 읽으세요
 >
-> **[`docs/CHANGELOG-D113-D114.md`](docs/CHANGELOG-D113-D114.md)** (2026-07-28)
+> **[`docs/CHANGELOG-D104-D114.md`](docs/CHANGELOG-D104-D114.md)**
+> (2026-07-27 ~ 07-28 · 커밋 51개 · +18,330 / −11,103줄)
 >
-> 관리자 페이지가 3탭 → 10탭으로 확장됐고, **DB 스키마가 바뀌었으며**(정책 32→38,
-> 함수 19→26), `db/migrations/`라는 새 규약이 생겼습니다.
->
-> - 새로 시작하는 환경 — **할 일 없음**
-> - 이미 데이터가 든 DB로 작업 중 — **마이그레이션 3개를 손으로 적용**(문서 §8)
->
-> 개발 DB에 실제로 한 작업(대화 기록 초기화 등)도 문서 §5에 기록해 두었습니다.
+> **Supabase 완전 제거(D104)**부터 운영 콘솔·데이터 관리(D113·D114)까지 이 기간에
+> 무엇을 바꿨는지 정리한 기록입니다. DB 스키마 변경(정책 32→38, 함수 19→26),
+> `db/migrations/` 규약 신설, 개발 DB에 실제로 한 작업까지 담겨 있습니다.
 
 - 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](CLAUDE.md)** ← 이 저장소의 규범 문서
 - 작업 체계: [`docs/TASKS.md`](docs/TASKS.md) · [`docs/AGENTS.md`](docs/AGENTS.md) · [`docs/PROCESS.md`](docs/PROCESS.md)
@@ -144,8 +141,12 @@ uv run python -m app.cli list-users
   (`textbook`) 업로드. 자료는 청킹 → 임베딩 → Qdrant로 RAG 구축.
 - **학생 세션 파일** — 학생이 올린 파일(`user_upload`)은 임베딩 없이 청킹만 하고
   **세션 컨텍스트로 전문 주입**한다(D83~D85, 기본 예산 150K자).
-- **교과서 figure** — 교과서 PDF에서 도판을 추출해 비전 판정으로 캡션을 확정하고
-  (D93), 학생 질의와 가까운 도판을 캔버스에 FigureNode로 띄운다(D95).
+- **교과서 figure** — 교과서 PDF에서 도판을 추출해 캡션을 확정하고, 학생 질의와
+  가까운 도판을 캔버스에 FigureNode로 띄운다(D93/D95).
+  > **비전 판정(EXAONE)은 현재 꺼져 있다** — `JUDGE_*`를 비워 둔 임시 상태다.
+  > 파서가 `caption`/`footnote`로 라벨한 도판은 그대로 처리되고, 라벨 없는
+  > 도판만 처리되지 않는다. 되살리려면 두 값을 채운다
+  > ([보고서 §5](docs/CHANGELOG-D104-D114.md#5-대화-생성-모델-교체-d108)).
 - **인증/권한** — 이메일/비밀번호 자체 회원가입·로그인(D99), 역할
   (student/teacher/admin), 개인(personal)·학급(class) 스코프, RLS로 접근 제어.
   가입 시 고른 역할은 `student`·`teacher`만 허용되며 `admin`은 승격으로만 부여된다.
@@ -265,7 +266,7 @@ RLS 정책 38개 + 함수 26개가 "누가 무엇에 접근 가능한가"를 정
 **데이터를 지우고 싶지 않다면** `db/migrations/`의 스크립트를 손으로 적용한다.
 자동 적용되지 않으며(엔트리포인트가 하위 디렉터리를 건너뛴다) 전부 멱등이다.
 어떤 것을 언제 적용해야 하는지는
-[`docs/CHANGELOG-D113-D114.md` §8](docs/CHANGELOG-D113-D114.md#8-팀원이-해야-할-일)
+[`docs/CHANGELOG-D104-D114.md` §10](docs/CHANGELOG-D104-D114.md#10-db-변경-총괄)
 에 정리해 두었다.
 
 ---
