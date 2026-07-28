@@ -50,9 +50,22 @@ class _Boom(SkillBase):
 # --- 카탈로그 (층 1) -------------------------------------------------------
 
 
-def test_개인세션에는_도구가_없다():
-    """개인 공간엔 학급 자료도 교과서도 없다 — 부를 도구 자체가 없다."""
-    assert skills_for("personal", "student") == []
+def test_개인세션에는_학급_도구가_없다():
+    """개인 공간엔 학급 자료도 교과서도 없다 — 노출하면 헛물을 켠다."""
+    names = skills_for("personal", "student")
+    assert "search_class_material" not in names
+    assert "search_textbook_figure" not in names
+    # 개념 조회는 개인 세션에도 있다(개인 공간에서도 카드를 만든다).
+    assert "list_session_concepts" in names
+
+
+def test_세션_파일_스킬은_파일이_있을_때만_보인다():
+    """없는데 노출하면 모델이 부르고 빈 목록을 받아 군더더기를 답에 붙인다."""
+    without = skills_for("personal", "student", has_session_files=False)
+    with_files = skills_for("personal", "student", has_session_files=True)
+    assert "read_session_file" not in without
+    assert "read_session_file" in with_files
+    assert "list_session_files" in with_files
 
 
 def test_도구가_부족하면_계획_도구도_빼는다():
@@ -61,7 +74,6 @@ def test_도구가_부족하면_계획_도구도_빼는다():
     실측(2026-07-28): 실도구 0개인 개인 세션에 think만 노출했더니 모델이 그걸
     불렀다. 계획을 세울 대상이 없는데 계획만 세우고 왕복 한 번을 버린 셈이다.
     """
-    assert "think" not in skills_for("personal", "student")
     assert "think" in skills_for("class", "student")
 
 

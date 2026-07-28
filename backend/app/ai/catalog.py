@@ -21,6 +21,14 @@ from __future__ import annotations
 # 실제로 데이터를 가져오는 도구 — 스코프가 결정한다.
 _CLASS_ONLY = ["search_class_material", "search_textbook_figure"]
 
+# 이 세션에서 만든 개념 조회 — 어디서나 가능하다(개인 세션도 카드를 만든다).
+_CONCEPTS = ["list_session_concepts", "get_concept"]
+
+# 세션에 올린 파일 조회 — **파일이 실제로 있을 때만** 넣는다. 없는데 노출하면
+# 모델이 부르고, 빈 목록을 받고, "올리신 파일이 없네요"라는 군더더기를 답에
+# 붙인다(학생은 파일 얘기를 꺼낸 적도 없다).
+_SESSION_FILES = ["list_session_files", "read_session_file"]
+
 # 계획 수립 도구. **조합할 대상이 2개 이상일 때만** 넣는다.
 #
 # 실측(2026-07-28): 개인 세션은 실도구가 0개인데 think만 노출하니 모델이
@@ -31,15 +39,19 @@ _PLANNER = "think"
 _PLANNER_MIN_TOOLS = 2
 
 
-def skills_for(space_kind: str, role: str) -> list[str]:
-    """(공간 종류, 앱 역할) → 노출할 스킬 이름 목록.
+def skills_for(
+    space_kind: str, role: str, *, has_session_files: bool = False
+) -> list[str]:
+    """(공간 종류, 앱 역할, 세션 상태) → 노출할 스킬 이름 목록.
 
     role은 지금 카탈로그를 가르지 않지만(교사 전용 스킬은 아직 없다) 시그니처에
     남겨 둔다 — 교사 스킬이 생길 때 호출부를 바꾸지 않으려는 것이다.
     """
-    names: list[str] = []
+    names: list[str] = list(_CONCEPTS)
     if space_kind == "class":
         names += _CLASS_ONLY
+    if has_session_files:
+        names += _SESSION_FILES
     if len(names) >= _PLANNER_MIN_TOOLS:
         names.append(_PLANNER)
     return names
