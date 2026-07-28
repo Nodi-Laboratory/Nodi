@@ -7,6 +7,14 @@
 Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
 **Qdrant**(벡터 1024d) · **Upstage**(대화 생성 `solar-pro2` + 임베딩 + 문서 파싱).
 
+> ## 📌 최근 변경 — 먼저 읽으세요
+>
+> **[`docs/CHANGELOG-D113-D114.md`](docs/CHANGELOG-D113-D114.md)** (2026-07-28)
+>
+> 관리자 페이지가 3탭 → 10탭으로 확장됐고 DB 스키마·API·프론트가 함께 바뀌었습니다.
+> **이미 데이터가 든 DB로 작업 중이라면 마이그레이션 3개를 손으로 적용해야 합니다**
+> (문서 §7). 새로 시작하는 환경은 할 일이 없습니다.
+
 - 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](CLAUDE.md)** ← 이 저장소의 규범 문서
 - 작업 체계: [`docs/TASKS.md`](docs/TASKS.md) · [`docs/AGENTS.md`](docs/AGENTS.md) · [`docs/PROCESS.md`](docs/PROCESS.md)
 - 배포: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
@@ -249,6 +257,12 @@ RLS 정책 38개 + 함수 26개가 "누가 무엇에 접근 가능한가"를 정
 파일 하나가 더 명확하다.
 
 > ⚠️ **`down -v`는 데이터를 지운다.** 계정도 함께 사라지므로 다시 만들어야 한다.
+
+**데이터를 지우고 싶지 않다면** `db/migrations/`의 스크립트를 손으로 적용한다.
+자동 적용되지 않으며(엔트리포인트가 하위 디렉터리를 건너뛴다) 전부 멱등이다.
+어떤 것을 언제 적용해야 하는지는
+[`docs/CHANGELOG-D113-D114.md` §7](docs/CHANGELOG-D113-D114.md#7-팀원이-해야-할-일)
+에 정리해 두었다.
 
 ---
 
