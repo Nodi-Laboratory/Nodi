@@ -62,7 +62,8 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 
 Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권한 강제·자체 인증)
 · Qdrant(벡터 1024d/Cosine, `docker compose up -d qdrant`) · Upstage(임베딩 + 문서 파싱)
-· EXAONE `K-EXAONE-236B-A23B`(Friendli 서버리스, 스트리밍 챗, 256K 컨텍스트).
+· Upstage `solar-pro2`(대화 생성 — 스트리밍 + tool calling, D108).
+교과서 도판 비전 판정만 별도 계열(judge_* 노브)이며 아직 미구현이다.
 
 ## 핵심 파이프라인
 
@@ -80,7 +81,18 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   embed_text=**판정 선택 캡션 단독**(D93) `embedding-passage` → Qdrant
   `textbook_figures`(**페이로드는 `{figure_id, file_id, owner_id}`만**). 행 상태는
   `textbook_figures.status`로만 추적(D86/D88).
-- **채팅 턴** (`routers/chat.py` `chat_stream`):
+- **채팅 턴** (`routers/chat.py` `chat_stream`) — 경로가 둘이다:
+
+  **ReAct 경로** (D109, `react_enabled` 튜너블·기본 off): 도구 판단 → 스킬 실행
+  → 생성. 스킬은 `app/ai/skills/`에 파일 하나씩이고, 노출 카탈로그는
+  `ai/catalog.py`가 `(space_kind, role)`로 **먼저 좁힌다** — 개인 세션에 학급
+  도구를 보여주면 모델이 부르고 빈 결과로 엉뚱한 답을 한다. 좁힌 뒤 모델이
+  고르므로 인사 턴에는 임베딩·검색이 아예 나가지 않는다. 판단 단계는 개념 카드
+  형식을 주지 않고, 생성 단계는 도구를 주지 않는다(두 지시의 충돌 회피 +
+  추론 누출 차단). 스킬 실패는 `SkillResult(ok=False)`로 모델에 전달되고
+  턴을 죽이지 않는다.
+
+  **기존 단발 경로** (`react_enabled` off):
   컨텍스트 빌더 병렬(gather): 기억 연결·파일 RAG·비교 참조·세션 파일 전문
   (D83, `session_context.py` — session_files 블록은 system_base 직후 고정,
   D85 Friendli 프리픽스 캐시) →
