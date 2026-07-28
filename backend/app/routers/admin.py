@@ -1,8 +1,11 @@
-"""Admin console endpoints (Stage 4c) — all admin-only.
+"""운영 콘솔 엔드포인트 — 전부 admin 전용.
 
-Uses the admin's OWN JWT against the admin RLS policies / SECURITY DEFINER RPCs
-added in migration 0008 (no service_role). Job monitor + file/storage usage are
-deferred to Stage 3b.
+관리자 **본인의 JWT**로 admin RLS 정책과 SECURITY DEFINER RPC를 탄다
+(service_role을 쓰지 않는다). 즉 콘솔이 넓게 보는 것도 DB가 허락한 만큼이다 —
+"권한은 DB가 강제한다"(D104)를 콘솔이라고 우회하지 않는다.
+
+D113에서 이 콘솔이 서비스 전체를 관측하는 창구가 됐다:
+  개요·AI 흐름·대화 기록·스킬 사용·문서 인제스트·RAG 테스트·런타임 설정.
 """
 
 from __future__ import annotations
@@ -13,11 +16,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from .. import ai
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
+from ..config import get_settings
 from ..db.client import UserClient
-from ..services import app_settings
+from ..services import admin_console, app_settings
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+settings = get_settings()
 
 
 # ---------------------------------------------------------------------------
@@ -67,12 +73,15 @@ async def set_user_role(
 async def list_settings(
     user: CurrentUser = Depends(get_current_user),
     _: Profile = Depends(require_admin),
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
+    """튜너블 전체 — 현재값 · 기본값 · 변경 여부 · 위젯 스펙 (D113).
+
+    예전에는 app_settings 행만 그대로 돌려주고 라벨·범위·설명은 프론트가 따로
+    들고 있었다. 그러면 노브를 추가할 때 서버·DB·프론트가 어긋난다. 스펙의
+    소유자를 서버로 옮겼다(services/admin_console.py).
+    """
     client = UserClient.from_user(user)
-    return await client.select(
-        "app_settings",
-        {"select": "key,value,updated_at,updated_by", "order": "key.asc"},
-    )
+    return await admin_console.settings_view(client)
 
 
 class SettingBody(BaseModel):
@@ -100,6 +109,38 @@ async def put_setting(
         {
             "key": key,
             "value": body.value,
+            "updated_by": user.id,
+            "updated_at": datetime.now(UTC).isoformat(),
+        },
+        on_conflict="key",
+    )
+    app_settings.bust_cache()
+    return result
+
+
+@router.post("/settings/{key}/reset")
+async def reset_setting(
+    key: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """한 설정을 config 기본값으로 되돌린다 (D113).
+
+    행을 **지우지 않고 기본값을 써 넣는다.** 지우면 admin 콘솔에서 그 노브가
+    사라져 다시 조정할 수 없다(D62: 행이 없으면 오버레이 자체가 불가능).
+    """
+    default = admin_console.default_for(key)
+    if default is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="이 키에는 코드 기본값이 없습니다.",
+        )
+    client = UserClient.from_user(user)
+    result = await client.upsert(
+        "app_settings",
+        {
+            "key": key,
+            "value": default,
             "updated_by": user.id,
             "updated_at": datetime.now(UTC).isoformat(),
         },
@@ -172,4 +213,370 @@ async def get_log_detail(
             status_code=status.HTTP_404_NOT_FOUND, detail="Log not found."
         )
     return {"log": rows[0]}
+
+
+# ---------------------------------------------------------------------------
+# 개요 (D113)
+# ---------------------------------------------------------------------------
+@router.get("/overview")
+async def overview(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """서비스 전체 카운터 한 판 — 사용자·세션·문서·청크·잡·턴·토큰·지연.
+
+    집계는 `admin_overview()` RPC가 한 질의로 한다. 앱에서 행을 끌어와 세면
+    수천 행이 오간다.
+    """
+    client = UserClient.from_user(user)
+    return await client.rpc("admin_overview", {})
+
+
+# ---------------------------------------------------------------------------
+# AI 흐름 · 스킬 (D113)
+# ---------------------------------------------------------------------------
+@router.get("/skills")
+async def list_skills(
+    days: int = Query(30, ge=1, le=365),
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """등록된 스킬 전부 + 노출 조건 + 실제 사용 통계.
+
+    카탈로그를 **하드코딩하지 않는다** — 레지스트리에서 읽어야 스킬을 추가·삭제
+    했을 때 이 화면이 저절로 맞는다. `exposed_in`은 어느 스코프에서 그 스킬이
+    보이는지를 `catalog.skills_for`를 실제로 호출해 계산한다(설명과 코드가
+    갈라지지 않게).
+    """
+    client = UserClient.from_user(user)
+    registry = ai.get_orchestrator().registry
+
+    # 노출 조건은 조합을 직접 돌려 확인한다 — 표를 손으로 적으면 틀린다.
+    combos = [
+        ("personal/student", ("personal", "student", False, False)),
+        ("personal/파일있음", ("personal", "student", True, False)),
+        ("personal/개념있음", ("personal", "student", False, True)),
+        ("class/student", ("class", "student", False, False)),
+        ("class/teacher", ("class", "teacher", False, False)),
+        ("class/teacher+전체", ("class", "teacher", True, True)),
+    ]
+    exposure: dict[str, list[str]] = {n: [] for n in registry.names()}
+    for label, (space, role, files, concepts) in combos:
+        for name in ai.skills_for(
+            space, role, has_session_files=files, has_concepts=concepts
+        ):
+            if name in exposure:
+                exposure[name].append(label)
+
+    usage_rows = await client.rpc("admin_skill_usage", {"p_days": days})
+    if isinstance(usage_rows, dict):
+        usage_rows = [usage_rows]
+    usage = {r["skill"]: r for r in (usage_rows or []) if r.get("skill")}
+
+    skills = []
+    for name in sorted(registry.names()):
+        skill = registry.get(name)
+        skills.append(
+            {
+                "name": name,
+                "description": skill.description if skill else "",
+                "parameters": skill.parameters if skill else {},
+                "exposed_in": exposure.get(name, []),
+                "usage": usage.get(name),
+            }
+        )
+    return {"days": days, "skills": skills}
+
+
+@router.get("/flow")
+async def ai_flow(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """채팅 한 턴의 파이프라인 그래프 — 어떤 경로가 지금 살아 있는지 포함."""
+    client = UserClient.from_user(user)
+    overlay = await app_settings.get_overlay()
+    react_on = app_settings.as_bool(overlay, "react_enabled", settings.react_enabled)
+    steps = app_settings.as_int(
+        overlay, "react_max_steps", settings.react_max_steps, 1, 8
+    )
+    registry = ai.get_orchestrator().registry
+    skills = [
+        {"name": n, "description": (registry.get(n).description if registry.get(n) else "")}
+        for n in sorted(registry.names())
+    ]
+    flow = admin_console.flow_spec(
+        react_on=react_on, react_steps=steps, skills=skills
+    )
+    # 대화가 실제로 어느 경로로 돌고 있는지(로그 기준)도 같이 — 설정과 실제가
+    # 어긋나면 여기서 드러난다.
+    counts = await client.rpc("admin_overview", {})
+    flow["observed_routes"] = (counts or {}).get("turns", {}).get("by_route", {})
+    return flow
+
+
+# ---------------------------------------------------------------------------
+# 대화 기록 (D113)
+# ---------------------------------------------------------------------------
+@router.get("/conversations")
+async def list_conversations(
+    owner_id: str | None = Query(None),
+    space_kind: str | None = Query(None, pattern="^(personal|class)$"),
+    search: str | None = Query(None, description="제목·이메일·질문·답변 부분일치"),
+    limit: int = Query(30, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """모든 사용자의 대화를 **세션 단위**로 목록화.
+
+    Plant-Counselor의 로그 화면은 대화가 파일 단위로 흩어져 읽기 어려웠다.
+    여기서는 한 줄이 곧 한 대화다 — 누가·어디서·몇 턴·토큰 얼마.
+    """
+    client = UserClient.from_user(user)
+    rows = await client.rpc(
+        "admin_conversations",
+        {
+            "p_owner": owner_id,
+            "p_space": space_kind,
+            "p_search": (search or None),
+            "p_limit": limit,
+            "p_offset": offset,
+        },
+    )
+    rows = _as_list(rows)
+    total = int(rows[0]["total_count"]) if rows else 0
+    for r in rows:
+        r.pop("total_count", None)
+    return {"total": total, "limit": limit, "offset": offset, "conversations": rows}
+
+
+@router.get("/conversations/{session_id}")
+async def get_conversation(
+    session_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """한 대화의 전체 기록 — 세션 · 노드(질문/답변) · 그 세션의 턴 로그.
+
+    노드와 로그를 **함께** 돌려준다. 노드는 학생이 본 것이고 로그는 그렇게
+    나오기까지의 과정이라, 둘을 나란히 놓아야 원인을 짚을 수 있다.
+    """
+    client = UserClient.from_user(user)
+    sessions = await client.select(
+        "sessions",
+        {
+            "id": f"eq.{session_id}",
+            "select": (
+                "id,owner_id,space_kind,space_ref,title,emoji,"
+                "root_node_id,current_head_id,created_at,updated_at"
+            ),
+            "limit": "1",
+        },
+    )
+    if not sessions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found."
+        )
+    session = sessions[0]
+    nodes = await client.select(
+        "nodes",
+        {
+            "session_id": f"eq.{session_id}",
+            "select": "id,parent_id,question,answer,label,attachments,rag_sources,created_at",
+            "order": "created_at.asc",
+        },
+    )
+    logs = await client.select(
+        "ai_logs",
+        {
+            "session_id": f"eq.{session_id}",
+            "select": _LOG_SELECT,
+            "order": "created_at.asc",
+        },
+    )
+    owners = await client.select(
+        "profiles",
+        {"id": f"eq.{session['owner_id']}", "select": "id,email,role,display_name", "limit": "1"},
+    )
+    return {
+        "session": session,
+        "owner": owners[0] if owners else None,
+        "nodes": nodes,
+        "logs": logs,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 문서 인제스트 (D113)
+# ---------------------------------------------------------------------------
+@router.get("/documents")
+async def list_documents(
+    kind: str | None = Query(None, pattern="^(user_upload|class_material|textbook)$"),
+    file_status: str | None = Query(None, alias="status"),
+    search: str | None = Query(None),
+    limit: int = Query(30, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """모든 문서 + 인제스트 현황(청크 행 수·임베딩 성공·글자 수·도판).
+
+    files.chunk_total/chunk_done은 워커가 갱신하는 **진행률**이라 실제 행 수와
+    어긋날 수 있다. 양쪽을 다 돌려주므로 어긋난 파일이 눈에 띈다.
+    """
+    client = UserClient.from_user(user)
+    rows = _as_list(
+        await client.rpc(
+            "admin_documents",
+            {
+                "p_kind": kind,
+                "p_status": file_status,
+                "p_search": (search or None),
+                "p_limit": limit,
+                "p_offset": offset,
+            },
+        )
+    )
+    total = int(rows[0]["total_count"]) if rows else 0
+    for r in rows:
+        r.pop("total_count", None)
+    return {"total": total, "limit": limit, "offset": offset, "documents": rows}
+
+
+@router.get("/documents/{file_id}")
+async def get_document(
+    file_id: str,
+    chunk_limit: int = Query(50, ge=1, le=500),
+    chunk_offset: int = Query(0, ge=0),
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """문서 하나의 인제스트 상세 — 파일 · 청크 원문 · 잡 이력 · 도판.
+
+    "문서가 어떻게 올라갔는가"의 답은 결국 **청크 경계**다. 어디서 끊겼는지를
+    직접 봐야 청크 크기·겹침 값을 고칠 수 있다.
+    """
+    client = UserClient.from_user(user)
+    files = await client.select(
+        "files",
+        {
+            "id": f"eq.{file_id}",
+            "select": (
+                "id,owner_id,space_kind,space_ref,kind,storage_path,mime,size_bytes,"
+                "status,chunk_total,chunk_done,error,name,session_id,context_chars,"
+                "created_at,updated_at"
+            ),
+            "limit": "1",
+        },
+    )
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="File not found."
+        )
+    chunks = await client.select(
+        "file_chunks",
+        {
+            "file_id": f"eq.{file_id}",
+            "select": "id,seq,status,chunk_text,created_at",
+            "order": "seq.asc",
+            "limit": str(chunk_limit),
+            "offset": str(chunk_offset),
+        },
+    )
+    jobs = await client.select(
+        "jobs",
+        {
+            "target_id": f"eq.{file_id}",
+            "select": (
+                "id,kind,status,progress,attempts,error,batch_range,"
+                "parent_job_id,created_at,updated_at"
+            ),
+            "order": "created_at.asc",
+        },
+    )
+    figures = await client.select(
+        "textbook_figures",
+        {
+            "file_id": f"eq.{file_id}",
+            "select": "id,seq,page,caption,figure_type,status,selected_index",
+            "order": "seq.asc",
+            "limit": "200",
+        },
+    )
+    owners = await client.select(
+        "profiles",
+        {"id": f"eq.{files[0]['owner_id']}", "select": "id,email,role", "limit": "1"},
+    )
+    return {
+        "file": files[0],
+        "owner": owners[0] if owners else None,
+        "chunks": chunks,
+        "chunk_offset": chunk_offset,
+        "jobs": jobs,
+        "figures": figures,
+    }
+
+
+# ---------------------------------------------------------------------------
+# RAG 테스트 (D113)
+# ---------------------------------------------------------------------------
+class RagTestBody(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    class_id: str | None = None
+    file_ids: list[str] = Field(default_factory=list)
+    top_k: int | None = Field(default=None, ge=1, le=50)
+    max_distance: float | None = Field(default=None, ge=0.0, le=1.0)
+    include_figures: bool = True
+
+
+@router.post("/rag/test")
+async def rag_test(
+    body: RagTestBody,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """RAG 검색을 실제 경로 그대로 돌리되 **잘린 것까지** 돌려준다.
+
+    게이트를 필터가 아니라 표시로 쓴다 — 통과·차단을 거리와 함께 봐야 게이트
+    값을 어디로 옮길지 판단할 수 있다. 채팅과 같은 함수를 쓰므로 여기서 잘
+    되는 질의는 실제로도 잘 된다.
+    """
+    client = UserClient.from_user(user)
+    return await admin_console.rag_test(
+        client,
+        query=body.query,
+        class_id=body.class_id,
+        file_ids=body.file_ids,
+        top_k=body.top_k,
+        max_distance=body.max_distance,
+        include_figures=body.include_figures,
+    )
+
+
+@router.get("/classes")
+async def list_all_classes(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    """모든 학급 — RAG 테스트의 검색 범위를 고르는 데 쓴다."""
+    client = UserClient.from_user(user)
+    return await client.select(
+        "classes",
+        {"select": "id,name,join_code,teacher_id,created_at", "order": "created_at.desc"},
+    )
+
+
+def _as_list(rows: Any) -> list[dict[str, Any]]:
+    """RPC 반환 정규화.
+
+    `UserClient.rpc`는 행이 하나면 **dict**, 여럿이면 list, 없으면 None을
+    돌려준다(스칼라/복합 타입 반환을 구분하려는 계약). 목록을 기대하는 곳에서
+    그대로 쓰면 행이 하나일 때 조용히 깨진다.
+    """
+    if rows is None:
+        return []
+    if isinstance(rows, dict):
+        return [rows]
+    return list(rows)
 

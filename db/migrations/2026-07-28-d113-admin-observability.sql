@@ -55,6 +55,23 @@ begin
         create policy textbook_figures_select_admin on public.textbook_figures
             for select using (public.is_admin());
     end if;
+
+    -- 학급은 담임·구성원만 볼 수 있었다. 관리자가 **자기 학급이 아니면** 목록이
+    -- 통째로 비어(실측: 0건) RAG 테스트의 검색 범위를 고를 수조차 없었다.
+    if not exists (select 1 from pg_policies
+                    where schemaname = 'public' and tablename = 'classes'
+                      and policyname = 'classes_select_admin') then
+        create policy classes_select_admin on public.classes
+            for select using (public.is_admin());
+    end if;
+
+    -- 학급 구성원 — "이 대화가 어느 학급의 누구인가"를 콘솔이 잇는 데 쓴다.
+    if not exists (select 1 from pg_policies
+                    where schemaname = 'public' and tablename = 'class_members'
+                      and policyname = 'class_members_select_admin') then
+        create policy class_members_select_admin on public.class_members
+            for select using (public.is_admin());
+    end if;
 end $$;
 
 commit;

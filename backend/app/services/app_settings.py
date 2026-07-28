@@ -30,7 +30,10 @@ logger = logging.getLogger("nodi.app_settings")
 # Q62-1: short TTL — admin changes propagate within ~20s across processes while
 # a single chat turn never triggers more than one DB read. 0 would mean "read
 # every call" (instant but high load).
-_TTL = 20.0
+# D113: 운영 콘솔이 "몇 초 안에 반영되는지"를 화면에 그대로 쓴다 — 값을 바꾸면
+# 안내 문구도 같이 바뀌게 공개 상수로 둔다(주석에 20초라고 적어 두고 코드만
+# 바뀌면 화면이 거짓말을 한다).
+TTL_SECONDS = 20.0
 _cache: dict[str, Any] = {}
 _loaded_at = 0.0
 
@@ -43,7 +46,7 @@ async def get_overlay() -> dict[str, Any]:
     """
     global _cache, _loaded_at
     now = time.monotonic()
-    if _cache and (now - _loaded_at) < _TTL:
+    if _cache and (now - _loaded_at) < TTL_SECONDS:
         return _cache
     svc = get_service_client()
     if svc is None:
