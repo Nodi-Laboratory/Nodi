@@ -195,6 +195,11 @@ git clone <repo> ~/app/Nodi        # 또는 러너/rsync로 코드 배달
 **서버에서 코드를 직접 고치지 마라.** 배포의 `rsync --delete`가 지운다. 수정은
 저장소에서 하고 main에 올린다.
 
+**`supervisorctl update`가 그룹 정의를 바꾸면 그룹 전체가 재시작된다.** 그때
+`autostart=false`인 프로그램은 내려간 채로 남는다. llama를 `nodi` 그룹에 추가한
+배포에서 cloudflared가 조용히 STOPPED가 되며 공개 사이트가 끊겼다 — 배포 로그는
+전부 초록이었다(D118). 이제 bootstrap이 토큰·가중치를 확인하고 매번 켠다.
+
 **`/health/config`를 rewrite로 열지 마라.** 콘솔의 "환경" 카드가 404 나길래
 한 번 열었다가 되돌렸다. 비밀값은 안 담기지만 `secret_is_default`·
 `jwt_algorithm`·내부 경로·모델명이 **인증 없이** 나가 정찰 정보가 된다.
@@ -215,24 +220,35 @@ git clone <repo> ~/app/Nodi        # 또는 러너/rsync로 코드 배달
 
 | | |
 |---|---|
-| 실행 | postgres · qdrant · backend · frontend · cloudflared · gh-runner (RUNNING) |
+| 실행 | postgres · qdrant · llama · backend · frontend · cloudflared · backup · gh-runner (RUNNING) |
 | 인그레스 | Cloudflare Tunnel → `http://localhost:3000` · 인바운드 포트 0개 |
 | 검증 | 공개 도메인에서 로그인 → 세션 생성 → SSE 실시간 스트리밍(확산 0.51s) 확인 |
-| 데이터 | 계정 6개(로컬에서 이관). 학급·문서·대화는 비어 있음 |
-| 하드닝 | `JWT_SECRET` 난수 · DB 비밀번호 난수 · 전 서비스 루프백 전용 · env 파일 0600 |
+| 데이터 | 계정 3개(admin·teacher·student). 학급·문서·대화는 비어 있음 |
+| 도판 판정 | 자체 GPU(EXAONE-4.5-33B 비전). 합성 도판 실측 — 정답 선택·해당없음(-1) 모두 정상 |
+| 백업 | 매일 03:00 KST 자동, 최신 14개 유지 → `~/data/nodi/storage/backups/` |
+| 하드닝 | `JWT_SECRET` 난수 · DB 비밀번호 난수 · 판정 엔드포인트 인증 · 전 서비스 루프백 전용 · env 파일 0600 |
 | 자동 배포 | main push → 러너 → 배포 → `/health` 확인까지 성공 |
+
+### 계정 정책
+
+관리자 비밀번호만 **따로 둔다.** 나머지(`teacher@nodi.local`·`student@nodi.local`)는
+교실에서 쓰는 시연 계정이라 공유 비밀번호를 쓰지만, 관리자 콘솔은 모든 학생의
+대화 원문과 문서를 읽을 수 있다 — 공개 도메인에 붙어 있는 이상 그 둘을 같은
+비밀번호로 둘 수 없다. 관측 점검용으로 만들었던 `probe-*` 계정 3개(그중 하나는
+admin이었다)는 지웠다.
+
+바꾸는 방법:
+
+```bash
+cd ~/app/Nodi/backend && ./.venv/bin/python -m app.cli set-password <이메일> <비밀번호>
+```
 
 ### 아직 안 한 것
 
-- **관리자 계정 비밀번호를 모른다.** 이관한 `admin@nodi.local`은 로컬에서 쓰던
-  해시 그대로라 같은 비밀번호로 들어간다. 새로 만들려면(가입 폼으로는 못 얻는다):
-  ```bash
-  cd ~/app/Nodi/backend && ./.venv/bin/python -m app.cli create-user <이메일> <비밀번호> --role admin
-  ```
-- `probe-*` 계정 3개는 관측 점검용으로 만들었던 것이다. 필요 없으면 지운다.
-- 교과서 도판 비전 판정(`JUDGE_*`)은 비활성. 이 VM에 GPU와 `llama.cpp`가
-  그대로 있어서 되살릴 수 있다(보고서 §5 참조).
-- 백업 자동화 — D114 백업 API는 있지만 주기 실행은 걸지 않았다.
+- 교과서·학급 자료가 아직 한 건도 없다. 도판 판정 파이프라인은 합성 도판으로만
+  확인했고, **실제 교과서 PDF로는 이 서버에서 아직 안 돌려 봤다.**
+- 백업은 이 서버 안에만 쌓인다(`~/data/nodi/storage/backups/`). NFS PVC라
+  오버레이보다는 안전하지만, 서버 밖 사본은 없다.
 
 ## 관련 문서
 

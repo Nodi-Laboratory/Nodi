@@ -136,13 +136,17 @@ uv run python -m app.cli list-users
 [`deploy/`](deploy/)에 있다. 요약하면:
 
 ```bash
-deploy/bootstrap.sh    # 새 인스턴스 최초 1회 — 런타임·DB·바이너리 전부
-deploy/deploy.sh       # 이후 배포 — pull → 빌드 → 마이그레이션 → 재시작
+deploy/bootstrap.sh    # 새 인스턴스 최초 1회 — 런타임·DB·모델·바이너리 전부
+deploy/deploy.sh       # 이후 배포 — 빌드 → 마이그레이션 → 재시작
 ```
 
-로컬 개발과의 차이는 두 가지뿐이다 — 인프라를 컨테이너가 아니라 프로세스로
-띄우고, 프론트가 `next start`(프로덕션 빌드)라 핫 리로드가 없다. 나머지
-명령·환경변수·포트는 같다.
+평소에는 사람이 칠 일이 없다. **main에 push하면 GitHub Actions가 자동 배포한다**
+(self-hosted 러너 → rsync → `deploy.sh`). dev는 배포하지 않는다.
+
+로컬 개발과의 차이는 세 가지다 — 인프라를 컨테이너가 아니라 프로세스로 띄우고,
+프론트가 `next start`(프로덕션 빌드)라 핫 리로드가 없고, 교과서 도판 비전
+판정을 **서버 GPU에서 직접 돌린다**(D118 — llama.cpp + EXAONE-4.5-33B).
+나머지 명령·환경변수·포트는 같다.
 
 ---
 
