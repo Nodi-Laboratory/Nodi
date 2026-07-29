@@ -20,14 +20,14 @@ const nextConfig: NextConfig = {
     return [
       { source: "/api/:path*", destination: `${backend}/api/:path*` },
       // D116: `/health`는 **`/api` 밖**이다(인프라 liveness 계약, main.py가
-      // prefix 없이 include한다). 운영 콘솔의 "환경" 카드가 이걸 부르는데,
-      // 같은 출처로 배포하면 API_BASE가 `/api`라 root가 빈 문자열이 되고
-      // `/health/config`가 Next로 떨어져 404였다. 로컬에서는 API_BASE가
-      // `http://localhost:8000/api`라 백엔드로 직행해 드러나지 않았다.
+      // prefix 없이 include한다). 외부 업타임 감시가 칠 수 있게 이것만 연다 —
+      // 응답이 상태·서비스명·환경뿐이다.
       //
-      // 비밀값은 담기지 않는다 — 존재 여부(bool)와 비밀이 아닌 URL·모델명뿐이고
-      // 외부 호출도 하지 않는다(routers/health.py).
-      { source: "/health/:path*", destination: `${backend}/health/:path*` },
+      // **`/health/config`는 일부러 빼 뒀다.** 한 번 `/health/:path*`로 열었다가
+      // 되돌렸다: 비밀값은 없어도 `secret_is_default`·`jwt_algorithm`·내부
+      // 경로·모델명이 인증 없이 나가 정찰 정보가 된다. 콘솔은 관리자 인증을
+      // 거치는 `/api/admin/env`로 같은 내용을 받는다. 서버에서 볼 때는
+      // `curl localhost:8000/health/config`.
       { source: "/health", destination: `${backend}/health` },
     ];
   },

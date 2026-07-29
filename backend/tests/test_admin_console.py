@@ -202,3 +202,38 @@ async def test_score는_거리의_보수다(monkeypatch):
         _ScopelessClient(), query="q", class_id="c1", include_figures=False
     )
     assert out["hits"][0]["score"] == 0.75
+
+
+# ── 5) 환경 진단은 관리자만 본다 (D116) ──────────────────────────────
+def test_환경_진단은_관리자_인증을_요구한다():
+    """공개 노출 사고의 회귀 방지.
+
+    콘솔이 `/health/config`를 직접 부르던 시절, 프론트·백엔드를 같은 출처로
+    배포하자 그 경로가 **인증 없이** 인터넷에 열렸다. 비밀값은 없지만
+    secret_is_default·jwt_algorithm·내부 경로가 정찰 정보다.
+
+    이제 콘솔은 `/api/admin/env`를 쓴다. 이 라우트에서 admin 의존성이
+    빠지면 같은 사고가 조용히 재발하므로 여기서 못을 박는다.
+    """
+    from app.auth.deps import require_admin
+    from app.routers.admin import router
+
+    # router에 prefix="/admin"이 붙어 있어 등록 경로는 "/admin/env"다.
+    route = next(r for r in router.routes if getattr(r, "path", None) == "/admin/env")
+    guards = {d.call for d in route.dependant.dependencies}
+    assert require_admin in guards, "admin/env에 require_admin이 없다"
+
+
+def test_환경_진단은_health와_같은_내용이다():
+    """둘이 갈라지면 서버에서 친 진단과 콘솔 화면이 달라진다.
+
+    관리자용 엔드포인트를 따로 만들면서 페이로드를 복사해 두면, 한쪽만
+    고쳐졌을 때 원인을 찾는 데 시간이 든다 — 같은 함수를 쓰는지 확인한다.
+    """
+    from app.routers import admin, health
+
+    assert admin.health.config_report is health.config_report
+
+    report = health.config_report()
+    for key in ("ready", "blocking", "environment", "database", "auth", "judge"):
+        assert key in report

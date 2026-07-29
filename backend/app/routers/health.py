@@ -43,13 +43,16 @@ async def health() -> dict:
     }
 
 
-@router.get("/health/config")
-async def health_config() -> dict:
-    """설정 자가진단 — 신규 환경에서 무엇이 빠졌는지 한눈에 본다.
+def config_report() -> dict:
+    """설정 자가진단 페이로드.
 
-    `ready`는 **채팅 한 턴이 성립하는 최소 조건**이다(DB + Upstage).
-    파일 업로드는 worker DSN이, 교과서는 judge가 추가로 필요하므로 각 블록의
-    `configured`를 따로 본다.
+    D116: 라우트에서 떼어 함수로 뺐다. 같은 내용을 운영 콘솔이 **관리자 인증을
+    거쳐** 받아야 하기 때문이다(`/api/admin/env`). 아래 `/health/config`는
+    서버에 들어가서 치는 로컬 진단 창구로 남는다 — 백엔드는 127.0.0.1에만
+    바인딩하고, 프론트가 이 경로를 외부로 프록시하지 않는다.
+
+    비밀값은 담지 않는다는 규칙은 그대로다. 그래도 공개는 하지 않는다 —
+    `secret_is_default`·`jwt_algorithm`·내부 경로는 공격자에게 정찰 정보다.
     """
     database = {
         "app_dsn_set": bool(settings.database_url),
@@ -124,3 +127,17 @@ async def health_config() -> dict:
         "storage": storage,
         "judge": judge,
     }
+
+
+@router.get("/health/config")
+async def health_config() -> dict:
+    """설정 자가진단 — 신규 환경에서 무엇이 빠졌는지 한눈에 본다.
+
+    `ready`는 **채팅 한 턴이 성립하는 최소 조건**이다(DB + Upstage).
+    파일 업로드는 worker DSN이, 교과서는 judge가 추가로 필요하므로 각 블록의
+    `configured`를 따로 본다.
+
+    **외부에 공개되지 않는다** — 배포에서 프론트가 `/health`(liveness)만
+    프록시한다. 서버에서 `curl localhost:8000/health/config`로 본다.
+    """
+    return config_report()

@@ -128,15 +128,15 @@ export async function getAdminOverview(): Promise<AdminOverview> {
 }
 
 /**
- * 환경 자가진단 (D97의 `/health/config`).
+ * 환경 자가진단 (D97의 내용, D116부터 관리자 인증 경유).
  *
- * 이 경로만 `/api` 접두사 **밖**이다 — 인프라 liveness 계약이라 그렇다.
- * 비밀값은 담기지 않는다(존재 여부와 비밀이 아닌 URL·모델명만).
+ * 예전에는 `/api` 밖의 `/health/config`를 직접 불렀다. 그런데 프론트와
+ * 백엔드를 같은 출처로 배포하면서 그 경로가 **인터넷에 인증 없이** 열리게
+ * 됐다. 비밀값은 없지만 `secret_is_default`·`jwt_algorithm`·내부 경로는
+ * 정찰 정보다. 백엔드가 같은 페이로드를 관리자 전용으로 다시 낸다.
  */
 export async function getHealthConfig(): Promise<HealthConfig> {
-  const root = API_BASE.replace(/\/api$/, "");
-  const res = await ensureOk(await fetch(`${root}/health/config`));
-  return res.json();
+  return getJson<HealthConfig>("/admin/env");
 }
 
 export async function getAdminFlow(): Promise<AdminFlow> {

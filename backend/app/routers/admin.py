@@ -23,6 +23,7 @@ from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
 from ..config import get_settings
 from ..db.client import UserClient, get_service_client
 from ..services import admin_backup, admin_console, app_settings
+from . import health
 
 logger = logging.getLogger("nodi.admin")
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -234,6 +235,24 @@ async def overview(
     """
     client = UserClient.from_user(user)
     return await client.rpc("admin_overview", {})
+
+
+@router.get("/env")
+async def env(
+    _user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """환경 자가진단 — 콘솔 개요의 "환경" 카드.
+
+    D116: 콘솔이 원래 `/health/config`를 직접 불렀는데, 같은 출처로 배포하면서
+    그 경로가 인터넷에 인증 없이 열리게 됐다. 비밀값은 없지만
+    `secret_is_default`·`jwt_algorithm`·내부 경로·모델명은 정찰 정보다 —
+    관리자만 볼 이유가 충분하다.
+
+    내용은 `/health/config`와 **같은 함수**가 만든다. 둘이 갈라지면 서버에서
+    친 진단과 콘솔 화면이 달라져 원인을 찾기 어려워진다.
+    """
+    return health.config_report()
 
 
 # ---------------------------------------------------------------------------
