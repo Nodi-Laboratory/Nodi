@@ -27,5 +27,15 @@ insert into public.app_settings (key, value) values
     ('figure_judge_concurrency',        '4'),
     -- ReAct 스킬 루프 (D109)
     ('react_enabled',                   'true'),
-    ('react_max_steps',                 '3')
+    ('react_max_steps',                 '3'),
+    -- PIKE-RAG (TASK 6, D116~D119)
+    ('atom_rag_enabled',                'false'),
+    ('atom_questions_per_chunk',        '3'),
+    ('atom_top_k',                      '5'),
+    ('atom_rag_max_distance',           '0.45'),
+    ('atom_gen_concurrency',            '4'),
+    ('rag_query_rewrite_enabled',       'false'),
+    ('figure_caption_generate_enabled', 'false'),
+    ('semantic_chunking_enabled',       'false'),
+    ('semantic_chunking_max_chars',     '120000')
 on conflict (key) do nothing;

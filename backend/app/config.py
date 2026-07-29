@@ -144,6 +144,24 @@ class Settings(BaseSettings):
     # (services/files.py). 판정 생략 폴백은 D88 시절 동작으로, 더 이상 없다.
     judge_api_key: str = ""
 
+    # ── PIKE-RAG (TASK 6, D116~D119) ─────────────────────────────
+    # A. 지식 원자화 (D116) — 킬스위치 off 출하, 캘리브레이션 후 on
+    atom_rag_enabled: bool = False
+    atom_questions_per_chunk: int = 3      # 청크당 예상 질문 수(비용 직결)
+    atom_top_k: int = 5                    # chunk_atoms 컬렉션 top-K
+    atom_rag_max_distance: float = 0.45    # 원자 거리 게이트(질문↔질문 — 실측 후 조정)
+    atom_gen_concurrency: int = 4          # solar 동시 호출
+    atom_batch_size: int = 16              # atom_batch 팬아웃 단위(스테일 120s 여유)
+    # C. 질문 정제 (D117)
+    rag_query_rewrite_enabled: bool = False
+    # D. figure 캡션 비전 생성 (D118) — off면 D103 경로 그대로
+    figure_caption_generate_enabled: bool = False
+    figure_page_text_max_chars: int = 4000  # 비전 프롬프트 페이지 컨텍스트 절단
+    # B. LLM 의미 청킹 (D119)
+    semantic_chunking_enabled: bool = False
+    semantic_chunking_max_chars: int = 120_000   # 초과 문서는 통째로 정규식 폴백
+    semantic_chunking_max_llm_calls: int = 120   # 경계 판단 콜 수 2차 가드
+
     # --- App ---
     cors_origins: list[str] = ["http://localhost:3000"]
     environment: str = "development"

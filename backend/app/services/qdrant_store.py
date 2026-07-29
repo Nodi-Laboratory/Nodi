@@ -27,6 +27,10 @@ COL_FILE_CHUNKS = "file_chunks"
 # figure 캡션·description 임베딩을 저장하고, file_id 페이로드 필터로 스코핑한다.
 # 청크 본문과 마찬가지로 페이로드엔 식별자만(본문 없음), 히트 후 RLS 재조회.
 COL_TEXTBOOK_FIGURES = "textbook_figures"
+# 원자 질문 임베딩 컬렉션(TASK 6, D116). 청크당 solar가 생성한 예상 질문을
+# embedding-passage로 임베딩해 저장한다. 페이로드는 {atom_id, chunk_id, file_id,
+# owner_id}만(질문 본문 금지) — 히트 후 chunk_id로 file_chunks를 RLS 재조회한다.
+COL_CHUNK_ATOMS = "chunk_atoms"
 
 _client: AsyncQdrantClient | None = None
 
@@ -50,6 +54,7 @@ async def ensure_collections() -> None:
         for name in (
             COL_FILE_CHUNKS,
             COL_TEXTBOOK_FIGURES,
+            COL_CHUNK_ATOMS,
         ):
             if not await client.collection_exists(name):
                 await client.create_collection(
@@ -77,6 +82,15 @@ async def ensure_collections() -> None:
             )
         except Exception:  # noqa: BLE001
             logger.debug("textbook_figures file_id 인덱스 생성 생략")
+        # chunk_atoms.file_id KEYWORD 인덱스 (원자 스코프 필터 성능, D116).
+        try:
+            await client.create_payload_index(
+                collection_name=COL_CHUNK_ATOMS,
+                field_name="file_id",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("chunk_atoms file_id 인덱스 생성 생략")
     except Exception:  # noqa: BLE001 - 부팅을 죽이지 않는다
         logger.warning(
             "Qdrant 컬렉션 보장 실패 — 부팅은 계속, 사용 시점에 에러로 드러남 (url=%s)",
