@@ -302,3 +302,99 @@ async def test_원자검색_꺼지면_기존_search와_거리게이트를_쓴다
     # 거리 게이트가 그대로 — 0.3만 통과.
     assert len(res.data["chunks"]) == 1
     assert res.data["chunks"][0]["distance"] == 0.3
+
+
+# --- search_class_material: 검색어 정제(D117) ------------------------------
+
+
+def _wire_refine(monkeypatch, *, refined=None, raises=False):
+    """`scm.solar.complete`를 기록 fake로 대체. 호출 여부·전달 메시지를 남긴다."""
+    import types
+
+    calls: dict[str, Any] = {"count": 0, "messages": None}
+
+    async def fake_complete(messages, *a, **kw):
+        calls["count"] += 1
+        calls["messages"] = messages
+        if raises:
+            raise RuntimeError("정제 실패")
+        return types.SimpleNamespace(message={"content": refined})
+
+    monkeypatch.setattr(scm.solar, "complete", fake_complete)
+    return calls
+
+
+async def test_정제_켜지면_정제문으로_검색한다(monkeypatch):
+    overlay = {
+        "class_material_rag_enabled": True,
+        "atom_rag_enabled": False,
+        "rag_query_rewrite_enabled": True,
+    }
+    calls = _wire_rag(
+        monkeypatch,
+        overlay=overlay,
+        search_rows=[{"file_id": "f1", "chunk_text": "히트", "distance": 0.3}],
+    )
+    refine = _wire_refine(monkeypatch, refined="광합성에서 명반응은 어디서 일어나?")
+    res = await SearchClassMaterialSkill().run({"query": "그거 어디서 일어나?"}, _class_ctx())
+    assert res.ok
+    # solar가 불렸고, 검색에는 정제문이 들어갔다.
+    assert refine["count"] == 1
+    assert calls["search"]["query"] == "광합성에서 명반응은 어디서 일어나?"
+
+
+async def test_정제_꺼지면_원문으로_검색하고_solar_미호출(monkeypatch):
+    overlay = {
+        "class_material_rag_enabled": True,
+        "atom_rag_enabled": False,
+        "rag_query_rewrite_enabled": False,
+    }
+    calls = _wire_rag(
+        monkeypatch,
+        overlay=overlay,
+        search_rows=[{"file_id": "f1", "chunk_text": "히트", "distance": 0.3}],
+    )
+    refine = _wire_refine(monkeypatch, refined="바뀐문장")
+    res = await SearchClassMaterialSkill().run({"query": "광합성이란?"}, _class_ctx())
+    assert res.ok
+    # solar는 아예 안 불린다.
+    assert refine["count"] == 0
+    assert calls["search"]["query"] == "광합성이란?"
+
+
+async def test_정제_예외면_원문으로_검색한다(monkeypatch):
+    overlay = {
+        "class_material_rag_enabled": True,
+        "atom_rag_enabled": False,
+        "rag_query_rewrite_enabled": True,
+    }
+    calls = _wire_rag(
+        monkeypatch,
+        overlay=overlay,
+        search_rows=[{"file_id": "f1", "chunk_text": "히트", "distance": 0.3}],
+    )
+    refine = _wire_refine(monkeypatch, raises=True)
+    res = await SearchClassMaterialSkill().run({"query": "광합성이란?"}, _class_ctx())
+    assert res.ok
+    # 예외를 삼키고 원문으로 검색.
+    assert refine["count"] == 1
+    assert calls["search"]["query"] == "광합성이란?"
+
+
+async def test_정제_빈문자열이면_원문을_유지한다(monkeypatch):
+    overlay = {
+        "class_material_rag_enabled": True,
+        "atom_rag_enabled": False,
+        "rag_query_rewrite_enabled": True,
+    }
+    calls = _wire_rag(
+        monkeypatch,
+        overlay=overlay,
+        search_rows=[{"file_id": "f1", "chunk_text": "히트", "distance": 0.3}],
+    )
+    refine = _wire_refine(monkeypatch, refined="   ")
+    res = await SearchClassMaterialSkill().run({"query": "광합성이란?"}, _class_ctx())
+    assert res.ok
+    # 정제 결과가 공백뿐이면 원문 유지.
+    assert refine["count"] == 1
+    assert calls["search"]["query"] == "광합성이란?"

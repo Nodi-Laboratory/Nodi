@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from ...config import get_settings
-from ...services import app_settings, rag
+from ...services import app_settings, rag, solar
 from ..base import SkillBase, SkillContext, SkillResult
 
 logger = logging.getLogger("nodi.ai.skill.class_material")
@@ -23,6 +23,32 @@ settings = get_settings()
 # 모델에게 돌려줄 청크 본문 길이 상한(자). 전문을 그대로 실으면 다음 LLM 호출
 # 입력이 그만큼 커진다 — 근거로 쓰기엔 이 정도면 충분하다.
 _SNIPPET_CHARS = 700
+
+
+async def _refine_query(query: str) -> str:
+    """D117: 검색어 정제 — 지시대명사·구어체 잔재를 풀어낸 자연어 의문문으로.
+
+    best-effort: 실패·빈 응답이면 원문 그대로. **키워드화 금지** — embedding-query는
+    자연어 질문으로 학습돼 있어 줄일수록 거리가 나빠진다(위 parameters 실측 주석).
+    """
+    try:
+        completion = await solar.complete(
+            [
+                {"role": "system", "content": (
+                    "학생 질문을 검색용으로 정제한다. 지시대명사('그것/이거')를 "
+                    "구체적 명사로 바꾸고 오탈자를 고치되, **완전한 자연어 의문문 "
+                    "형태를 유지**하라. 키워드 나열로 줄이지 마라. 이미 명확하면 "
+                    "그대로 돌려줘라. 정제된 질문 한 문장만 출력하라."
+                )},
+                {"role": "user", "content": query},
+            ],
+            max_tokens=128,
+        )
+        refined = (completion.message.get("content") or "").strip()
+        return refined or query
+    except Exception:  # noqa: BLE001 - 정제 실패가 검색을 막지 않는다
+        logger.warning("검색어 정제 실패 — 원문으로 검색", exc_info=True)
+        return query
 
 
 class SearchClassMaterialSkill(SkillBase):
@@ -87,6 +113,13 @@ class SearchClassMaterialSkill(SkillBase):
                 message="이 학급에 올라온 수업 자료가 아직 없습니다.",
                 data={"chunks": []},
             )
+
+        # D117: 검색어 정제 — 지시대명사·구어체를 자연어 의문문으로 풀어 검색
+        # 정확도를 올린다. query 확정 단계이므로 이중 검색 분기보다 **앞**에 둔다.
+        if app_settings.as_bool(
+            overlay, "rag_query_rewrite_enabled", settings.rag_query_rewrite_enabled
+        ):
+            query = await _refine_query(query)
 
         max_dist = app_settings.as_float(
             overlay,
