@@ -95,12 +95,20 @@ class SearchClassMaterialSkill(SkillBase):
             0.1,
             0.9,
         )
-        chunks = await rag.search(ctx.client, file_ids, query)
-        # 거리 게이트 — 무관한 청크가 근거로 새는 것을 막는다(D73).
-        chunks = [
-            c for c in chunks
-            if c.get("distance") is not None and c["distance"] <= max_dist
-        ]
+        use_atoms = app_settings.as_bool(
+            overlay, "atom_rag_enabled", settings.atom_rag_enabled
+        )
+        if use_atoms:
+            # D116: 이중 검색은 게이트(직접 0.60/원자 0.45)를 내부에서 끝냈다 —
+            # 여기서 재게이트하면 원자 경유 청크(distance=None)가 다 죽는다.
+            chunks = await rag.dual_search(ctx.client, file_ids, query)
+        else:
+            chunks = await rag.search(ctx.client, file_ids, query)
+            # 거리 게이트 — 무관한 청크가 근거로 새는 것을 막는다(D73).
+            chunks = [
+                c for c in chunks
+                if c.get("distance") is not None and c["distance"] <= max_dist
+            ]
         if not chunks:
             return SkillResult(
                 ok=True,
@@ -114,7 +122,13 @@ class SearchClassMaterialSkill(SkillBase):
             {
                 "file": names.get(c.get("file_id")) or "자료",
                 "text": (c.get("chunk_text") or "")[:_SNIPPET_CHARS],
-                "distance": round(float(c["distance"]), 3),
+                # D116: 원자 경유 청크는 청크 벡터 거리를 알 수 없어 distance=None —
+                # round() 전에 가드하지 않으면 TypeError로 스킬이 죽는다.
+                "distance": (
+                    round(float(c["distance"]), 3)
+                    if c.get("distance") is not None
+                    else None
+                ),
             }
             for c in chunks
         ]

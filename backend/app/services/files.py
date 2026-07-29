@@ -384,6 +384,10 @@ async def delete_file(
         await worker_common._qdrant_delete_file_points(
             file_id, collection=qdrant_store.COL_TEXTBOOK_FIGURES
         )
+    # D116: 청크 원자(예상 질문) 임베딩 포인트도 정리(별도 Qdrant 컬렉션).
+    await worker_common._qdrant_delete_file_points(
+        file_id, collection=qdrant_store.COL_CHUNK_ATOMS
+    )
 
 
 async def retry_file(

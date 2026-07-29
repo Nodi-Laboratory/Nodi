@@ -10,11 +10,13 @@ from __future__ import annotations
 from typing import Any
 
 from app.ai.base import SkillContext
+from app.ai.skills import search_class_material as scm
 from app.ai.skills.concepts import (
     GetConceptSkill,
     ListSessionConceptsSkill,
     _parse_cards,
 )
+from app.ai.skills.search_class_material import SearchClassMaterialSkill
 from app.ai.skills.session_files import (
     ListSessionFilesSkill,
     ReadSessionFileSkill,
@@ -202,3 +204,101 @@ async def test_이_세션의_파일이_아니면_거절한다():
     res = await ReadSessionFileSkill().run({"file_id": "다른파일"}, _ctx(c))
     assert res.ok is False
     assert res.error_code == "not_found"
+
+
+# --- search_class_material: 이중 검색 배선(D116) ---------------------------
+
+
+def _class_ctx() -> SkillContext:
+    return SkillContext(
+        user_id="u1",
+        client=object(),  # rag 함수는 전부 patch되므로 실제 client는 안 쓴다
+        session_id="s1",
+        space_kind="class",
+        space_ref="class-1",
+        role="student",
+    )
+
+
+def _wire_rag(monkeypatch, *, overlay, search_rows=None, dual_rows=None):
+    """스킬이 부르는 rag 표면을 전부 기록 fake로 대체. 어느 검색을 불렀는지
+    calls에 남긴다."""
+    calls: dict[str, Any] = {"search": None, "dual": None}
+
+    async def fake_overlay():
+        return overlay
+
+    async def fake_file_ids(_client, _ref):
+        return ["f1"]
+
+    async def fake_search(_client, file_ids, query, *a, **kw):
+        calls["search"] = {"file_ids": file_ids, "query": query}
+        return list(search_rows or [])
+
+    async def fake_dual(_client, file_ids, query, *a, **kw):
+        calls["dual"] = {"file_ids": file_ids, "query": query}
+        return list(dual_rows or [])
+
+    async def fake_names(_client, ids):
+        return {i: f"자료-{i}" for i in ids}
+
+    def fake_sources(chunks, names):
+        return [{"id": c.get("file_id")} for c in chunks]
+
+    monkeypatch.setattr(scm.app_settings, "get_overlay", fake_overlay)
+    monkeypatch.setattr(scm.rag, "class_material_file_ids", fake_file_ids)
+    monkeypatch.setattr(scm.rag, "search", fake_search)
+    monkeypatch.setattr(scm.rag, "dual_search", fake_dual)
+    monkeypatch.setattr(scm.rag, "file_names", fake_names)
+    monkeypatch.setattr(scm.rag, "build_sources", fake_sources)
+    return calls
+
+
+async def test_원자검색_켜지면_dual_search를_부른다(monkeypatch):
+    overlay = {"class_material_rag_enabled": True, "atom_rag_enabled": True}
+    calls = _wire_rag(
+        monkeypatch,
+        overlay=overlay,
+        dual_rows=[
+            {"file_id": "f1", "chunk_text": "직접 히트", "distance": 0.3, "via": "chunk"},
+            # 원자 경유 행 — distance None. round()에서 죽지 않아야 한다.
+            {"file_id": "f1", "chunk_text": "원자 히트", "distance": None, "via": "atom"},
+        ],
+    )
+    res = await SearchClassMaterialSkill().run({"query": "A와 B의 차이는?"}, _class_ctx())
+    assert res.ok
+    # dual만 불리고 search는 안 불린다.
+    assert calls["dual"] is not None
+    assert calls["search"] is None
+    assert calls["dual"]["query"] == "A와 B의 차이는?"
+    # 원자 경유 행(distance None)도 살아남아 2곳이 잡힌다(재게이트 금지).
+    assert len(res.data["chunks"]) == 2
+    # distance None은 items 조립에서 None으로 나가고 죽지 않는다.
+    dists = [c["distance"] for c in res.data["chunks"]]
+    assert 0.3 in dists
+    assert None in dists
+
+
+async def test_원자검색_꺼지면_기존_search와_거리게이트를_쓴다(monkeypatch):
+    overlay = {
+        "class_material_rag_enabled": True,
+        "atom_rag_enabled": False,
+        "class_material_rag_max_distance": 0.60,
+    }
+    calls = _wire_rag(
+        monkeypatch,
+        overlay=overlay,
+        search_rows=[
+            {"file_id": "f1", "chunk_text": "가까움", "distance": 0.3},
+            {"file_id": "f1", "chunk_text": "멀다", "distance": 0.8},  # 게이트에 걸린다
+            {"file_id": "f1", "chunk_text": "거리없음", "distance": None},  # 걸린다
+        ],
+    )
+    res = await SearchClassMaterialSkill().run({"query": "광합성이란?"}, _class_ctx())
+    assert res.ok
+    # search만 불리고 dual은 안 불린다.
+    assert calls["search"] is not None
+    assert calls["dual"] is None
+    # 거리 게이트가 그대로 — 0.3만 통과.
+    assert len(res.data["chunks"]) == 1
+    assert res.data["chunks"][0]["distance"] == 0.3
