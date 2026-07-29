@@ -1,39 +1,47 @@
 @import "tailwindcss";
 
 /* ──────────────────────────────────────────────────────────────
-   nodi 디자인 토큰 (architecture.md §9, D4/D5)
-   노란 브랜드 팔레트(#fcf58b) + cream 표면 + dark brown 사이드바.
-   값은 실제 화면 확인 후 미세조정(WCAG 대비)할 수 있음.
+   nodi 디자인 토큰 (D127 — 캔버스 v2와 함께 전면 교체)
+
+   이전: 크림(#faf7ee) + 노랑(#fcf58b) + 다크브라운 사이드바 + 손글씨 폰트.
+   따뜻했지만 유치했고("초딩같다", 사용자 2026-07-30), 무엇보다 노랑 하나로는
+   "AI가 쓴 것 / 학생이 쓴 것"을 구분할 수 없었다.
+
+   이후: 아주 살짝 푸른 흰 종이 + **강조색 둘**.
+       파랑  AI가 만든 것
+       주황  학생이 만든 것
+   캔버스의 `--c-*` 토큰과 같은 값이다(globals.css 아래쪽 .canvas2 블록).
+   두 팔레트가 갈리면 캔버스와 나머지 화면이 다른 제품처럼 보인다.
    ────────────────────────────────────────────────────────────── */
 :root {
   /* 표면 */
-  --bg: #faf7ee;            /* warm cream 표면 */
-  --bg-elevated: #fffdf7;   /* 카드 */
+  --bg: #f7f8fa;            /* 제도지 — 크림이 아니라 냉백 */
+  --bg-elevated: #ffffff;   /* 카드·팝오버 */
 
-  /* 세션 그래프 노드 (Conversation-Tree 형태 + nodi 노랑) */
-  --node-fill: #fcf58b;     /* 노드 채움(브랜드 노랑) */
-  --node-stroke: #6b4e13;   /* 노드 진한 테두리(대비) */
-  --node-label: #3a3320;    /* 노드 아래 라벨 텍스트 */
+  /* 세션 그래프 노드 */
+  --node-fill: #e7ebfb;
+  --node-stroke: #2a4bd8;
+  --node-label: #14161c;
 
-  /* 브랜드 강조 */
-  --accent: #fcf58b;        /* 연노랑 — 배경/하이라이트 */
-  --accent-deep: #e0a32e;   /* 대비 필요한 곳(버튼/링/강조선) */
-  --accent-fg: #4a3d1e;     /* 노랑 배경 위 텍스트 */
-  --accent-border: #c9a227; /* 노랑 요소 테두리 */
+  /* 브랜드 강조 — 잉크 블루 */
+  --accent: #e7ebfb;        /* 옅은 파랑 — 배경/하이라이트 */
+  --accent-deep: #2a4bd8;   /* 대비 필요한 곳(버튼/링/강조선) */
+  --accent-fg: #1c2f8f;     /* 옅은 파랑 위 텍스트 */
+  --accent-border: #c3ccf2; /* 파랑 요소 테두리 */
 
-  /* 사이드바 (dark brown) */
-  --bg-sidebar: #3a3320;
-  --sidebar-fg: #cfc5a6;        /* 비활성 */
+  /* 사이드바 — 잉크. 갈색은 새 종이색과 충돌했다 */
+  --bg-sidebar: #14161c;
+  --sidebar-fg: #8b91a1;        /* 비활성 */
   --sidebar-fg-active: #ffffff; /* 활성 */
 
-  /* 상태 색 (노랑 accent와 충돌 회피) */
-  --warning: #c2702a;   /* 주황-갈색 */
-  --danger: #b54a3a;    /* 위험 */
-  --positive: #6e8a3c;  /* 성공(올리브-그린) */
+  /* 상태 색 */
+  --warning: #b26a12;
+  --danger: #c0392b;
+  --positive: #2f7a4d;
 
   /* 본문 텍스트 */
-  --fg: #2a2a24;
-  --fg-muted: #7a7a6e;
+  --fg: #14161c;
+  --fg-muted: #5b6172;
 }
 
 /* Tailwind v4: CSS 변수 → 유틸리티 색 토큰 매핑.
@@ -150,6 +158,149 @@ body {
   margin: 0.5em 0;
   padding-left: 0.75em;
   color: var(--fg-muted);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   캔버스 v2 — "제도 작업대" (D127)
+   ══════════════════════════════════════════════════════════════
+
+   이 화면의 핵심 긴장은 **기계 활자와 손 자국이 한 면 위에 있다**는 것이다.
+   AI가 쓴 글은 조판된 것이고, 학생이 그은 선은 손으로 그은 것이다. 디자인이
+   그 차이를 지워 버리면 학생은 자기가 무엇을 스스로 했는지 알 수 없다.
+
+   그래서 강조색이 **둘**이다. 이게 이 화면의 서명이다:
+
+       파랑(--c-live)   AI가 만든 것. 개념 글의 좌측 괘선, 연결선, 선택 상태
+       주황(--c-hand)   학생이 만든 것. 메모의 좌측 괘선, 그리기 기본 획
+
+   장식이 아니라 정보다. 캔버스를 멀리서 봐도 학생이 스스로 채운 분량이
+   한눈에 보인다 — 교사에게는 그게 곧 학습의 흔적이다.
+
+   폐기한 것: 크림(#faf7ee) + 노랑(#ffc526) 단색 + 손글씨 폰트 + 방사형 글로우.
+   따뜻하지만 유치했고, 노랑 하나로는 위 구분을 표현할 수 없었다.
+*/
+.canvas2 {
+  /* 면 — 크림이 아니라 아주 살짝 푸른 흰색. 제도지의 인상 */
+  --c-paper: #f7f8fa;
+  --c-sunk: #edeff3; /* 도구 레일 · 칩 등 눌린 면 */
+  --c-raised: #ffffff; /* 팝오버 · 입력창 */
+
+  /* 잉크 */
+  --c-ink: #14161c; /* 본문 */
+  --c-ink-soft: #5b6172; /* 보조 · 비활성 아이콘 */
+  --c-ink-faint: #8b91a1; /* 캡션 · 플레이스홀더 */
+  --c-rule: #d8dde6; /* 괘선 · 도트 그리드 · 경계 */
+
+  /* 두 축 */
+  --c-live: #2a4bd8; /* AI */
+  --c-live-wash: rgba(42, 75, 216, 0.07);
+  --c-hand: #e8552e; /* 학생 */
+  --c-hand-wash: rgba(232, 85, 46, 0.08);
+
+  /* 형광펜은 이제 강조색이 아니라 텍스트 마크업 전용 */
+  --c-mark: rgba(255, 214, 92, 0.55);
+
+  --c-danger: #c0392b;
+
+  /* 그림자는 중성 · 얕게. 노란 그림자를 쓰지 않는다 */
+  --c-shadow-sm: 0 1px 2px rgba(20, 22, 28, 0.06);
+  --c-shadow-md: 0 4px 16px rgba(20, 22, 28, 0.1);
+  --c-shadow-lg: 0 12px 40px rgba(20, 22, 28, 0.14);
+
+  --c-radius: 10px;
+
+  background: var(--c-paper);
+  color: var(--c-ink);
+  font-family: var(--font-sans);
+}
+
+/* UI 크롬 — 각진 터미널의 제도 도구 인상 */
+.canvas2 .ui {
+  font-family: var(--font-ui), var(--font-sans);
+}
+/* 태그 · 단축키 · 수치 — 고정폭이 "계측"의 감각을 준다 */
+.canvas2 .label {
+  font-family: var(--font-label), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+/* 도트 그리드 — **변환 평면 안**에 있어야 팬을 따라간다.
+   v1의 방사형 글로우는 화면 고정이라 아무리 캔버스를 끌어도 안 움직였고,
+   그래서 무한 캔버스라는 느낌이 전혀 없었다. */
+.canvas2-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle at 1px 1px, var(--c-rule) 1px, transparent 0);
+  opacity: 0.55;
+}
+
+/* Excalidraw 기본 UI 잔재 제거 — zenMode로도 남는 것들.
+   우리 도구 레일이 그 역할을 전부 한다. */
+.canvas2 .excalidraw .App-menu,
+.canvas2 .excalidraw .App-toolbar,
+.canvas2 .excalidraw .layer-ui__wrapper__footer,
+.canvas2 .excalidraw .App-bottom-bar,
+.canvas2 .excalidraw .scroll-back-to-content,
+.canvas2 .excalidraw .help-icon,
+.canvas2 .excalidraw .zen-mode-transition {
+  display: none !important;
+}
+.canvas2 .excalidraw {
+  --color-surface-low: transparent;
+  background: transparent !important;
+}
+
+/* 아이템 등장 — 좌측 괘선이 위에서 아래로 그어지고 글이 뒤따른다.
+   "쓰는" 동작 하나만 남기고 나머지는 조용히 둔다. */
+@keyframes c2-rule-draw {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+@keyframes c2-text-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes c2-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+@keyframes c2-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas2 *,
+  .canvas2 *::before,
+  .canvas2 *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────
