@@ -17,6 +17,7 @@ from .. import (
     embedding,
     figure_extract,
     qdrant_store,
+    semantic_chunker,
     upstage,
 )
 from . import common, jobs
@@ -275,7 +276,29 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     chunk_overlap = 0 if is_session_upload else app_settings.as_int(
         overlay, "chunk_overlap_chars", settings.chunk_overlap_chars, 0, 500
     )
-    chunks = embedding.chunk_text(text, chunk_size, chunk_overlap)
+
+    # D119: LLM 의미 청킹 분기. 노브 on이고 세션 업로드가 아니며 크기 가드 이내일
+    # 때만 경계를 재조정한다(비용·지연 방어). 어떤 실패든 정규식 폴백으로 삼켜
+    # 인덱싱을 절대 막지 않는다(인덱싱 불가침 — D88 동형).
+    chunks: list[str] = []
+    sem_on = app_settings.as_bool(
+        overlay, "semantic_chunking_enabled", settings.semantic_chunking_enabled
+    )
+    sem_max = app_settings.as_int(
+        overlay, "semantic_chunking_max_chars",
+        settings.semantic_chunking_max_chars, 10_000, 500_000,
+    )
+    if sem_on and not is_session_upload and len(text) <= sem_max:
+        try:
+            chunks = await semantic_chunker.chunk_text_semantic(
+                text, chunk_size, chunk_overlap,
+                heartbeat=lambda: common.touch_job(svc, job["id"]),
+            )
+        except Exception:  # noqa: BLE001 - D119: 의미 청킹 실패 격리(정규식 폴백)
+            logger.exception("의미 청킹 실패 — 정규식 폴백 file=%s", file_id)
+            chunks = []
+    if not chunks:
+        chunks = embedding.chunk_text(text, chunk_size, chunk_overlap)
 
     if not chunks:
         await svc.update(
