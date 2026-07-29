@@ -218,6 +218,30 @@ def list_backups() -> list[dict[str, Any]]:
     return out
 
 
+def prune_backups(keep: int) -> list[str]:
+    """최신 `keep`개만 남기고 지운다 — 지운 이름 목록 반환 (D119).
+
+    자동 백업을 걸면 스냅샷이 무한히 쌓인다. 대화 원문이 든 파일이라 오래된
+    것을 그냥 두는 것도 좋지 않고(유출 시 범위가 넓어진다), 33T NFS라도 언젠가
+    찬다. 목록은 이름순 역정렬이고 이름이 타임스탬프라 사전순=시간순이다.
+
+    `keep < 1`은 거부한다 — 전부 지우는 실수를 이 함수로 할 수 있으면 안 된다.
+    """
+    if keep < 1:
+        raise ValueError("keep은 1 이상이어야 합니다.")
+    names = [b["name"] for b in list_backups()]
+    removed = []
+    for name in names[keep:]:
+        try:
+            _path(name).unlink()
+            removed.append(name)
+        except OSError:
+            logger.warning("백업 삭제 실패: %s", name, exc_info=True)
+    if removed:
+        logger.info("오래된 백업 %d개 정리: %s", len(removed), ", ".join(removed))
+    return removed
+
+
 def read_backup(name: str) -> dict[str, Any]:
     path = _path(name)
     if not path.exists():

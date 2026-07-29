@@ -34,6 +34,7 @@ supervisorctl -c ~/app/supervisord.conf status
 | `nodi:backend` | FastAPI + **업로드/임베딩 워커도 이 안에서 돈다** | 127.0.0.1:8000 |
 | `nodi:frontend` | Next.js `next start` | 127.0.0.1:3000 |
 | `nodi:cloudflared` | 외부 공개(HTTPS). 아웃바운드로만 붙는다 | 없음 |
+| `nodi:backup` | 매일 03:00(KST) 데이터 스냅샷. 대부분 잠들어 있다 | 없음 |
 | `gh-runner` | GitHub Actions self-hosted 러너 (**`nodi` 그룹 밖**) | 없음 |
 
 **전부 127.0.0.1에만 바인딩한다.** 인바운드로 열린 포트가 하나도 없고, 외부
@@ -71,6 +72,39 @@ key를 못 만든다) — 그래서 서버가 스스로 `git fetch`하지 못한
 > **서버에서 코드를 직접 고치지 마라.** 배포의 `rsync --delete`가 지운다.
 > 고칠 것은 저장소에서 고치고 main에 올린다.
 
+## 계정 · 백업 (운영 CLI)
+
+콘솔에 없는 것들이다. 서버에 들어올 수 있는 사람만 하도록 CLI에 뒀다.
+
+```bash
+cd ~/app/Nodi/backend
+./.venv/bin/python -m app.cli list-users
+./.venv/bin/python -m app.cli create-user 이메일 비밀번호 --role admin --name 이름
+./.venv/bin/python -m app.cli grant-admin 이메일
+./.venv/bin/python -m app.cli set-password 이메일 새비밀번호
+./.venv/bin/python -m app.cli backup            # 지금 바로 스냅샷 하나
+```
+
+관리자는 **가입 폼으로 만들 수 없다**(D99 권한 상승 차단). 첫 관리자는 반드시
+`create-user --role admin`으로 만든다.
+
+`set-password`가 콘솔이 아니라 CLI인 이유: 관리자가 남의 비밀번호를 바꿀 수
+있으면 그 사람으로 로그인해 대화를 볼 수 있다. 콘솔의 읽기 권한과는 성격이
+다르다. **이미 발급된 토큰은 무효화되지 않는다** — JWT는 상태가 없어서
+만료(기본 12시간)까지 통한다. 계정 탈취 대응이라면 `JWT_SECRET`을 갈아
+전원 로그아웃시켜야 한다.
+
+백업은 매일 03:00(KST) `nodi:backup`이 자동으로 만들고 **최신 14개만 남긴다**.
+
+```bash
+ls -lh ~/data/nodi/storage/backups/     # 쌓인 스냅샷
+tail -40 ~/app/log/backup.log           # 다음 실행 시각·결과
+```
+
+> **스냅샷에는 학생 대화 원문이 들어 있다.** 노트북으로 내려받으면 그 내용도
+> 함께 나간다. 복원은 관리자 콘솔에서 한다(문서는 복원되지 않는다 — 원본
+> 바이트와 벡터가 스냅샷에 없어서 껍데기만 생긴다).
+
 ## 완전 복구 (인스턴스가 재생성됐을 때)
 
 `~/app`이 통째로 사라져도 `~/data`만 살아 있으면 데이터는 그대로다.
@@ -99,8 +133,9 @@ rsync -az --delete --exclude .git --exclude node_modules --exclude .venv \
 ~/data/nodi/            ← 영속 (NFS PVC). 이것만 지키면 데이터는 안 잃는다
 ├─ pg/                  Postgres 데이터 디렉터리
 ├─ qdrant/storage/      벡터
-├─ storage/             업로드 원본 (STORAGE_ROOT)
-├─ backups/             D114 백업 JSON
+├─ storage/
+│  ├─ files/            업로드 원본 (STORAGE_ROOT)
+│  └─ backups/          스냅샷 JSON — **매일 03:00 KST 자동 생성** (D119)
 ├─ models/              판정 모델 가중치 **아카이브** (22GB, 실행용 아님)
 └─ env/
    ├─ backend.env       ★ 비밀값 정본. repo의 backend/.env가 여기를 가리킨다

@@ -93,6 +93,41 @@ async def authenticate(email: str, password: str) -> dict[str, Any] | None:
     return {"id": str(row["id"]), "email": row["email"]}
 
 
+async def set_password(email: str, password: str) -> dict[str, Any]:
+    """비밀번호 재설정 — 운영 CLI 전용 (D119).
+
+    관리자 비밀번호를 잊었거나 초기 비밀번호를 갈아야 할 때 쓸 수단이 없었다.
+    콘솔에도 이 기능은 없다 — 관리자가 다른 사람의 비밀번호를 바꿀 수 있으면
+    그 사람 계정으로 로그인해 대화를 볼 수 있고, 그건 콘솔의 읽기 권한과
+    성격이 다르다. 서버에 들어올 수 있는 사람만 할 수 있게 CLI에 둔다.
+
+    가입 경로와 같은 길이 규칙을 쓴다 — CLI라고 약한 비밀번호를 허용하면
+    운영 계정이 제일 약해진다.
+
+    **이미 발급된 토큰은 무효화되지 않는다.** JWT는 상태가 없어서 만료
+    (JWT_EXPIRE_MINUTES, 기본 12시간)까지 그대로 통한다. 계정이 털렸다고
+    판단해 비밀번호를 바꾸는 상황이면 비밀번호만으로는 부족하고,
+    JWT_SECRET을 갈아 전원 로그아웃시켜야 한다.
+    """
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"비밀번호는 {MIN_PASSWORD_LENGTH}자 이상이어야 합니다.")
+    async with worker_conn() as conn:
+        row = await conn.fetchrow(
+            """
+            update public.users set password_hash = $2
+            where email = $1
+            returning id, email
+            """,
+            email,
+            hash_password(password),
+        )
+    if row is None:
+        raise LookupError(f"계정을 찾을 수 없습니다: {email}")
+    # 비밀번호 자체는 절대 남기지 않는다. 언제 누가 바뀌었는지만.
+    logger.warning("비밀번호 재설정(CLI): %s", email)
+    return dict(row)
+
+
 async def set_role(email: str, role: str) -> dict[str, Any]:
     """역할 승격 — 관리자 부여용(CLI). 가입 경로로는 도달할 수 없다."""
     if role not in ("student", "teacher", "admin"):
