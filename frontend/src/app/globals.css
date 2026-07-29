@@ -264,6 +264,18 @@ body {
     transform: none;
   }
 }
+@keyframes c2-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
 @keyframes c2-caret {
   0%,
   100% {

@@ -34,8 +34,10 @@ interface Props {
   bridge: Bridge;
   initialScene: DrawingScene | null;
   onSceneCommit: (scene: DrawingScene) => void;
-  /** 빈 캔버스를 클릭했을 때(글쓰기 도구) — world 좌표를 준다. */
+  /** 글쓰기 도구로 빈 캔버스를 클릭했을 때 — world 좌표를 준다. */
   onCanvasClick?: (world: { x: number; y: number }) => void;
+  /** 그 외 도구로 빈 캔버스를 클릭했을 때 — 선택 해제용. */
+  onBackgroundClick?: () => void;
   viewOnly?: boolean;
   /** 화면 고정 UI(상단바·입력창 등) */
   chrome?: React.ReactNode;
@@ -47,6 +49,7 @@ export function CanvasStage({
   initialScene,
   onSceneCommit,
   onCanvasClick,
+  onBackgroundClick,
   viewOnly = false,
   chrome,
   children,
@@ -57,24 +60,32 @@ export function CanvasStage({
 
   useWheelForwarding(overlayRef, overlayInteractive);
 
-  // 글쓰기 도구: 캔버스 클릭 → 그 자리에 아이템. Excalidraw가 먼저 먹지 않도록
-  // 캡처 단계에서 가로챈다.
+  // 빈 캔버스 클릭.
+  //
+  //   글쓰기 도구  → 그 자리에 새 글을 만든다. Excalidraw가 먼저 먹지 않도록
+  //                  **캡처 단계에서** 가로채고 전파를 끊는다.
+  //   그 외        → 선택 해제만. 전파는 끊지 않는다(팬·그리기가 계속 돌아야 한다).
   useEffect(() => {
     const root = rootRef.current;
-    if (!root || activeTool !== "note" || !onCanvasClick) return;
+    if (!root) return;
 
     const onDown = (e: PointerEvent) => {
       const t = e.target as HTMLElement;
       // 우리 UI(도구 레일·아이템) 위 클릭은 그쪽에 맡긴다.
       if (t.closest("[data-no-pan]") || t.closest("[data-canvas-item]")) return;
-      e.preventDefault();
-      e.stopPropagation();
-      onCanvasClick(bridge.toWorld(e.clientX, e.clientY, root.getBoundingClientRect()));
+
+      if (activeTool === "note") {
+        e.preventDefault();
+        e.stopPropagation();
+        onCanvasClick?.(bridge.toWorld(e.clientX, e.clientY, root.getBoundingClientRect()));
+        return;
+      }
+      onBackgroundClick?.();
     };
 
     root.addEventListener("pointerdown", onDown, { capture: true });
     return () => root.removeEventListener("pointerdown", onDown, { capture: true });
-  }, [activeTool, onCanvasClick, bridge]);
+  }, [activeTool, onCanvasClick, onBackgroundClick, bridge]);
 
   return (
     <div

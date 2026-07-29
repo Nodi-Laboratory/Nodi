@@ -26,6 +26,9 @@ import { useItemLayout, type LayoutSource } from "@/lib/canvas2/useItemLayout";
 import { useCanvasItems } from "@/lib/canvas2/useCanvasItems";
 import { reflowOne, type LayoutInput } from "@/lib/canvas2/layout";
 import { sanitizeScene } from "@/lib/canvas2/sanitizeScene";
+import { useCanvasStream } from "@/lib/canvas2/useCanvasStream";
+import type { CanvasItem } from "@/lib/canvas2/types";
+import { AskBar } from "./AskBar";
 import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
 
@@ -45,6 +48,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
+  const [quote, setQuote] = useState<{ id: string; text: string } | null>(null);
 
   useEffect(() => setActiveSpace(spaceId), [spaceId, setActiveSpace]);
 
@@ -89,6 +93,24 @@ export function CanvasWorkspace({ spaceId }: Props) {
     },
     [sessionId],
   );
+
+  // --- 스트림 ----------------------------------------------------------------
+
+  const { upsertLocal, replaceTemp } = store;
+
+  // 임시 id로 그려 둔 아이템을 서버가 준 진짜 행으로 갈아 끼운다.
+  // 갈아 끼우지 않으면 그 아이템은 영영 로컬 전용이라 편집·삭제가 서버에 안 간다.
+  const onPersisted = useCallback(
+    (tempIds: string[], saved: CanvasItem[]) => replaceTemp(tempIds, saved),
+    [replaceTemp],
+  );
+
+  const nextSeq = useCallback(
+    () => (store.items.length ? Math.max(...store.items.map((i) => i.seq)) + 1 : 0),
+    [store.items],
+  );
+
+  const stream = useCanvasStream({ sessionId, upsertLocal, onPersisted, nextSeq });
 
   // --- 배치 ------------------------------------------------------------------
 
@@ -189,9 +211,10 @@ export function CanvasWorkspace({ spaceId }: Props) {
         );
       },
 
+      // 학생 글 → 그 내용이 인용된 채 입력창이 열린다(D126).
       onAsk: (id: string) => {
-        // P4에서 AskBar로 연결한다.
-        console.debug("[canvas2] AI에게 묻기", id);
+        const it = items.find((i) => i.id === id);
+        if (it) setQuote({ id, text: it.body.slice(0, 200) });
       },
 
       onDismissAsk: (id: string) => {
@@ -202,11 +225,26 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [items, patch, remove, editingId, selectedId, layout, bridge],
   );
 
-  // 빈 곳을 클릭하면 선택 해제. 편집 중이면 편집도 끝낸다.
-  const handleCanvasClick = useCallback(() => {
+  // 빈 곳 클릭 — 선택 해제. 편집 중이면 편집도 끝낸다.
+  const handleBackgroundClick = useCallback(() => {
     setSelectedId(null);
     setEditingId(null);
   }, []);
+
+  // 글쓰기 도구로 빈 곳 클릭 → 그 자리에 빈 글을 만들고 바로 편집 모드로.
+  // 클릭한 자리가 곧 학생이 고른 자리이므로 pinned로 태어난다.
+  const { createNote } = store;
+  const handleCreateNote = useCallback(
+    (world: { x: number; y: number }) => {
+      if (!sessionId) return;
+      const id = createNote(sessionId, world.x, world.y, nextSeq());
+      setSelectedId(id);
+      setEditingId(id);
+      // 글을 하나 놓았으면 계속 놓고 싶지는 않다 — 선택 도구로 돌아간다.
+      bridge.setTool("selection");
+    },
+    [sessionId, createNote, nextSeq, bridge],
+  );
 
   // 세션이 바뀌면 카메라를 원점으로. 이전 세션의 화면 위치를 물고 오면
   // 학생이 빈 공간을 보게 된다.
@@ -218,6 +256,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const banner =
     drawError ??
     store.error ??
+    stream.error ??
     (cleaned && cleaned.dropped > 0
       ? `그림 요소 ${cleaned.dropped}개를 읽지 못해 건너뛰었습니다`
       : null);
@@ -228,11 +267,20 @@ export function CanvasWorkspace({ spaceId }: Props) {
       bridge={bridge}
       initialScene={initialScene}
       onSceneCommit={handleSceneCommit}
-      onCanvasClick={handleCanvasClick}
+      onCanvasClick={handleCreateNote}
+      onBackgroundClick={handleBackgroundClick}
       chrome={
         <>
           {banner && <SaveBanner message={banner} onClose={store.clearError} />}
           {store.undo && <UndoToast label={store.undo.label} onUndo={store.undo.run} />}
+          <AskBar
+            busy={stream.busy}
+            reply={stream.reply}
+            quote={quote}
+            disabled={!sessionId}
+            onClearQuote={() => setQuote(null)}
+            onSend={(q, parentItemId) => void stream.send(q, { parentItemId })}
+          />
         </>
       }
     >
