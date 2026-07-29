@@ -251,3 +251,28 @@ def text_from_elements(elements: list[dict]) -> str:
         if el.get("category") not in FIGURE_CATEGORIES
     ]
     return "\n\n".join(p for p in parts if p)
+
+
+def page_texts(elements: list[dict], max_chars: int = 4000) -> dict[int, str]:
+    """페이지별 본문 텍스트(D118 캡션 비전 생성 컨텍스트) — {page: text}.
+
+    figure 카테고리를 제외한 요소의 element_text를 페이지별로 등장 순서대로
+    이어붙이고, `" ".join(text.split())`로 공백(탭·개행 포함)을 단일 공백으로
+    정규화한 뒤 max_chars로 절단한다. 탭은 추론형 비전 모델의 reasoning 폭주를
+    유발한다(figure_judge `_clean` 실측 근거). 텍스트가 없는 페이지(그림만 있는
+    페이지)는 키 자체가 없다 — 호출부(_fanout_figures)가 '' 폴백한다.
+
+    **extract_figures 레코드 shape은 건드리지 않는다**(계약 고정) — page_text는
+    _fanout_figures가 이 결과에서 r["page"]로 얻어 rows에만 싣는다.
+    """
+    by_page: dict[int, list[str]] = defaultdict(list)
+    for el in elements:
+        if el.get("category") in FIGURE_CATEGORIES:
+            continue
+        text = element_text(el)
+        if text:
+            by_page[el.get("page", 1)].append(text)
+    return {
+        page: " ".join(" ".join(parts).split())[:max_chars]
+        for page, parts in by_page.items()
+    }

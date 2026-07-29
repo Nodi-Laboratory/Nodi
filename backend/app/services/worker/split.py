@@ -118,6 +118,13 @@ async def _fanout_figures(
         return
     owner_id = f.get("owner_id")
 
+    # D118: 캡션 비전 생성용 페이지 본문(figure 워커가 프롬프트 컨텍스트로 쓴다).
+    # extract_figures 레코드 shape은 불변이므로 page_texts에서 별도로 얻어 rows에만
+    # 싣는다. 텍스트 없는 페이지는 '' 폴백.
+    page_map = figure_extract.page_texts(
+        elements, settings.figure_page_text_max_chars
+    )
+
     # 레코드별 크롭 업로드(경로 결정적 pN_eM.ext, upsert) + textbook_figures 행.
     # seq는 0-base 열거 순서(figure_batch batch_range 팬아웃 기준). image_bytes/ext는
     # Storage가 원본이므로 행에 넣지 않는다.
@@ -145,6 +152,7 @@ async def _fanout_figures(
             "candidates": r["candidates"],
             "embed_text": r["embed_text"],
             "match_kind": r["match_kind"],
+            "page_text": page_map.get(r["page"], ""),  # D118
             "image_path": image_path,
             "status": "pending",
         })

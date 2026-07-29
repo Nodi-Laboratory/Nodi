@@ -288,3 +288,36 @@ def test_text_from_elements_fallback_chain():
 def test_text_from_elements_empty_input():
     assert F.text_from_elements([]) == ""
     assert F.text_from_elements([{"category": "figure", "content": {"markdown": "x"}}]) == ""
+
+
+# ── page_texts (D118) ───────────────────────────────────────────────────
+def test_page_texts_groups_by_page_and_excludes_figures():
+    """페이지별로 figure 제외 요소 텍스트를 순서대로 이어붙인다."""
+    els = [
+        _text_el(1, "heading1", (0.1, 0.1, 0.5, 0.15), "제목 A", page=1),
+        _fig_el(2, (0.1, 0.4, 0.5, 0.6),
+                b64=base64.b64encode(_JPG).decode(), page=1),  # figure 제외
+        _text_el(3, "paragraph", (0.1, 0.2, 0.5, 0.3), "본문 A", page=1),
+        _text_el(4, "paragraph", (0.1, 0.1, 0.5, 0.2), "본문 B", page=2),
+    ]
+    out = F.page_texts(els)
+    assert out[1] == "제목 A 본문 A"  # figure 텍스트 미포함, 순서 보존
+    assert out[2] == "본문 B"
+
+
+def test_page_texts_normalizes_whitespace_and_tabs():
+    """탭·개행·연속 공백은 단일 공백으로 정규화한다(비전 reasoning 폭주 방지)."""
+    els = [_text_el(1, "paragraph", (0, 0, 1, 1), "탭\t사이\n\n여러   줄", page=1)]
+    assert F.page_texts(els)[1] == "탭 사이 여러 줄"
+
+
+def test_page_texts_truncates_to_max_chars():
+    els = [_text_el(1, "paragraph", (0, 0, 1, 1), "가" * 100, page=1)]
+    assert F.page_texts(els, max_chars=10)[1] == "가" * 10
+
+
+def test_page_texts_empty_for_figure_only_page():
+    """figure만 있는 페이지는 결과에 키가 없다(_fanout_figures가 '' 폴백)."""
+    els = [_fig_el(1, (0.1, 0.4, 0.5, 0.6),
+                   b64=base64.b64encode(_JPG).decode(), page=1)]
+    assert F.page_texts(els) == {}

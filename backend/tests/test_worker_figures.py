@@ -14,7 +14,14 @@ import re
 
 import pytest
 
-from app.services import app_settings, figure_extract, figure_judge, qdrant_store, upstage
+from app.services import (
+    app_settings,
+    figure_caption,
+    figure_extract,
+    figure_judge,
+    qdrant_store,
+    upstage,
+)
 from app.services import files as F
 from app.services.worker import common, figures, jobs, runner, split
 
@@ -313,6 +320,36 @@ async def test_split_idempotent_no_duplicate_figures(monkeypatch):
     assert figbatch_after_2 == figbatch_after_1, "figure_batch 잡이 중복 생성되면 안 된다"
 
 
+@pytest.mark.asyncio
+async def test_fanout_figures_rows_include_page_text(monkeypatch):
+    """② D118: _fanout_figures는 page_texts 결과를 rows에 page_text로 싣는다.
+
+    페이지 텍스트가 없는 페이지(그림만 있는 페이지)는 ''로 폴백한다.
+    """
+    async def fake_parse(data, filename):
+        return ("md", [{"page": 1}, {"page": 2}])
+
+    monkeypatch.setattr(upstage, "parse_document_full", fake_parse)
+    monkeypatch.setattr(figure_extract, "text_from_elements", lambda els: "본문")
+    monkeypatch.setattr(
+        figure_extract, "extract_figures",
+        lambda els: [_fig_record(1, 10), _fig_record(2, 20), _fig_record(3, 30)],
+    )
+    monkeypatch.setattr(
+        figure_extract, "page_texts",
+        lambda els, mx: {1: "1페이지 본문", 2: "2페이지 본문"},
+    )
+
+    svc = _FakeService(_tb_file())
+    await split._handle_split(svc, _split_job())
+
+    rows = [r for t, r in svc.inserts if t == "textbook_figures"][0]
+    assert rows[0]["page_text"] == "1페이지 본문"
+    assert rows[1]["page_text"] == "2페이지 본문"
+    # page_texts에 없는 페이지(figure만 있는 3페이지)는 '' 폴백.
+    assert rows[2]["page_text"] == ""
+
+
 # ===========================================================================
 # figure_batch 핸들러
 # ===========================================================================
@@ -596,6 +633,173 @@ async def test_figure_batch_no_pending_marks_done(monkeypatch):
                 if t == "jobs" and patch.get("status") == "done"]
     assert job_done
     assert all(t != "textbook_figures" for t, _, _ in svc.updates)
+
+
+# ===========================================================================
+# figure_batch 핸들러 — D118 캡션 비전 생성 경로(figure_caption_generate_enabled on)
+# ===========================================================================
+async def _overlay_generate_on():
+    return {"figure_caption_generate_enabled": True}
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_generate_embeds_generated_caption(monkeypatch):
+    """③ 노브 on: 전 행 생성 → match_kind='generated', embed_text=생성 캡션, 하트비트 호출.
+
+    items에 page_text·parsed_caption(row.caption)·alt가 실리고, 판정 메타는 None.
+    """
+    captured = {}
+    touches = []
+
+    async def fake_caption_all(items, *, concurrency, heartbeat=None):
+        captured["items"] = items
+        captured["concurrency"] = concurrency
+        if heartbeat is not None:
+            await heartbeat()  # 하트비트 배선(job id로 touch_job) 검증용
+        return [f"생성 캡션 {i}" for i in range(len(items))]
+
+    async def fake_touch(svc, job_id):
+        touches.append(job_id)
+
+    async def fake_embed(texts):
+        captured["texts"] = list(texts)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
+        captured["points"] = points
+        captured["collection"] = collection
+
+    monkeypatch.setattr(app_settings, "get_overlay", _overlay_generate_on)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(figure_caption, "caption_all", fake_caption_all)
+    monkeypatch.setattr(common, "touch_job", fake_touch)
+    monkeypatch.setattr(upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(common, "_qdrant_upsert", fake_upsert)
+
+    row0 = _fig_row("r0", 0)
+    row0["page_text"] = "페이지 본문 0"
+    row0["caption"] = "파싱0"
+    row1 = _fig_row("r1", 1)
+    row1["page_text"] = "페이지 본문 1"
+    row1["caption"] = ""
+    svc = _FakeService(_tb_file(), figures=[row0, row1])
+    await figures._handle_figure_batch(svc, _fig_batch_job())
+
+    # items 계약: page_text·parsed_caption(=row.caption)·alt 실림.
+    assert captured["items"][0]["page_text"] == "페이지 본문 0"
+    assert captured["items"][0]["parsed_caption"] == "파싱0"
+    assert captured["items"][0]["alt"] == "alt 0"
+    # 생성 캡션이 곧 embed_text.
+    assert captured["texts"] == ["생성 캡션 0", "생성 캡션 1"]
+    embedded = [patch for t, _, patch in svc.updates
+                if t == "textbook_figures" and patch.get("status") == "embedded"]
+    assert len(embedded) == 2
+    assert all(p["match_kind"] == "generated" for p in embedded)
+    assert embedded[0]["embed_text"] == "생성 캡션 0"
+    # 판정을 안 거쳤으므로 판정 메타는 None.
+    assert all(p["selected_index"] is None and p["judge_reason"] is None
+               for p in embedded)
+    # 하트비트가 이 잡 id로 배선됐다.
+    assert touches == ["fj1"]
+    # 불변식: Qdrant 컬렉션은 textbook_figures.
+    assert captured["collection"] == qdrant_store.COL_TEXTBOOK_FIGURES
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_generate_falls_back_to_parsed(monkeypatch):
+    """④ 생성 실패 + parsed(row.caption) 존재 → parsed 폴백(match_kind='parsed')."""
+    captured = {}
+
+    async def fake_caption_all(items, *, concurrency, heartbeat=None):
+        return [None for _ in items]  # 전부 생성 실패
+
+    async def fake_embed(texts):
+        captured["texts"] = list(texts)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
+        captured["points"] = points
+
+    monkeypatch.setattr(app_settings, "get_overlay", _overlay_generate_on)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(figure_caption, "caption_all", fake_caption_all)
+    monkeypatch.setattr(upstage, "embed_passages", fake_embed)
+    monkeypatch.setattr(common, "_qdrant_upsert", fake_upsert)
+
+    row0 = _fig_row("r0", 0)
+    row0["page_text"] = "본문"
+    row0["caption"] = "파싱 캡션"
+    svc = _FakeService(_tb_file(), figures=[row0])
+    await figures._handle_figure_batch(svc, _fig_batch_job())
+
+    assert captured["texts"] == ["파싱 캡션"]  # parsed 폴백을 임베딩.
+    embedded = [patch for t, _, patch in svc.updates
+                if t == "textbook_figures" and patch.get("status") == "embedded"]
+    assert len(embedded) == 1
+    assert embedded[0]["match_kind"] == "parsed"
+    assert embedded[0]["embed_text"] == "파싱 캡션"
+    assert embedded[0]["selected_index"] is None
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_generate_caption_error_when_no_parsed(monkeypatch):
+    """⑤ 생성 실패 + parsed 없음 → 행 failed(match_kind='caption-error'), 임베딩 미호출."""
+    async def fake_caption_all(items, *, concurrency, heartbeat=None):
+        return [None for _ in items]
+
+    async def boom_embed(texts):
+        raise AssertionError("임베딩할 캡션이 없으면 임베딩까지 가지 않는다")
+
+    monkeypatch.setattr(app_settings, "get_overlay", _overlay_generate_on)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: True)
+    monkeypatch.setattr(figure_caption, "caption_all", fake_caption_all)
+    monkeypatch.setattr(upstage, "embed_passages", boom_embed)
+
+    row0 = _fig_row("r0", 0)
+    row0["page_text"] = "본문"
+    row0["caption"] = ""  # parsed 폴백 없음
+    svc = _FakeService(_tb_file(), figures=[row0])
+    await figures._handle_figure_batch(svc, _fig_batch_job())
+
+    failed = [patch for t, _, patch in svc.updates
+              if t == "textbook_figures" and patch.get("status") == "failed"]
+    assert len(failed) == 1
+    assert failed[0]["match_kind"] == "caption-error"
+    # 임베딩할 게 없을 뿐 배치는 실패가 아니다 — 잡은 done.
+    job_done = [patch for t, _, patch in svc.updates
+                if t == "jobs" and patch.get("status") == "done"]
+    assert job_done
+    assert all(t != "files" for t, _, _ in svc.updates)
+
+
+@pytest.mark.asyncio
+async def test_figure_batch_generate_unconfigured_fails_all_no_caption(monkeypatch):
+    """노브 on이어도 judge/caption 계열 미설정이면 전 행 no-caption failed(생성 불가)."""
+    called = {"caption": False}
+
+    async def fake_caption_all(items, *, concurrency, heartbeat=None):
+        called["caption"] = True
+        return [None for _ in items]
+
+    async def boom_embed(texts):
+        raise AssertionError("미설정이면 임베딩까지 가지 않는다")
+
+    monkeypatch.setattr(app_settings, "get_overlay", _overlay_generate_on)
+    monkeypatch.setattr(figure_judge, "is_configured", lambda: False)
+    monkeypatch.setattr(figure_caption, "caption_all", fake_caption_all)
+    monkeypatch.setattr(upstage, "embed_passages", boom_embed)
+
+    svc = _FakeService(_tb_file(), figures=[_fig_row("r0", 0), _fig_row("r1", 1)])
+    await figures._handle_figure_batch(svc, _fig_batch_job())
+
+    assert called["caption"] is False, "미설정이면 생성을 호출하지 않는다"
+    failed = [patch for t, _, patch in svc.updates
+              if t == "textbook_figures" and patch.get("status") == "failed"]
+    assert len(failed) == 2
+    assert all(p["match_kind"] == "no-caption" for p in failed)
+    job_done = [patch for t, _, patch in svc.updates
+                if t == "jobs" and patch.get("status") == "done"]
+    assert job_done
 
 
 # ===========================================================================
