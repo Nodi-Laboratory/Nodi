@@ -28,7 +28,14 @@ import { reflowOne, type LayoutInput } from "@/lib/canvas2/layout";
 import { sanitizeScene } from "@/lib/canvas2/sanitizeScene";
 import { useCanvasStream } from "@/lib/canvas2/useCanvasStream";
 import type { CanvasItem } from "@/lib/canvas2/types";
+import { spaceTargetFromId } from "@/lib/api";
+import { useSessionDetail } from "@/lib/queries";
+import { union } from "@/lib/canvas2/rect";
+import { ITEM_W } from "@/lib/canvas2/layout";
+import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
+import SessionDrawer from "@/components/canvas/SessionDrawer";
 import { AskBar } from "./AskBar";
+import { CanvasTopBar } from "./CanvasTopBar";
 import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
 
@@ -38,11 +45,28 @@ interface Props {
 
 const FALLBACK_H = 180;
 
+/**
+ * 초기 카메라. 좌·상단 여유를 둬서 열 라벨(아이템 위 34px)과 좌측 괘선(-16px)이
+ * 사이드바에 가려지지 않게 한다. 세션이 바뀌면 sceneKey로 그리기 레이어가
+ * 리마운트되며 다시 적용된다 — 이전 세션의 화면 위치를 물고 오면 학생이 빈
+ * 공간을 본다.
+ */
+const INITIAL_CAMERA = { scrollX: 180, scrollY: 150, zoom: 1 };
+
+/** 뷰포트 크기. 캔버스는 사이드바를 뺀 <main> 안에 있다. */
+function viewport(): { w: number; h: number } {
+  const el = typeof document !== "undefined" ? document.querySelector("main") : null;
+  return {
+    w: el?.clientWidth ?? 1200,
+    h: el?.clientHeight ?? 800,
+  };
+}
+
 export function CanvasWorkspace({ spaceId }: Props) {
   const bridge = useExcalidrawBridge();
-  // 스프링은 아이템으로 카메라를 옮길 때 쓴다(미니맵·"이 글로 이동").
+  // 스프링은 아이템으로 카메라를 옮길 때 쓴다(전체 보기·확대/축소).
   // 초기 카메라는 여기 쓰지 않는다 — ExcalidrawLayer의 initialData가 맡는다.
-  useCameraSpring(bridge);
+  const spring = useCameraSpring(bridge);
   const store = useCanvasItems();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   const { sessionId } = useSessionBinding(spaceId);
@@ -51,6 +75,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
   const [quote, setQuote] = useState<{ id: string; text: string } | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => setActiveSpace(spaceId), [spaceId, setActiveSpace]);
 
@@ -248,10 +273,41 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [sessionId, createNote, nextSeq, bridge],
   );
 
-  // 초기 카메라. 좌·상단 여유를 둬서 열 라벨(아이템 위 34px)과 좌측 괘선(-16px)이
-  // 사이드바에 가려지지 않게 한다. 세션이 바뀌면 sceneKey로 리마운트되면서
-  // 다시 적용된다 — 이전 세션의 화면 위치를 물고 오면 학생이 빈 공간을 본다.
-  const INITIAL_CAMERA = { scrollX: 180, scrollY: 150, zoom: 1 };
+  // 화면 배율 — 뷰포트 중앙을 기준으로 확대·축소한다(커서 기준은 휠이 맡는다).
+  const { flyTo } = spring;
+  const { cameraRef, getObstacles } = bridge;
+  const handleZoom = useCallback(
+    (factor: number) => {
+      const c = cameraRef.current;
+      const { w, h } = viewport();
+      const next = Math.min(2.5, Math.max(0.2, c.zoom * factor));
+      // 화면 중앙의 world 점을 고정한 채 배율만 바꾼다.
+      const cx = w / 2 / c.zoom - c.scrollX;
+      const cy = h / 2 / c.zoom - c.scrollY;
+      flyTo({ zoom: next, scrollX: w / 2 / next - cx, scrollY: h / 2 / next - cy });
+    },
+    [cameraRef, flyTo],
+  );
+
+  const handleFit = useCallback(() => {
+    const rects = items
+      .map((i) => {
+        const p = layout.positions.get(i.id);
+        if (!p) return null;
+        return { x: p.x, y: p.y, w: ITEM_W, h: layout.heights.get(i.id) ?? FALLBACK_H };
+      })
+      .filter((r): r is NonNullable<typeof r> => !!r);
+    const box = union([...rects, ...getObstacles()]);
+    if (!box) return;
+    const { w, h } = viewport();
+    const pad = 140;
+    const zoom = Math.min(1.2, Math.max(0.2, Math.min((w - pad) / box.w, (h - pad) / box.h)));
+    flyTo(cameraForRect(box, { w, h }, zoom));
+  }, [items, layout, getObstacles, flyTo]);
+
+  const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
+  const { data: detail } = useSessionDetail(sessionId);
+  const sessionTitle = detail?.session?.title?.trim() || "새 대화";
 
   const banner =
     drawError ??
@@ -272,6 +328,18 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onBackgroundClick={handleBackgroundClick}
       chrome={
         <>
+          <CanvasTopBar
+            title={sessionTitle}
+            zoom={bridge.camera.zoom}
+            onOpenSessions={() => setDrawerOpen(true)}
+            onZoom={handleZoom}
+            onFit={handleFit}
+          />
+          <SessionDrawer
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            target={target}
+          />
           {banner && <SaveBanner message={banner} onClose={store.clearError} />}
           {store.undo && <UndoToast label={store.undo.label} onUndo={store.undo.run} />}
           <AskBar

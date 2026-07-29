@@ -15,7 +15,7 @@ function toSpaceId(kind: SpaceKind, ref?: string | null): string {
  * 홈에서 워크스페이스로 진입하는 동작.
  * - startSeeded: 새 세션을 만들고 시드 질문을 첫 질문으로 시작.
  * - openSession: 기존 세션을 열기(선택).
- * 둘 다 store.pendingSession에 기록 후 /space/{spaceId}로 이동 → ConceptCanvasWorkspace가 소비.
+ * 둘 다 store.pendingSession에 기록 후 /space/{spaceId}로 이동 → useSessionBinding이 소비.
  */
 export function useStartSession() {
   const router = useRouter();
