@@ -13,6 +13,7 @@ import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Placed } from "@/lib/canvas2/layout";
 import { UNTAGGED } from "@/lib/canvas2/layout";
 import { ConnectorLayer } from "./ConnectorLayer";
+import { FigureItem } from "./FigureItem";
 import { TextItem } from "./TextItem";
 
 interface Props {
@@ -61,6 +62,17 @@ export function ItemLayer({
       {items.map((item) => {
         const p = positions.get(item.id);
         if (!p) return null;
+        if (item.kind === "figure") {
+          return (
+            <FigureItem
+              key={item.id}
+              item={item}
+              x={p.x}
+              y={p.y}
+              measureRef={measureRef(item.id)}
+            />
+          );
+        }
         return (
           <TextItem
             key={item.id}

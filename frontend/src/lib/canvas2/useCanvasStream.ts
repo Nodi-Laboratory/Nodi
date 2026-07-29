@@ -152,6 +152,36 @@ export function useCanvasStream({
             onToolCall: (name) => setReply(TOOL_LABELS[name] ?? "찾아보고 있어요…"),
             onDone: (d: ChatDoneEvent) => {
               nodeId = d.node?.id ?? null;
+              // 교과서 도판(D86~D95) — 서버가 done에 실어 보낸다. url은 signed라
+              // 만료되므로 **저장하지 않는다**(D87). figureId만 남기고 화면에서
+              // 필요할 때 재발급한다.
+              for (const f of d.figures ?? []) {
+                if (made.some((m) => m.data.figure?.figureId === f.figure_id)) continue;
+                made.push({
+                  id: tempId(),
+                  sessionId,
+                  nodeId: null,
+                  parentItemId,
+                  kind: "figure",
+                  source: "ai",
+                  title: null,
+                  body: "",
+                  tag: null,
+                  x: 0,
+                  y: 0,
+                  pinned: false,
+                  seq: baseSeq + made.length,
+                  data: {
+                    figure: {
+                      figureId: f.figure_id,
+                      fileId: f.file_id,
+                      page: f.page ?? 0,
+                      caption: f.caption ?? "",
+                      url: f.url ?? "",
+                    },
+                  },
+                });
+              }
             },
             onError: (msg) => setError(msg),
           },
@@ -185,7 +215,11 @@ export function useCanvasStream({
         y: it.y,
         pinned: false,
         seq: it.seq,
-        data: {},
+        // 도판은 data에 메타가 있다. url은 빼고 보낸다(만료되는 값).
+        data:
+          it.kind === "figure" && it.data.figure
+            ? { figure: { ...it.data.figure, url: "" } }
+            : {},
       }));
       try {
         const saved = await createItems(sessionId, payload);

@@ -8,7 +8,7 @@
  * 무엇에 대해 묻는지 보이지 않으면 답이 어디에 붙을지도 모른다.
  */
 
-import { ArrowUp, Quote, X } from "lucide-react";
+import { ArrowUp, Paperclip, Quote, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 interface Props {
@@ -20,9 +20,11 @@ interface Props {
   onClearQuote: () => void;
   onSend: (question: string, parentItemId: string | null) => void;
   disabled?: boolean;
+  /** 세션 컨텍스트 파일 첨부 (D83). 없으면 버튼을 숨긴다. */
+  onAttach?: (file: File) => void;
 }
 
-export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled }: Props) {
+export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onAttach }: Props) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -112,6 +114,25 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled }: P
           boxShadow: focused ? "var(--c-shadow-lg)" : "var(--c-shadow-md)",
         }}
       >
+        {onAttach && (
+          <label
+            className="mb-0.5 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-[var(--c-sunk)]"
+            style={{ color: "var(--c-ink-soft)" }}
+            title="파일 첨부"
+          >
+            <Paperclip size={16} />
+            <input
+              type="file"
+              className="hidden"
+              disabled={disabled}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) onAttach(f);
+                e.target.value = ""; // 같은 파일을 다시 골라도 change가 나게
+              }}
+            />
+          </label>
+        )}
         <textarea
           ref={taRef}
           rows={1}

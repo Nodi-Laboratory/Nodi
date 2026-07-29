@@ -35,6 +35,10 @@ import { union } from "@/lib/canvas2/rect";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
+import SessionFilesBar from "@/components/canvas/SessionFilesBar";
+import { uploadFile } from "@/lib/api";
+import { sessionFilesKey } from "@/lib/queries";
+import { useQueryClient } from "@tanstack/react-query";
 import { AskBar } from "./AskBar";
 import { CanvasTopBar } from "./CanvasTopBar";
 import { CanvasStage } from "./CanvasStage";
@@ -77,6 +81,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [drawError, setDrawError] = useState<string | null>(null);
   const [quote, setQuote] = useState<{ id: string; text: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   useEffect(() => setActiveSpace(spaceId), [spaceId, setActiveSpace]);
 
@@ -321,6 +327,20 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
   const sessionTitle = detail?.session?.title?.trim() || "새 대화";
 
+  // 세션 컨텍스트 파일 첨부 (D83) — 업로드 후 칩 바가 상태를 보여 준다.
+  const handleAttach = useCallback(
+    (file: File) => {
+      if (!sessionId) return;
+      setUploadError(null);
+      void uploadFile(target, file, { kind: "user_upload", session_id: sessionId })
+        .then(() =>
+          queryClient.invalidateQueries({ queryKey: sessionFilesKey(sessionId) }),
+        )
+        .catch((e: Error) => setUploadError(e.message));
+    },
+    [sessionId, target, queryClient],
+  );
+
   const banner =
     drawError ??
     store.error ??
@@ -354,7 +374,11 @@ export function CanvasWorkspace({ spaceId }: Props) {
           />
           {banner && <SaveBanner message={banner} onClose={store.clearError} />}
           {store.undo && <UndoToast label={store.undo.label} onUndo={store.undo.run} />}
+          <div className="ui absolute bottom-28 left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2">
+            <SessionFilesBar sessionId={sessionId} uploadError={uploadError} />
+          </div>
           <AskBar
+            onAttach={handleAttach}
             busy={stream.busy}
             reply={stream.reply}
             quote={quote}
