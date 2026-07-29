@@ -28,7 +28,7 @@ serverurl=unix://__RUN_DIR__/supervisor.sock
 
 ; ---------------------------------------------------------------------------
 ; priority가 기동 순서다. 낮을수록 먼저.
-;   10 postgres · qdrant   →  20 backend  →  30 frontend  →  40 cloudflared
+;   10 postgres · qdrant  →  15 llama  →  20 backend  →  30 frontend  →  40 cloudflared
 ; backend는 DB가 떠야 뜨고, cloudflared는 프론트가 떠야 의미가 있다.
 ; supervisor는 depends_on이 없으므로 priority + autorestart로 수렴시킨다.
 ; (DB가 늦게 떠서 backend가 죽어도 autorestart가 다시 올린다.)
@@ -57,6 +57,33 @@ autorestart=true
 startsecs=5
 stdout_logfile=__LOG_DIR__/qdrant.log
 stderr_logfile=__LOG_DIR__/qdrant.err.log
+
+[program:llama]
+; 교과서 도판 캡션 판정용 비전 모델 (D118). llama.cpp + EXAONE-4.5-33B.
+;
+; 예전에는 사람이 손으로 띄운 프로세스였다 — supervisor 밖에 있어서 상태에도
+; 안 잡히고, 죽으면 아무도 모르고, 워크로드가 재생성되면 되살릴 방법이
+; 어디에도 안 적혀 있었다(그 상태로 도판 판정이 몇 달간 꺼져 있었다).
+;
+; 손으로 띄우던 것과 두 가지가 다르다:
+;   --host 127.0.0.1   원래 0.0.0.0이었다. 이 서버의 다른 서비스와 규약을 맞춘다.
+;   --api-key-file     원래 인증이 없었다. 키 없이 호출하면 이제 401이다.
+; 나머지 파라미터(-ngl 99 -c 32768 -fa on)는 실제로 돌던 값 그대로다.
+;
+; autostart=false — 가중치(22GB)가 없는 인스턴스에서 크래시 루프를 돌지 않게.
+; bootstrap이 파일을 확인한 뒤 켠다.
+; **restart 비용이 크다**(모델 재적재 1~2분). deploy.sh는 이 프로그램을
+; 건드리지 않는다 — 코드 배포와 무관하다.
+command=__LLAMA_BIN__/llama-server -m __MODEL_DIR__/__JUDGE_WEIGHTS__ --mmproj __MODEL_DIR__/__JUDGE_MMPROJ__ --host 127.0.0.1 --port __JUDGE_PORT__ --api-key-file __JUDGE_KEY_FILE__ --alias __JUDGE_MODEL_ALIAS__ --no-webui -ngl 99 -c 32768 -fa on
+directory=__MODEL_DIR__
+priority=15
+autostart=false
+autorestart=true
+startsecs=90
+startretries=2
+stopwaitsecs=30
+stdout_logfile=__LOG_DIR__/llama.log
+stderr_logfile=__LOG_DIR__/llama.err.log
 
 [program:backend]
 ; 업로드·임베딩 워커는 별도 프로세스가 아니다 — 이 앱 프로세스 안에서 돈다.
@@ -96,7 +123,7 @@ stdout_logfile=__LOG_DIR__/cloudflared.log
 stderr_logfile=__LOG_DIR__/cloudflared.err.log
 
 [group:nodi]
-programs=postgres,qdrant,backend,frontend,cloudflared
+programs=postgres,qdrant,llama,backend,frontend,cloudflared
 
 ; ---------------------------------------------------------------------------
 ; GitHub Actions self-hosted 러너

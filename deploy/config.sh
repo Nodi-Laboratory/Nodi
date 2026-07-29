@@ -26,6 +26,7 @@ NODI_BACKUPS="$NODI_DATA/backups"         # D114 백업 JSON
 NODI_ENV_DIR="$NODI_DATA/env"             # 비밀값. git에 절대 안 들어간다
 BACKEND_ENV="$NODI_ENV_DIR/backend.env"
 CLOUDFLARED_ENV="$NODI_ENV_DIR/cloudflared.env"
+MODEL_ARCHIVE="$NODI_DATA/models"         # 판정 모델 가중치 아카이브 (D118)
 
 # --- 휘발 (오버레이). 날아가도 되는 것만 ------------------------------------
 NODI_APP="${NODI_APP:-$NODI_HOME/app}"
@@ -42,6 +43,26 @@ PG_PORT="${PG_PORT:-5433}"
 QDRANT_PORT="${QDRANT_PORT:-6333}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+JUDGE_PORT="${JUDGE_PORT:-8080}"
+
+# --- 교과서 도판 비전 판정 (D118) -------------------------------------------
+# 이 서버에는 A100 80GB가 두 장 있다. 도판 캡션 판정(figure_judge.py)은
+# OpenAI 호환 비전 엔드포인트면 무엇이든 되는데, 외부 API를 쓸 이유가 없어
+# llama.cpp로 EXAONE 4.5를 직접 띄운다.
+#
+# **모델은 휘발 파일시스템에 두고 아카이브는 영속 볼륨에 둔다.** 22GB를 NFS에서
+# mmap하면 기동이 느려서 실행 경로는 오버레이($MODEL_DIR)를 쓰고, 워크로드가
+# 재생성돼 사라지면 bootstrap이 $MODEL_ARCHIVE에서 복사해 되살린다.
+# 아카이브가 없으면 재다운로드에 수십 분이 든다 — 그래서 복사본을 둔다.
+LLAMA_BIN="${LLAMA_BIN:-$NODI_HOME/llama.cpp/build/bin}"
+MODEL_DIR="${MODEL_DIR:-$NODI_HOME/models/exaone45}"
+JUDGE_WEIGHTS="EXAONE-4.5-33B-Q4_K_M.gguf"
+JUDGE_MMPROJ="mmproj-EXAONE-4.5-33B-BF16.gguf"   # 비전 투영 — 이게 없으면 텍스트 전용
+# 키 파일은 가중치 옆이 아니라 비밀값 폴더에 둔다 — $MODEL_DIR은 휘발이라
+# 워크로드 재생성 때 키만 새로 생기고 backend.env는 옛 키를 들고 있게 된다(401).
+JUDGE_KEY_FILE="$NODI_ENV_DIR/judge_api_key.txt"
+# --alias 값. 백엔드의 JUDGE_MODEL과 **반드시 같아야** 한다.
+JUDGE_MODEL_ALIAS="${JUDGE_MODEL_ALIAS:-exaone-4.5-33b}"
 
 # --- 프론트 빌드 값 ---------------------------------------------------------
 # 둘 다 **빌드 시점에 번들·라우트 매니페스트에 박힌다.** 런타임 환경변수로는
