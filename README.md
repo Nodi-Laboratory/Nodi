@@ -18,9 +18,8 @@ Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
 
 - 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](CLAUDE.md)** ← 이 저장소의 규범 문서
 - 작업 체계: [`docs/TASKS.md`](docs/TASKS.md) · [`docs/AGENTS.md`](docs/AGENTS.md) · [`docs/PROCESS.md`](docs/PROCESS.md)
-- 배포: **[서버 배포 — 전체 컨테이너](#서버-배포--전체-컨테이너-d115)** (이 문서 아래).
-  [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)는 Docker를 못 쓰던 구 VM의 기록이라
-  지금 구성과 다르다 — 그 환경에 손댈 때만 본다.
+- 배포: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)** — 배포 서버는 컨테이너를
+  못 쓴다(D116). supervisor로 프로세스를 띄운다.
 
 ---
 
@@ -49,7 +48,7 @@ docker compose up -d      # postgres(5433) + qdrant(6333)
 | 파일 | 내용 |
 |---|---|
 | `00_bootstrap.sql` | `auth.uid()` · `public.users` · 역할(`nodi_app`/`nodi_worker`) |
-| `01_schema.sql` | 테이블 11 · RLS 정책 38 · 함수 26 |
+| `01_schema.sql` | 테이블 12 · RLS 정책 38 · 함수 26 |
 | `02_triggers.sql` | 가입 시 프로필 자동 생성 |
 | `03_app_settings.sql` | admin 튜너블 기본값 13종 |
 | `04_seed.sql` | (계정을 넣지 않는다 — 아래 참조) |
@@ -127,51 +126,23 @@ uv run python -m app.cli list-users
 
 ---
 
-## 서버 배포 — 전체 컨테이너 (D115)
+## 서버 배포 (D116)
 
-위 "빠른 시작"은 **개발용**이다: 컨테이너로는 인프라(Postgres·Qdrant)만 띄우고
-백엔드·프론트는 호스트에서 직접 돌린다. 서버에 올릴 때는 넷 다 컨테이너로
-띄운다.
+**배포 서버는 컨테이너를 못 쓴다.** 유일한 서버가 `CAP_SYS_ADMIN`·`CAP_NET_ADMIN`이
+바운딩 셋에서 빠진 샌드박스라 docker도 rootless(podman)도 불가능하다 —
+설치로 해결되는 문제가 아니다. 그래서 **supervisor로 프로세스를 띄운다.**
+
+절차·운영 명령·고장 대처는 전부 **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**와
+[`deploy/`](deploy/)에 있다. 요약하면:
 
 ```bash
-git clone <repo> && cd Nodi
-cp backend/.env.example backend/.env     # UPSTAGE_API_KEY·JWT_SECRET 채우기
-docker compose --profile app up -d --build
-# → http://<서버주소>:3000
+deploy/bootstrap.sh    # 새 인스턴스 최초 1회 — 런타임·DB·바이너리 전부
+deploy/deploy.sh       # 이후 배포 — pull → 빌드 → 마이그레이션 → 재시작
 ```
 
-`--profile app` 없이 `docker compose up -d`를 치면 **지금까지와 똑같이 인프라만**
-뜬다. 개발 흐름을 바꾸지 않으려고 프로필로 나눠 뒀다.
-
-| | 개발 (`up -d`) | 배포 (`--profile app up -d`) |
-|---|---|---|
-| postgres · qdrant | 컨테이너 | 컨테이너 |
-| backend | 호스트 (`uv run uvicorn`) | 컨테이너 |
-| frontend | 호스트 (`npm run dev`) | 컨테이너 |
-| 외부에 열리는 포트 | 3000 · 8000 · 5433 · 6333 | **3000 하나** |
-
-배포 모드에서 백엔드 포트는 밖으로 열지 않는다. 브라우저는 Next 서버(3000)에만
-말하고 `/api/*`만 `next.config.ts`의 rewrite가 내부 네트워크로 넘긴다.
-
-### 컨테이너 안에서는 값이 달라진다
-
-`backend/.env`는 그대로 쓰되, 호스트 기준이라 컨테이너에서 틀린 값들은
-`docker-compose.yml`이 덮어쓴다 — `DATABASE_URL`·`DATABASE_WORKER_URL`은
-`postgres:5432`, `QDRANT_URL`은 `qdrant:6333`, `STORAGE_ROOT`는 볼륨을 붙인
-`/data/storage`. `.env`를 고칠 필요가 없다.
-
-> **⚠️ 프론트의 두 값은 빌드 시점에 박힌다.** `NEXT_PUBLIC_API_BASE_URL`은
-> 번들에, `BACKEND_ORIGIN`은 `rewrites()`가 빌드 때 평가돼
-> `routes-manifest.json`에 들어간다. **런타임 환경변수로는 안 바뀐다** —
-> 바꾸려면 `docker compose --profile app build frontend`로 다시 빌드해야 한다.
-> (런타임에만 넣어 보고 `ECONNREFUSED 127.0.0.1:8000`으로 확인한 값이다.)
-
-> **⚠️ 인터넷에 노출되는 서버라면** compose의 `POSTGRES_PASSWORD: postgres`와
-> `JWT_SECRET` 기본값을 먼저 바꾼다. postgres·qdrant 포트도 `0.0.0.0`으로
-> 열려 있으니 필요 없으면 `ports:`를 지우거나 `127.0.0.1:`을 앞에 붙인다.
-
-업로드 원본은 `nodi_storage` 볼륨에 남는다 — 컨테이너를 다시 만들어도 유지되고,
-`docker compose down -v`로만 지워진다.
+로컬 개발과의 차이는 두 가지뿐이다 — 인프라를 컨테이너가 아니라 프로세스로
+띄우고, 프론트가 `next start`(프로덕션 빌드)라 핫 리로드가 없다. 나머지
+명령·환경변수·포트는 같다.
 
 ---
 

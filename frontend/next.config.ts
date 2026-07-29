@@ -8,14 +8,13 @@ const nextConfig: NextConfig = {
   // 경로가 양쪽에서 같아졌다 — 예전에는 여기서 /api를 떼고 넘겨서
   // 로컬(:8000 직접)과 배포(/api 경유)의 경로가 갈라져 있었다.
   //
-  // D115: 백엔드 주소를 환경변수로 뺀다. 컨테이너 안에서는 localhost가
-  // **프론트 컨테이너 자신**이라 백엔드에 닿지 못한다 — 이미지를 빌드할 때
-  // BACKEND_ORIGIN=http://backend:8000 을 넣는다. 안 넣으면 기존과 같다.
+  // 백엔드 주소는 BACKEND_ORIGIN으로 덮어쓸 수 있다. 안 넣으면 기존과 같다
+  // — 배포 서버도 백엔드가 같은 호스트의 127.0.0.1:8000이라 기본값이 맞다.
+  // 포트를 바꾸거나 백엔드를 다른 호스트로 뺄 때만 지정한다.
   //
   // ⚠️ rewrites()는 **빌드 시점에 평가돼 routes-manifest.json에 박힌다.**
-  // 런타임 환경변수로는 안 바뀐다 — 실측으로 확인했다(컨테이너에 런타임으로만
-  // 넣었더니 그대로 localhost:8000으로 나가 ECONNREFUSED). 그래서
-  // frontend/Dockerfile이 이 값을 build ARG로 받는다.
+  // 런타임 환경변수로는 안 바뀐다(실측). 값을 바꾸려면 넣은 채로
+  // `npm run build`를 다시 돌려야 한다 — 재시작만으로는 반영되지 않는다.
   async rewrites() {
     const backend = process.env.BACKEND_ORIGIN ?? "http://localhost:8000";
     return [{ source: "/api/:path*", destination: `${backend}/api/:path*` }];
