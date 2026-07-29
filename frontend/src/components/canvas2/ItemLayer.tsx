@@ -8,7 +8,7 @@
  * 한 파일에 뒀기 때문이다.
  */
 
-import { COL_GAP, ITEM_W } from "@/lib/canvas2/layout";
+import { ITEM_W } from "@/lib/canvas2/layout";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Placed } from "@/lib/canvas2/layout";
 import { UNTAGGED } from "@/lib/canvas2/layout";
@@ -118,16 +118,24 @@ function ColumnLabels({
         return (
           <div
             key={tag}
-            className="label pointer-events-none absolute select-none truncate"
+            className="label pointer-events-none absolute flex select-none items-center gap-2"
             style={{
               left: x - 16,
-              top: y - 30,
-              maxWidth: ITEM_W + COL_GAP,
+              top: y - 34,
+              maxWidth: ITEM_W,
               color: "var(--c-ink-faint)",
-              textTransform: "uppercase",
+              // 한글에 letter-spacing을 주면 자모가 벌어져 보인다. 라벨은
+              // .label의 고정폭만 쓰고 자간은 되돌린다.
+              letterSpacing: 0,
             }}
           >
-            {tag}
+            <span className="truncate">{tag}</span>
+            {/* 열의 폭만큼 가로선을 그어 어디까지가 이 열인지 보이게 한다 */}
+            <span
+              aria-hidden
+              className="h-px flex-1"
+              style={{ background: "var(--c-rule)" }}
+            />
           </div>
         );
       })}
