@@ -26,6 +26,7 @@ import { useItemLayout, type LayoutSource } from "@/lib/canvas2/useItemLayout";
 import { useCanvasItems } from "@/lib/canvas2/useCanvasItems";
 import { reflowOne, type LayoutInput } from "@/lib/canvas2/layout";
 import { sanitizeScene } from "@/lib/canvas2/sanitizeScene";
+import { itemsFromNodes } from "@/lib/canvas2/legacyItems";
 import { useCanvasStream } from "@/lib/canvas2/useCanvasStream";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import { spaceTargetFromId } from "@/lib/api";
@@ -89,10 +90,22 @@ export function CanvasWorkspace({ spaceId }: Props) {
     refetchOnWindowFocus: false,
   });
 
+  // 구 세션 폴백 — v2 이전 세션에는 canvas_items가 한 행도 없다. 폴백이
+  // 없으면 학생이 지난 대화를 열었을 때 빈 캔버스를 본다(데이터가 날아간
+  // 것처럼 보인다). nodes.answer를 파싱해 읽기용으로 그리고, 첫 편집 때
+  // 서버로 승격한다(legacyItems.ts 참조).
+  const { data: detail } = useSessionDetail(sessionId);
+
   const { replaceAll } = store;
   useEffect(() => {
-    if (snapshot) replaceAll(snapshot.items);
-  }, [snapshot, replaceAll]);
+    if (!snapshot || !sessionId) return;
+    if (snapshot.items.length) {
+      replaceAll(snapshot.items);
+      return;
+    }
+    const nodes = detail?.nodes ?? [];
+    replaceAll(nodes.length ? itemsFromNodes(sessionId, nodes) : []);
+  }, [snapshot, detail, sessionId, replaceAll]);
 
   // 그림은 마운트 시 1회만 밀어 넣는다(`initialData`가 그때만 읽힌다).
   // sceneKey는 씬이 도착한 뒤에야 생긴다 — sessionId로 키를 잡으면 세션 전환
@@ -306,7 +319,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
   }, [items, layout, getObstacles, flyTo]);
 
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
-  const { data: detail } = useSessionDetail(sessionId);
   const sessionTitle = detail?.session?.title?.trim() || "새 대화";
 
   const banner =

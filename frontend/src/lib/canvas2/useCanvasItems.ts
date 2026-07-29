@@ -118,8 +118,46 @@ export function useCanvasItems(): CanvasItemsApi {
         ),
       );
 
-      // 아직 서버에 없는 아이템(스트리밍 중·구 세션 파싱본)은 로컬로 끝낸다.
-      if (!before || before._pending || before._legacy) return;
+      if (!before) return;
+      // 스트리밍 중인 아이템은 done에서 일괄 저장된다 — 여기서 건드리지 않는다.
+      if (before._pending) return;
+
+      // 구 세션에서 파싱만 해 온 아이템(_legacy)은 서버에 아직 행이 없다.
+      // **첫 편집이 곧 마이그레이션이다** — 이때 만든다. 전 세션을 한 번에
+      // 옮기면 안 쓰는 세션까지 행이 생긴다.
+      if (before._legacy) {
+        const merged = { ...before, ...toLocal(serverPatch), ...localExtra };
+        void apiCreate(before.sessionId, [
+          {
+            kind: merged.kind,
+            source: merged.source,
+            node_id: merged.nodeId,
+            parent_item_id: null,
+            title: merged.title,
+            body: merged.body,
+            tag: merged.tag,
+            x: merged.x,
+            y: merged.y,
+            pinned: merged.pinned,
+            seq: merged.seq,
+            data: merged.data,
+          },
+        ])
+          .then(([saved]) => {
+            if (!saved) return;
+            // 저장되는 사이 학생이 더 고쳤을 수 있다 — 로컬 본문·위치를 지키고
+            // id와 서버 소유 필드만 갈아 끼운다.
+            setItems((prev) =>
+              prev.map((i) =>
+                i.id === id
+                  ? { ...saved, body: i.body, x: i.x, y: i.y, pinned: i.pinned, tag: i.tag }
+                  : i,
+              ),
+            );
+          })
+          .catch((e: Error) => setError(`저장하지 못했습니다 — ${e.message}`));
+        return;
+      }
 
       void apiPatch(id, serverPatch).catch((e: Error) => {
         setError(`저장하지 못했습니다 — ${e.message}`);
@@ -166,52 +204,42 @@ export function useCanvasItems(): CanvasItemsApi {
    * **곧바로 pinned다.** 학생이 그 자리를 골라서 클릭한 것이므로 배치 엔진이
    * 다른 데로 옮기면 안 된다.
    *
-   * 저장은 백그라운드로 보내고 화면은 즉시 그린다 — 클릭하고 나서 서버를
-   * 기다렸다가 커서가 뜨면 글을 쓸 수 없다.
+   * ## 서버에 바로 만들지 않는다
+   *
+   * 처음에는 즉시 POST했는데, 응답이 오면 임시 id가 서버 id로 바뀌면서
+   * `editingId`가 가리키던 아이템이 사라진다 — **학생이 타이핑하는 중에
+   * 입력창이 없어졌다**(실측). id를 안정적으로 유지하려고 붙잡는 것보다,
+   * 저장 시점을 뒤로 미루는 편이 단순하고 부작용이 없다.
+   *
+   * `_legacy: true`로 만들어 로컬에만 둔다. 학생이 편집을 끝내면(blur) 그
+   * patch가 승격 경로를 타면서 서버에 만들어진다. 부수 효과로 **빈 메모는
+   * 아예 저장되지 않는다** — 캔버스를 잘못 클릭했다고 DB에 빈 행이 쌓이지
+   * 않는다.
    */
   const createNote = useCallback(
     (sessionId: string, x: number, y: number, seq: number): string => {
-      const temp = `tmp-note-${Date.now()}`;
-      const draft: CanvasItem = {
-        id: temp,
-        sessionId,
-        nodeId: null,
-        parentItemId: null,
-        kind: "note",
-        source: "user",
-        title: null,
-        body: "",
-        tag: null,
-        x,
-        y,
-        pinned: true,
-        seq,
-        data: {},
-      };
-      setItems((prev) => [...prev, draft]);
-
-      void apiCreate(sessionId, [
+      const id = `local-note-${Date.now()}`;
+      setItems((prev) => [
+        ...prev,
         {
+          id,
+          sessionId,
+          nodeId: null,
+          parentItemId: null,
           kind: "note",
           source: "user",
+          title: null,
           body: "",
+          tag: null,
           x,
           y,
           pinned: true,
           seq,
+          data: {},
+          _legacy: true, // 아직 서버에 없다 — 첫 편집이 승격시킨다
         },
-      ])
-        .then(([saved]) => {
-          if (!saved) return;
-          // 저장되는 사이 학생이 이미 타이핑했을 수 있다 — 로컬 본문을 지키고
-          // id만 갈아 끼운다. 안 그러면 방금 쓴 글자가 사라진다.
-          setItems((prev) =>
-            prev.map((i) => (i.id === temp ? { ...saved, body: i.body } : i)),
-          );
-        })
-        .catch((e: Error) => setError(`글을 저장하지 못했습니다 — ${e.message}`));
-
-      return temp;
+      ]);
+      return id;
     },
     [],
   );
