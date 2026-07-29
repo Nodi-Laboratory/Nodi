@@ -170,25 +170,34 @@ git clone <repo> ~/app/Nodi        # 또는 러너/rsync로 코드 배달
 **서버에서 코드를 직접 고치지 마라.** 배포의 `rsync --delete`가 지운다. 수정은
 저장소에서 하고 main에 올린다.
 
+**SSE는 `rewrites()`로 넘기면 버퍼링된다.** 채팅 스트림만
+`src/app/api/chat/stream/route.ts`가 직접 처리한다. 스트리밍 엔드포인트를
+새로 만들면 같은 처리가 필요하다 — rewrites에 맡기면 토큰이 다 끝난 뒤
+한꺼번에 떨어진다.
+
 ---
 
 ## 지금 상태
 
+**공개 주소: <https://app.edunodi.com>**
+
 | | |
 |---|---|
-| 실행 | postgres · qdrant · backend · frontend · gh-runner (RUNNING) |
-| 대기 | cloudflared — 터널 토큰 대기 중 |
-| 검증 | E2E 통과 — 가입 → 학급 개설 → 가입 → 자료 업로드 → `indexed` → 개념카드 스트리밍 |
-| 데이터 | 비어 있음. `app_settings` 기본값 13종만 (검증용 계정·학급·파일은 삭제) |
+| 실행 | postgres · qdrant · backend · frontend · cloudflared · gh-runner (RUNNING) |
+| 인그레스 | Cloudflare Tunnel → `http://localhost:3000` · 인바운드 포트 0개 |
+| 검증 | 공개 도메인에서 로그인 → 세션 생성 → SSE 실시간 스트리밍(확산 0.51s) 확인 |
+| 데이터 | 계정 6개(로컬에서 이관). 학급·문서·대화는 비어 있음 |
 | 하드닝 | `JWT_SECRET` 난수 · DB 비밀번호 난수 · 전 서비스 루프백 전용 · env 파일 0600 |
-| 자동 배포 | main push → 러너 → 배포 → `/health` 확인까지 성공 확인 |
+| 자동 배포 | main push → 러너 → 배포 → `/health` 확인까지 성공 |
 
 ### 아직 안 한 것
 
-- **관리자 계정이 없다.** 첫 관리자는 CLI로 만든다(가입 폼으로는 못 얻는다):
+- **관리자 계정 비밀번호를 모른다.** 이관한 `admin@nodi.local`은 로컬에서 쓰던
+  해시 그대로라 같은 비밀번호로 들어간다. 새로 만들려면(가입 폼으로는 못 얻는다):
   ```bash
   cd ~/app/Nodi/backend && ./.venv/bin/python -m app.cli create-user <이메일> <비밀번호> --role admin
   ```
+- `probe-*` 계정 3개는 관측 점검용으로 만들었던 것이다. 필요 없으면 지운다.
 - 교과서 도판 비전 판정(`JUDGE_*`)은 비활성. 이 VM에 GPU와 `llama.cpp`가
   그대로 있어서 되살릴 수 있다(보고서 §5 참조).
 - 백업 자동화 — D114 백업 API는 있지만 주기 실행은 걸지 않았다.
