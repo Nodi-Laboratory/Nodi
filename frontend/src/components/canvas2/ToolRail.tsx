@@ -1,0 +1,177 @@
+"use client";
+
+/**
+ * 우측 세로 도구 레일 (D120).
+ *
+ * Excalidraw 기본 툴바를 끄고 이걸 쓴다. 단축키는 Excalidraw와 **같게** 둔다 —
+ * 다른 그리기 도구를 써 본 학생이 손에 익은 키를 그대로 쓸 수 있게.
+ *
+ * `note`만 우리 도구다. Excalidraw의 텍스트 요소가 아니라 우리 아이템을
+ * 만들기 때문에 Excalidraw에는 선택 도구를 물려 두고 캔버스 클릭을 오버레이가
+ * 가로챈다.
+ */
+
+import {
+  ArrowUpRight,
+  Circle,
+  Eraser,
+  Hand,
+  Minus,
+  MousePointer2,
+  Pencil,
+  Redo2,
+  Square,
+  Type,
+  Undo2,
+} from "lucide-react";
+import { useEffect } from "react";
+import type { ToolName } from "@/lib/canvas2/types";
+
+interface ToolDef {
+  tool: ToolName;
+  icon: typeof Pencil;
+  label: string;
+  key: string;
+}
+
+/** 구분선 위치를 담기 위해 그룹으로 나눈다. */
+const GROUPS: ToolDef[][] = [
+  [
+    { tool: "selection", icon: MousePointer2, label: "선택", key: "v" },
+    { tool: "hand", icon: Hand, label: "화면 이동", key: "h" },
+  ],
+  [
+    { tool: "note", icon: Type, label: "글 쓰기", key: "t" },
+  ],
+  [
+    { tool: "freedraw", icon: Pencil, label: "자유선", key: "p" },
+    { tool: "rectangle", icon: Square, label: "사각형", key: "r" },
+    { tool: "ellipse", icon: Circle, label: "원", key: "o" },
+    { tool: "arrow", icon: ArrowUpRight, label: "화살표", key: "a" },
+    { tool: "line", icon: Minus, label: "선", key: "l" },
+  ],
+  [{ tool: "eraser", icon: Eraser, label: "지우개", key: "e" }],
+];
+
+const ALL = GROUPS.flat();
+
+interface Props {
+  active: ToolName;
+  onSelect: (tool: ToolName) => void;
+  onUndo: () => void;
+  onRedo: () => void;
+}
+
+export function ToolRail({ active, onSelect, onUndo, onRedo }: Props) {
+  // 단축키. 입력 중일 때는 절대 가로채지 않는다 — 학생이 글을 쓰다가
+  // 'p'를 치면 자유선으로 바뀌는 사고를 막는다.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      const hit = ALL.find((d) => d.key === e.key.toLowerCase());
+      if (hit) {
+        e.preventDefault();
+        onSelect(hit.tool);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onSelect]);
+
+  return (
+    <div
+      data-no-pan
+      className="ui absolute right-4 top-1/2 z-30 flex -translate-y-1/2 flex-col gap-1 rounded-xl border p-1.5"
+      style={{
+        background: "var(--c-raised)",
+        borderColor: "var(--c-rule)",
+        boxShadow: "var(--c-shadow-md)",
+      }}
+    >
+      {GROUPS.map((group, gi) => (
+        <div key={gi} className="flex flex-col gap-1">
+          {gi > 0 && (
+            <div className="mx-1.5 my-0.5 h-px" style={{ background: "var(--c-rule)" }} />
+          )}
+          {group.map(({ tool, icon: Icon, label, key }) => (
+            <ToolButton
+              key={tool}
+              active={active === tool}
+              label={label}
+              hint={key.toUpperCase()}
+              onClick={() => onSelect(tool)}
+              // 학생의 손(그리기·글쓰기)은 주황, 선택/이동은 중립
+              accent={tool === "selection" || tool === "hand" ? "neutral" : "hand"}
+            >
+              <Icon size={17} strokeWidth={1.9} />
+            </ToolButton>
+          ))}
+        </div>
+      ))}
+
+      <div className="mx-1.5 my-0.5 h-px" style={{ background: "var(--c-rule)" }} />
+      <ToolButton active={false} label="실행 취소" hint="⌘Z" onClick={onUndo} accent="neutral">
+        <Undo2 size={17} strokeWidth={1.9} />
+      </ToolButton>
+      <ToolButton active={false} label="다시 실행" hint="⇧⌘Z" onClick={onRedo} accent="neutral">
+        <Redo2 size={17} strokeWidth={1.9} />
+      </ToolButton>
+    </div>
+  );
+}
+
+function ToolButton({
+  active,
+  label,
+  hint,
+  onClick,
+  accent,
+  children,
+}: {
+  active: boolean;
+  label: string;
+  hint: string;
+  onClick: () => void;
+  accent: "neutral" | "hand";
+  children: React.ReactNode;
+}) {
+  const on = accent === "hand" ? "var(--c-hand)" : "var(--c-ink)";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`${label} (${hint})`}
+      aria-label={label}
+      aria-pressed={active}
+      className="group relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+      style={{
+        background: active ? (accent === "hand" ? "var(--c-hand-wash)" : "var(--c-sunk)") : "transparent",
+        color: active ? on : "var(--c-ink-soft)",
+      }}
+      onMouseEnter={(e) => {
+        if (!active) e.currentTarget.style.background = "var(--c-sunk)";
+      }}
+      onMouseLeave={(e) => {
+        if (!active) e.currentTarget.style.background = "transparent";
+      }}
+    >
+      {children}
+      {/* 단축키는 hover에만. 평소에 다 보이면 레일이 시끄럽다 */}
+      <span
+        className="label pointer-events-none absolute right-full mr-2 whitespace-nowrap rounded px-1.5 py-1 opacity-0 transition-opacity group-hover:opacity-100"
+        style={{ background: "var(--c-ink)", color: "var(--c-paper)" }}
+      >
+        {label} <span style={{ opacity: 0.55 }}>{hint}</span>
+      </span>
+    </button>
+  );
+}
