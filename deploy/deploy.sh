@@ -128,5 +128,9 @@ case "$ready" in
     *)     warn "설정 미완: $ready — $BACKEND_ENV 확인" ;;
 esac
 
-$SUPERVISORCTL status
+# `|| true`가 필요하다. supervisorctl status는 RUNNING이 아닌 프로그램이 하나라도
+# 있으면 exit 3을 준다 — cloudflared는 토큰을 넣기 전까지 일부러 STOPPED이므로
+# 정상 상태에서도 3이 나온다. set -e가 여기서 스크립트를 끊어 배포가 전부
+# 성공했는데도 실패로 보고됐다(실측: Actions run 30433823688).
+$SUPERVISORCTL status || true
 log "배포 완료 ($(( $(date +%s) - started_at ))초)"
