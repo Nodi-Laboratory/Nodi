@@ -188,13 +188,21 @@ else
             || die "스키마 적용 실패: $(basename "$f")"
         ok "$(basename "$f")"
     done
-    # 역할 비밀번호를 backend.env의 난수와 맞춘다(개발 기본값 제거).
-    app_pw=$(grep -oP '(?<=nodi_app:)[^@]+' "$BACKEND_ENV" | head -1)
-    wrk_pw=$(grep -oP '(?<=nodi_worker:)[^@]+' "$BACKEND_ENV" | head -1)
-    psql -q -d nodi -c "alter role nodi_app password '$app_pw';" \
-                    -c "alter role nodi_worker password '$wrk_pw';"
-    ok "DB 역할 비밀번호를 운영 값으로 교체"
 fi
+
+# 역할 비밀번호를 backend.env의 값과 맞춘다.
+#
+# **DB 생성 여부와 무관하게 매번 한다.** 처음엔 DB를 만들 때만 했는데, 이미
+# 있는 DB에 bootstrap을 다시 돌리면 backend.env는 난수로 새로 쓰이고 DB 역할은
+# 00_bootstrap.sql의 개발 기본값(nodi_app_dev)에 머물러 둘이 어긋난다.
+# 백엔드가 인증 실패로 뜨지 않는데 원인이 전혀 드러나지 않는 고장이다.
+# alter role은 멱등하므로 매번 돌려도 안전하다.
+app_pw=$(grep -oP '(?<=nodi_app:)[^@]+' "$BACKEND_ENV" | head -1)
+wrk_pw=$(grep -oP '(?<=nodi_worker:)[^@]+' "$BACKEND_ENV" | head -1)
+[ -n "$app_pw" ] && [ -n "$wrk_pw" ] || die "backend.env에서 DB 비밀번호를 못 읽었다"
+psql -q -d nodi -c "alter role nodi_app password '$app_pw';" \
+                -c "alter role nodi_worker password '$wrk_pw';"
+ok "DB 역할 비밀번호를 backend.env와 동기화"
 
 # ---------------------------------------------------------------------------
 # 7. 나머지는 deploy.sh가 한다 (빌드 → 서비스 기동 → 검증)
