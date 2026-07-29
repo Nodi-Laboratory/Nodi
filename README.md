@@ -125,6 +125,54 @@ uv run python -m app.cli list-users
 
 ---
 
+## 서버 배포 — 전체 컨테이너 (D115)
+
+위 "빠른 시작"은 **개발용**이다: 컨테이너로는 인프라(Postgres·Qdrant)만 띄우고
+백엔드·프론트는 호스트에서 직접 돌린다. 서버에 올릴 때는 넷 다 컨테이너로
+띄운다.
+
+```bash
+git clone <repo> && cd Nodi
+cp backend/.env.example backend/.env     # UPSTAGE_API_KEY·JWT_SECRET 채우기
+docker compose --profile app up -d --build
+# → http://<서버주소>:3000
+```
+
+`--profile app` 없이 `docker compose up -d`를 치면 **지금까지와 똑같이 인프라만**
+뜬다. 개발 흐름을 바꾸지 않으려고 프로필로 나눠 뒀다.
+
+| | 개발 (`up -d`) | 배포 (`--profile app up -d`) |
+|---|---|---|
+| postgres · qdrant | 컨테이너 | 컨테이너 |
+| backend | 호스트 (`uv run uvicorn`) | 컨테이너 |
+| frontend | 호스트 (`npm run dev`) | 컨테이너 |
+| 외부에 열리는 포트 | 3000 · 8000 · 5433 · 6333 | **3000 하나** |
+
+배포 모드에서 백엔드 포트는 밖으로 열지 않는다. 브라우저는 Next 서버(3000)에만
+말하고 `/api/*`만 `next.config.ts`의 rewrite가 내부 네트워크로 넘긴다.
+
+### 컨테이너 안에서는 값이 달라진다
+
+`backend/.env`는 그대로 쓰되, 호스트 기준이라 컨테이너에서 틀린 값들은
+`docker-compose.yml`이 덮어쓴다 — `DATABASE_URL`·`DATABASE_WORKER_URL`은
+`postgres:5432`, `QDRANT_URL`은 `qdrant:6333`, `STORAGE_ROOT`는 볼륨을 붙인
+`/data/storage`. `.env`를 고칠 필요가 없다.
+
+> **⚠️ 프론트의 두 값은 빌드 시점에 박힌다.** `NEXT_PUBLIC_API_BASE_URL`은
+> 번들에, `BACKEND_ORIGIN`은 `rewrites()`가 빌드 때 평가돼
+> `routes-manifest.json`에 들어간다. **런타임 환경변수로는 안 바뀐다** —
+> 바꾸려면 `docker compose --profile app build frontend`로 다시 빌드해야 한다.
+> (런타임에만 넣어 보고 `ECONNREFUSED 127.0.0.1:8000`으로 확인한 값이다.)
+
+> **⚠️ 인터넷에 노출되는 서버라면** compose의 `POSTGRES_PASSWORD: postgres`와
+> `JWT_SECRET` 기본값을 먼저 바꾼다. postgres·qdrant 포트도 `0.0.0.0`으로
+> 열려 있으니 필요 없으면 `ports:`를 지우거나 `127.0.0.1:`을 앞에 붙인다.
+
+업로드 원본은 `nodi_storage` 볼륨에 남는다 — 컨테이너를 다시 만들어도 유지되고,
+`docker compose down -v`로만 지워진다.
+
+---
+
 ## 주요 기능
 
 - **개념 캔버스** — pan/zoom 무한 캔버스에 개념 카드를 손글씨 스타일로 배치.
