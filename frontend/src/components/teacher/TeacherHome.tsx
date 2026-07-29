@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Users, FolderOpen, Plus, Copy, Check, Clock } from "lucide-react";
 import { useTeacherOverview } from "@/lib/queries";
+import { useRoutePrefetch } from "@/lib/useRoutePrefetch";
 import type { TeacherClassOverview } from "@/lib/types";
 import { TeacherHeader } from "./TeacherHeader";
 import { CreateClassModal } from "./CreateClassModal";
@@ -28,6 +29,10 @@ export function TeacherHome() {
   };
 
   const list = classes ?? [];
+
+  // D117: 학급 카드도 버튼 + router.push라 자동 프리페치가 안 걸린다.
+  // 화면에 보이는 학급 상세를 미리 받아 둔다(훅이 개수를 제한한다).
+  useRoutePrefetch(list.map((c) => `/teacher/${c.id}`));
 
   return (
     <div className="flex h-screen flex-col bg-bg text-fg">

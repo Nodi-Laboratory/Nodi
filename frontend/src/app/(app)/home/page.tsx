@@ -7,6 +7,7 @@ import { useProfile } from "@/lib/hooks";
 import { prefetchSessionData, useHomeSummary } from "@/lib/queries";
 import { isRealId } from "@/lib/ids";
 import { useStartSession } from "@/lib/useStartSession";
+import { useRoutePrefetch } from "@/lib/useRoutePrefetch";
 import type { HomeRecentSession, SpaceKind } from "@/lib/types";
 
 /**
@@ -54,6 +55,22 @@ export default function HomePage() {
 
   const displayName = profile?.display_name ?? profile?.email ?? null;
   const recent = summary?.recent_sessions ?? [];
+
+  // D117: 데이터만 선반입하고 **라우트는 클릭 후에** 받고 있었다. 최근 대화가
+  // 버튼(router.push)이라 `<Link>`의 자동 프리페치가 걸리지 않는다 — 클릭하고
+  // 나서야 RSC 페이로드와 캔버스 청크를 받기 시작한다(프로덕션 빌드 실측
+  // 268ms, 배포본은 왕복 220ms가 더 붙는다).
+  //
+  // 세션이 여러 개여도 목적지 공간은 몇 개 안 된다(개인 + 학급들) — 중복은
+  // 훅이 제거한다.
+  useRoutePrefetch([
+    "/space/personal",
+    ...recent.map((s) =>
+      s.space_kind === "personal"
+        ? "/space/personal"
+        : `/space/${s.space_ref ?? "personal"}`,
+    ),
+  ]);
 
   // iso만으로 결정적 포맷(현재 시각 비교 없음 — 렌더 순수성 유지)
   const formatTime = (iso: string): string => {
