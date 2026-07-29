@@ -1,0 +1,60 @@
+# 배포 — main에 들어온 것만 서버에 올린다 (D116)
+#
+# 서버에 SSH로 밀어넣지 않는다. VM 안의 self-hosted 러너가 아웃바운드로 붙어
+# 자기 자신에게 배포한다. 이유:
+#   - 이 서버는 게이트웨이가 포워딩하는 SSH 포트가 바뀔 수 있다. 아웃바운드
+#     연결은 그 영향을 받지 않는다.
+#   - 조직 정책으로 deploy key를 못 만든다(422 Deploy keys are disabled).
+#     러너가 자기 토큰으로 체크아웃하므로 VM에 git 자격증명을 둘 필요가 없다.
+#   - SSH 개인키를 저장소 시크릿에 넣지 않아도 된다.
+#
+# 저장소가 private이라 포크 PR이 self-hosted 러너를 잡는 위험은 없다.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main] # ← main만. dev·기타 브랜치는 배포하지 않는다
+  workflow_dispatch: # 손으로 다시 돌릴 때
+
+concurrency:
+  # 배포가 겹치면 빌드 중인 디렉터리를 서로 덮어쓴다. 앞의 배포를 취소하지
+  # 않고 기다린다 — 중간에 끊긴 배포가 제일 나쁘다.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, nodi-prod]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 코드를 배포 디렉터리로 배달
+        # --delete로 저장소에 없는 파일은 지운다(서버에서 직접 고친 것도 사라진다.
+        # 그게 의도다 — 수정은 저장소에서 한다).
+        # .env는 영속 볼륨을 가리키는 심볼릭 링크라 건드리면 안 되고,
+        # node_modules·.venv·.next는 지우면 빌드가 매번 처음부터 돈다.
+        run: |
+          rsync -a --delete \
+            --exclude '.git' --exclude '.env' \
+            --exclude 'node_modules' --exclude '.venv' --exclude '.next' \
+            --exclude '.storage' \
+            "$GITHUB_WORKSPACE/" "$HOME/app/Nodi/"
+
+      - name: 리비전 기록
+        # 서버에 .git이 없으므로 deploy.sh가 이 파일로 버전을 표시한다.
+        run: git rev-parse --short HEAD > "$HOME/app/Nodi/.deployed-rev"
+
+      - name: 배포
+        # uv sync → 마이그레이션 → next build → 재시작 → /health 확인.
+        # 헬스체크가 실패하면 여기서 배포가 실패로 끝난다.
+        run: "$HOME/app/Nodi/deploy/deploy.sh --skip-pull"
+
+      - name: 실패하면 로그를 남긴다
+        if: failure()
+        run: |
+          tail -60 "$HOME/app/log/backend.err.log"  || true
+          tail -40 "$HOME/app/log/frontend.err.log" || true
+          supervisorctl -c "$HOME/app/supervisord.conf" status || true

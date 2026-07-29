@@ -146,6 +146,7 @@ ok "backend/.env → $BACKEND_ENV"
 # ---------------------------------------------------------------------------
 log "supervisor 설정"
 sed -e "s|__RUN_DIR__|$RUN_DIR|g"                 -e "s|__LOG_DIR__|$LOG_DIR|g" \
+    -e "s|__NODI_APP__|$NODI_APP|g" \
     -e "s|__BIN_DIR__|$BIN_DIR|g"                 -e "s|__NODE_BIN__|$NODE_BIN|g" \
     -e "s|__REPO_DIR__|$REPO_DIR|g"               -e "s|__PG_BIN__|$PG_BIN|g" \
     -e "s|__PGDATA__|$PGDATA|g"                   -e "s|__PG_PORT__|$PG_PORT|g" \

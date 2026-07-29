@@ -97,3 +97,23 @@ stderr_logfile=__LOG_DIR__/cloudflared.err.log
 
 [group:nodi]
 programs=postgres,qdrant,backend,frontend,cloudflared
+
+; ---------------------------------------------------------------------------
+; GitHub Actions self-hosted 러너
+;
+; **일부러 nodi 그룹 밖에 둔다.** 이 러너가 배포를 실행하는데, `restart nodi:`로
+; 그룹 전체를 재시작하면 자기가 돌리고 있는 배포를 스스로 죽인다.
+; deploy.sh도 backend·frontend만 건드린다.
+;
+; 이 서버는 조직 정책으로 deploy key를 못 만든다. 러너는 아웃바운드로만 붙고
+; 체크아웃을 자기 토큰으로 하므로, VM에 git 자격증명을 두지 않아도 된다.
+; ---------------------------------------------------------------------------
+[program:gh-runner]
+command=__NODI_APP__/runner/run.sh
+directory=__NODI_APP__/runner
+autostart=true
+autorestart=true
+startsecs=10
+stopwaitsecs=60
+stdout_logfile=__LOG_DIR__/gh-runner.log
+stderr_logfile=__LOG_DIR__/gh-runner.err.log
