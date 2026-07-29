@@ -16,6 +16,7 @@ from .db.pool import close_pools
 from .logging_setup import configure_logging, log_config_summary
 from .routers import (
     admin,
+    canvas,
     chat,
     files,
     health,
@@ -74,6 +75,7 @@ app.include_router(health.router)
 for _router in (
     me.router,
     sessions.router,
+    canvas.router,
     chat.router,
     home.router,
     admin.router,
