@@ -85,10 +85,14 @@ ok "$applied건 적용"
 # 4. 프론트엔드 빌드
 #
 # ⚠️ NEXT_PUBLIC_* 와 BACKEND_ORIGIN은 **빌드 시점에 박힌다.** 값을 바꿨다면
-# 재시작이 아니라 이 빌드를 다시 돌려야 반영된다.
-# 기본값(/api · localhost:8000)이 이 서버 구성과 맞으므로 따로 넘기지 않는다.
+# 재시작이 아니라 이 빌드를 다시 돌려야 반영된다. 값은 config.sh가 export한다.
 # ---------------------------------------------------------------------------
-log "프론트엔드 빌드"
+# 빈 값으로 빌드되면 브라우저가 /api 없이 요청해 로그인이 죽는다. 서버 API는
+# 멀쩡해서 헬스체크·curl로는 안 잡히므로, 빌드 전에 여기서 끊는다.
+[ -n "${NEXT_PUBLIC_API_BASE_URL:-}" ] \
+    || die "NEXT_PUBLIC_API_BASE_URL이 비었다 — 이대로 빌드하면 로그인이 깨진다"
+
+log "프론트엔드 빌드 (API_BASE=$NEXT_PUBLIC_API_BASE_URL)"
 ( cd "$REPO_DIR/frontend" && npm ci --silent && npm run build >/dev/null )
 ok "완료"
 

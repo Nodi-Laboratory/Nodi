@@ -43,6 +43,18 @@ QDRANT_PORT="${QDRANT_PORT:-6333}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 
+# --- 프론트 빌드 값 ---------------------------------------------------------
+# 둘 다 **빌드 시점에 번들·라우트 매니페스트에 박힌다.** 런타임 환경변수로는
+# 안 바뀌므로 값을 고치면 반드시 다시 빌드해야 한다.
+#
+# NEXT_PUBLIC_API_BASE_URL을 빠뜨리면 `API_BASE`가 **빈 문자열**이 된다
+# (_core.ts의 `?? ""`). 그러면 브라우저가 /api 없이 `/auth/login`을 쳐서
+# 404가 나고 로그인이 통째로 죽는다 — 서버 API는 멀쩡하므로 curl 검증만으로는
+# 절대 드러나지 않는다. 실제로 이걸로 한 번 당했다.
+export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-/api}"
+# 백엔드는 같은 호스트의 127.0.0.1:8000이라 기본값이 맞다.
+export BACKEND_ORIGIN="${BACKEND_ORIGIN:-http://127.0.0.1:$BACKEND_PORT}"
+
 # --- 런타임 버전 ------------------------------------------------------------
 NODE_VERSION="${NODE_VERSION:-22.20.0}"
 QDRANT_VERSION="${QDRANT_VERSION:-1.18.3}"
