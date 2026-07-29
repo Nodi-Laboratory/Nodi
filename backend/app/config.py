@@ -48,7 +48,8 @@ class Settings(BaseSettings):
     #   개념 카드 형식 준수  둘 다 통과. 다만 EXAONE은 응답에 추론 과정을
     #                        흘렸고(포르투갈어 조각 포함) solar는 깨끗했다.
     # 임베딩·문서 파싱이 이미 Upstage라 벤더가 하나로 줄어드는 효과도 있다.
-    # 교과서 도판 비전 판정은 별도 계열(judge_* 노브) — 아직 미구현이다.
+    # 교과서 도판 비전 판정은 별도 계열(judge_* 노브)로 남는다 — 비전이
+    # 필요하고 자체 GPU로 돌리므로 벤더 통합 대상이 아니다(D118).
     #
     # 비대칭 임베딩: 질의 embedding-query / 문서 embedding-passage (혼용 금지).
     upstage_api_key: str = ""
