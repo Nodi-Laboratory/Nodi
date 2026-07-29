@@ -170,6 +170,13 @@ git clone <repo> ~/app/Nodi        # 또는 러너/rsync로 코드 배달
 **서버에서 코드를 직접 고치지 마라.** 배포의 `rsync --delete`가 지운다. 수정은
 저장소에서 하고 main에 올린다.
 
+**`/health/config`를 rewrite로 열지 마라.** 콘솔의 "환경" 카드가 404 나길래
+한 번 열었다가 되돌렸다. 비밀값은 안 담기지만 `secret_is_default`·
+`jwt_algorithm`·내부 경로·모델명이 **인증 없이** 나가 정찰 정보가 된다.
+로컬 자가진단용으로 만든 창구를 인터넷에 두면 성격이 달라진다. 공개하는 것은
+`/health`(상태·서비스명·환경)뿐이고, 콘솔은 `/api/admin/env`로 같은 내용을
+관리자 인증을 거쳐 받는다. 서버에서 볼 때는 `curl localhost:8000/health/config`.
+
 **SSE는 `rewrites()`로 넘기면 버퍼링된다.** 채팅 스트림만
 `src/app/api/chat/stream/route.ts`가 직접 처리한다. 스트리밍 엔드포인트를
 새로 만들면 같은 처리가 필요하다 — rewrites에 맡기면 토큰이 다 끝난 뒤
