@@ -204,6 +204,11 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         return
     await svc.delete("file_chunks", {"file_id": f"eq.{file_id}"})
     await common._qdrant_delete_file_points(file_id)
+    # D116: chunk_atoms 포인트도 정리(행은 file_chunks delete의 FK CASCADE로 함께
+    # 지워진다 — 여기서는 Qdrant 잔여 포인트만).
+    await common._qdrant_delete_file_points(
+        file_id, collection=qdrant_store.COL_CHUNK_ATOMS
+    )
 
     # D86: textbook figure 멱등 정리 + 중복 팬아웃 가드(embedding_batch 조기 done
     # 가드와 동형). 잔여 figure_batch queued/running 잡이 있으면 이미 팬아웃됐으므로
@@ -310,6 +315,28 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         for start in range(0, len(chunks), bsize)
     ]
     await svc.insert("jobs", child_jobs, returning=False)
+
+    # D116: 원자 질문 팬아웃 — 실패해도 텍스트 인덱싱을 막지 않는다(D88 동형).
+    try:
+        if app_settings.as_bool(overlay, "atom_rag_enabled", settings.atom_rag_enabled):
+            asize = max(1, settings.atom_batch_size)
+            atom_jobs = [
+                {
+                    "owner_id": f.get("owner_id"),
+                    "kind": "atom_batch",
+                    "target_id": file_id,
+                    "parent_job_id": job["id"],
+                    "batch_range": {"from_seq": start, "to_seq": min(start + asize, len(chunks))},
+                    "status": "queued",
+                    "space_ref": f.get("space_ref"),
+                }
+                for start in range(0, len(chunks), asize)
+            ]
+            await svc.insert("jobs", atom_jobs, returning=False)
+            logger.info("원자 팬아웃 file=%s -> %d batches", file_id, len(atom_jobs))
+    except Exception:  # noqa: BLE001 - D116: 원자화 실패 격리
+        logger.exception("원자 팬아웃 실패 — 텍스트 인덱싱은 계속 file=%s", file_id)
+
     await svc.update(
         "jobs", {"id": f"eq.{job['id']}"},
         {"status": "done", "updated_at": common._now_iso()},

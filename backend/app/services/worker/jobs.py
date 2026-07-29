@@ -120,6 +120,22 @@ async def _fail_file_for_job(
                 },
                 {"status": "failed"},
             )
+    elif kind == "atom_batch":
+        # D116: atom_batch 영구 실패도 파일 status와 무관(원자화는 텍스트
+        # 인덱싱과 격리, D88 동형). 범위 내 pending 원자 행만 chunk_seq 기준으로
+        # failed로 두고, _finalize_file은 호출하지 않는다.
+        rng = job.get("batch_range") or {}
+        if "from_seq" in rng and "to_seq" in rng:
+            lo, hi = int(rng["from_seq"]), int(rng["to_seq"])
+            await svc.update(
+                "chunk_atoms",
+                {
+                    "file_id": f"eq.{file_id}",
+                    "and": f"(chunk_seq.gte.{lo},chunk_seq.lt.{hi})",
+                    "status": "eq.pending",
+                },
+                {"status": "failed"},
+            )
     else:  # embedding_batch: fail this batch's still-pending chunks, then finalize
         rng = job.get("batch_range") or {}
         if "from_seq" in rng and "to_seq" in rng:

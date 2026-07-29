@@ -65,7 +65,9 @@ def _patches(monkeypatch):
     async def fake_extract(data, mime, path):
         return "가" * 3000
 
-    async def fake_qdrant_delete(file_id):
+    async def fake_qdrant_delete(file_id, collection=None):
+        # D116: split 멱등 정리가 file_chunks + chunk_atoms 두 컬렉션을 지우므로
+        # 실함수 시그니처(collection 키워드)에 맞춘다.
         return None
 
     monkeypatch.setattr(common, "_extract_text", fake_extract)
