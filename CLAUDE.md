@@ -62,8 +62,10 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 
 Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권한 강제·자체 인증)
 · Qdrant(벡터 1024d/Cosine, `docker compose up -d qdrant`) · Upstage(임베딩 + 문서 파싱)
-· Upstage `solar-pro2`(대화 생성 — 스트리밍 + tool calling, D108).
-교과서 도판 비전 판정만 별도 계열(judge_* 노브)이며 아직 미구현이다.
+· Upstage `solar-pro2`(대화 생성 — 스트리밍 + tool calling, D108. 인제스트 시점
+LLM 작업 — 원자 질문 생성 D116·의미 청킹 경계 판단 D119 — 도 이 모델을 재사용한다).
+교과서 도판 비전(판정 `figure_judge.py`·캡션 생성 `figure_caption.py` D118)만 별도
+계열 — judge_* 노브(base_url/model/api_key, OpenAI 호환)가 전부 설정돼야 동작한다.
 
 ## 핵심 파이프라인
 
@@ -74,13 +76,25 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   → 문단 인지 청킹(1,200자/오버랩 150자, admin 튜너블)
   → `embedding_batch` 잡 팬아웃(64청크 단위) → Upstage `embedding-passage` 1024d(D106)
   → **벡터는 Qdrant, 청크 본문·상태는 Postgres `file_chunks`**.
+  **D119 의미 청킹**(`semantic_chunking_enabled`, 기본 off): on이면 소형 문서
+  (`semantic_chunking_max_chars` 이하)에 한해 solar가 청크 경계를 재조정
+  (`semantic_chunker.py`, PIKE resplit 이식) — 어떤 실패든 정규식 청킹 폴백.
+  **D116 지식 원자화**(`atom_rag_enabled`, 기본 off): on이면 `atom_batch` 잡이
+  청크당 solar로 예상 질문을 생성(`atomize.py`·`worker/atoms.py`)해
+  `embedding-passage`로 Qdrant `chunk_atoms`에 적재(페이로드 `{atom_id, chunk_id,
+  file_id, owner_id}`만, 행은 Postgres `chunk_atoms`). 원자 실패는 텍스트 인덱싱과
+  격리(D88 동형). 장기 잡(원자 생성·캡션 생성·의미 청킹)은 `common.touch_job`
+  하트비트로 스테일 복구(120초) 오탐을 막는다(D120).
   교과서는 `upstage.parse_document_full`(표준 모드+coordinates+figure base64 —
   D92로 enhanced 제거, 조각 ≤48MB·≤100p 사전 분할)로 텍스트·elements를 한 번에
-  얻고 figure 팬아웃(`figure_batch` 잡, 배치 8): 크롭 Storage 업로드 → 비전
-  판정(필수, D93 — 절대거리 top-3 후보 중 선택, 미선택 행은 failed) →
-  embed_text=**판정 선택 캡션 단독**(D93) `embedding-passage` → Qdrant
-  `textbook_figures`(**페이로드는 `{figure_id, file_id, owner_id}`만**). 행 상태는
-  `textbook_figures.status`로만 추적(D86/D88).
+  얻고 figure 팬아웃(`figure_batch` 잡, 배치 8): 크롭 Storage 업로드 → 캡션 확정 →
+  `embedding-passage` → Qdrant `textbook_figures`(**페이로드는 `{figure_id, file_id,
+  owner_id}`만**). 캡션 확정은 노브로 갈린다 — `figure_caption_generate_enabled`
+  **off**(기본)면 D103 2단(파서 라벨 우선 → 비전 판정이 후보 top-3 중 선택,
+  둘 다 없으면 failed — 추측하지 않는다), **on**이면 **D118 생성 일원화**: 비전
+  모델이 페이지 본문(`textbook_figures.page_text`, split 시점 영속)을 컨텍스트로
+  캡션을 생성(`match_kind='generated'`), 실패 시 파서 라벨 캡션 폴백, 둘 다 없으면
+  failed. 행 상태는 `textbook_figures.status`로만 추적(D86/D88).
 - **채팅 턴** (`routers/chat.py` `chat_stream`) — 경로가 둘이다:
 
   **ReAct 경로** (D109, `react_enabled` 튜너블·**기본 on**): 도구 판단 → 스킬 실행
@@ -96,6 +110,11 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   list_session_concepts · get_concept · list_session_files · read_session_file.
   카탈로그는 스코프뿐 아니라 **세션 상태**로도 갈린다(파일이 없으면 파일 스킬을
   노출하지 않는다 — 노출하면 모델이 부르고 빈 결과로 군더더기를 붙인다).
+  판단 프롬프트에 복합 질문 서브질문 분해 지침이 있다(D117). search_class_material은
+  노브 둘을 더 탄다(둘 다 기본 off): `rag_query_rewrite_enabled` — solar 1콜로
+  검색어 정제(실패 시 원문), `atom_rag_enabled` — `rag.dual_search`로 청크·원자
+  이중 검색(거리 게이트 분리: 직접 0.60 / 원자 `atom_rag_max_distance` 0.45,
+  원자 경유 청크 재게이트 금지 — 게이트는 dual_search 내부에서 끝난다, D116).
 
   **기존 단발 경로** (`react_enabled` off, 롤백용):
   컨텍스트 빌더 병렬(gather): 기억 연결·파일 RAG·비교 참조·세션 파일 전문
