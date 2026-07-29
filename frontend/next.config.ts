@@ -17,7 +17,19 @@ const nextConfig: NextConfig = {
   // `npm run build`를 다시 돌려야 한다 — 재시작만으로는 반영되지 않는다.
   async rewrites() {
     const backend = process.env.BACKEND_ORIGIN ?? "http://localhost:8000";
-    return [{ source: "/api/:path*", destination: `${backend}/api/:path*` }];
+    return [
+      { source: "/api/:path*", destination: `${backend}/api/:path*` },
+      // D116: `/health`는 **`/api` 밖**이다(인프라 liveness 계약, main.py가
+      // prefix 없이 include한다). 운영 콘솔의 "환경" 카드가 이걸 부르는데,
+      // 같은 출처로 배포하면 API_BASE가 `/api`라 root가 빈 문자열이 되고
+      // `/health/config`가 Next로 떨어져 404였다. 로컬에서는 API_BASE가
+      // `http://localhost:8000/api`라 백엔드로 직행해 드러나지 않았다.
+      //
+      // 비밀값은 담기지 않는다 — 존재 여부(bool)와 비밀이 아닌 URL·모델명뿐이고
+      // 외부 호출도 하지 않는다(routers/health.py).
+      { source: "/health/:path*", destination: `${backend}/health/:path*` },
+      { source: "/health", destination: `${backend}/health` },
+    ];
   },
 };
 
