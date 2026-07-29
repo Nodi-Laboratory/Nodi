@@ -22,7 +22,10 @@ NODI_DATA="${NODI_DATA:-$NODI_HOME/data/nodi}"
 PGDATA="$NODI_DATA/pg"                    # Postgres 데이터 디렉터리
 QDRANT_STORAGE="$NODI_DATA/qdrant/storage"
 NODI_STORAGE="$NODI_DATA/storage"         # 업로드 원본 (STORAGE_ROOT)
-NODI_BACKUPS="$NODI_DATA/backups"         # D114 백업 JSON
+# 백업 위치는 우리가 정하는 게 아니라 앱이 정한다 — admin_backup._dir()이
+# `storage_root/backups`를 쓴다. 예전에 여기 $NODI_DATA/backups로 적혀 있었는데
+# 그 폴더는 아무도 쓰지 않는 빈 디렉터리였다(실물은 storage/backups).
+NODI_BACKUPS="$NODI_STORAGE/backups"      # D114 백업 JSON
 NODI_ENV_DIR="$NODI_DATA/env"             # 비밀값. git에 절대 안 들어간다
 BACKEND_ENV="$NODI_ENV_DIR/backend.env"
 CLOUDFLARED_ENV="$NODI_ENV_DIR/cloudflared.env"
