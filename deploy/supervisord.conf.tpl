@@ -122,8 +122,23 @@ startsecs=10
 stdout_logfile=__LOG_DIR__/cloudflared.log
 stderr_logfile=__LOG_DIR__/cloudflared.err.log
 
+[program:backup]
+; 매일 정해진 시각에 데이터 스냅샷 (D119). 대부분의 시간을 sleep으로 보낸다.
+; TZ를 못 박는 이유: 지금은 이 VM이 KST지만 그건 우리가 정한 게 아니다.
+; 워크로드가 UTC로 재생성되면 "새벽 3시"가 한국 낮 12시가 되고, 그 어긋남은
+; 아무 로그에도 안 남는다(백업은 계속 성공한다).
+command=__REPO_DIR__/deploy/backup-loop.sh
+directory=__REPO_DIR__/deploy
+environment=TZ="Asia/Seoul"
+priority=50
+autostart=true
+autorestart=true
+startsecs=5
+stdout_logfile=__LOG_DIR__/backup.log
+stderr_logfile=__LOG_DIR__/backup.err.log
+
 [group:nodi]
-programs=postgres,qdrant,llama,backend,frontend,cloudflared
+programs=postgres,qdrant,llama,backend,frontend,cloudflared,backup
 
 ; ---------------------------------------------------------------------------
 ; GitHub Actions self-hosted 러너

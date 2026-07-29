@@ -108,4 +108,42 @@ async def test_알_수_없는_스코프로는_지울_수_없다():
     assert exc.value.status_code == 400
 
 
+# --- D119: 자동 백업의 보존 정리 -------------------------------------------
+
+
+def _seed(tmp_path: Path, names: list[str]) -> None:
+    for n in names:
+        (tmp_path / n).write_text('{"created_at": "2026-01-01T00:00:00"}', encoding="utf-8")
+
+
+def test_보존_개수만큼만_남기고_최신을_지킨다(tmp_path, monkeypatch):
+    """이름이 타임스탬프라 사전순 = 시간순이다 — 최신이 살아남아야 한다."""
+    monkeypatch.setattr(admin_backup, "_dir", lambda: tmp_path)
+    names = [f"nodi-2026072{d}-030000.json" for d in range(1, 6)]  # 21~25일
+    _seed(tmp_path, names)
+
+    removed = admin_backup.prune_backups(2)
+
+    남은것 = sorted(p.name for p in tmp_path.glob("*.json"))
+    assert 남은것 == ["nodi-20260724-030000.json", "nodi-20260725-030000.json"]
+    assert sorted(removed) == names[:3]
+
+
+def test_보존_개수보다_적으면_아무것도_안_지운다(tmp_path, monkeypatch):
+    monkeypatch.setattr(admin_backup, "_dir", lambda: tmp_path)
+    _seed(tmp_path, ["nodi-20260721-030000.json"])
+    assert admin_backup.prune_backups(14) == []
+    assert len(list(tmp_path.glob("*.json"))) == 1
+
+
+def test_보존_개수가_0이면_거부한다(tmp_path, monkeypatch):
+    """전부 지우는 실수를 이 함수로 할 수 있으면 안 된다 — 자동 실행 경로다."""
+    monkeypatch.setattr(admin_backup, "_dir", lambda: tmp_path)
+    _seed(tmp_path, ["nodi-20260721-030000.json"])
+    for bad in (0, -1):
+        with pytest.raises(ValueError):
+            admin_backup.prune_backups(bad)
+    assert len(list(tmp_path.glob("*.json"))) == 1
+
+
 pytestmark = pytest.mark.asyncio
