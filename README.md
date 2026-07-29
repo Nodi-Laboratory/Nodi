@@ -18,7 +18,9 @@ Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
 
 - 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](CLAUDE.md)** ← 이 저장소의 규범 문서
 - 작업 체계: [`docs/TASKS.md`](docs/TASKS.md) · [`docs/AGENTS.md`](docs/AGENTS.md) · [`docs/PROCESS.md`](docs/PROCESS.md)
-- 배포: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+- 배포: **[서버 배포 — 전체 컨테이너](#서버-배포--전체-컨테이너-d115)** (이 문서 아래).
+  [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)는 Docker를 못 쓰던 구 VM의 기록이라
+  지금 구성과 다르다 — 그 환경에 손댈 때만 본다.
 
 ---
 
