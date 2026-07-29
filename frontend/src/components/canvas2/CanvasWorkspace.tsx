@@ -41,6 +41,7 @@ import { sessionFilesKey } from "@/lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 import { AskBar } from "./AskBar";
 import { CanvasTopBar } from "./CanvasTopBar";
+import { Minimap } from "./Minimap";
 import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
 
@@ -65,6 +66,33 @@ function viewport(): { w: number; h: number } {
     w: el?.clientWidth ?? 1200,
     h: el?.clientHeight ?? 800,
   };
+}
+
+/**
+ * 창 크기를 따라가는 뷰포트.
+ *
+ * 값으로 들고 있어야 미니맵이 좁은 화면에서 접힌다 — 매 렌더 `viewport()`를
+ * 부르는 것만으로는 리사이즈 때 리렌더가 나지 않는다(교실 태블릿의 화면
+ * 회전이 정확히 그 경우다).
+ */
+function useViewport(): { w: number; h: number } {
+  const [vp, setVp] = useState(() => ({ w: 1200, h: 800 }));
+  useEffect(() => {
+    const read = () => {
+      const next = viewport();
+      setVp((prev) => (prev.w === next.w && prev.h === next.h ? prev : next));
+    };
+    read();
+    window.addEventListener("resize", read);
+    const el = document.querySelector("main");
+    const ro = el ? new ResizeObserver(read) : null;
+    if (el && ro) ro.observe(el);
+    return () => {
+      window.removeEventListener("resize", read);
+      ro?.disconnect();
+    };
+  }, []);
+  return vp;
 }
 
 export function CanvasWorkspace({ spaceId }: Props) {
@@ -324,6 +352,17 @@ export function CanvasWorkspace({ spaceId }: Props) {
     flyTo(cameraForRect(box, { w, h }, zoom));
   }, [items, layout, getObstacles, flyTo]);
 
+  const vp = useViewport();
+
+  const handleMinimapJump = useCallback(
+    (world: { x: number; y: number }) => {
+      const { w, h } = viewport();
+      const z = cameraRef.current.zoom;
+      flyTo({ zoom: z, scrollX: w / 2 / z - world.x, scrollY: h / 2 / z - world.y });
+    },
+    [cameraRef, flyTo],
+  );
+
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
   const sessionTitle = detail?.session?.title?.trim() || "새 대화";
 
@@ -374,6 +413,15 @@ export function CanvasWorkspace({ spaceId }: Props) {
           />
           {banner && <SaveBanner message={banner} onClose={store.clearError} />}
           {store.undo && <UndoToast label={store.undo.label} onUndo={store.undo.run} />}
+          <Minimap
+            items={items}
+            positions={layout.positions}
+            heights={layout.heights}
+            getObstacles={getObstacles}
+            camera={bridge.camera}
+            viewport={vp}
+            onJump={handleMinimapJump}
+          />
           <div className="ui absolute bottom-28 left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2">
             <SessionFilesBar sessionId={sessionId} uploadError={uploadError} />
           </div>
