@@ -801,7 +801,9 @@ CREATE POLICY file_chunks_select_own ON public.file_chunks FOR SELECT USING ((EX
 CREATE POLICY file_chunks_select_admin ON public.file_chunks FOR SELECT USING (public.is_admin());
 
 -- D116: chunk_atoms SELECT는 file_chunks 정책과 동형 — 부모 파일 접근 가능 시 열람
--- (매칭된 원자 질문 관측용). 쓰기는 워커(BYPASSRLS) 전용, nodi_app에는 GRANT도 없다.
+-- (매칭된 원자 질문 관측용). 쓰기는 워커(BYPASSRLS) 전용 — nodi_app은 RLS write
+-- 정책 부재로 차단된다(file_chunks와 동일 기전. 00_bootstrap의 default privileges가
+-- 풀 DML을 부여하므로 GRANT 자체는 있지만, write 정책이 없어 INSERT/UPDATE/DELETE는 막힌다).
 ALTER TABLE public.chunk_atoms ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY chunk_atoms_select_class ON public.chunk_atoms FOR SELECT USING ((EXISTS ( SELECT 1

@@ -180,6 +180,33 @@ async def _fanout_figures(
     )
 
 
+async def _fanout_atom_jobs(
+    svc: ServiceClient, job: dict[str, Any], f: dict[str, Any],
+    file_id: str, total_chunks: int,
+) -> int:
+    """D116: atom_batch 자식 잡을 seq 범위로 팬아웃(embedding_batch와 동형).
+
+    반환: 만든 배치 수. 호출부는 D88 격리를 위해 try/except로 감싼다(원자화 실패가
+    텍스트 인덱싱을 막지 않는다).
+    """
+    asize = max(1, settings.atom_batch_size)
+    atom_jobs = [
+        {
+            "owner_id": f.get("owner_id"),
+            "kind": "atom_batch",
+            "target_id": file_id,
+            "parent_job_id": job["id"],
+            "batch_range": {"from_seq": start, "to_seq": min(start + asize, total_chunks)},
+            "status": "queued",
+            "space_ref": f.get("space_ref"),
+        }
+        for start in range(0, total_chunks, asize)
+    ]
+    await svc.insert("jobs", atom_jobs, returning=False)
+    logger.info("원자 팬아웃 file=%s -> %d batches", file_id, len(atom_jobs))
+    return len(atom_jobs)
+
+
 async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     file_id = job["target_id"]
     files = await svc.select(
@@ -205,6 +232,28 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         "jobs", {"target_id": f"eq.{file_id}", "kind": "eq.embedding_batch"}
     )
     if existing_batches > 0:
+        # (task6-fix2) 조기 done 전에 atom_batch 팬아웃 갭을 메운다 —
+        # embedding_batch를 넣고 atom_batch를 넣기 전에 크래시하면, 재큐된 split이
+        # 여기서 조기 반환하며 atom 팬아웃을 영구 스킵한다(figure의
+        # skip_figure_fanout 가드와 동형). 킬스위치 on이고 atom_batch가 아직 0이며
+        # 청크가 있으면 atom_batch만 채운다. D88 격리(try/except)로 감싼다.
+        try:
+            overlay = await app_settings.get_overlay()
+            if app_settings.as_bool(
+                overlay, "atom_rag_enabled", settings.atom_rag_enabled
+            ):
+                atom_batches = await svc.count(
+                    "jobs", {"target_id": f"eq.{file_id}", "kind": "eq.atom_batch"}
+                )
+                total_chunks = await svc.count(
+                    "file_chunks", {"file_id": f"eq.{file_id}"}
+                )
+                if atom_batches == 0 and total_chunks > 0:
+                    await _fanout_atom_jobs(svc, job, f, file_id, total_chunks)
+        except Exception:  # noqa: BLE001 - D116: 원자 팬아웃 보정 실패 격리
+            logger.exception(
+                "원자 팬아웃 보정 실패 — 텍스트 인덱싱은 계속 file=%s", file_id
+            )
         await svc.update(
             "jobs", {"id": f"eq.{job['id']}"},
             {"status": "done", "updated_at": common._now_iso()},
@@ -350,21 +399,7 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     # D116: 원자 질문 팬아웃 — 실패해도 텍스트 인덱싱을 막지 않는다(D88 동형).
     try:
         if app_settings.as_bool(overlay, "atom_rag_enabled", settings.atom_rag_enabled):
-            asize = max(1, settings.atom_batch_size)
-            atom_jobs = [
-                {
-                    "owner_id": f.get("owner_id"),
-                    "kind": "atom_batch",
-                    "target_id": file_id,
-                    "parent_job_id": job["id"],
-                    "batch_range": {"from_seq": start, "to_seq": min(start + asize, len(chunks))},
-                    "status": "queued",
-                    "space_ref": f.get("space_ref"),
-                }
-                for start in range(0, len(chunks), asize)
-            ]
-            await svc.insert("jobs", atom_jobs, returning=False)
-            logger.info("원자 팬아웃 file=%s -> %d batches", file_id, len(atom_jobs))
+            await _fanout_atom_jobs(svc, job, f, file_id, len(chunks))
     except Exception:  # noqa: BLE001 - D116: 원자화 실패 격리
         logger.exception("원자 팬아웃 실패 — 텍스트 인덱싱은 계속 file=%s", file_id)
 

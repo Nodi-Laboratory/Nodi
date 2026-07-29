@@ -83,6 +83,29 @@ async def _qdrant_upsert(
         raise
 
 
+async def _qdrant_delete_points(
+    point_ids: list[str], collection: str = qdrant_store.COL_FILE_CHUNKS
+) -> None:
+    """지정 포인트 id들을 Qdrant에서 삭제 — best-effort(정리는 검색을 막지 않는다).
+
+    원자 재시도(task6-fix2)에서 비-embedded 잔여 행을 삭제·재생성할 때, 구 행
+    id로 남은 고아 포인트를 함께 지운다. 실패해도 삼킨다 — 고아 포인트는 본문
+    없는 페이로드뿐이고, 검색 히트 후 Postgres 재조회(RLS)에서 행이 없어 걸러진다.
+    """
+    if not point_ids:
+        return
+    try:
+        await qdrant_store.get_client().delete(
+            collection_name=collection,
+            points_selector=list(point_ids),
+        )
+    except Exception:  # noqa: BLE001 - 정리는 최적화일 뿐, 재시도를 막지 않는다
+        logger.warning(
+            "Qdrant 포인트 id 정리 실패 collection=%s n=%d",
+            collection, len(point_ids), exc_info=True,
+        )
+
+
 async def _qdrant_delete_file_points(
     file_id: str, collection: str = qdrant_store.COL_FILE_CHUNKS
 ) -> None:

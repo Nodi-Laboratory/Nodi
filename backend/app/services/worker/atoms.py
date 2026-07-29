@@ -43,8 +43,10 @@ async def _handle_atom_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
 
     핵심 동작(figures.py를 본뜸):
     1. batch_range의 file_chunks(seq 범위, 본문만) 조회 — status 무관.
-    2. 행 단위 멱등: chunk_atoms에 이미 원자가 있는 청크는 재생성하지 않는다
-       (재시도·재큐 시 중복 insert 방지).
+    2. 행 단위 멱등: **embedded** 원자가 있는 청크만 스킵한다(정상 재시도 중복
+       insert 방지). 비-embedded(pending/failed) 잔여 행은 재큐·복구 대상이므로
+       삭제 후 재생성한다(+구 Qdrant 포인트 정리) — 존재 기반 스킵이 리셋 행을
+       삼켜 pending을 영구 정체시키던 버그 수정(task6-fix2).
     3. 킬스위치 재확인(atom_rag_enabled) — 팬아웃 후 off로 바꿨으면 조용히 done.
     4. 청크당 solar.complete로 질문 n개 생성(동시성 세마포어 + 4청크마다 하트비트).
        개별 실패는 그 청크만 건너뛰고, 연속 CIRCUIT_BREAK_THRESHOLD회 실패면 회로차단·배치 실패.
@@ -80,21 +82,45 @@ async def _handle_atom_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
         await _mark_job_done(svc, job["id"])
         return
 
-    # 2. 행 단위 멱등 — 이미 원자가 있는 청크는 재생성하지 않는다.
+    # 2. 행 단위 멱등 — 이미 **embedded** 원자가 있는 청크만 "완료"로 보고 스킵한다.
+    #    (task6-fix2) 존재 기반 멱등(status 무관)은 _requeue_atoms의 failed→pending
+    #    리셋·재큐, requeue_file 복구, 크래시 잔여 pending을 모두 스킵해 pending을
+    #    영구 정체시켰다. 그래서 비-embedded(pending/failed) 잔여 행은 완료로 치지
+    #    않고, 재생성 대상 청크의 잔여 행은 삭제 후 재생성한다. 삭제 행의 Qdrant
+    #    포인트(포인트 id=원자 uuid)도 함께 지워 고아를 남기지 않는다. embedded 행은
+    #    건드리지 않으므로 정상 재시도 시 중복 생성은 여전히 없다(행 단위 멱등 유지).
     chunk_ids = [c["id"] for c in chunks]
     existing = await svc.select(
         "chunk_atoms",
         {
             "file_id": f"eq.{file_id}",
             "chunk_id": "in.(" + ",".join(str(cid) for cid in chunk_ids) + ")",
-            "select": "chunk_id",
+            "select": "id,chunk_id,status",
         },
     )
-    done_chunk_ids = {str(r["chunk_id"]) for r in existing}
-    todo = [c for c in chunks if str(c["id"]) not in done_chunk_ids]
+    embedded_chunk_ids = {
+        str(r["chunk_id"]) for r in existing if r.get("status") == "embedded"
+    }
+    todo = [c for c in chunks if str(c["id"]) not in embedded_chunk_ids]
     if not todo:
         await _mark_job_done(svc, job["id"])
         return
+    # 재생성 대상 청크의 비-embedded 잔여 행 삭제(+Qdrant 포인트 정리) — 이게 없으면
+    # 재큐로 리셋된 pending 행이 그대로 남아 이 배치가 다시 스킵한다.
+    stale_atom_ids = [
+        str(r["id"])
+        for r in existing
+        if r.get("status") != "embedded"
+        and str(r["chunk_id"]) not in embedded_chunk_ids
+    ]
+    if stale_atom_ids:
+        await svc.delete(
+            "chunk_atoms",
+            {"id": "in.(" + ",".join(stale_atom_ids) + ")"},
+        )
+        await common._qdrant_delete_points(
+            stale_atom_ids, collection=qdrant_store.COL_CHUNK_ATOMS
+        )
 
     files = await svc.select(
         "files", {"id": f"eq.{file_id}", "select": "id,owner_id", "limit": "1"}
@@ -261,8 +287,9 @@ async def _requeue_atoms(
 
     _requeue_figures와 동형 — 잔여 atom_batch queued/running 잡이 있으면
     재팬아웃을 생략한다(리셋만). failed 행이 없으면 아무 것도 하지 않고 None.
-    재팬아웃은 청크 seq 전 범위로 하되, atom_batch 핸들러가 이미 원자가 있는
-    청크를 자동 스킵하므로(행 단위 멱등) 중복 생성은 일어나지 않는다.
+    재팬아웃은 청크 seq 전 범위로 하되, atom_batch 핸들러는 embedded 원자가 있는
+    청크만 스킵하고 리셋된 pending 행은 삭제 후 재생성하므로(task6-fix2), 리셋이
+    무효화되지 않으면서 embedded 청크의 중복 생성도 없다.
     반환: 관측용 액션 문자열(없으면 None).
     """
     failed = await svc.count(
@@ -284,6 +311,8 @@ async def _requeue_atoms(
         return "atoms_reset"
     total_chunks = await svc.count("file_chunks", {"file_id": f"eq.{file_id}"})
     asize = max(1, settings.atom_batch_size)
+    # parent_job_id 생략은 의도적 — 원 split 잡은 이미 done이라 부모로 매달 대상이
+    # 없다. _requeue_figures도 동일하게 parent 없이 재큐한다(동형 유지, task6-fix2).
     child_jobs = [
         {
             "owner_id": f.get("owner_id"),

@@ -264,6 +264,85 @@ async def test_이미_원자가_있는_청크는_스킵(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_failed_잔여_행_있는_청크는_삭제후_재생성_embedded(monkeypatch):
+    """(task6-fix2) failed 원자 행이 있는 청크는 스킵이 아니라 삭제 후 재생성돼
+    embedded로 끝난다. 존재 기반 멱등(status 무관)이던 구버전은 이 청크를 영구
+    스킵해 재큐·재시도를 무효화했다."""
+    solar_seen = []
+
+    async def fake_complete(messages, *, max_tokens=None):
+        solar_seen.append(messages[-1]["content"])
+        return _completion("재생성 질문")
+
+    async def fake_embed(texts, task_type="RETRIEVAL_DOCUMENT"):
+        return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
+        return None
+
+    monkeypatch.setattr(atoms.solar, "complete", fake_complete)
+    monkeypatch.setattr(atoms.embedding, "embed_texts", fake_embed)
+    monkeypatch.setattr(common, "_qdrant_upsert", fake_upsert)
+
+    svc = _FakeService(
+        _file(),
+        chunks=[_chunk("c0", 0, "재큐된 청크")],
+        atoms=[{"id": "a0", "chunk_id": "c0", "file_id": "f1",
+                "chunk_seq": 0, "question": "옛 질문", "status": "failed"}],
+    )
+    await atoms._handle_atom_batch(svc, _atom_batch_job())
+
+    # 재생성됨 — solar가 c0에 대해 호출(스킵 아님)
+    assert len(solar_seen) == 1 and "재큐된 청크" in solar_seen[0]
+    # 잔여 failed 행(a0) 삭제
+    assert any(t == "chunk_atoms" and "a0" in str(filt.get("id"))
+               for t, filt in svc.deletes)
+    # 새 행 embedded로 마감 + 잡 done
+    embedded = [patch for t, _, patch in svc.updates
+                if t == "chunk_atoms" and patch.get("status") == "embedded"]
+    assert embedded
+    assert any(t == "jobs" and patch.get("status") == "done"
+               for t, _, patch in svc.updates)
+
+
+@pytest.mark.asyncio
+async def test_requeue_리셋_후_재실행으로_원자_복구(monkeypatch):
+    """(task6-fix2) _requeue_atoms가 failed→pending 리셋·재큐한 뒤, 재큐된
+    atom_batch 재실행이 그 청크를 실제로 재생성한다(구버전은 pending 잔여 행을
+    스킵해 pending이 영구 정체됐다)."""
+    async def fake_complete(messages, *, max_tokens=None):
+        return _completion("복구 질문")
+
+    async def fake_embed(texts, task_type="RETRIEVAL_DOCUMENT"):
+        return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+    async def fake_upsert(points, collection=qdrant_store.COL_FILE_CHUNKS):
+        return None
+
+    monkeypatch.setattr(atoms.solar, "complete", fake_complete)
+    monkeypatch.setattr(atoms.embedding, "embed_texts", fake_embed)
+    monkeypatch.setattr(common, "_qdrant_upsert", fake_upsert)
+
+    svc = _FakeService(
+        _file(),
+        chunks=[{"id": "c0", "file_id": "f1", "seq": 0,
+                 "chunk_text": "본문", "status": "embedded"}],
+        atoms=[{"id": "a0", "chunk_id": "c0", "file_id": "f1",
+                "chunk_seq": 0, "question": "q", "status": "failed"}],
+    )
+    # 1) requeue — failed→pending 리셋 + atom_batch 재팬아웃
+    action = await atoms._requeue_atoms(svc, _file(), "f1")
+    assert action == "atoms_requeued"
+    assert svc.tables["chunk_atoms"][0]["status"] == "pending"
+    # 2) 재큐된 atom_batch 재실행 — pending 잔여 행 삭제 후 재생성(스킵 아님)
+    await atoms._handle_atom_batch(svc, _atom_batch_job())
+    assert any(t == "chunk_atoms" for t, _ in svc.deletes)
+    embedded = [patch for t, _, patch in svc.updates
+                if t == "chunk_atoms" and patch.get("status") == "embedded"]
+    assert embedded
+
+
+@pytest.mark.asyncio
 async def test_solar_개별_실패는_그_청크만_스킵(monkeypatch):
     """④ 청크 2개 중 1개 solar 실패 → 나머지는 정상 적재, files 무변경(불가침)."""
     async def fake_complete(messages, *, max_tokens=None):
@@ -448,6 +527,58 @@ async def test_split_팬아웃_on이면_범위별_atom_잡(monkeypatch):
     assert j["parent_job_id"] == "j1"
     assert j["status"] == "queued"
     assert j["space_ref"] == "c1"
+
+
+@pytest.mark.asyncio
+async def test_split_조기반환_atom_팬아웃_갭_보정(monkeypatch):
+    """(task6-fix2) embedding_batch는 있으나 atom_batch가 0인 재큐 split →
+    조기 done 전에 atom_batch를 보정 팬아웃한다(figure skip_figure_fanout 동형).
+    embedding_batch 삽입 후 atom_batch 삽입 전 크래시 윈도우를 메운다."""
+    svc = _FakeService(
+        _file(),
+        chunks=[
+            {"id": "c0", "file_id": "f1", "seq": 0, "chunk_text": "x",
+             "status": "embedded"},
+            {"id": "c1", "file_id": "f1", "seq": 1, "chunk_text": "y",
+             "status": "embedded"},
+        ],
+        jobs=[{"id": "eb1", "kind": "embedding_batch", "target_id": "f1",
+               "status": "queued"}],
+    )
+    monkeypatch.setattr(split.settings, "atom_batch_size", 5)
+    await split._handle_split(svc, _split_job())
+
+    atom_jobs = [row for t, rows in svc.inserts if t == "jobs"
+                 for row in ([rows] if isinstance(rows, dict) else rows)
+                 if row["kind"] == "atom_batch"]
+    assert len(atom_jobs) == 1  # 청크 2개, size 5 → 1배치
+    assert atom_jobs[0]["batch_range"] == {"from_seq": 0, "to_seq": 2}
+    assert atom_jobs[0]["parent_job_id"] == "j1"
+    # split 잡은 done으로 마감
+    assert any(t == "jobs" and patch.get("status") == "done"
+               for t, _, patch in svc.updates)
+
+
+@pytest.mark.asyncio
+async def test_split_조기반환_atom_이미_있으면_보정_없음(monkeypatch):
+    """(task6-fix2) atom_batch가 이미 있으면 조기반환 보정은 중복 팬아웃하지 않는다."""
+    svc = _FakeService(
+        _file(),
+        chunks=[{"id": "c0", "file_id": "f1", "seq": 0, "chunk_text": "x",
+                 "status": "embedded"}],
+        jobs=[
+            {"id": "eb1", "kind": "embedding_batch", "target_id": "f1",
+             "status": "queued"},
+            {"id": "ab1", "kind": "atom_batch", "target_id": "f1",
+             "status": "queued"},
+        ],
+    )
+    await split._handle_split(svc, _split_job())
+
+    new_atom_jobs = [row for t, rows in svc.inserts if t == "jobs"
+                     for row in ([rows] if isinstance(rows, dict) else rows)
+                     if row["kind"] == "atom_batch"]
+    assert new_atom_jobs == []
 
 
 # ===========================================================================
