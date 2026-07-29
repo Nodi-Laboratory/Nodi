@@ -174,6 +174,25 @@ async def test_청크_1개면_solar_미호출(monkeypatch):
     assert calls["count"] == 0
 
 
+async def test_endline_1_반복이어도_모든_청크_size2_이하_원문보존(monkeypatch):
+    # 리뷰어 지적(task6-fix3): 모델이 매 콜 endline=1(유효하나 극단)만 반환하면
+    # 파싱 실패가 아니라 회로차단이 안 걸리고 remainder가 반복마다 누적 →
+    # max_calls 소진 후 tail로 하나의 초대형 청크가 이월된다. 크기 가드가
+    # 이를 정규식으로 잘라 어떤 청크도 size*2를 넘지 않게 하는지 검증한다.
+    # 실 chunk_text 사용(가드 강등 경로가 실제로 동작해야 함).
+    text = " ".join(f"문장{i}번의내용." for i in range(300))
+    _wire_solar(monkeypatch, lambda msgs, n: '{"endline": 1}')
+
+    size = 30
+    out = await sc.chunk_text_semantic(text, size, 5)
+
+    assert out  # 비어 있지 않다
+    # 어떤 청크도 창 상한(size*2)을 넘지 않는다
+    assert all(len(c) <= size * 2 for c in out), [len(c) for c in out]
+    # 원문 보존(공백 정규화 후 유실·중복 없음)
+    assert _norm("".join(out)) == _norm(text)
+
+
 async def test_전_청크_이어붙이면_원문_보존(monkeypatch):
     # 실 chunk_text 사용 — 공백 정규화 후 원문과 동일(유실·중복 없음)
     text = (

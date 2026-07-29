@@ -122,7 +122,23 @@ async def chunk_text_semantic(
 
     max_calls = settings.semantic_chunking_max_llm_calls
 
+    # 크기 가드 상한: resplit 창은 인접 두 청크(base[idx]+base[idx+1])이므로
+    # 정상 경계는 조각 하나가 창(≈2*size)을 넘을 수 없다. 상수 2는 이 설계에서
+    # 자연스러운 상한. 모델이 매 콜 endline=1처럼 극단을 반환하면 remainder가
+    # 반복마다 누적돼(파싱 실패가 아니라 회로차단도 안 걸린다) 하나의 초대형
+    # 청크로 이월된다 — embedding-passage 벡터 희석·API 절단 위험. 이월/확정
+    # 조각이 이 상한을 넘으면 정규식으로 잘라 확정한다(D119, task6-fix3).
+    max_chunk = size * 2
+
     result: list[str] = []
+
+    def _emit(piece: str) -> None:
+        """result에 조각을 확정하되, max_chunk 초과 시 정규식으로 강등해 자른다."""
+        if len(piece) > max_chunk:
+            result.extend(embedding.chunk_text(piece, size, 0))
+        else:
+            result.append(piece)
+
     remainder = ""  # 직전 창에서 이월된 꼬리(lines[N:])
     idx = 0
     total_calls = 0
@@ -156,17 +172,22 @@ async def chunk_text_semantic(
 
         if n is None:
             # 경계 결정 실패: base[idx]를 (이월분과 함께) 정규식 경계로 확정
-            result.append("\n".join(p for p in (remainder, base[idx]) if p))
+            _emit("\n".join(p for p in (remainder, base[idx]) if p))
             remainder = ""
             idx += 1
             consecutive_failures += 1
             if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
                 circuit_broken = True
         else:
-            result.append("\n".join(lines[:n]))
+            _emit("\n".join(lines[:n]))
             remainder = "\n".join(lines[n:])
             idx += 2
             consecutive_failures = 0
+            # 이월분이 창 상한을 넘으면(endline=1 반복 등) 정규식으로 잘라 확정,
+            # 다음 창으로 초대형 꼬리가 누적 이월되는 것을 끊는다.
+            if len(remainder) > max_chunk:
+                result.extend(embedding.chunk_text(remainder, size, 0))
+                remainder = ""
 
     # 잔여 확정: 이월분을 첫 잔여 조각에 붙이고 나머지는 정규식 경계 그대로
     tail = list(base[idx:])
@@ -175,6 +196,8 @@ async def chunk_text_semantic(
             tail[0] = remainder + "\n" + tail[0]
         else:
             tail = [remainder]
-    result.extend(t for t in tail if t)
+    for t in tail:
+        if t:
+            _emit(t)
 
     return [c for c in (c.strip() for c in result) if c]
