@@ -108,9 +108,20 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   session_files 뒤 배치로 캐시 프리픽스 보존) →
   `exaone.stream_answer` SSE → 개념 카드 파싱·캔버스 배치. 시스템 프롬프트는
   **중·고등 전 교과 교사 페르소나 + 자유 분류 태그**(D89, `exaone.py`).
-- **캔버스 배치**: 개념 카드는 EXAONE 자유 태그로 클러스터링 — 태그 첫 등장
-  순서로 황금각 슬롯 앵커를 영구 부여(D90, `useTagLayout`/`curriculumTags.ts`),
-  "기타"는 중앙. 교과서 도판은 `services/figure_search.py`가 검색한다(D111 — 프론트
+- **캔버스 v2 (D120~D127)**: 카드를 없애고 **학생이 편집하는 작업 공간**으로
+  바꿨다. 평소에는 글자만 있고 hover 시 반투명 박스가 깔린다. 좌측 세로 괘선의
+  색이 출처를 나타낸다 — **파랑=AI, 주황=학생**(장식이 아니라 정보다).
+  · **뷰포트는 Excalidraw가 소유한다**(D120). 팬/줌/그리기를 맡기고 우리 DOM
+    오버레이를 얹는다: `screen = (world + scroll) * zoom`. 오버레이 컨테이너는
+    `pointer-events:none`, 아이템만 `auto`이며 그리기 도구일 때는 아이템도
+    놓아 준다(글 위에도 선을 그을 수 있어야 한다).
+  · **배치는 태그 열**(D123, `lib/canvas2/layout.ts`). 태그마다 열 하나(첫 등장
+    순서로 고정), 열 안에서는 seq 순으로 위→아래. **무겹침이 알고리즘의
+    성질이지 수렴의 결과가 아니다** — d3-force는 보장하지 못해 버렸다.
+  · **좌표를 저장한다**(D122, D105 폐기). `pinned=false`면 엔진이 자리를 정하고
+    `pinned=true`(학생이 드래그한 것)면 장애물로만 읽는다.
+  · 카메라는 CSS transition이 아니라 **임계 감쇠 스프링**(D124). v1은 매 프레임
+    setCamera + transition 0.7s로 "따라오다 마지막에 훅 가는" 지연이 있었다. 교과서 도판은 `services/figure_search.py`가 검색한다(D111 — 프론트
   선행 `/retrieve` 제거, ReAct 스킬과 레거시 경로가 같은 구현을 쓴다). (D94, 사용자 결정 2026-07-18: EBS 영상·SVG 아트 추천 기능 전면 제거 —
   `/art/search`·인제스트 스크립트·Qdrant ebs/art_assets 컬렉션·art_assets
   테이블 포함. 마이그레이션 0040은 2026-07-19 원격 적용 완료).
@@ -134,9 +145,13 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   (그 경로를 우회하면 앞 요청의 사용자로 질의가 나갈 수 있다).
   워커는 `nodi_worker`(BYPASSRLS). 비밀번호 해시가 든 `public.users`는
   `nodi_app`에 GRANT 자체가 없다 — 정책보다 앞선 방어.
-- **카드 좌표는 저장하지 않는다(D105)** — 소유자는 프론트 d3-force(`useTagLayout`)
-  이고, 매 로드마다 재계산한다. 태그 슬롯이 첫 등장 순서로만 정해지므로 같은
-  세션은 항상 같은 배치로 수렴한다. 좌표를 받아 적는 엔드포인트·컬럼은 제거됐다.
+- **아이템 좌표는 저장한다(D122 — D105 폐기)** — 학생이 드래그로 옮길 수 있게
+  되면서 D105("좌표 미저장")가 성립하지 않는다. 옮긴 자리를 안 남기면 새로고침
+  마다 학생의 작업이 사라진다. 결정론은 `pinned=false` 아이템에서 유지된다.
+- **파싱은 프론트가 소유한다** — `canvas_items.body`에 AI 응답 원문을 그대로
+  담는다. 개념 카드 형식을 파싱하는 구현이 이미 셋이고(streamParser.ts /
+  solar.extract_used_tags / ai.skills.concepts._parse_cards) 관용도가 서로
+  다르다. 네 번째를 만들면 반드시 어긋난다.
 
 ## 개발
 
@@ -144,8 +159,13 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   `requirements.txt`는 하한만 있는 폴백 — 버전이 팀원마다 갈리므로 권장하지 않는다.
 - 백엔드 테스트: `cd backend && uv run pytest tests/ -v` (전부 mock — 키·네트워크 불필요).
   커버리지는 `--cov` 추가(목표치 강제 없음 — 어디가 비었는지 보는 용도, D105).
-- 프론트 테스트: `cd frontend && npm test` (vitest, D105). 대상은 `lib/concept`의
-  파서·배치 순수 함수 — 컴포넌트 렌더 테스트는 아직 없다.
+- 프론트 테스트: `cd frontend && npm test` (vitest). 대상은 `lib/canvas2`의
+  순수 함수 — **배치 엔진의 무겹침 불변식이 가장 중요하다**(무작위 200케이스).
+  컴포넌트 렌더 테스트는 없다.
+- **eslint에 React Compiler 규칙이 켜져 있다.** 렌더 중 ref 쓰기와 이펙트 내
+  동기 setState가 **에러**다. 억제하지 말고 구조로 풀 것.
+- **dev 서버를 띄운 채 `npm run build`를 돌리지 마라** — `.next`를 덮어써서
+  dev가 stale CSS를 내보낸다.
 - 로컬 실행 (README '빠른 시작' 참조):
   1. `docker compose up -d` (postgres 5433 + qdrant 6333)
   2. `cd backend && uv run uvicorn app.main:app --reload --port 8000`

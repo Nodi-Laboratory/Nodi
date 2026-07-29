@@ -25,7 +25,7 @@ export default function SessionFilesBar({
   uploadError,
 }: {
   sessionId: string | null;
-  // 업로드 오류는 소유자(ConceptCanvasWorkspace)가 넘긴다(내부 상태 없음).
+  // 업로드 오류는 소유자(CanvasWorkspace)가 넘긴다(내부 상태 없음).
   uploadError?: string | null;
 }) {
   const queryClient = useQueryClient();
