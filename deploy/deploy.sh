@@ -25,17 +25,33 @@ started_at=$(date +%s)
 
 # ---------------------------------------------------------------------------
 # 1. 코드
+#
+# 이 서버에는 **git 자격증명이 없다.** 조직 정책으로 deploy key가 막혀 있어서
+# (`Deploy keys are disabled for this repository`) VM이 직접 fetch하지 못한다.
+# 대신 GitHub Actions의 self-hosted 러너가 체크아웃한 코드를 $REPO_DIR로
+# 밀어 넣고 이 스크립트를 --skip-pull로 부른다. 서버에 토큰을 심지 않아도
+# 되므로 오히려 이쪽이 낫다.
+#
+# 나중에 조직에서 deploy key를 허용하면 --skip-pull 없이 아래 경로가 살아난다.
 # ---------------------------------------------------------------------------
 if [ "$SKIP_PULL" -eq 1 ]; then
-    log "git: 건너뜀 (--skip-pull)"
-else
+    log "git: 건너뜀 (코드는 이미 배달됨)"
+elif git -C "$REPO_DIR" rev-parse --git-dir >/dev/null 2>&1; then
     log "git: origin/main으로 맞춘다"
-    git -C "$REPO_DIR" fetch --prune origin main
+    git -C "$REPO_DIR" fetch --prune origin main \
+        || die "fetch 실패 — 이 서버엔 자격증명이 없다. --skip-pull로 부를 것"
     # reset --hard 다 — 서버의 코드는 항상 main과 같아야 한다. 서버에서 직접
     # 고친 내용이 있으면 여기서 사라진다(그게 의도다. 수정은 저장소에서 한다).
     git -C "$REPO_DIR" reset --hard origin/main
+else
+    die "$REPO_DIR 가 git 저장소가 아니다 — --skip-pull로 부를 것"
 fi
-ok "$(git -C "$REPO_DIR" log --oneline -1)"
+
+# 버전 표시는 있으면 좋고 없어도 그만이다(러너가 밀어 넣은 코드엔 .git이 없을
+# 수 있다). 배포를 여기서 멈출 이유는 아니다.
+rev=$(git -C "$REPO_DIR" log --oneline -1 2>/dev/null \
+      || cat "$REPO_DIR/.deployed-rev" 2>/dev/null || echo "(리비전 미상)")
+ok "$rev"
 
 # backend/.env 링크는 매번 확인한다 — reset --hard로 지워질 수 있다.
 [ -L "$REPO_DIR/backend/.env" ] || ln -sfn "$BACKEND_ENV" "$REPO_DIR/backend/.env"
