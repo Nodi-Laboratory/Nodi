@@ -63,7 +63,9 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권한 강제·자체 인증)
 · Qdrant(벡터 1024d/Cosine, `docker compose up -d qdrant`) · Upstage(임베딩 + 문서 파싱)
 · Upstage `solar-pro2`(대화 생성 — 스트리밍 + tool calling, D108).
-교과서 도판 비전 판정만 별도 계열(judge_* 노브)이며 아직 미구현이다.
+교과서 도판 비전 판정만 별도 계열(judge_* 노브)이다 — OpenAI 호환 비전
+엔드포인트면 무엇이든 꽂히고, 배포 서버는 자체 GPU에 llama.cpp로 EXAONE-4.5-33B를
+띄워 쓴다(D118). 로컬은 비워 두면 된다(파서 라벨 경로만 동작).
 
 ## 핵심 파이프라인
 
