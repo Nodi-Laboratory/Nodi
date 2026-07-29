@@ -17,7 +17,11 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { ItemPatch } from "@/lib/api/canvas";
-import { deleteItem as apiDelete, patchItem as apiPatch } from "@/lib/api/canvas";
+import {
+  createItems as apiCreate,
+  deleteItem as apiDelete,
+  patchItem as apiPatch,
+} from "@/lib/api/canvas";
 import type { CanvasItem, ItemData } from "./types";
 
 export interface UndoEntry {
@@ -33,6 +37,10 @@ export interface CanvasItemsApi {
   upsertLocal: (items: CanvasItem[]) => void;
   /** 로컬만 바꾼다(스트리밍 중 본문 누적 등). */
   patchLocal: (id: string, patch: Partial<CanvasItem>) => void;
+  /** 임시 id 아이템을 서버가 준 진짜 행으로 교체한다(스트림 저장 완료). */
+  replaceTemp: (tempIds: string[], saved: CanvasItem[]) => void;
+  /** 학생이 캔버스에 직접 쓴 글. 만들고 바로 저장한다. 반환은 임시 id. */
+  createNote: (sessionId: string, x: number, y: number, seq: number) => string;
   /** 로컬 + 서버. 실패 시 롤백 + 오류 노출. */
   patch: (id: string, patch: ItemPatch, local?: Partial<CanvasItem>) => void;
   remove: (id: string) => void;
@@ -63,6 +71,32 @@ export function useCanvasItems(): CanvasItemsApi {
 
   const patchLocal = useCallback((id: string, patch: Partial<CanvasItem>) => {
     setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+  }, []);
+
+  /**
+   * 임시 id → 서버 id 교체.
+   *
+   * 순서를 지켜야 한다 — 화면에 있던 자리에 그대로 넣는다. 뒤에 붙이면
+   * 스트리밍이 끝나는 순간 아이템들이 자리를 바꾼다.
+   */
+  const replaceTemp = useCallback((tempIds: string[], saved: CanvasItem[]) => {
+    setItems((prev) => {
+      const map = new Map(tempIds.map((t, i) => [t, saved[i]]));
+      const out: CanvasItem[] = [];
+      for (const it of prev) {
+        const replacement = map.get(it.id);
+        if (replacement) {
+          // 서버 값을 정본으로 하되, 스트리밍 중 붙은 클라이언트 표시는 버린다.
+          out.push(replacement);
+          map.delete(it.id);
+        } else {
+          out.push(it);
+        }
+      }
+      // 화면에 없던 저장분(경합으로 사라진 경우)은 뒤에 붙인다.
+      for (const left of map.values()) if (left) out.push(left);
+      return out;
+    });
   }, []);
 
   // ⚠️ `before`를 setState **업데이터 안에서** 읽으면 안 된다.
@@ -126,6 +160,62 @@ export function useCanvasItems(): CanvasItemsApi {
     [items],
   );
 
+  /**
+   * 학생이 캔버스를 클릭해 만든 글.
+   *
+   * **곧바로 pinned다.** 학생이 그 자리를 골라서 클릭한 것이므로 배치 엔진이
+   * 다른 데로 옮기면 안 된다.
+   *
+   * 저장은 백그라운드로 보내고 화면은 즉시 그린다 — 클릭하고 나서 서버를
+   * 기다렸다가 커서가 뜨면 글을 쓸 수 없다.
+   */
+  const createNote = useCallback(
+    (sessionId: string, x: number, y: number, seq: number): string => {
+      const temp = `tmp-note-${Date.now()}`;
+      const draft: CanvasItem = {
+        id: temp,
+        sessionId,
+        nodeId: null,
+        parentItemId: null,
+        kind: "note",
+        source: "user",
+        title: null,
+        body: "",
+        tag: null,
+        x,
+        y,
+        pinned: true,
+        seq,
+        data: {},
+      };
+      setItems((prev) => [...prev, draft]);
+
+      void apiCreate(sessionId, [
+        {
+          kind: "note",
+          source: "user",
+          body: "",
+          x,
+          y,
+          pinned: true,
+          seq,
+        },
+      ])
+        .then(([saved]) => {
+          if (!saved) return;
+          // 저장되는 사이 학생이 이미 타이핑했을 수 있다 — 로컬 본문을 지키고
+          // id만 갈아 끼운다. 안 그러면 방금 쓴 글자가 사라진다.
+          setItems((prev) =>
+            prev.map((i) => (i.id === temp ? { ...saved, body: i.body } : i)),
+          );
+        })
+        .catch((e: Error) => setError(`글을 저장하지 못했습니다 — ${e.message}`));
+
+      return temp;
+    },
+    [],
+  );
+
   const tagOptions = useMemo(() => {
     const seen: string[] = [];
     for (const it of [...items].sort((a, b) => a.seq - b.seq)) {
@@ -139,6 +229,8 @@ export function useCanvasItems(): CanvasItemsApi {
     replaceAll,
     upsertLocal,
     patchLocal,
+    replaceTemp,
+    createNote,
     patch,
     remove,
     undo,
