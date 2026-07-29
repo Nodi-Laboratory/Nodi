@@ -12,7 +12,7 @@
  * P1 시점에서는 셸과 그리기까지만 붙어 있다. 아이템·스트림은 P2~P4에서 채운다.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { DrawingScene } from "@/lib/api/canvas";
 import { getCanvas, putDrawing } from "@/lib/api/canvas";
@@ -50,12 +50,16 @@ export function CanvasWorkspace({ spaceId }: Props) {
     refetchOnWindowFocus: false,
   });
 
-  // 그림은 Excalidraw가 소유하고 우리는 최초 1회만 밀어 넣는다.
-  // 이후 스냅샷 변화를 다시 반영하면 사용자가 그리는 중에 씬이 되감긴다.
-  const initialSceneRef = useRef<DrawingScene | null>(null);
-  if (snapshot && initialSceneRef.current === null) {
-    initialSceneRef.current = snapshot.drawing;
-  }
+  // 그림은 Excalidraw가 소유하고 우리는 **마운트 시 한 번만** 밀어 넣는다
+  // (`initialData`는 최초 1회만 읽힌다). 그래서 상태로 얼릴 필요가 없다 —
+  // 리마운트 시점만 정해 주면 된다.
+  //
+  //   sceneKey는 **씬이 도착한 뒤에야** 값이 생긴다. sessionId로 키를 잡으면
+  //   세션 전환 직후(쿼리 응답 전) null 씬으로 마운트돼 그림이 영영 안 뜬다.
+  //   반대로 아이템 저장 후 invalidate로 스냅샷이 새로 와도 sceneKey는 그대로라
+  //   Excalidraw가 리마운트되지 않는다 — 그리던 게 되감기지 않는다.
+  const sceneKey = snapshot && sessionId ? sessionId : null;
+  const initialScene = snapshot?.drawing ?? null;
 
   const commitScene = useCallback(
     (scene: DrawingScene) => {
@@ -86,7 +90,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
   return (
     <CanvasStage
       bridge={bridge}
-      initialScene={initialSceneRef.current}
+      key={sceneKey ?? "none"}
+      initialScene={initialScene}
       onSceneCommit={commitScene}
       onCanvasClick={handleCanvasClick}
       chrome={saveError ? <SaveBanner message={saveError} /> : null}

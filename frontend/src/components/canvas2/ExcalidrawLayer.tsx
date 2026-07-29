@@ -42,8 +42,12 @@ export function ExcalidrawLayer({
   viewOnly = false,
 }: Props) {
   const timerRef = useRef<number | null>(null);
+  // 최신 콜백을 ref에 담아 둔다 — 렌더 중에 쓰면 React Compiler가 막으므로
+  // 이펙트에서 동기화한다. 디바운스 타이머가 옛 콜백을 붙잡는 걸 막는 게 목적이다.
   const commitRef = useRef(onSceneCommit);
-  commitRef.current = onSceneCommit;
+  useEffect(() => {
+    commitRef.current = onSceneCommit;
+  }, [onSceneCommit]);
 
   const handleChange = useCallback(
     (elements: readonly ExcalidrawElementLike[], _state: unknown, files: unknown) => {
