@@ -25,7 +25,7 @@ log "Nodi bootstrap — 데이터=$NODI_DATA  앱=$NODI_APP"
 # ---------------------------------------------------------------------------
 log "디렉터리"
 mkdir -p "$PGDATA" "$QDRANT_STORAGE" "$NODI_STORAGE" "$NODI_BACKUPS" \
-         "$NODI_ENV_DIR" "$BIN_DIR" "$LOG_DIR" "$RUN_DIR"
+         "$NODI_ENV_DIR" "$MODEL_ARCHIVE" "$BIN_DIR" "$LOG_DIR" "$RUN_DIR"
 chmod 700 "$PGDATA" "$NODI_ENV_DIR"
 ok "준비됨"
 
@@ -83,6 +83,46 @@ fi
 ok "$("$BIN_DIR/cloudflared" --version)"
 
 # ---------------------------------------------------------------------------
+# 2b. 도판 판정 모델 (D118) — 아카이브 ↔ 실행 경로 동기화
+#
+# 실행은 오버레이($MODEL_DIR)에서, 백업은 영속 볼륨($MODEL_ARCHIVE)에.
+# 둘 중 한쪽에만 있으면 없는 쪽으로 복사한다. 둘 다 없으면 판정을 끄고 넘어간다
+# — 22GB를 이 스크립트가 받아 오지는 않는다(수십 분짜리 작업이고, 그 사이
+# 배포 전체가 멈춘다). 받는 방법은 deploy/README.md에 적어 뒀다.
+# ---------------------------------------------------------------------------
+log "도판 판정 모델"
+judge_ready=0
+if [ -x "$LLAMA_BIN/llama-server" ]; then
+    mkdir -p "$MODEL_DIR"
+    for f in "$JUDGE_WEIGHTS" "$JUDGE_MMPROJ"; do
+        if [ -f "$MODEL_DIR/$f" ] && [ ! -f "$MODEL_ARCHIVE/$f" ]; then
+            log "  $f → 아카이브 복사(첫 1회, 수 분 걸린다)"
+            cp "$MODEL_DIR/$f" "$MODEL_ARCHIVE/$f.part" && \
+                mv "$MODEL_ARCHIVE/$f.part" "$MODEL_ARCHIVE/$f"
+        elif [ ! -f "$MODEL_DIR/$f" ] && [ -f "$MODEL_ARCHIVE/$f" ]; then
+            log "  $f ← 아카이브에서 복구"
+            cp "$MODEL_ARCHIVE/$f" "$MODEL_DIR/$f.part" && \
+                mv "$MODEL_DIR/$f.part" "$MODEL_DIR/$f"
+        fi
+    done
+    if [ -f "$MODEL_DIR/$JUDGE_WEIGHTS" ] && [ -f "$MODEL_DIR/$JUDGE_MMPROJ" ]; then
+        judge_ready=1
+        ok "가중치 준비됨 ($MODEL_DIR)"
+    else
+        warn "가중치 없음 — 도판 판정 비활성(교과서 업로드는 정상, 라벨 없는 도판만 누락)"
+    fi
+else
+    warn "llama-server 없음($LLAMA_BIN) — 도판 판정 비활성"
+fi
+
+# 판정 엔드포인트 인증 키. 원래는 인증이 아예 없었다(D118).
+if [ "$judge_ready" = 1 ] && [ ! -s "$JUDGE_KEY_FILE" ]; then
+    openssl rand -hex 16 > "$JUDGE_KEY_FILE"
+    chmod 600 "$JUDGE_KEY_FILE"
+    ok "판정 API 키 생성"
+fi
+
+# ---------------------------------------------------------------------------
 # 3. DB 클러스터 — 없을 때만. 있으면 절대 건드리지 않는다
 # ---------------------------------------------------------------------------
 if [ -f "$PGDATA/PG_VERSION" ]; then
@@ -117,8 +157,10 @@ ENVIRONMENT=production
 UPSTAGE_API_KEY=
 
 # 교과서 도판 비전 판정. 비우면 라벨 없는 도판만 처리되지 않는다(업로드는 됨).
+# 이 서버에서 llama-server가 뜨면 bootstrap이 아래 셋을 채운다(D118).
 JUDGE_API_KEY=
 JUDGE_BASE_URL=
+JUDGE_MODEL=
 EOF
     # 개발 기본값(nodi_app_dev 등)을 운영에 그대로 쓰지 않는다.
     for k in __APP_PW__ __WORKER_PW__ __JWT__; do
@@ -137,6 +179,31 @@ fi
     chmod 600 "$CLOUDFLARED_ENV"
 }
 
+# 판정 설정 동기화 (D118) — 값 셋이 서로 맞아야만 판정이 돈다.
+#
+# 매번 다시 쓰는 이유는 DB 역할 비밀번호와 같다: 한쪽만 바뀌어도 조용히
+# 어긋나고, 그 고장이 화면에 안 드러난다(도판만 사라지고 업로드는 성공한다).
+set_env() {  # set_env KEY VALUE — 있으면 교체, 없으면 추가
+    if grep -qE "^$1=" "$BACKEND_ENV"; then
+        sed -i "s|^$1=.*|$1=$2|" "$BACKEND_ENV"
+    else
+        printf '%s=%s\n' "$1" "$2" >> "$BACKEND_ENV"
+    fi
+}
+if [ "$judge_ready" = 1 ]; then
+    judge_url="http://127.0.0.1:$JUDGE_PORT/v1"
+    cur=$(grep -E '^JUDGE_BASE_URL=' "$BACKEND_ENV" | head -1 | cut -d= -f2-)
+    if [ -z "$cur" ] || [ "$cur" = "$judge_url" ]; then
+        set_env JUDGE_BASE_URL "$judge_url"
+        set_env JUDGE_MODEL    "$JUDGE_MODEL_ALIAS"
+        set_env JUDGE_API_KEY  "$(cat "$JUDGE_KEY_FILE")"
+        ok "판정 설정 동기화 → $judge_url ($JUDGE_MODEL_ALIAS)"
+    else
+        # 운영자가 외부 엔드포인트를 가리켜 뒀다 — 덮어쓰면 그 의도가 사라진다.
+        warn "JUDGE_BASE_URL이 외부 주소($cur)다 — 건드리지 않는다"
+    fi
+fi
+
 # repo의 backend/.env 는 링크. 코드가 날아가도 비밀값은 영속 볼륨에 남는다.
 ln -sfn "$BACKEND_ENV" "$REPO_DIR/backend/.env"
 ok "backend/.env → $BACKEND_ENV"
@@ -153,6 +220,10 @@ sed -e "s|__RUN_DIR__|$RUN_DIR|g"                 -e "s|__LOG_DIR__|$LOG_DIR|g" 
     -e "s|__NODI_DATA__|$NODI_DATA|g"             -e "s|__QDRANT_STORAGE__|$QDRANT_STORAGE|g" \
     -e "s|__QDRANT_PORT__|$QDRANT_PORT|g"         -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
     -e "s|__FRONTEND_PORT__|$FRONTEND_PORT|g"     -e "s|__CLOUDFLARED_ENV__|$CLOUDFLARED_ENV|g" \
+    -e "s|__LLAMA_BIN__|$LLAMA_BIN|g"             -e "s|__MODEL_DIR__|$MODEL_DIR|g" \
+    -e "s|__JUDGE_WEIGHTS__|$JUDGE_WEIGHTS|g"     -e "s|__JUDGE_MMPROJ__|$JUDGE_MMPROJ|g" \
+    -e "s|__JUDGE_PORT__|$JUDGE_PORT|g"           -e "s|__JUDGE_KEY_FILE__|$JUDGE_KEY_FILE|g" \
+    -e "s|__JUDGE_MODEL_ALIAS__|$JUDGE_MODEL_ALIAS|g" \
     "$REPO_DIR/deploy/supervisord.conf.tpl" > "$SUPERVISOR_CONF"
 ok "$SUPERVISOR_CONF"
 
@@ -166,6 +237,23 @@ else
     sleep 3
 fi
 ok "supervisor 준비됨"
+
+# autostart=false인 두 프로그램은 여기서 조건을 확인하고 켠다.
+#
+# **`update`가 그룹 정의를 바꾸면 그룹 전체가 재시작된다.** 그때 autostart=false인
+# 프로그램은 내려간 채로 남는다 — 실제로 llama를 그룹에 넣은 배포에서 cloudflared가
+# 조용히 STOPPED가 되면서 공개 사이트가 끊겼다. 조건이 갖춰졌으면 매번 켠다
+# (이미 RUNNING이면 supervisorctl이 아무 일도 하지 않는다).
+if [ "$judge_ready" = 1 ]; then
+    $SUPERVISORCTL start nodi:llama >/dev/null 2>&1 || true
+    ok "판정 모델 기동 요청 — 적재 완료까지 1~2분 ($LOG_DIR/llama.log)"
+fi
+if grep -qE '^CF_TUNNEL_TOKEN=.+' "$CLOUDFLARED_ENV" 2>/dev/null; then
+    $SUPERVISORCTL start nodi:cloudflared >/dev/null 2>&1 || true
+    ok "터널 기동 요청"
+else
+    warn "CF_TUNNEL_TOKEN 없음 — 터널 미기동(외부에서 접속 불가)"
+fi
 
 # ---------------------------------------------------------------------------
 # 6. DB 초기 스키마 — DB가 없을 때만
