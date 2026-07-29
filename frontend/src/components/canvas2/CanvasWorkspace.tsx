@@ -40,7 +40,9 @@ const FALLBACK_H = 180;
 
 export function CanvasWorkspace({ spaceId }: Props) {
   const bridge = useExcalidrawBridge();
-  const spring = useCameraSpring(bridge);
+  // 스프링은 아이템으로 카메라를 옮길 때 쓴다(미니맵·"이 글로 이동").
+  // 초기 카메라는 여기 쓰지 않는다 — ExcalidrawLayer의 initialData가 맡는다.
+  useCameraSpring(bridge);
   const store = useCanvasItems();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   const { sessionId } = useSessionBinding(spaceId);
@@ -246,12 +248,10 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [sessionId, createNote, nextSeq, bridge],
   );
 
-  // 세션이 바뀌면 카메라를 원점으로. 이전 세션의 화면 위치를 물고 오면
-  // 학생이 빈 공간을 보게 된다.
-  const { jumpTo } = spring;
-  useEffect(() => {
-    jumpTo({ scrollX: 120, scrollY: 120, zoom: 1 });
-  }, [sessionId, jumpTo]);
+  // 초기 카메라. 좌·상단 여유를 둬서 열 라벨(아이템 위 34px)과 좌측 괘선(-16px)이
+  // 사이드바에 가려지지 않게 한다. 세션이 바뀌면 sceneKey로 리마운트되면서
+  // 다시 적용된다 — 이전 세션의 화면 위치를 물고 오면 학생이 빈 공간을 본다.
+  const INITIAL_CAMERA = { scrollX: 180, scrollY: 150, zoom: 1 };
 
   const banner =
     drawError ??
@@ -263,8 +263,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   return (
     <CanvasStage
-      key={sceneKey ?? "none"}
       bridge={bridge}
+      sceneKey={sceneKey}
+      initialCamera={INITIAL_CAMERA}
       initialScene={initialScene}
       onSceneCommit={handleSceneCommit}
       onCanvasClick={handleCreateNote}

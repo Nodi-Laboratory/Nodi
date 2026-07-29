@@ -50,6 +50,14 @@ export interface CameraSpring {
 }
 
 export function useCameraSpring(bridge: Bridge): CameraSpring {
+  // **bridge 객체 전체에 의존하면 안 된다.**
+  //
+  // bridge는 카메라가 바뀔 때마다 새 객체가 된다. 그걸 의존성에 넣으면
+  //   applyCamera → setCamera → 새 bridge → jumpTo 새 함수 → 이펙트 재실행
+  //   → applyCamera → …
+  // 로 무한 루프가 된다(실측: "Maximum update depth exceeded").
+  // api·cameraRef·applyCamera는 카메라 값과 무관하게 안정적이다.
+  const { api, cameraRef, applyCamera } = bridge;
   const targetRef = useRef<Camera | null>(null);
   const velRef = useRef({ sx: 0, sy: 0, z: 0 });
   /** 마지막으로 **우리가** 쓴 카메라. 사용자 조작 감지에 쓴다. */
@@ -66,9 +74,9 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
   const jumpTo = useCallback(
     (target: Camera) => {
       cancel();
-      bridge.applyCamera(target);
+      applyCamera(target);
     },
-    [bridge, cancel],
+    [applyCamera, cancel],
   );
 
   const flyTo = useCallback((target: Camera) => {
@@ -77,7 +85,7 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
   }, []);
 
   useEffect(() => {
-    if (!bridge.api) return;
+    if (!api) return;
 
     const step = (ts: number) => {
       rafRef.current = requestAnimationFrame(step);
@@ -88,7 +96,7 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
         return;
       }
 
-      const cur = bridge.cameraRef.current;
+      const cur = cameraRef.current;
 
       // 사용자 조작 감지 — 우리가 쓴 값과 실제가 어긋났으면 사람이 만진 것이다.
       const wrote = wroteRef.current;
@@ -133,14 +141,14 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
         : { scrollX: nx.x, scrollY: ny.x, zoom: nz.x };
 
       wroteRef.current = next;
-      bridge.applyCamera(next);
+      applyCamera(next);
       if (done) cancel();
     };
 
     lastTsRef.current = performance.now();
     rafRef.current = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [bridge, cancel]);
+  }, [api, cameraRef, applyCamera, cancel]);
 
   return { flyTo, jumpTo, cancel };
 }

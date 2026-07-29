@@ -145,9 +145,15 @@ export function useExcalidrawBridge(): Bridge {
       api.updateScene({
         appState: { scrollX: c.scrollX, scrollY: c.scrollY, zoom: { value: c.zoom } },
       });
-      // 폴링이 다음 프레임에 잡지만, 드래그 계산이 같은 프레임에 최신값을
-      // 읽어야 하므로 ref는 즉시 갱신한다.
+      // **ref와 state를 함께 올린다.**
+      //
+      // ref만 갱신하면 폴링 루프가 영영 차이를 못 본다 — 루프는 ref와 실제
+      // Excalidraw 상태를 비교하는데, 우리가 방금 둘을 같게 만들어 놨기
+      // 때문이다. 그러면 React state는 초기값에 머물고 오버레이가 카메라를
+      // 따라가지 않는다(실측: 초기 카메라를 180,150으로 옮겼는데 오버레이
+      // transform은 translate(0,0)에 멈춰 있었다).
       cameraRef.current = c;
+      setCamera(c);
     },
     [api],
   );

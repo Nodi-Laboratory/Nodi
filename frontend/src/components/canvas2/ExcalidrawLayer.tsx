@@ -33,6 +33,15 @@ interface Props {
   onSceneCommit: (scene: DrawingScene) => void;
   /** 읽기 전용(교사 뷰 등) */
   viewOnly?: boolean;
+  /**
+   * 마운트 시 적용할 카메라.
+   *
+   * **명령형(updateScene)으로 밀지 않는다.** 마운트 직후에는 api가 아직 없고,
+   * 씬이 도착하면 이 컴포넌트가 리마운트되면서 스크롤이 0으로 돌아간다 —
+   * 그 사이 어디에 끼워 넣어도 경합이 남는다. initialData는 마운트 시점에
+   * 확정적으로 적용되므로 경합 자체가 없다.
+   */
+  initialCamera?: { scrollX: number; scrollY: number; zoom: number };
 }
 
 export function ExcalidrawLayer({
@@ -40,6 +49,7 @@ export function ExcalidrawLayer({
   initialScene,
   onSceneCommit,
   viewOnly = false,
+  initialCamera,
 }: Props) {
   const timerRef = useRef<number | null>(null);
   // 최신 콜백을 ref에 담아 둔다 — 렌더 중에 쓰면 React Compiler가 막으므로
@@ -63,10 +73,21 @@ export function ExcalidrawLayer({
     [viewOnly],
   );
 
-  // 언마운트 직전에 대기 중인 저장을 흘려보낸다 — 마지막 획이 사라지면 안 된다.
+  // 언마운트 정리.
+  //
+  // **`onApi(null)`을 반드시 부른다.** 이 컴포넌트는 씬이 도착하면 key가 바뀌며
+  // 리마운트되는데, 그때 알려 주지 않으면 상위가 죽은 Excalidraw의 api를 계속
+  // 들고 있는다. 그 api로 `updateScene`을 부르면 조용히 아무 일도 일어나지
+  // 않는다 — 실측으로 초기 카메라가 통째로 버려졌다(좌측 여백이 안 잡혀 열
+  // 라벨이 사이드바에 잘렸다).
+  const apiRef = useRef(onApi);
+  useEffect(() => {
+    apiRef.current = onApi;
+  }, [onApi]);
   useEffect(() => {
     return () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
+      apiRef.current(null);
     };
   }, []);
 
@@ -81,6 +102,15 @@ export function ExcalidrawLayer({
           files: (initialScene?.files ?? {}) as never,
           appState: {
             viewBackgroundColor: "transparent",
+            ...(initialCamera
+              ? {
+                  scrollX: initialCamera.scrollX,
+                  scrollY: initialCamera.scrollY,
+                  // NormalizedZoomValue는 브랜드 타입이다 — 런타임에는 그냥
+                  // 숫자라 캐스팅으로 넘긴다.
+                  zoom: { value: initialCamera.zoom as unknown as never },
+                }
+              : {}),
             currentItemStrokeColor: "#2b2620",
             currentItemRoughness: 1,
             currentItemStrokeWidth: 2,

@@ -33,6 +33,10 @@ const GRID = 28;
 interface Props {
   bridge: Bridge;
   initialScene: DrawingScene | null;
+  /** 씬이 도착한 시점을 나타내는 키. 바뀌면 그리기 레이어만 리마운트된다. */
+  sceneKey: string | null;
+  /** 그리기 레이어 마운트 시 적용할 카메라. */
+  initialCamera?: { scrollX: number; scrollY: number; zoom: number };
   onSceneCommit: (scene: DrawingScene) => void;
   /** 글쓰기 도구로 빈 캔버스를 클릭했을 때 — world 좌표를 준다. */
   onCanvasClick?: (world: { x: number; y: number }) => void;
@@ -47,6 +51,8 @@ interface Props {
 export function CanvasStage({
   bridge,
   initialScene,
+  sceneKey,
+  initialCamera,
   onSceneCommit,
   onCanvasClick,
   onBackgroundClick,
@@ -96,10 +102,12 @@ export function CanvasStage({
       <DotGrid camera={camera} />
 
       <ExcalidrawLayer
+        key={sceneKey ?? "none"}
         onApi={bridge.setApi}
         initialScene={initialScene}
         onSceneCommit={onSceneCommit}
         viewOnly={viewOnly}
+        initialCamera={initialCamera}
       />
 
       <div
