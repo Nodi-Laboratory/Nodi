@@ -1,289 +1,200 @@
-# 배포 문서 — 구 클라우드 VM 구성 (2026-07-19 기준)
+# 배포 문서 (D116 · 2026-07-29 기준)
 
-> ## ⚠️ 이 문서는 현재 구성이 아니다
->
-> 2026-07-19의 **특정 VM 기록**이다. Docker-in-Docker가 막힌 샌드박스라 모든
-> 것을 프로세스로 직접 띄우던 환경이고, 그 뒤로 세 가지가 달라졌다:
->
-> - **D104** — Supabase를 걷어내고 Postgres·자체 인증으로 옮겼다.
-> - **D108** — 대화 생성이 EXAONE(Friendli) → Upstage `solar-pro2`로 바뀌었다.
->   아래에 남은 EXAONE 관련 서술은 도판 판정(현재 비활성)에만 해당한다.
-> - **D115** — 일반 서버는 `docker compose --profile app up -d --build` 한 줄로
->   전체가 뜬다. **[README의 "서버 배포 — 전체 컨테이너"](../README.md#서버-배포--전체-컨테이너-d115)**
->   를 본다.
->
-> 이 문서는 **그 VM에 손댈 때만** 참고한다.
+운영 서버가 어떻게 구성돼 있고 **왜 이렇게 됐는지**를 적는다.
+서버에 접속해서 뭘 쳐야 하는지는 **[`deploy/README.md`](../deploy/README.md)**를 본다
+— 명령·로그 위치·고장 대처는 그쪽이다. 이 문서는 배경과 구조다.
 
-이 문서는 `README.md`의 "로컬 실행"(Docker Compose 기반)과 다르다. 이 VM(TTA GPU
-렌탈 클라우드)은 **샌드박스 컨테이너라 Docker-in-Docker가 근본적으로 불가능**하다
-(`CAP_NET_ADMIN`·`CAP_SYS_ADMIN`이 bounding set에서 빠져 있음 — `sudo`로도 못 올림,
-`docker run`이 브리지 네트워크 생성·오버레이 마운트 단계에서 `operation not
-permitted`로 실패). 그래서 Qdrant·backend·frontend를 **컨테이너 없이 프로세스로
-직접 실행**한다.
+> 이전 판(2026-07-19)은 Supabase·EXAONE 시절 기록이었고 전부 대체됐다.
 
 ---
 
-## 아키텍처 / 포트 매핑
+## 한 장 요약
 
 ```
-외부 인터넷
-   │  https:// 시도(브라우저 HSTS) → SSL 에러 (아래 "외부 접속" 참고)
-   │  http://proxy.tta-gpu.gov-nhncloud.com:30099  또는  http://114.110.181.24:30099
-   ▼
-[클라우드 게이트웨이 114.110.181.24] ── 고정 포트포워딩 30099 → 이 VM의 8080
-   │
-   ▼
-이 VM (내부 전용, 외부에서 8080 외에는 직접 도달 불가)
-   ├─ 8080  Next.js (frontend, production `next start`)  ← 유일한 외부 진입점
-   │          └─ /api/*  rewrite(next.config.ts) → 내부 8000으로 서버사이드 프록시
-   ├─ 8000  FastAPI (backend, uvicorn --reload)           ← 외부 미노출, 127.0.0.1만
-   ├─ 8081  llama.cpp EXAONE-4.5-33B (비전 judge, D93)    ← 내부 전용, 0.0.0.0 바인딩이지만
-   │                                                          게이트웨이가 8081을 안 열어줌
-   ├─ 6333  Qdrant REST + 대시보드
-   └─ 6334  Qdrant gRPC
+                    인터넷
+                      │  https://<도메인>   (Cloudflare가 인증서·DNS 담당)
+                      ▼
+              Cloudflare Edge
+                      │
+                      │  ← 아웃바운드 터널. 인바운드로 열린 포트가 0개다
+                      ▼
+  ┌──────────────── TTA GPU VM (Ubuntu 22.04, 92코어 / 885GB) ───────────────┐
+  │                                                                          │
+  │  supervisord (~/app/supervisord.conf) ── 우리 것. 플랫폼 것과 별개         │
+  │    ├─ cloudflared                        터널                             │
+  │    ├─ frontend   127.0.0.1:3000          Next.js `next start`             │
+  │    │                └ /api/* → rewrite → 127.0.0.1:8000                   │
+  │    ├─ backend    127.0.0.1:8000          FastAPI + 업로드/임베딩 워커      │
+  │    ├─ qdrant     127.0.0.1:6333          벡터 1024d                       │
+  │    ├─ postgres   127.0.0.1:5433          데이터·RLS·비즈니스 함수          │
+  │    └─ gh-runner                          Actions self-hosted 러너         │
+  │                                                                          │
+  │  ~/data/nodi  ← NFS PVC(33T). 영속. DB·벡터·업로드·백업·비밀값            │
+  │  ~/app        ← 오버레이. 휘발. 코드·런타임·로그                          │
+  └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **채팅 생성(EXAONE)**: 여전히 원격 Friendli 서버리스(`K-EXAONE-236B-A23B`)를 쓴다. 이 VM의
-  llama.cpp는 별개로, **교과서 figure 캡션 판정(vision judge, D88/D93)** 전용이다.
-- 8080은 원래 llama.cpp가 쓰던 자리였다(judge_base_url 기본값이 이 게이트웨이:30099를
-  가리키고 있었음). 프론트엔드 외부 노출을 위해 llama.cpp를 8081로 옮기고 8080을
-  비웠다 — 아래 "구성 변경 이력" 참고.
+**서비스 전부 127.0.0.1에만 바인딩한다.** 파드 IP로 붙어 봐도 네 포트 모두
+거부되는 것을 확인했다. 외부 도달 경로는 Cloudflare Tunnel 하나뿐이다.
 
 ---
 
-## 1. Qdrant (바이너리 직접 실행)
+## 결정 1 — 컨테이너를 쓰지 않는다
 
-Docker 불가로 `docker compose up -d qdrant` 대신 **musl 정적 바이너리**를 직접 띄운다
-(이 Ubuntu 22.04의 glibc 2.35가 공식 gnu 빌드가 요구하는 2.38보다 낮아 gnu 빌드는
-`GLIBC_2.38 not found`로 실행 불가 — 반드시 musl 빌드 사용).
+D115에서 백엔드·프론트 이미지를 만들었다가 **되돌렸다.** 쓸 수 있는 서버가
+이것 하나인데 컨테이너를 못 돌린다. 추측이 아니라 실측이다:
+
+```
+CapBnd  0x800004cb    → CAP_SYS_ADMIN(21)·CAP_NET_ADMIN(12) 없음
+unshare --user        → Operation not permitted
+sudo                  → 무암호로 되지만, 바운딩 셋에 없는 권한은 root도 못 얻는다
+```
+
+`unprivileged_userns_clone=1`이라 rootless(podman)에 기대를 걸었는데 실제로
+`unshare`를 쳐 보니 seccomp/AppArmor 단에서 막힌다. **docker 설치를 시도하지
+마라 — 커널 권한 문제라 설치로 해결되지 않는다.**
+
+그래서 supervisor로 프로세스를 띄운다. 조작감은 compose와 거의 같다:
 
 ```bash
-# 최초 1회: 바이너리 받기 (이미 받아져 있으면 생략)
-mkdir -p /home/ubuntu/Nodi/.qdrant-bin && cd /home/ubuntu/Nodi/.qdrant-bin
-curl -sL -o qdrant.tar.gz \
-  https://github.com/qdrant/qdrant/releases/download/v1.18.3/qdrant-x86_64-unknown-linux-musl.tar.gz
-tar xzf qdrant.tar.gz && rm qdrant.tar.gz
-
-# 실행 (스토리지는 docker-compose.yml과 동일 경로 재사용)
-mkdir -p /home/ubuntu/Nodi/qdrant_storage
-cd /home/ubuntu/Nodi/.qdrant-bin
-QDRANT__STORAGE__STORAGE_PATH=/home/ubuntu/Nodi/qdrant_storage \
-QDRANT__SERVICE__HTTP_PORT=6333 \
-QDRANT__SERVICE__GRPC_PORT=6334 \
-nohup ./qdrant > qdrant.log 2>&1 &
-disown
+supervisorctl -c ~/app/supervisord.conf status
+supervisorctl -c ~/app/supervisord.conf restart nodi:backend
 ```
 
-확인: `curl http://localhost:6333/collections`
+로컬 개발은 여전히 Docker를 쓴다(인프라만). 노트북에서는 컨테이너가 되고,
+그게 지금까지의 개발 흐름이다.
 
-`.qdrant-bin/`은 `.gitignore` 처리됨 — 커밋 대상 아님.
+## 결정 2 — 상태는 전부 NFS 볼륨에
 
----
+이 서버는 **오버레이 파일시스템이 워크로드 재생성 때 사라진다.** 추정이 아니라
+실제로 겪었다 — 예전 배포본 `~/Nodi`가 통째로 없어졌고, `models/`·`llama.cpp`만
+남아 있었다.
 
-## 2. Backend (FastAPI / uvicorn)
+살아남는 것은 `~/data`(NFS PVC 33T)뿐이다. 그래서:
 
-로컬 실행(README)과 동일하되, `backend/.env`에 EXAONE judge 관련 오버라이드가 추가돼 있다.
-
-```bash
-cd /home/ubuntu/Nodi/backend
-# venv 없이 시스템 uvicorn 사용 중(이 VM 한정) — venv가 있으면 source .venv/bin/activate 먼저
-nohup uvicorn app.main:app --reload --port 8000 > backend.log 2>&1 &
-disown
-```
-
-확인: `curl http://localhost:8000/health`
-
-`backend/.env` 추가 키(judge 전용, D88/D93):
-
-```
-JUDGE_BASE_URL=http://localhost:8081/v1   # 로컬 llama.cpp — 8080은 프론트엔드가 씀
-JUDGE_MODEL=EXAONE-4.5-33B
-JUDGE_API_KEY=<llama-server --api-key와 동일한 값>
-```
-
-> **D97 — 이제 세 값 모두 필수다.** `judge_base_url`의 config 기본값이 제거됐고
-> (과거 기본값은 게이트웨이 30099를 가리켰는데 그 포트는 프론트엔드로 넘어갔다),
-> 셋 중 하나라도 비면 교과서 업로드가 503으로 거부된다. 설정 상태는
-> `curl http://localhost:8000/health/config` 의 `judge` 블록으로 확인한다.
-
-> ⚠️ **키를 이 문서에 적지 말 것.** 실제 값은 VM의 `backend/.env`와
-> `/home/ubuntu/exaone4.5/run_server.sh`에만 둔다. (과거 이 문서에 평문으로
-> 적혀 있었고 git 히스토리에 남아 있다 — 협업자를 늘리기 전에 회전 권장.)
-
-> `.env` 수정은 `uvicorn --reload`의 파일 감시 대상이 아닐 수 있다(기본은 `.py` 위주).
-> 값이 실제로 반영됐는지 불확실하면 프로세스를 재기동해서 확실히 한다.
-
----
-
-## 3. EXAONE 비전 judge (llama.cpp, figure 캡션 판정 전용)
-
-`/home/ubuntu/exaone4.5/run_server.sh`로 기동. **채팅 생성이 아니라 교과서 figure
-캡션 판정(D88/D93)에만 쓰인다** — 헷갈리지 말 것.
-
-```bash
-cd /home/ubuntu/exaone4.5
-nohup ./run_server.sh > server.log 2>&1 &
-disown
-```
-
-`run_server.sh` 핵심 플래그: `--host 0.0.0.0 --port 8081 -a EXAONE-4.5-33B --api-key
-rkd0520 --mmproj models/mmproj-EXAONE-4.5-33B-BF16.gguf`(멀티모달 vision).
-
-33B 모델 로딩에 GPU 기준 약 5~10초 소요. 확인:
-`curl http://localhost:8081/v1/models -H "Authorization: Bearer $JUDGE_API_KEY"`
-
-> **포트는 반드시 8081.** 8080은 프론트엔드 몫이다. 원래 기본은 8080이었고
-> `judge_base_url` config 기본값(`http://proxy.tta-gpu.gov-nhncloud.com:30099/v1`)도
-> 8080 기준이었는데, 프론트를 8080에 앉히면서 8081로 옮기고 `JUDGE_BASE_URL`을
-> 로컬 직결(`http://localhost:8081/v1`)로 오버라이드했다(원격 프록시 왕복 대신
-> 로컬 직결이라 지연시간도 더 좋아짐).
->
-> **D97에서 그 config 기본값 자체를 제거했다** — 기본값이 프론트엔드로 용도가
-> 바뀐 포트를 계속 가리키고 있어서, `JUDGE_API_KEY`만 채운 신규 환경이 비전
-> 요청을 엉뚱한 서비스로 보내는 사고가 가능했다. 이제 `JUDGE_BASE_URL`을
-> 명시하지 않으면 교과서 업로드가 아예 거부된다(조용히 실패하지 않는다).
-
----
-
-## 4. Frontend (Next.js, 프로덕션 빌드)
-
-**dev 모드가 아니라 프로덕션 빌드로 띄운다** — 외부 프록시가 WebSocket Upgrade를
-통과시키지 못해 HMR(`/_next/webpack-hmr`)이 항상 실패하고 콘솔에 에러가 쌓이기
-때문(사용자 결정: dev 유지보다 프로덕션 전환 선택). 프로덕션은 HMR 자체가 없어
-이 문제가 사라진다.
-
-이 VM의 시스템 Node(v18.20.4)는 Next.js 16 요구사항(`>=20.9.0`)에 못 미친다 —
-`nvm`으로 v22.23.1 사용.
-
-```bash
-source /usr/local/nvm/nvm.sh && nvm use v22.23.1
-cd /home/ubuntu/Nodi/frontend
-
-npm install         # @tailwindcss/oxide-linux-x64-gnu 네이티브 바이너리 포함 확인
-                     # (npm optional-deps 버그로 누락되면 next dev/build가 500/빌드실패남 —
-                     #  node_modules/@tailwindcss/oxide-linux-x64-gnu/*.node 존재 여부로 확인)
-npm run build
-
-setsid nohup npx next start -p 8080 -H 0.0.0.0 > frontend.log 2>&1 < /dev/null &
-disown -a
-```
-
-> `next dev`/`next start`를 백그라운드 job으로 띄우고 바로 `sleep && ps/tail`을
-> 이어붙이면 셸 job-control 메시지 때문에 tool 호출이 이상한 exit code를 내며
-> 로그가 꼬여 보일 수 있었다(`setsid` + 별도 호출로 분리해서 해결). 재기동할 땐
-> 실행과 상태확인을 **별도 명령으로 분리**할 것.
-
-코드를 고치면 자동 반영되지 않는다 — 재배포 시:
-```bash
-pkill -f "next start"
-cd /home/ubuntu/Nodi/frontend && npm run build
-setsid nohup npx next start -p 8080 -H 0.0.0.0 > frontend.log 2>&1 < /dev/null &
-disown -a
-```
-
-### `frontend/.env.local` (신규 생성, gitignore 대상)
-
-```
-NEXT_PUBLIC_API_BASE_URL=/api
-```
-
-(D104로 Supabase 값 2종은 사라졌다 — 프론트에 실을 자격증명이 없다.)
-
-`NEXT_PUBLIC_API_BASE_URL`이 절대 URL(`http://localhost:8000`)이 아니라 **상대 경로
-`/api`**인 이유: 외부에서 브라우저가 직접 붙는 origin은 오직 8080(→30099) 하나뿐이라,
-브라우저 fetch가 같은 origin의 `/api/...`로 나가야 `next.config.ts`의 rewrite가
-받아서 내부 8000으로 넘겨줄 수 있다. 클라이언트 코드에 `localhost:8000`을 박아두면
-외부 접속자의 브라우저는 자기 자신의 localhost를 찌르게 되어 무조건 실패한다.
-
-### `next.config.ts` — `/api/*` 프록시 rewrite
-
-```ts
-async rewrites() {
-  return [{ source: "/api/:path*", destination: "http://localhost:8000/api/:path*" }];
-}
-```
-
-D105: 백엔드 도메인 라우터가 **직접 `/api` 접두사를 가진다.** 그래서 rewrite는
-접두사를 벗기지 않고 그대로 넘긴다 — 로컬(`:8000/api/...`)과 배포(`/api/...`)의
-경로가 같아져, 한쪽에서만 나는 경로 버그가 사라진다.
-
-예전에는 백엔드 prefix(`/home`·`/admin`·`/teacher`)가 프론트 페이지 경로와 겹쳐
-여기서 `/api`를 떼고 넘겨야 했다. 그 편법이 경로 차이의 원인이었다.
-
-`/health`는 접두사 밖에 남겨 뒀다 — 인프라 liveness 프로브의 계약이라
-API 클라이언트가 아니라 운영자가 백엔드에 직접 호출한다.
-
----
-
-## 5. 외부 접속
-
-### 정상 경로가 막히는 이유와 우회
-
-`http://proxy.tta-gpu.gov-nhncloud.com:30099`로 접속하면:
-
-1. Chromium/Arc가 **HSTS preload**로 인해 `http://`를 무시하고 자동으로
-   `https://...:30099`를 시도한다 — 상위 도메인(`nhncloud.com` 계열)이 preload
-   목록에 `includeSubDomains`로 올라가 있는 것으로 추정(`chrome://net-internals/#hsts`
-   조회 결과 `static_sts_domain`으로 확인됨. 브라우저 UI로 삭제 불가능한 종류).
-2. 이 서버는 8080에 순수 HTTP만 서빙하므로 TLS 핸드셰이크가 실패 → SSL 인증서 오류.
-3. 우리가 소유하지 않은 도메인이라 정식 인증서 발급(Let's Encrypt HTTP-01/DNS-01
-   모두 도메인 제어권 필요)도 불가능.
-
-**우회**: 게이트웨이 **IP를 직접** 사용한다. HSTS는 호스트네임 기준이라 IP 접속엔
-적용되지 않는다.
-
-```
-http://114.110.181.24:30099/
-```
-
-Host 헤더 유무와 무관하게 동일하게 라우팅됨을 확인함(순수 포트포워딩, 가상호스팅
-아님). 이 IP가 게이트웨이 쪽에서 바뀔 수 있으므로 접속이 안 되면 먼저
-`getent hosts proxy.tta-gpu.gov-nhncloud.com`로 최신 IP를 재확인할 것.
-
----
-
-## 6. Supabase Auth 설정
-
-**D99(2026-07-27)로 Google OAuth를 제거했다.** 인증은 이메일/비밀번호 자체
-회원가입·로그인이며, 리다이렉트 왕복이 없다. 따라서 **origin이 바뀌어도 Auth
-설정을 갱신할 필요가 없다** — 과거 이 절에 있던 Redirect URL 등록·Site URL
-폴백·PKCE 쿠키 충돌 대응은 전부 OAuth 전용 문제라 함께 사라졌다.
-
-남는 항목:
-
-- **Site URL**은 비밀번호 재설정 메일 링크에 쓰이므로, 그 기능을 켤 때
-  실제 도달 가능한 주소로 맞춘다(현재 `http://114.110.181.24:30099`).
-- 이메일 확인(`enable_confirmations`)을 켜면 가입 직후 세션이 발급되지 않는다 —
-  프론트가 그 경우 `/login?signup=1`로 안내하도록 이미 분기돼 있다.
-
-구글 로그인은 나중에 **자체 리다이렉션**으로 다시 붙일 예정이다. 그때 이 절을
-새 방식 기준으로 다시 쓴다.
-
----
-
-## 재기동 체크리스트 (VM 재부팅/세션 종료 후)
-
-이 VM에는 systemd가 없고, 모든 프로세스는 `nohup`/`setsid`로 백그라운드 실행한
-것이라 **VM/세션이 끊기면 전부 죽는다**. 영구 서비스화(systemd user unit, `pm2`,
-`supervisord` 등)는 아직 안 돼 있음 — 필요하면 별도 작업으로 추가할 것. 재기동 순서:
-
-1. Qdrant (§1) — 다른 서비스가 의존하므로 가장 먼저
-2. EXAONE judge llama.cpp (§3, 포트 8081) — 모델 로딩 5~10초 대기
-3. Backend uvicorn (§2, 포트 8000) — judge가 떠 있어야 `JUDGE_BASE_URL` 헬스 정상
-4. Frontend (§4, 포트 8080, 프로덕션) — 코드 변경 있었으면 `npm run build`부터
-
-각 단계 후 `curl`로 개별 확인(§1~§4의 확인 명령) 후 다음 단계로 넘어갈 것 — 한 번에
-다 띄우고 마지막에 몰아서 디버깅하면 원인 특정이 어렵다.
-
----
-
-## 구성 변경 이력 (이 세션에서 바뀐 것)
-
-| 파일 | 변경 | 이유 |
+| | 위치 | 사라지면 |
 |---|---|---|
-| `/home/ubuntu/exaone4.5/run_server.sh` | `--port 8080` → `8081` | 8080을 프론트엔드에 양보 |
-| `backend/.env` | `JUDGE_BASE_URL=http://localhost:8081/v1` 추가 | judge를 로컬 직결로 전환 |
-| `frontend/next.config.ts` | `/api/*` rewrite 추가 | 외부 포트 하나(8080)로 프론트+백엔드 동시 서빙 |
-| `frontend/.env.local` | 신규 생성, `NEXT_PUBLIC_API_BASE_URL=/api` | 위와 동일 목적 |
-| `.gitignore` | `.qdrant-bin/` 추가 | Qdrant 바이너리 커밋 방지 |
-| Supabase 대시보드 (코드 아님) | Site URL, Redirect URLs 갱신 | 외부 origin 변경 반영 |
+| DB·벡터·업로드·백업·비밀값 | `~/data/nodi/` | **복구 불가** |
+| 코드·런타임·로그 | `~/app/` | `bootstrap.sh` 한 번으로 복구 |
+
+NFS 위의 Postgres가 느리거나 불안정할까 걱정해 재 봤는데 문제없었다:
+
+```
+쓰기  2,650 tps (지연 3.0ms)      읽기  96,521 tps (지연 0.083ms)
+```
+
+교실용 부하로는 과하다. 마운트는 `vers=3 hard local_lock=none`이다.
+
+## 결정 3 — 인그레스는 Cloudflare Tunnel
+
+이 VM은 클라우드 게이트웨이가 포워딩해 주는 포트로만 외부에 노출됐었고, 그
+포트가 워크로드마다 바뀐다. 터널은 **아웃바운드로 붙으므로** 그 문제에서
+자유롭고, HTTPS 인증서와 DNS도 Cloudflare가 맡는다. 인바운드로 열 포트가
+하나도 없다는 점에서 보안 면도 낫다.
+
+`cloudflared`는 supervisor의 `autostart=false`다 — 토큰(`~/data/nodi/env/cloudflared.env`)을
+넣기 전에는 뜨지 않는다.
+
+## 결정 4 — 배포는 self-hosted 러너가 스스로
+
+GitHub-hosted 러너에서 SSH로 밀어넣는 방식을 버렸다. 이유가 셋이다:
+
+1. **deploy key를 못 만든다.** 조직 정책으로 막혀 있다 —
+   `POST /repos/.../keys` → `422 Deploy keys are disabled for this repository`.
+   VM이 스스로 `git fetch`할 수단이 없다.
+2. SSH 진입점(게이트웨이 호스트·포트)이 바뀔 수 있다.
+3. SSH 개인키를 저장소 시크릿에 넣지 않아도 된다.
+
+러너가 자기 토큰으로 체크아웃하고 `rsync`로 `~/app/Nodi`에 배달한 뒤
+`deploy.sh --skip-pull`을 부른다. **VM에 git 자격증명이 하나도 없다.**
+
+`.github/workflows/deploy.yml`은 `push: branches: [main]`이다 — dev는 배포하지
+않는다. 저장소가 private이라 포크 PR이 self-hosted 러너를 잡는 위험은 없다.
+
+러너는 supervisor에 얹되 **`nodi` 그룹 밖**에 둔다. 그룹째 재시작하면 배포를
+실행 중인 자기 자신을 죽인다.
+
+---
+
+## 처음 세울 때
+
+```bash
+git clone <repo> ~/app/Nodi        # 또는 러너/rsync로 코드 배달
+~/app/Nodi/deploy/bootstrap.sh
+```
+
+`bootstrap.sh`가 하는 일 — 전부 **"없을 때만"** 한다(멱등):
+
+1. 런타임 — Postgres 17(PGDG), Node 22(tarball), uv, Qdrant(musl), cloudflared
+2. 디렉터리 — 영속/휘발 분리
+3. DB — `initdb` → `db/0*.sql` 적용. **기존 DB는 절대 건드리지 않는다**
+4. 비밀값 — `~/data/nodi/env/backend.env` 생성, `JWT_SECRET`·DB 비밀번호를
+   난수로. repo의 `backend/.env`는 여기를 가리키는 심볼릭 링크
+5. supervisor — 템플릿에서 설정 생성 후 기동
+6. `deploy.sh` 호출
+
+`UPSTAGE_API_KEY`만 손으로 채운다. 안 채우면 `/health/config`가
+`ready:false, blocking:["chat","upstage"]`로 알려 준다.
+
+### 버전 고정
+
+| | 버전 | 왜 |
+|---|---|---|
+| Postgres | 17 (PGDG) | Ubuntu 22.04 기본은 14까지다 |
+| Node | 22.20.0 (tarball) | apt에 22가 없다. root도 필요 없다 |
+| Qdrant | 1.18.3 **musl** | glibc 2.35 < gnu 빌드 요구치 2.38 — gnu는 실행 자체가 안 된다 |
+
+`deploy/config.sh` 한 곳에서 바꾼다.
+
+---
+
+## 알아 둘 함정
+
+**프론트의 두 값은 빌드 시점에 박힌다.** `NEXT_PUBLIC_API_BASE_URL`은 번들에,
+`BACKEND_ORIGIN`은 `rewrites()`가 빌드 때 평가돼 `routes-manifest.json`에
+들어간다. 런타임 환경변수로는 안 바뀐다(실측 — 런타임에만 넣었더니
+`ECONNREFUSED 127.0.0.1:8000`이 났다). 재시작이 아니라 `deploy.sh`를 다시
+돌려야 반영된다.
+
+**플랫폼 supervisor를 건드리지 마라.** `~/services.conf`는 sshd·jupyter를
+돌리는 플랫폼 소유 파일이고, 옆에 `services.conf.tpl`이 있다 — 재생성되므로
+거기 추가한 program은 조용히 사라진다. 기본 `supervisorctl`이
+`/var/run/supervisor.sock`을 찾는데 그 소켓도 없다. 그래서 우리는 소켓·pid·로그를
+전부 분리한 별도 supervisord를 띄운다. **항상 `-c ~/app/supervisord.conf`를 준다.**
+
+**`supervisorctl status`는 정상일 때도 exit 3을 준다.** RUNNING이 아닌 프로그램이
+하나라도 있으면 그렇고, cloudflared는 토큰 전까지 일부러 STOPPED다. 스크립트에서
+쓸 때 `|| true`가 없으면 `set -e`가 끊는다 — 배포가 전부 성공했는데 실패로
+보고된 적이 있다(Actions run 30433823688).
+
+**서버에서 코드를 직접 고치지 마라.** 배포의 `rsync --delete`가 지운다. 수정은
+저장소에서 하고 main에 올린다.
+
+---
+
+## 지금 상태
+
+| | |
+|---|---|
+| 실행 | postgres · qdrant · backend · frontend · gh-runner (RUNNING) |
+| 대기 | cloudflared — 터널 토큰 대기 중 |
+| 검증 | E2E 통과 — 가입 → 학급 개설 → 가입 → 자료 업로드 → `indexed` → 개념카드 스트리밍 |
+| 데이터 | 비어 있음. `app_settings` 기본값 13종만 (검증용 계정·학급·파일은 삭제) |
+| 하드닝 | `JWT_SECRET` 난수 · DB 비밀번호 난수 · 전 서비스 루프백 전용 · env 파일 0600 |
+| 자동 배포 | main push → 러너 → 배포 → `/health` 확인까지 성공 확인 |
+
+### 아직 안 한 것
+
+- **관리자 계정이 없다.** 첫 관리자는 CLI로 만든다(가입 폼으로는 못 얻는다):
+  ```bash
+  cd ~/app/Nodi/backend && ./.venv/bin/python -m app.cli create-user <이메일> <비밀번호> --role admin
+  ```
+- 교과서 도판 비전 판정(`JUDGE_*`)은 비활성. 이 VM에 GPU와 `llama.cpp`가
+  그대로 있어서 되살릴 수 있다(보고서 §5 참조).
+- 백업 자동화 — D114 백업 API는 있지만 주기 실행은 걸지 않았다.
+
+## 관련 문서
+
+- [`deploy/README.md`](../deploy/README.md) — **서버 조작은 이쪽**
+- [`README.md`](../README.md) — 로컬 개발
+- [`docs/CHANGELOG-D104-D114.md`](CHANGELOG-D104-D114.md) — Supabase 제거 이후 변경 보고서
