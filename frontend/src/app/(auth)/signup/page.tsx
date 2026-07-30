@@ -103,8 +103,8 @@ export default function SignupPage() {
               aria-pressed={role === opt.value}
               className={`rounded-lg border px-3 py-2 text-left transition-colors ${
                 role === opt.value
-                  ? "border-accent-border bg-accent text-accent-fg"
-                  : "border-accent-border/50 bg-bg text-fg hover:bg-accent/20"
+                  ? "border-accent-border bg-accent-soft text-accent-fg"
+                  : "border-accent-border/50 bg-bg text-fg hover:bg-accent-soft/60"
               }`}
             >
               <span className="block text-sm font-medium">{opt.label}</span>

@@ -41,7 +41,7 @@ export function StudentsTab({ classId }: { classId: string }) {
                     type="button"
                     onClick={() => selectStudent(s.user_id)}
                     className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
-                      active ? "bg-accent text-accent-fg" : "text-fg hover:bg-accent/30"
+                      active ? "bg-accent text-accent-fg" : "text-fg hover:bg-accent-soft"
                     }`}
                   >
                     <User size={14} className="shrink-0 opacity-70" />
@@ -82,7 +82,7 @@ export function StudentsTab({ classId }: { classId: string }) {
                     type="button"
                     onClick={() => setSessionId(s.id)}
                     className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
-                      active ? "bg-accent text-accent-fg" : "text-fg hover:bg-accent/30"
+                      active ? "bg-accent text-accent-fg" : "text-fg hover:bg-accent-soft"
                     }`}
                   >
                     <MessageSquare size={14} className="shrink-0 opacity-70" />

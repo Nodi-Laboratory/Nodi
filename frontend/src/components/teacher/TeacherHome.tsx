@@ -102,7 +102,7 @@ function ClassCard({
     <button
       type="button"
       onClick={onOpen}
-      className="flex flex-col gap-3 rounded-2xl border border-accent-border/30 bg-bg-elevated p-4 text-left transition-colors hover:border-accent-deep/60 hover:bg-accent/10"
+      className="flex flex-col gap-3 rounded-2xl border border-accent-border/30 bg-bg-elevated p-4 text-left transition-colors hover:border-accent-deep/60 hover:bg-accent-soft/60"
     >
       <div className="flex items-start justify-between gap-2">
         <h3 className="min-w-0 flex-1 truncate text-base font-bold text-fg" title={cls.name ?? "학급"}>
@@ -111,7 +111,7 @@ function ClassCard({
       </div>
 
       {cls.join_code ? (
-        <span className="flex w-fit items-center gap-1 rounded-md bg-accent/30 px-2 py-1 text-xs font-medium text-accent-fg">
+        <span className="flex w-fit items-center gap-1 rounded-md bg-accent-soft px-2 py-1 text-xs font-medium text-accent-fg">
           코드 {cls.join_code}
           <span
             role="button"

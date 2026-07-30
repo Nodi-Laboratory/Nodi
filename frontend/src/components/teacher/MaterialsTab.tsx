@@ -49,9 +49,9 @@ const STATUS_META: Record<
   FileStatus,
   { label: string; cls: string; progress: boolean }
 > = {
-  uploaded: { label: "대기", cls: "bg-accent/40 text-accent-fg", progress: true },
-  splitting: { label: "분할 중", cls: "bg-accent/40 text-accent-fg", progress: true },
-  embedding: { label: "임베딩 중", cls: "bg-accent/40 text-accent-fg", progress: true },
+  uploaded: { label: "대기", cls: "bg-accent-soft text-accent-fg", progress: true },
+  splitting: { label: "분할 중", cls: "bg-accent-soft text-accent-fg", progress: true },
+  embedding: { label: "임베딩 중", cls: "bg-accent-soft text-accent-fg", progress: true },
   indexed: { label: "완료", cls: "bg-positive/20 text-positive", progress: false },
   partial: { label: "부분 실패", cls: "bg-warning/20 text-warning", progress: false },
   failed: { label: "실패", cls: "bg-danger/20 text-danger", progress: false },
@@ -138,7 +138,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
             type="button"
             onClick={() => openPicker("textbook")}
             disabled={uploading}
-            className="flex items-center gap-1 rounded-lg border border-accent-border bg-bg-elevated px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent disabled:opacity-60"
+            className="flex items-center gap-1 rounded-lg border border-accent-border bg-bg-elevated px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-soft disabled:opacity-60"
           >
             <BookOpen size={14} />
             교과서 업로드
@@ -147,7 +147,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
             type="button"
             onClick={() => openPicker("class_material")}
             disabled={uploading}
-            className="flex items-center gap-1 rounded-lg border border-accent-border bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white disabled:opacity-60"
+            className="flex items-center gap-1 rounded-lg bg-accent-deep px-3 py-1.5 text-sm font-medium text-white transition-colors hover:brightness-110 disabled:opacity-60"
           >
             <Upload size={14} />
             {uploading ? "업로드 중…" : "자료 업로드"}
@@ -259,7 +259,7 @@ function MaterialItem({ file, classId }: { file: FileRow; classId: string }) {
           {formatBytes(file.size_bytes)}
         </span>
         {file.kind === "textbook" && (
-          <span className="shrink-0 rounded-full bg-accent/40 px-2 py-0.5 text-[11px] font-medium text-accent-fg">
+          <span className="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent-fg">
             교과서
           </span>
         )}
@@ -274,7 +274,7 @@ function MaterialItem({ file, classId }: { file: FileRow; classId: string }) {
             onClick={handleRetry}
             disabled={pendingAction != null}
             title="재시도"
-            className="flex shrink-0 items-center gap-1 rounded-md border border-accent-border/50 px-2 py-1 text-[11px] text-fg-muted transition-colors hover:bg-accent/20 hover:text-fg disabled:opacity-50"
+            className="flex shrink-0 items-center gap-1 rounded-md border border-accent-border/50 px-2 py-1 text-[11px] text-fg-muted transition-colors hover:bg-accent-soft/60 hover:text-fg disabled:opacity-50"
           >
             <RotateCcw size={12} />
             {pendingAction === "retry" ? "재시도 중…" : "재시도"}
@@ -294,7 +294,7 @@ function MaterialItem({ file, classId }: { file: FileRow; classId: string }) {
 
       {meta.progress && (
         <div className="mt-2 flex items-center gap-2">
-          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-accent/20">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-accent-soft/60">
             <div
               className="h-full rounded-full bg-accent-deep transition-all"
               style={{ width: `${total > 0 ? pct : 8}%` }}

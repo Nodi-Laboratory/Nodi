@@ -50,6 +50,8 @@ export interface ExcalidrawElementLike {
   width: number;
   height: number;
   isDeleted?: boolean;
+  /** 요소를 고칠 때마다 오른다. 변경 감지에 쓴다(ExcalidrawLayer). */
+  version?: number;
 }
 
 const IDENTITY: Camera = { scrollX: 0, scrollY: 0, zoom: 1 };

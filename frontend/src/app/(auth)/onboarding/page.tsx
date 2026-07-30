@@ -77,7 +77,7 @@ export default function OnboardingPage() {
             type="button"
             onClick={handleJoin}
             disabled={loading || !code.trim()}
-            className="rounded-lg border border-accent-border bg-accent px-4 py-2 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white disabled:opacity-60"
+            className="rounded-lg bg-accent-deep px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-110 disabled:opacity-60"
           >
             연결
           </button>
@@ -115,7 +115,7 @@ export default function OnboardingPage() {
             router.push("/home");
             router.refresh();
           }}
-          className="w-full rounded-lg border border-accent-border bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white disabled:opacity-60"
+          className="w-full rounded-lg bg-accent-deep px-4 py-2.5 text-sm font-medium text-white transition-colors hover:brightness-110 disabled:opacity-60"
         >
           {starting
             ? "시작하는 중…"

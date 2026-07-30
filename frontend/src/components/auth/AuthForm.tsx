@@ -78,7 +78,7 @@ export function AuthShell({
           type="submit"
           disabled={pending || disabled}
           aria-describedby={error ? errorId : undefined}
-          className="mt-1 w-full rounded-lg border border-accent-border bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-1 w-full rounded-lg bg-accent-deep px-4 py-2.5 text-sm font-medium text-white transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {pending ? pendingLabel : submitLabel}
         </button>
