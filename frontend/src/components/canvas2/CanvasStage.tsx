@@ -133,54 +133,10 @@ export function CanvasStage({
       {chrome}
 
       {!viewOnly && (
-        <ToolRail
-          active={activeTool}
-          onSelect={bridge.setTool}
-          onUndo={() => sendHistoryKey(false)}
-          onRedo={() => sendHistoryKey(true)}
-        />
+        <ToolRail active={activeTool} onSelect={bridge.setTool} />
       )}
     </div>
   );
-}
-
-/**
- * 실행 취소/다시 실행.
- *
- * **Excalidraw는 undo/redo를 공개 API로 노출하지 않는다** — `api.history`에는
- * `clear()`만 있다(문서 확인). 그래서 Excalidraw 자신의 키 처리 경로를 태운다.
- *
- * 두 가지를 지킨다:
- *   1. 먼저 캔버스에 포커스를 준다. Excalidraw는 포커스가 자기 밖에 있으면
- *      단축키를 무시한다(입력창에 타이핑하는 중에 도형이 지워지면 안 되니까).
- *   2. `document`에 올린다. Excalidraw의 리스너가 거기 붙어 있다.
- *
- * ⚠️ 이 경로는 합성 포인터 이벤트로 자동 검증할 수 없다(Excalidraw의 포인터
- * 파이프라인이 합성 이벤트를 받지 않아 되돌릴 그림을 만들 수 없다). 손으로
- * 확인해야 하고, Excalidraw를 올릴 때 함께 확인해야 한다. 학생에게는
- * `Ctrl/⌘+Z`가 항상 되는 경로이므로 이 버튼이 실패해도 막히지는 않는다.
- */
-function sendHistoryKey(redo: boolean) {
-  const canvas = document.querySelector<HTMLElement>(
-    ".excalidraw__canvas.interactive",
-  );
-  const container = document.querySelector<HTMLElement>(".excalidraw");
-  if (!container) return;
-
-  // Excalidraw는 포커스가 자기 안에 없으면 단축키를 흘려보낸다.
-  (canvas ?? container).focus?.();
-
-  const ev = new KeyboardEvent("keydown", {
-    key: "z",
-    code: "KeyZ",
-    // ⌘(mac) / Ctrl(그 외) — 둘 다 켜면 Excalidraw의 CTRL_OR_CMD 검사를 통과한다.
-    ctrlKey: true,
-    metaKey: true,
-    shiftKey: redo,
-    bubbles: true,
-    cancelable: true,
-  });
-  document.dispatchEvent(ev);
 }
 
 /**

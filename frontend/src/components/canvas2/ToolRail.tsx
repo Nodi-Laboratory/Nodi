@@ -19,10 +19,8 @@ import {
   Minus,
   MousePointer2,
   Pencil,
-  Redo2,
   Square,
   Type,
-  Undo2,
 } from "lucide-react";
 import { useEffect } from "react";
 import type { ToolName } from "@/lib/canvas2/types";
@@ -58,11 +56,9 @@ const ALL = GROUPS.flat();
 interface Props {
   active: ToolName;
   onSelect: (tool: ToolName) => void;
-  onUndo: () => void;
-  onRedo: () => void;
 }
 
-export function ToolRail({ active, onSelect, onUndo, onRedo }: Props) {
+export function ToolRail({ active, onSelect }: Props) {
   // 단축키. 입력 중일 때는 절대 가로채지 않는다 — 학생이 글을 쓰다가
   // 'p'를 치면 자유선으로 바뀌는 사고를 막는다.
   useEffect(() => {
@@ -127,12 +123,20 @@ export function ToolRail({ active, onSelect, onUndo, onRedo }: Props) {
       ))}
 
       <div className="mx-1.5 my-0.5 h-px" style={{ background: "var(--c-rule)" }} />
-      <ToolButton active={false} label="실행 취소" hint="⌘Z" onClick={onUndo} accent="neutral">
-        <Undo2 size={17} strokeWidth={1.9} />
-      </ToolButton>
-      <ToolButton active={false} label="다시 실행" hint="⇧⌘Z" onClick={onRedo} accent="neutral">
-        <Redo2 size={17} strokeWidth={1.9} />
-      </ToolButton>
+      {/* 실행 취소는 **키보드로만** 제공한다.
+          Excalidraw는 undo/redo를 공개 API로 주지 않고(`history.clear()`만
+          있다), 합성 KeyboardEvent는 그 경로에 닿지 않는다 — 실측으로
+          확인했다(진짜 키보드 Ctrl+Z는 요소 10→9로 동작, 합성 이벤트는 무동작).
+          우리 스냅샷 스택으로 직접 만들어 봤으나 Excalidraw의 onChange와
+          맞물려 무한 렌더가 났다. **아무 일도 안 하는 버튼을 두는 것보다
+          없는 편이 낫다** — 대신 여기서 단축키를 알려 준다. */}
+      <div
+        className="label px-1 py-1.5 text-center leading-tight"
+        style={{ color: "var(--c-ink-faint)", letterSpacing: 0 }}
+        title="그림 되돌리기는 키보드 단축키를 씁니다"
+      >
+        ⌘Z
+      </div>
     </div>
   );
 }
