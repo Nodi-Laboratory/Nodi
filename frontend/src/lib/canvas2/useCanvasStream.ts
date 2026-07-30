@@ -29,6 +29,7 @@
 import { useCallback, useRef, useState } from "react";
 import { createItems, type NewItemInput } from "@/lib/api/canvas";
 import { streamChat } from "@/lib/api/chat";
+import { isRealId } from "@/lib/ids";
 import type { ChatDoneEvent } from "@/lib/types";
 import type { CanvasItem } from "./types";
 import { appendLine, createStreamParser } from "./streamParser";
@@ -52,6 +53,17 @@ export interface CanvasStreamApi {
   send: (question: string, opts?: { parentItemId?: string | null }) => Promise<void>;
   /** 마지막 오류. */
   error: string | null;
+  /**
+   * 카메라가 따라가야 할 아이템 id.
+   *
+   * 답이 어디에 생기는지 안 보이면 학생은 화면 밖에서 글이 생기는 것을 놓친다
+   * (사용자가 지적한 "답변 생성 위치로 이동하는 기능"). 배치가 좌표를 정한 뒤
+   * 상위가 이 id를 보고 스프링으로 옮긴다 — 여기서 카메라를 직접 만지지
+   * 않는 이유는, 스트림은 좌표를 모르기 때문이다(배치 엔진이 소유한다).
+   */
+  focusId: string | null;
+  /** 추종을 소비했다고 알린다. 같은 아이템으로 계속 끌려가지 않게. */
+  clearFocus: () => void;
 }
 
 interface Deps {
@@ -62,6 +74,8 @@ interface Deps {
   onPersisted: (tempIds: string[], saved: CanvasItem[]) => void;
   /** 현재 아이템 수 — seq를 이어 붙이는 데 쓴다. */
   nextSeq: () => number;
+  /** 이 도판이 이미 캔버스에 있나 (D95 세션 내 중복 제거). */
+  hasFigure: (figureId: string) => boolean;
 }
 
 let tempCounter = 0;
@@ -72,10 +86,12 @@ export function useCanvasStream({
   upsertLocal,
   onPersisted,
   nextSeq,
+  hasFigure,
 }: Deps): CanvasStreamApi {
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const send = useCallback(
@@ -87,11 +103,47 @@ export function useCanvasStream({
       setError(null);
       setReply("");
 
-      const parentItemId = opts?.parentItemId ?? null;
       const baseSeq = nextSeq();
       // 이 턴에서 만든 아이템들. temp id로 먼저 그리고 done에서 서버 id로 바꾼다.
       const made: CanvasItem[] = [];
       let current: CanvasItem | null = null;
+
+      /**
+       * 질문을 캔버스에 남긴다 — **"AI 응답이 연결되지 않는다"의 근본 원인**.
+       *
+       * 지금까지 연결선이 그려지는 유일한 경로는 "AI에게 묻기"였다. 입력창에
+       * 그냥 물으면 부모가 없었고, 질문 자체도 캔버스에 남지 않아 **연결할
+       * 대상이 아예 없었다.** 학생 화면에는 답만 덩그러니 생기고 무엇을 물었는지
+       * 알 수 없었다.
+       *
+       * 이제 질문이 학생 글(kind='note')로 남고 그 턴의 모든 응답·도판이 그
+       * 자식이 된다. 배치(layout.ts)가 자식을 부모 오른쪽에 두고 연결선이
+       * 자동으로 따라온다.
+       */
+      const askedFrom = opts?.parentItemId ?? null;
+      const questionItem: CanvasItem | null = askedFrom
+        ? null // "AI에게 묻기" — 이미 있는 메모가 부모다
+        : {
+            id: tempId(),
+            sessionId,
+            nodeId: null,
+            parentItemId: null,
+            kind: "note",
+            source: "user",
+            title: null,
+            body: q,
+            tag: null,
+            x: 0,
+            y: 0,
+            pinned: false,
+            seq: baseSeq,
+            data: { askHidden: true }, // 이미 물어본 글이다 — 버튼을 또 띄우지 않는다
+          };
+      if (questionItem) {
+        made.push(questionItem);
+        upsertLocal([questionItem]);
+      }
+      const parentItemId = askedFrom ?? questionItem?.id ?? null;
 
       const flush = () => {
         if (made.length) upsertLocal([...made]);
@@ -121,6 +173,12 @@ export function useCanvasStream({
               _pending: true,
             };
             made.push(current);
+            // 첫 **개념**이 생기는 순간 카메라를 그쪽으로 보낸다(질문 아이템은
+            // 세지 않는다). 두 번째부터는 옮기지 않는다 — 글이 하나씩 나올
+            // 때마다 화면이 튀면 읽을 수 없다.
+            if (made.filter((m) => m.kind === "concept").length === 1) {
+              setFocusId(current.id);
+            }
             flush();
             break;
           }
@@ -156,7 +214,12 @@ export function useCanvasStream({
               // 만료되므로 **저장하지 않는다**(D87). figureId만 남기고 화면에서
               // 필요할 때 재발급한다.
               for (const f of d.figures ?? []) {
-                if (made.some((m) => m.data.figure?.figureId === f.figure_id)) continue;
+                // D95: **세션 내** 중복 제거. 이 턴(made)만 보면 앞 턴에서 이미
+                // 나온 같은 도판이 다시 쌓인다 — 같은 그림이 캔버스에 여러 번
+                // 뜬다. 화면에 있는 전체를 본다.
+                if (hasFigure(f.figure_id) || made.some((m) => m.data.figure?.figureId === f.figure_id)) {
+                  continue;
+                }
                 made.push({
                   id: tempId(),
                   sessionId,
@@ -195,7 +258,8 @@ export function useCanvasStream({
       // pending 해제 — 캐럿을 끄고 정상 아이템으로 만든다.
       for (const it of made) {
         it._pending = false;
-        it.nodeId = nodeId;
+        // 질문 아이템은 우리가 만든 것이라 노드에 속하지 않는다.
+        if (it.kind === "concept" || it.kind === "figure") it.nodeId = nodeId;
       }
       flush();
       setBusy(false);
@@ -207,7 +271,13 @@ export function useCanvasStream({
         kind: it.kind,
         source: it.source,
         node_id: it.nodeId,
-        parent_item_id: it.parentItemId,
+        // **서버에 있는 id만 보낸다.** 학생이 메모를 쓰고 blur 전에 바로
+        // "AI에게 묻기"를 누르면 그 메모는 아직 로컬 전용(local-note-…)이다.
+        // 그대로 보내면 FK 위반으로 **배치 전체가 실패**해 응답이 하나도
+        // 저장되지 않는다 — 화면에는 있는데 새로고침하면 사라진다.
+        // 연결선은 로컬 관계만으로도 그려지므로 화면은 정상이다.
+        parent_item_id: isRealId(it.parentItemId) ? it.parentItemId : null,
+        // 질문 아이템은 학생이 옮길 일이 많다 — 배치가 자리를 정하게 둔다.
         title: it.title,
         body: it.body,
         tag: it.tag,
@@ -223,17 +293,24 @@ export function useCanvasStream({
       }));
       try {
         const saved = await createItems(sessionId, payload);
-        onPersisted(
-          made.map((i) => i.id),
-          saved,
-        );
+        const tempIds = made.map((i) => i.id);
+        onPersisted(tempIds, saved);
+        // 임시 id가 서버 id로 바뀌면 추종 대상도 갱신해야 한다 —
+        // 안 하면 사라진 id를 쫓다가 조용히 실패한다.
+        setFocusId((cur) => {
+          if (!cur) return cur;
+          const at = tempIds.indexOf(cur);
+          return at >= 0 && saved[at] ? saved[at].id : cur;
+        });
       } catch (e) {
         // 저장 실패가 학습을 막지 않는다. 화면의 아이템은 그대로 두고 알린다.
         setError(`저장하지 못했습니다 — ${(e as Error).message}`);
       }
     },
-    [sessionId, busy, upsertLocal, onPersisted, nextSeq],
+    [sessionId, busy, upsertLocal, onPersisted, nextSeq, hasFigure],
   );
 
-  return { reply, busy, send, error };
+  const clearFocus = useCallback(() => setFocusId(null), []);
+
+  return { reply, busy, send, error, focusId, clearFocus };
 }

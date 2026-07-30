@@ -86,7 +86,9 @@ export function CanvasStage({
         onCanvasClick?.(bridge.toWorld(e.clientX, e.clientY, root.getBoundingClientRect()));
         return;
       }
-      onBackgroundClick?.();
+      // 팬·그리기 중에는 선택을 건드리지 않는다 — 화면을 옮길 때마다 선택이
+      // 풀리면 아이템을 고르고 이동해서 보려는 동작이 불가능하다.
+      if (activeTool === "selection") onBackgroundClick?.();
     };
 
     root.addEventListener("pointerdown", onDown, { capture: true });
@@ -119,6 +121,8 @@ export function CanvasStage({
             camera.scrollY * camera.zoom
           }px) scale(${camera.zoom})`,
           transformOrigin: "0 0",
+          // 팬/줌마다 합성 레이어를 다시 만들지 않게 미리 알린다.
+          willChange: "transform",
           // 자식(아이템)이 pointer-events:auto를 켤지 여기서 정한다.
           ["--c2-item-events" as string]: overlayInteractive ? "auto" : "none",
         }}
@@ -143,24 +147,40 @@ export function CanvasStage({
 /**
  * 실행 취소/다시 실행.
  *
- * Excalidraw는 자체 히스토리를 들고 있고 API로 직접 노출하지 않는다
- * (`api.history.clear()`만 있다). 그래서 컨테이너에 키 이벤트를 보낸다 —
- * `document.execCommand("undo")`는 contenteditable 전용이라 여기서는
- * 아무 일도 하지 않는다.
+ * **Excalidraw는 undo/redo를 공개 API로 노출하지 않는다** — `api.history`에는
+ * `clear()`만 있다(문서 확인). 그래서 Excalidraw 자신의 키 처리 경로를 태운다.
+ *
+ * 두 가지를 지킨다:
+ *   1. 먼저 캔버스에 포커스를 준다. Excalidraw는 포커스가 자기 밖에 있으면
+ *      단축키를 무시한다(입력창에 타이핑하는 중에 도형이 지워지면 안 되니까).
+ *   2. `document`에 올린다. Excalidraw의 리스너가 거기 붙어 있다.
+ *
+ * ⚠️ 이 경로는 합성 포인터 이벤트로 자동 검증할 수 없다(Excalidraw의 포인터
+ * 파이프라인이 합성 이벤트를 받지 않아 되돌릴 그림을 만들 수 없다). 손으로
+ * 확인해야 하고, Excalidraw를 올릴 때 함께 확인해야 한다. 학생에게는
+ * `Ctrl/⌘+Z`가 항상 되는 경로이므로 이 버튼이 실패해도 막히지는 않는다.
  */
 function sendHistoryKey(redo: boolean) {
-  const el = document.querySelector<HTMLElement>(".excalidraw");
-  if (!el) return;
-  el.dispatchEvent(
-    new KeyboardEvent("keydown", {
-      key: "z",
-      code: "KeyZ",
-      ctrlKey: true,
-      shiftKey: redo,
-      bubbles: true,
-      cancelable: true,
-    }),
+  const canvas = document.querySelector<HTMLElement>(
+    ".excalidraw__canvas.interactive",
   );
+  const container = document.querySelector<HTMLElement>(".excalidraw");
+  if (!container) return;
+
+  // Excalidraw는 포커스가 자기 안에 없으면 단축키를 흘려보낸다.
+  (canvas ?? container).focus?.();
+
+  const ev = new KeyboardEvent("keydown", {
+    key: "z",
+    code: "KeyZ",
+    // ⌘(mac) / Ctrl(그 외) — 둘 다 켜면 Excalidraw의 CTRL_OR_CMD 검사를 통과한다.
+    ctrlKey: true,
+    metaKey: true,
+    shiftKey: redo,
+    bubbles: true,
+    cancelable: true,
+  });
+  document.dispatchEvent(ev);
 }
 
 /**

@@ -14,7 +14,7 @@
 
 import { useMemo, useState } from "react";
 import { Map as MapIcon, X } from "lucide-react";
-import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
+import { ITEM_W, UNTAGGED, type Placed } from "@/lib/canvas2/layout";
 import type { Rect } from "@/lib/canvas2/rect";
 import { union } from "@/lib/canvas2/rect";
 import type { Camera, CanvasItem } from "@/lib/canvas2/types";
@@ -37,6 +37,10 @@ interface Props {
   items: CanvasItem[];
   positions: Map<string, Placed>;
   heights: Map<string, number>;
+  /** 태그 → 열 x. 태그 그룹 경계를 그리는 데 쓴다. */
+  columnX: Map<string, number>;
+  /** 태그 순서(첫 등장). 라벨을 그릴 순서다. */
+  tagOrder: readonly string[];
   /**
    * 그림 요소를 그때그때 읽는다. 배열을 prop으로 받으면 매 렌더 새 아이덴티티가
    * 되어 아래 useMemo가 무력화된다 — 이 함수는 api에만 의존해 안정적이다.
@@ -52,6 +56,8 @@ export function Minimap({
   items,
   positions,
   heights,
+  columnX,
+  tagOrder,
   getObstacles,
   camera,
   viewport,
@@ -103,8 +109,31 @@ export function Minimap({
       height: Math.max(2, r.h * scale),
     });
 
+    /**
+     * 태그 그룹 — 사용자가 지적한 "태그별로 묶인 위치를 지도로 보여주는 기능".
+     *
+     * 각 태그가 차지한 영역을 감싸는 사각형과 이름을 낸다. 열 x가 정해져
+     * 있으므로 그 열에 놓인 아이템들만 묶는다 — pinned로 딴 데 옮긴 아이템은
+     * 그 태그 그룹의 경계를 왜곡하지 않는다(학생이 일부러 뺀 것이다).
+     */
+    const groups = tagOrder
+      .filter((t) => t !== UNTAGGED)
+      .map((tag) => {
+        const cx = columnX.get(tag);
+        if (cx === undefined) return null;
+        const mine = rects.filter((v) => {
+          const it = items.find((i) => i.id === v.id);
+          return (it?.tag || UNTAGGED) === tag && Math.abs(v.r.x - cx) < 1;
+        });
+        const b = union(mine.map((v) => v.r));
+        if (!b) return null;
+        return { tag, p: project({ x: b.x, y: b.y, w: b.w, h: b.h }) };
+      })
+      .filter((g): g is NonNullable<typeof g> => !!g);
+
     return {
       rects: rects.map((v) => ({ ...v, p: project(v.r) })),
+      groups,
       draws: draws.map(project),
       view: project(view),
       box,
@@ -112,7 +141,7 @@ export function Minimap({
       ox,
       oy,
     };
-  }, [items, positions, heights, getObstacles, camera, viewport]);
+  }, [items, positions, heights, columnX, tagOrder, getObstacles, camera, viewport]);
 
   if (!model) return null;
 
@@ -137,8 +166,11 @@ export function Minimap({
     );
   }
 
-  const toWorld = (e: React.MouseEvent<SVGSVGElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
+  const toWorld = (e: React.MouseEvent<HTMLButtonElement>) => {
+    // button이 svg를 감싸므로 svg 자체의 사각형을 쓴다 — button에 패딩이
+    // 생기면 좌표가 어긋난다.
+    const svg = e.currentTarget.querySelector("svg");
+    const r = (svg ?? e.currentTarget).getBoundingClientRect();
     return {
       x: model.box.x + (e.clientX - r.left - model.ox) / model.scale,
       y: model.box.y + (e.clientY - r.top - model.oy) / model.scale,
@@ -164,14 +196,15 @@ export function Minimap({
       >
         <X size={12} />
       </button>
-      <svg
-        width={W}
-        height={H}
-        role="img"
-        aria-label="캔버스 전체 지도 — 클릭하면 그 자리로 이동합니다"
+      {/* 클릭 가능한 role="img"였다 — 키보드로는 접근조차 못 했다.
+          button으로 감싸 포커스·Enter/Space를 브라우저에 맡긴다. */}
+      <button
+        type="button"
+        aria-label="캔버스 전체 지도 — 클릭한 자리로 이동합니다"
         className="block cursor-pointer"
         onClick={(e) => onJump(toWorld(e))}
       >
+      <svg width={W} height={H} aria-hidden className="block">
         {/* 그림은 배경에 옅게 */}
         {model.draws.map((d, i) => (
           <rect
@@ -181,6 +214,34 @@ export function Minimap({
             fill="var(--c-rule)"
             opacity={0.5}
           />
+        ))}
+        {/* 태그 그룹 — 아이템 뒤, 그림 위 */}
+        {model.groups.map((g) => (
+          <g key={g.tag}>
+            <rect
+              x={g.p.x - 3}
+              y={g.p.y - 3}
+              width={g.p.width + 6}
+              height={g.p.height + 6}
+              rx={3}
+              fill="var(--c-live)"
+              fillOpacity={0.06}
+              stroke="var(--c-live)"
+              strokeOpacity={0.28}
+              strokeWidth={1}
+            />
+            {/* 라벨은 그룹이 충분히 넓을 때만 — 좁으면 글자가 겹쳐 읽을 수 없다 */}
+            {g.p.width >= 26 && (
+              <text
+                x={g.p.x - 2}
+                y={Math.max(8, g.p.y - 5)}
+                fill="var(--c-ink-soft)"
+                style={{ fontFamily: "var(--font-label), monospace", fontSize: 7 }}
+              >
+                {g.tag.length > 6 ? `${g.tag.slice(0, 6)}…` : g.tag}
+              </text>
+            )}
+          </g>
         ))}
         {model.rects.map((v) => (
           <rect
@@ -204,6 +265,7 @@ export function Minimap({
           strokeWidth={1}
         />
       </svg>
+      </button>
     </div>
   );
 }

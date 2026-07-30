@@ -68,6 +68,9 @@ export function ToolRail({ active, onSelect, onUndo, onRedo }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // 한글 조합 중에는 도구를 바꾸지 않는다. IME에 따라 라틴 키가 새어
+      // 들어올 수 있다.
+      if (e.isComposing) return;
       const t = e.target as HTMLElement | null;
       if (
         t &&
@@ -80,11 +83,16 @@ export function ToolRail({ active, onSelect, onUndo, onRedo }: Props) {
       const hit = ALL.find((d) => d.key === e.key.toLowerCase());
       if (hit) {
         e.preventDefault();
+        // Excalidraw도 document에서 같은 키를 듣는다 — `t`는 저쪽에서
+        // 텍스트 요소를 만든다. 전파를 끊어야 우리 note 도구만 켜진다.
+        e.stopPropagation();
         onSelect(hit.tool);
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // capture로 받는다 — Excalidraw도 document에 붙어 있어서, 버블 단계에서는
+    // 이미 저쪽이 처리한 뒤다.
+    document.addEventListener("keydown", onKey, { capture: true });
+    return () => document.removeEventListener("keydown", onKey, { capture: true });
   }, [onSelect]);
 
   return (

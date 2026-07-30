@@ -95,7 +95,7 @@ export type ToolName =
   /** 우리 note 아이템을 만드는 도구 — Excalidraw text가 아니다. */
   | "note";
 
-/** 그리기 도구 = 오버레이가 이벤트를 놓아 줘야 하는 도구. */
+/** 그리기 도구 = 캔버스에 무언가를 그리는 도구. */
 export const DRAW_TOOLS: readonly ToolName[] = [
   "freedraw",
   "rectangle",
@@ -107,6 +107,18 @@ export const DRAW_TOOLS: readonly ToolName[] = [
 
 export function isDrawTool(t: ToolName): boolean {
   return DRAW_TOOLS.includes(t);
+}
+
+/**
+ * 오버레이가 포인터 이벤트를 **놓아 줘야** 하는 도구.
+ *
+ * 그리기 도구 + `hand`다. hand를 빠뜨렸던 것이 "화면 이동이 답답하다"의
+ * 원인이었다 — 글자 위에서 끌면 오버레이가 이벤트를 먹어 드래그가 아이템
+ * 이동으로 가고, 화면은 꼼짝도 안 했다. 글이 많은 캔버스에서는 빈 곳을
+ * 찾아야만 화면이 움직이는 셈이다.
+ */
+export function isPassThroughTool(t: ToolName): boolean {
+  return t === "hand" || isDrawTool(t);
 }
 
 // --- 렌더용 블록 (markup.ts가 만든다) ----------------------------------------
