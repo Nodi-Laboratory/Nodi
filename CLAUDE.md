@@ -28,16 +28,16 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 - 선생님은 별도 버튼으로 **교과서**(`kind='textbook'`, PDF 전용)도 업로드한다
   (TASK 4, D86~D88 — 0038·0039 원격 적용 완료, E2E PASS 2026-07-17). 텍스트는
   class_material과 동일하게 RAG 구축 + 추가로 figure를 추출·임베딩해 Qdrant
-  `textbook_figures`에 적재(D86). **figure 캡션은 비전 판정이 확정한다**(D93,
-  사용자 결정 2026-07-18): 후보는 bbox 중심 절대거리 top-3(위치기반 매칭 제거),
-  판정이 고른 후보 **캡션 단독**이 임베딩 텍스트(heading·alt·enhanced 설명 제외
-  — D91 대체). **D103: 캡션 확정은 2단 경로다** — ① 파서가 `caption`/`footnote`로
-  라벨한 요소가 가까이(정규화 거리 0.25 이내) 있으면 그대로 캡션
-  (`match_kind='parsed'`, 비전 판정 불필요), ② 라벨이 없으면 비전 판정이
-  candidates에서 고른다(폴백). **둘 다 없으면 캡션 없이 failed — 추측하지 않는다.**
-  판정 미설정은 더 이상 업로드를 막지 않고(D93 게이트 해제), 라벨 없는 figure만
-  처리되지 않는다. 판정 실패(-1 포함) figure는 임베딩 없이 failed(검색 미노출,
-  retry로 재판정 가능). 학생 질의와 유사한
+  `textbook_figures`에 적재(D86). **figure 캡션은 비전 생성이 단독 확정한다**
+  (D134, 사용자 결정 2026-07-30 — D93 후보 선택·D103 2단 경로·D131 노브 대체):
+  비전 모델(judge_* 노브, 기본 EXAONE-4.5)이 페이지 본문
+  (`textbook_figures.page_text`, split 시점 영속)을 컨텍스트로 캡션을 생성
+  (`match_kind='generated'`)하고, 그 **생성 캡션 단독**이 임베딩 텍스트다.
+  파서 라벨 캡션(정규화 거리 0.25 이내 `caption`/`footnote`)은 생성 프롬프트의
+  힌트로만 쓰인다 — 폴백 아님. **생성 실패는 폴백 없이 failed(caption-error),
+  추측하지 않는다.** 비전 미설정은 업로드를 막지 않지만(텍스트 RAG 정상)
+  figure 전부가 no-caption failed(검색 미노출, env 설정 후 retry로 재생성 가능).
+  학생 질의와 유사한
   figure(거리 게이트 0.60)는 캔버스 FigureNode로 표시 — **다중 표시**(D95:
   top-3, 리프 id=`figure-{figureId}`로 세션 내 중복 제거·누적, 재수화는 전
   노드 figures를 figureId dedupe 후 전부 복원). 이미지는 백엔드 signed
@@ -62,10 +62,14 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 
 Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권한 강제·자체 인증)
 · Qdrant(벡터 1024d/Cosine, `docker compose up -d qdrant`) · Upstage(임베딩 + 문서 파싱)
-· Upstage `solar-pro2`(대화 생성 — 스트리밍 + tool calling, D108).
-교과서 도판 비전 판정만 별도 계열(judge_* 노브)이다 — OpenAI 호환 비전
-엔드포인트면 무엇이든 꽂히고, 배포 서버는 자체 GPU에 llama.cpp로 EXAONE-4.5-33B를
-띄워 쓴다(D118). 로컬은 비워 두면 된다(파서 라벨 경로만 동작).
+· Upstage `solar-pro2`(대화 생성 — 스트리밍 + tool calling, D108. 인제스트 시점
+LLM 작업 — 원자 질문 생성 D129·의미 청킹 경계 판단 D132 — 도 이 모델을 재사용한다).
+교과서 도판 비전만 별도 계열(judge_* 노브)이다 — OpenAI 호환 비전 엔드포인트면
+무엇이든 꽂히고, 배포 서버는 자체 GPU에 llama.cpp로 EXAONE-4.5-33B를 띄워
+쓴다(D118). 이 계열이 지금 하는 일은 **캡션 생성**이다(`figure_caption.py`,
+D131·D134 — `figure_judge.py`는 설정 게이트·공용 유틸만 남았다).
+base_url/model/api_key 셋이 다 채워져야 동작하고, 로컬은 비워 두면 된다(파서
+라벨 경로만 동작).
 
 ## 핵심 파이프라인
 
@@ -76,13 +80,22 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   → 문단 인지 청킹(1,200자/오버랩 150자, admin 튜너블)
   → `embedding_batch` 잡 팬아웃(64청크 단위) → Upstage `embedding-passage` 1024d(D106)
   → **벡터는 Qdrant, 청크 본문·상태는 Postgres `file_chunks`**.
+  **D132 의미 청킹**(`semantic_chunking_enabled`, 기본 off): on이면 소형 문서
+  (`semantic_chunking_max_chars` 이하)에 한해 solar가 청크 경계를 재조정
+  (`semantic_chunker.py`, PIKE resplit 이식) — 어떤 실패든 정규식 청킹 폴백.
+  **D129 지식 원자화**(`atom_rag_enabled`, 기본 off): on이면 `atom_batch` 잡이
+  청크당 solar로 예상 질문을 생성(`atomize.py`·`worker/atoms.py`)해
+  `embedding-passage`로 Qdrant `chunk_atoms`에 적재(페이로드 `{atom_id, chunk_id,
+  file_id, owner_id}`만, 행은 Postgres `chunk_atoms`). 원자 실패는 텍스트 인덱싱과
+  격리(D88 동형). 장기 잡(원자 생성·캡션 생성·의미 청킹)은 `common.touch_job`
+  하트비트로 스테일 복구(120초) 오탐을 막는다(D133).
   교과서는 `upstage.parse_document_full`(표준 모드+coordinates+figure base64 —
   D92로 enhanced 제거, 조각 ≤48MB·≤100p 사전 분할)로 텍스트·elements를 한 번에
-  얻고 figure 팬아웃(`figure_batch` 잡, 배치 8): 크롭 Storage 업로드 → 비전
-  판정(필수, D93 — 절대거리 top-3 후보 중 선택, 미선택 행은 failed) →
-  embed_text=**판정 선택 캡션 단독**(D93) `embedding-passage` → Qdrant
-  `textbook_figures`(**페이로드는 `{figure_id, file_id, owner_id}`만**). 행 상태는
-  `textbook_figures.status`로만 추적(D86/D88).
+  얻고 figure 팬아웃(`figure_batch` 잡, 배치 8): 크롭 Storage 업로드 → 비전 캡션
+  생성(D134 단독 경로 — 이미지 + `page_text` + 파서 라벨 힌트로 생성,
+  `match_kind='generated'`, 실패는 폴백 없이 failed) → `embedding-passage` →
+  Qdrant `textbook_figures`(**페이로드는 `{figure_id, file_id, owner_id}`만**).
+  행 상태는 `textbook_figures.status`로만 추적(D86/D88).
 - **채팅 턴** (`routers/chat.py` `chat_stream`) — 경로가 둘이다:
 
   **ReAct 경로** (D109, `react_enabled` 튜너블·**기본 on**): 도구 판단 → 스킬 실행
@@ -98,6 +111,11 @@ Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권�
   list_session_concepts · get_concept · list_session_files · read_session_file.
   카탈로그는 스코프뿐 아니라 **세션 상태**로도 갈린다(파일이 없으면 파일 스킬을
   노출하지 않는다 — 노출하면 모델이 부르고 빈 결과로 군더더기를 붙인다).
+  판단 프롬프트에 복합 질문 서브질문 분해 지침이 있다(D130). search_class_material은
+  노브 둘을 더 탄다(둘 다 기본 off): `rag_query_rewrite_enabled` — solar 1콜로
+  검색어 정제(실패 시 원문), `atom_rag_enabled` — `rag.dual_search`로 청크·원자
+  이중 검색(거리 게이트 분리: 직접 0.60 / 원자 `atom_rag_max_distance` 0.45,
+  원자 경유 청크 재게이트 금지 — 게이트는 dual_search 내부에서 끝난다, D129).
 
   **기존 단발 경로** (`react_enabled` off, 롤백용):
   컨텍스트 빌더 병렬(gather): 기억 연결·파일 RAG·비교 참조·세션 파일 전문

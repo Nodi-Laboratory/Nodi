@@ -48,8 +48,11 @@ class Settings(BaseSettings):
     #   개념 카드 형식 준수  둘 다 통과. 다만 EXAONE은 응답에 추론 과정을
     #                        흘렸고(포르투갈어 조각 포함) solar는 깨끗했다.
     # 임베딩·문서 파싱이 이미 Upstage라 벤더가 하나로 줄어드는 효과도 있다.
-    # 교과서 도판 비전 판정은 별도 계열(judge_* 노브)로 남는다 — 비전이
-    # 필요하고 자체 GPU로 돌리므로 벤더 통합 대상이 아니다(D118).
+    # 교과서 도판 비전은 별도 계열(judge_* 노브)로 남는다 — 비전이 필요하고
+    # 자체 GPU로 돌리므로 벤더 통합 대상이 아니다(D118). 지금 이 계열이 하는
+    # 일은 캡션 생성이다(figure_caption, D131·D134). figure_judge는 설정
+    # 게이트·공용 유틸만 남았고, 셋(base_url/model/api_key)이 다 채워져야
+    # 동작한다(figure_judge.is_configured).
     #
     # 비대칭 임베딩: 질의 embedding-query / 문서 embedding-passage (혼용 금지).
     upstage_api_key: str = ""
@@ -144,6 +147,23 @@ class Settings(BaseSettings):
     # D93: 판정은 필수 게이트다 — 미설정이면 교과서 업로드 자체가 503으로 거부된다
     # (services/files.py). 판정 생략 폴백은 D88 시절 동작으로, 더 이상 없다.
     judge_api_key: str = ""
+
+    # ── PIKE-RAG (TASK 6, D129~D132) ─────────────────────────────
+    # A. 지식 원자화 (D129) — 킬스위치 off 출하, 캘리브레이션 후 on
+    atom_rag_enabled: bool = False
+    atom_questions_per_chunk: int = 3      # 청크당 예상 질문 수(비용 직결)
+    atom_top_k: int = 5                    # chunk_atoms 컬렉션 top-K
+    atom_rag_max_distance: float = 0.45    # 원자 거리 게이트(질문↔질문 — 실측 후 조정)
+    atom_gen_concurrency: int = 4          # solar 동시 호출
+    atom_batch_size: int = 16              # atom_batch 팬아웃 단위(스테일 120s 여유)
+    # C. 질문 정제 (D130)
+    rag_query_rewrite_enabled: bool = False
+    # D. figure 캡션 비전 생성 (D131·D134 — 생성 단독, 노브 없음)
+    figure_page_text_max_chars: int = 4000  # 비전 프롬프트 페이지 컨텍스트 절단
+    # B. LLM 의미 청킹 (D132)
+    semantic_chunking_enabled: bool = False
+    semantic_chunking_max_chars: int = 120_000   # 초과 문서는 통째로 정규식 폴백
+    semantic_chunking_max_llm_calls: int = 120   # 경계 판단 콜 수 2차 가드
 
     # --- App ---
     cors_origins: list[str] = ["http://localhost:3000"]

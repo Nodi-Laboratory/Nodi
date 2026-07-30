@@ -23,6 +23,7 @@ from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
 from ..config import get_settings
 from ..db.client import UserClient, get_service_client
 from ..services import admin_backup, admin_console, app_settings
+from ..services import figures as figures_svc
 from . import health
 
 logger = logging.getLogger("nodi.admin")
@@ -475,10 +476,12 @@ async def get_document(
     user: CurrentUser = Depends(get_current_user),
     _: Profile = Depends(require_admin),
 ) -> dict[str, Any]:
-    """문서 하나의 인제스트 상세 — 파일 · 청크 원문 · 잡 이력 · 도판.
+    """문서 하나의 인제스트 상세 — 파일 · 청크 원문 · 잡 이력 · 도판 · 지식 원자.
 
     "문서가 어떻게 올라갔는가"의 답은 결국 **청크 경계**다. 어디서 끊겼는지를
-    직접 봐야 청크 크기·겹침 값을 고칠 수 있다.
+    직접 봐야 청크 크기·겹침 값을 고칠 수 있다. 원자(D129 — 청크별 예상 질문)도
+    같은 이유로 원문을 보여준다: 어떤 질문이 생성됐는지 봐야
+    atom_questions_per_chunk·atom_rag_max_distance를 고칠 수 있다.
     """
     client = UserClient.from_user(user)
     files = await client.select(
@@ -518,13 +521,40 @@ async def get_document(
             "order": "created_at.asc",
         },
     )
-    figures = await client.select(
+    figure_rows = await client.select(
         "textbook_figures",
         {
             "file_id": f"eq.{file_id}",
-            "select": "id,seq,page,caption,figure_type,status,selected_index",
+            # D134: 확정 캡션은 embed_text(생성 캡션)다 — caption 컬럼은 파서
+            # 라벨 힌트라 대부분 비어 있어, 그대로 내리면 콘솔에 '캡션 없음'으로
+            # 보인다. 검색·파일 상세와 같은 표시 규약(display_caption)으로 내린다.
+            "select": (
+                "id,seq,page,caption,alt,candidates,selected_index,"
+                "embed_text,match_kind,figure_type,status"
+            ),
             "order": "seq.asc",
             "limit": "200",
+        },
+    )
+    figures = [
+        {
+            "id": f["id"], "seq": f["seq"], "page": f["page"],
+            "caption": figures_svc.display_caption(f),
+            "figure_type": f["figure_type"], "status": f["status"],
+            "match_kind": f.get("match_kind") or "",
+            "selected_index": f.get("selected_index"),
+        }
+        for f in figure_rows
+    ]
+    # D129: 지식 원자 — atom_rag_enabled로 만들어진 청크별 예상 질문. 노브가
+    # 꺼져 있었거나 원자화 전 문서면 빈 목록(프론트는 있을 때만 패널을 그린다).
+    atoms = await client.select(
+        "chunk_atoms",
+        {
+            "file_id": f"eq.{file_id}",
+            "select": "id,chunk_seq,question,status",
+            "order": "chunk_seq.asc",
+            "limit": "500",
         },
     )
     owners = await client.select(
@@ -538,6 +568,7 @@ async def get_document(
         "chunk_offset": chunk_offset,
         "jobs": jobs,
         "figures": figures,
+        "atoms": atoms,
     }
 
 

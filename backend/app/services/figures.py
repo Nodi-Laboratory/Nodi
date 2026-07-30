@@ -18,13 +18,16 @@ settings = get_settings()
 
 
 def display_caption(row: dict[str, Any]) -> str:
-    """표시용 캡션: 판정 선택(candidates[selected_index]) 우선 → 위치기반 caption
-    → alt (labs search.py 표시 규약, figure_judge.final_embed_text와 동형 선택).
+    """표시용 캡션: embed_text(확정 캡션 — D134 생성 단독, 임베딩된 그 텍스트)
+    우선 → 레거시 판정 선택(candidates[selected_index]) → caption → alt.
 
-    candidates는 문자열 리스트(figure_extract.rank_candidates). selected_index가
-    유효 범위(0 이상, 후보 개수 미만)면 그 후보를, -1/null/범위밖이면 caption
-    (없으면 alt)을 쓴다 — judge의 보수적 판정이 위치기반 캡션을 지우지 않게.
+    embedded 행은 어떤 경로였든 embed_text가 확정 캡션이다(생성 generated /
+    구 판정 judge / 구 파서 라벨 parsed). 뒤의 폴백 사슬은 embed_text가 비어
+    있는 옛 행(D103 이전 적재분)을 위한 레거시 표시 규약이다.
     """
+    embed_text = (row.get("embed_text") or "").strip()
+    if embed_text:
+        return embed_text
     candidates = row.get("candidates")
     idx = row.get("selected_index")
     if (

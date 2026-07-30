@@ -27,5 +27,15 @@ insert into public.app_settings (key, value) values
     ('figure_judge_concurrency',        '4'),
     -- ReAct 스킬 루프 (D109)
     ('react_enabled',                   'true'),
-    ('react_max_steps',                 '3')
+    ('react_max_steps',                 '3'),
+    -- PIKE-RAG (TASK 6, D129~D132)
+    ('atom_rag_enabled',                'false'),
+    ('atom_questions_per_chunk',        '3'),
+    ('atom_top_k',                      '5'),
+    ('atom_rag_max_distance',           '0.45'),
+    ('atom_gen_concurrency',            '4'),
+    ('rag_query_rewrite_enabled',       'false'),
+    -- (D134: figure_caption_generate_enabled 노브는 제거 — 캡션은 생성 단독)
+    ('semantic_chunking_enabled',       'false'),
+    ('semantic_chunking_max_chars',     '120000')
 on conflict (key) do nothing;

@@ -15,7 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ...config import get_settings
 from ...db.client import ServiceClient, get_service_client
-from . import batch, common, figures, jobs, split
+from . import atoms, batch, common, figures, jobs, split
 
 logger = logging.getLogger("nodi.worker.runner")
 settings = get_settings()
@@ -99,6 +99,11 @@ async def requeue_file(svc: ServiceClient, file_id: str) -> str:
         figure_action = await figures._requeue_figures(svc, f, file_id)
         if figure_action:
             action = f"{action}+{figure_action}"
+
+    # D129: 실패 원자 행도 pending 리셋·재팬아웃하고 액션 문자열에 합류(figure 동형).
+    atom_action = await atoms._requeue_atoms(svc, f, file_id)
+    if atom_action:
+        action = f"{action}+{atom_action}"
     return action
 
 
@@ -113,6 +118,8 @@ async def _process(svc: ServiceClient, job: dict[str, Any]) -> None:
             await batch._handle_batch(svc, job)
         elif job["kind"] == "figure_batch":
             await figures._handle_figure_batch(svc, job)
+        elif job["kind"] == "atom_batch":
+            await atoms._handle_atom_batch(svc, job)
         else:
             await jobs._fail_job(svc, job["id"], f"unknown kind {job['kind']}")
     except Exception as exc:  # noqa: BLE001

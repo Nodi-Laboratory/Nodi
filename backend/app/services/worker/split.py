@@ -17,6 +17,7 @@ from .. import (
     embedding,
     figure_extract,
     qdrant_store,
+    semantic_chunker,
     upstage,
 )
 from . import common, jobs
@@ -118,6 +119,13 @@ async def _fanout_figures(
         return
     owner_id = f.get("owner_id")
 
+    # D131: 캡션 비전 생성용 페이지 본문(figure 워커가 프롬프트 컨텍스트로 쓴다).
+    # extract_figures 레코드 shape은 불변이므로 page_texts에서 별도로 얻어 rows에만
+    # 싣는다. 텍스트 없는 페이지는 '' 폴백.
+    page_map = figure_extract.page_texts(
+        elements, settings.figure_page_text_max_chars
+    )
+
     # 레코드별 크롭 업로드(경로 결정적 pN_eM.ext, upsert) + textbook_figures 행.
     # seq는 0-base 열거 순서(figure_batch batch_range 팬아웃 기준). image_bytes/ext는
     # Storage가 원본이므로 행에 넣지 않는다.
@@ -142,9 +150,10 @@ async def _fanout_figures(
             "description": r["description"],
             "figure_type": r["figure_type"],
             "heading": r["heading"],
-            "candidates": r["candidates"],
+            # candidates(판정 후보)는 D121로 제거 — 컬럼 기본값('[]')이 채운다.
             "embed_text": r["embed_text"],
             "match_kind": r["match_kind"],
+            "page_text": page_map.get(r["page"], ""),  # D131
             "image_path": image_path,
             "status": "pending",
         })
@@ -169,6 +178,33 @@ async def _fanout_figures(
     logger.info(
         "figure 팬아웃 file=%s -> %d figures, %d batches", file_id, n, len(child_jobs)
     )
+
+
+async def _fanout_atom_jobs(
+    svc: ServiceClient, job: dict[str, Any], f: dict[str, Any],
+    file_id: str, total_chunks: int,
+) -> int:
+    """D129: atom_batch 자식 잡을 seq 범위로 팬아웃(embedding_batch와 동형).
+
+    반환: 만든 배치 수. 호출부는 D88 격리를 위해 try/except로 감싼다(원자화 실패가
+    텍스트 인덱싱을 막지 않는다).
+    """
+    asize = max(1, settings.atom_batch_size)
+    atom_jobs = [
+        {
+            "owner_id": f.get("owner_id"),
+            "kind": "atom_batch",
+            "target_id": file_id,
+            "parent_job_id": job["id"],
+            "batch_range": {"from_seq": start, "to_seq": min(start + asize, total_chunks)},
+            "status": "queued",
+            "space_ref": f.get("space_ref"),
+        }
+        for start in range(0, total_chunks, asize)
+    ]
+    await svc.insert("jobs", atom_jobs, returning=False)
+    logger.info("원자 팬아웃 file=%s -> %d batches", file_id, len(atom_jobs))
+    return len(atom_jobs)
 
 
 async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
@@ -196,6 +232,28 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         "jobs", {"target_id": f"eq.{file_id}", "kind": "eq.embedding_batch"}
     )
     if existing_batches > 0:
+        # (task6-fix2) 조기 done 전에 atom_batch 팬아웃 갭을 메운다 —
+        # embedding_batch를 넣고 atom_batch를 넣기 전에 크래시하면, 재큐된 split이
+        # 여기서 조기 반환하며 atom 팬아웃을 영구 스킵한다(figure의
+        # skip_figure_fanout 가드와 동형). 킬스위치 on이고 atom_batch가 아직 0이며
+        # 청크가 있으면 atom_batch만 채운다. D88 격리(try/except)로 감싼다.
+        try:
+            overlay = await app_settings.get_overlay()
+            if app_settings.as_bool(
+                overlay, "atom_rag_enabled", settings.atom_rag_enabled
+            ):
+                atom_batches = await svc.count(
+                    "jobs", {"target_id": f"eq.{file_id}", "kind": "eq.atom_batch"}
+                )
+                total_chunks = await svc.count(
+                    "file_chunks", {"file_id": f"eq.{file_id}"}
+                )
+                if atom_batches == 0 and total_chunks > 0:
+                    await _fanout_atom_jobs(svc, job, f, file_id, total_chunks)
+        except Exception:  # noqa: BLE001 - D129: 원자 팬아웃 보정 실패 격리
+            logger.exception(
+                "원자 팬아웃 보정 실패 — 텍스트 인덱싱은 계속 file=%s", file_id
+            )
         await svc.update(
             "jobs", {"id": f"eq.{job['id']}"},
             {"status": "done", "updated_at": common._now_iso()},
@@ -204,6 +262,11 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         return
     await svc.delete("file_chunks", {"file_id": f"eq.{file_id}"})
     await common._qdrant_delete_file_points(file_id)
+    # D129: chunk_atoms 포인트도 정리(행은 file_chunks delete의 FK CASCADE로 함께
+    # 지워진다 — 여기서는 Qdrant 잔여 포인트만).
+    await common._qdrant_delete_file_points(
+        file_id, collection=qdrant_store.COL_CHUNK_ATOMS
+    )
 
     # D86: textbook figure 멱등 정리 + 중복 팬아웃 가드(embedding_batch 조기 done
     # 가드와 동형). 잔여 figure_batch queued/running 잡이 있으면 이미 팬아웃됐으므로
@@ -262,7 +325,29 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     chunk_overlap = 0 if is_session_upload else app_settings.as_int(
         overlay, "chunk_overlap_chars", settings.chunk_overlap_chars, 0, 500
     )
-    chunks = embedding.chunk_text(text, chunk_size, chunk_overlap)
+
+    # D132: LLM 의미 청킹 분기. 노브 on이고 세션 업로드가 아니며 크기 가드 이내일
+    # 때만 경계를 재조정한다(비용·지연 방어). 어떤 실패든 정규식 폴백으로 삼켜
+    # 인덱싱을 절대 막지 않는다(인덱싱 불가침 — D88 동형).
+    chunks: list[str] = []
+    sem_on = app_settings.as_bool(
+        overlay, "semantic_chunking_enabled", settings.semantic_chunking_enabled
+    )
+    sem_max = app_settings.as_int(
+        overlay, "semantic_chunking_max_chars",
+        settings.semantic_chunking_max_chars, 10_000, 500_000,
+    )
+    if sem_on and not is_session_upload and len(text) <= sem_max:
+        try:
+            chunks = await semantic_chunker.chunk_text_semantic(
+                text, chunk_size, chunk_overlap,
+                heartbeat=lambda: common.touch_job(svc, job["id"]),
+            )
+        except Exception:  # noqa: BLE001 - D132: 의미 청킹 실패 격리(정규식 폴백)
+            logger.exception("의미 청킹 실패 — 정규식 폴백 file=%s", file_id)
+            chunks = []
+    if not chunks:
+        chunks = embedding.chunk_text(text, chunk_size, chunk_overlap)
 
     if not chunks:
         await svc.update(
@@ -310,6 +395,14 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
         for start in range(0, len(chunks), bsize)
     ]
     await svc.insert("jobs", child_jobs, returning=False)
+
+    # D129: 원자 질문 팬아웃 — 실패해도 텍스트 인덱싱을 막지 않는다(D88 동형).
+    try:
+        if app_settings.as_bool(overlay, "atom_rag_enabled", settings.atom_rag_enabled):
+            await _fanout_atom_jobs(svc, job, f, file_id, len(chunks))
+    except Exception:  # noqa: BLE001 - D129: 원자화 실패 격리
+        logger.exception("원자 팬아웃 실패 — 텍스트 인덱싱은 계속 file=%s", file_id)
+
     await svc.update(
         "jobs", {"id": f"eq.{job['id']}"},
         {"status": "done", "updated_at": common._now_iso()},

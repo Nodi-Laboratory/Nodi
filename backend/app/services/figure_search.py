@@ -71,7 +71,7 @@ async def search_class_figures(
             {
                 "id": f"in.({','.join(scores)})",
                 "select": (
-                    "id,file_id,page,caption,alt,candidates,selected_index,image_path"
+                    "id,file_id,page,caption,alt,candidates,selected_index,embed_text,image_path"
                 ),
             },
         )

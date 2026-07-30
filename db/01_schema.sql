@@ -497,6 +497,19 @@ CREATE TABLE public.file_chunks (
     CONSTRAINT file_chunks_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'embedded'::text, 'failed'::text, 'stored'::text])))
 );
 
+-- 원자 질문 테이블(TASK 6, D129) — 청크당 solar 생성 예상 질문. 벡터는 Qdrant
+-- chunk_atoms, 본문·상태는 여기. file_chunks/files delete의 FK CASCADE로 제거된다.
+CREATE TABLE public.chunk_atoms (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    chunk_id uuid NOT NULL,
+    file_id uuid NOT NULL,
+    chunk_seq integer NOT NULL,
+    question text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chunk_atoms_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'embedded'::text, 'failed'::text])))
+);
+
 CREATE TABLE public.files (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     owner_id uuid NOT NULL,
@@ -534,7 +547,7 @@ CREATE TABLE public.jobs (
     space_ref uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['embedding_split'::text, 'embedding_batch'::text, 'figure_batch'::text]))),
+    CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['embedding_split'::text, 'embedding_batch'::text, 'figure_batch'::text, 'atom_batch'::text]))),
     CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'done'::text, 'failed'::text])))
 );
 
@@ -570,6 +583,8 @@ CREATE TABLE public.textbook_figures (
     match_kind text DEFAULT ''::text NOT NULL,
     embed_text text DEFAULT ''::text NOT NULL,
     image_path text NOT NULL,
+    -- D131: 비전 캡션 생성 프롬프트에 넣는 페이지 본문 컨텍스트(figure 제외 요소 이어붙임).
+    page_text text DEFAULT ''::text NOT NULL,
     status text DEFAULT 'pending'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT textbook_figures_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'embedded'::text, 'failed'::text])))
@@ -595,6 +610,9 @@ ALTER TABLE ONLY public.file_chunks
 
 ALTER TABLE ONLY public.file_chunks
     ADD CONSTRAINT file_chunks_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.chunk_atoms
+    ADD CONSTRAINT chunk_atoms_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.files
     ADD CONSTRAINT files_pkey PRIMARY KEY (id);
@@ -630,6 +648,10 @@ CREATE INDEX idx_class_members_user_id ON public.class_members USING btree (user
 CREATE INDEX idx_classes_teacher ON public.classes USING btree (teacher_id);
 
 CREATE INDEX idx_file_chunks_status ON public.file_chunks USING btree (status);
+
+CREATE INDEX idx_chunk_atoms_file ON public.chunk_atoms USING btree (file_id, status);
+
+CREATE INDEX idx_chunk_atoms_chunk ON public.chunk_atoms USING btree (chunk_id);
 
 CREATE INDEX idx_files_owner ON public.files USING btree (owner_id);
 
@@ -683,6 +705,12 @@ ALTER TABLE ONLY public.classes
 
 ALTER TABLE ONLY public.file_chunks
     ADD CONSTRAINT file_chunks_file_id_fkey FOREIGN KEY (file_id) REFERENCES public.files(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.chunk_atoms
+    ADD CONSTRAINT chunk_atoms_chunk_id_fkey FOREIGN KEY (chunk_id) REFERENCES public.file_chunks(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.chunk_atoms
+    ADD CONSTRAINT chunk_atoms_file_id_fkey FOREIGN KEY (file_id) REFERENCES public.files(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.files
     ADD CONSTRAINT files_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
@@ -771,6 +799,22 @@ CREATE POLICY file_chunks_select_own ON public.file_chunks FOR SELECT USING ((EX
 -- 한다. **읽기 전용**이며 sessions_select_admin·ai_logs_select_admin과 같은
 -- 형태다 — 권한은 계속 DB가 강제한다(D104).
 CREATE POLICY file_chunks_select_admin ON public.file_chunks FOR SELECT USING (public.is_admin());
+
+-- D129: chunk_atoms SELECT는 file_chunks 정책과 동형 — 부모 파일 접근 가능 시 열람
+-- (매칭된 원자 질문 관측용). 쓰기는 워커(BYPASSRLS) 전용 — nodi_app은 RLS write
+-- 정책 부재로 차단된다(file_chunks와 동일 기전. 00_bootstrap의 default privileges가
+-- 풀 DML을 부여하므로 GRANT 자체는 있지만, write 정책이 없어 INSERT/UPDATE/DELETE는 막힌다).
+ALTER TABLE public.chunk_atoms ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY chunk_atoms_select_class ON public.chunk_atoms FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.files f
+  WHERE ((f.id = chunk_atoms.file_id) AND (f.kind = ANY (ARRAY['class_material'::text, 'textbook'::text])) AND public.is_class_member(f.space_ref)))));
+
+CREATE POLICY chunk_atoms_select_own ON public.chunk_atoms FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.files f
+  WHERE ((f.id = chunk_atoms.file_id) AND (f.owner_id = ( SELECT auth.uid() AS uid))))));
+
+CREATE POLICY chunk_atoms_select_admin ON public.chunk_atoms FOR SELECT USING (public.is_admin());
 
 ALTER TABLE public.files ENABLE ROW LEVEL SECURITY;
 

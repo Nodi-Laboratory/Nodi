@@ -163,6 +163,42 @@ answer의 `@concept:` 라인), D90(프론트 동적 태그 앵커 — 태그별 
 
 ---
 
+## TASK 6. PIKE-RAG 기법 적용 (원자화·분해·figure 캡션·의미 청킹)
+
+- [x] 완료 (2026-07-29 — dev 커밋 4d2cdf0..4fd2aff: docs 2 + feat 10 + fix 3.
+  구현은 opus 워크트리 병렬(task6-1~6-10) + 수정 3건(fix1 기존 테스트 결함,
+  fix2 원자 재큐 갭, fix3 remainder 가드). 리뷰 게이트: task6-1 Approved /
+  단계 A "With fixes"→fix2 재리뷰 Approved / 단계 C·D·B "Approved with
+  fixes"→fix3 재리뷰 Approved — 최종 C0/I0. 통합 스위트 **411 passed·실패 0**
+  (킬스위치 off 회귀 = 기존 테스트 무수정 그린) + 프론트 tsc/build PASS(무변경)
+  + 스키마 psql 실적용 검증(빈 볼륨·마이그레이션 양 경로 일치).
+  **라이브 E2E는 미수행** — 메인 저장소에 backend/.env·postgres 컨테이너 부재
+  (사용자 보고 완료, .env 제공 시 가능). **마이그레이션
+  `db/migrations/2026-07-29-pike-rag-infra.sql`은 DRAFT — 원격 적용은 사용자
+  승인 후.** 새 노브 4종(atom_rag/rag_query_rewrite/figure_caption_generate/
+  semantic_chunking) 전부 기본 off — 캘리브레이션 후 admin 콘솔에서 개별 on.
+  상세는 원장(.superpowers/sdd/progress.md).)
+
+**범위**: Microsoft PIKE-RAG(ICML 2025)의 검색 품질 기법 4종을 단계 구현한다 —
+A) 지식 원자화 + 이중 검색(D129): 청크당 solar-pro2 예상 질문 생성 → Qdrant
+`chunk_atoms` 컬렉션 → 청크·원자 이중 검색. B→C) 태스크 분해 강화(D130): ReAct 판단
+프롬프트 분해 지침 + 스킬 내 질문 정제(기본 off). D) figure 캡션 비전 생성(D131):
+페이지 텍스트를 컨텍스트로 비전 모델이 캡션 생성 — D93/D103 후보 선택 대체.
+B) LLM 의미 청킹(D132): PIKE resplit 이식. 공통: 잡 하트비트 `touch_job`(D133).
+구현 순서 A → C → D → B. 모든 신규 경로는 킬스위치 기본 off + 실패 시 기존 경로
+폴백(채팅·텍스트 인덱싱 불가침).
+
+**설계 결정**: D129~D133. 스펙:
+`docs/superpowers/specs/2026-07-29-pike-rag-adoption-design.md` (사용자 승인
+2026-07-29 — plan 게이트).
+
+**완료 기준**: 킬스위치 off 시 전 경로가 현행과 동일(기존 스위트 무수정 그린),
+on 시 — 학생 복합 질문에서 원자 경유 히트(via=atom)가 관측되고, 교과서 figure가
+`match_kind='generated'` 캡션으로 검색되며, 의미 청킹이 소형 문서에서 동작한다.
+마이그레이션 2건(chunk_atoms·page_text)은 DRAFT — 원격 적용은 사용자 승인 후.
+
+---
+
 ## 전제 · 미해결 결정
 
 미해결 결정은 Manager가 착수 시점에 스스로 결정하고 근거를 여기에 기록한 뒤
