@@ -198,6 +198,113 @@ _SPECS: list[dict[str, Any]] = [
         "description": "인접 청크가 겹치는 글자 수(경계에서 문맥이 끊기는 것을 막는다).",
         "effect": "경계 문맥 보존 ↔ 저장·임베딩 비용",
     },
+    # --- PIKE-RAG (TASK 6, D116~D119) — 클램프는 각 호출부와 일치시킨다 ---
+    {
+        "key": "atom_rag_enabled",
+        "label": "지식 원자화 + 이중 검색",
+        "group": "PIKE-RAG",
+        "widget": "toggle",
+        "scope": "new-only",
+        "description": (
+            "켜면 자료 인제스트 때 청크마다 '이 청크로 답할 수 있는 예상 질문'을 "
+            "solar로 생성해 별도 컬렉션에 임베딩하고, 학생 질의 때 청크·질문 두 "
+            "컬렉션을 동시에 검색한다(질문↔질문 매칭으로 재현율 보강). 켜기 전에 "
+            "올린 자료에는 원자가 없다 — 재업로드해야 적용된다."
+        ),
+        "effect": "표현이 다른 질문의 검색 재현율 ↑ ↔ 인제스트 LLM·임베딩 비용 추가",
+    },
+    {
+        "key": "atom_questions_per_chunk",
+        "label": "청크당 예상 질문 수",
+        "group": "PIKE-RAG",
+        "widget": "number",
+        "min": 1,
+        "max": 8,
+        "step": 1,
+        "unit": "개",
+        "scope": "new-only",
+        "description": "원자화 때 청크 하나에서 생성할 예상 질문 개수.",
+        "effect": "질문 표현 커버리지 ↑ ↔ 인제스트 비용 정비례",
+    },
+    {
+        "key": "atom_top_k",
+        "label": "원자 검색 top-k",
+        "group": "PIKE-RAG",
+        "widget": "number",
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "scope": "live",
+        "description": "이중 검색에서 예상 질문 컬렉션을 몇 개까지 조회할지.",
+        "effect": "원자 경유 후보 폭 ↔ 검색 지연",
+    },
+    {
+        "key": "atom_rag_max_distance",
+        "label": "원자 거리 게이트",
+        "group": "PIKE-RAG",
+        "widget": "number",
+        "min": 0.1,
+        "max": 0.9,
+        "step": 0.05,
+        "scope": "live",
+        "description": (
+            "원자(예상 질문) 히트를 채택할 최대 거리(distance = 1 − cosine). "
+            "질문↔질문 매칭이라 청크 게이트(0.60)보다 엄격한 0.45가 기본 — "
+            "원자로 잡힌 청크에는 청크 게이트를 다시 적용하지 않는다."
+        ),
+        "effect": "낮출수록 정밀 ↑ 재현율 ↓ (실측 후 조정 권장)",
+    },
+    {
+        "key": "atom_gen_concurrency",
+        "label": "원자 생성 동시 호출",
+        "group": "PIKE-RAG",
+        "widget": "number",
+        "min": 1,
+        "max": 16,
+        "step": 1,
+        "scope": "new-only",
+        "description": "원자 질문 생성 시 solar 동시 호출 수.",
+        "effect": "인제스트 속도 ↔ API 부하",
+    },
+    {
+        "key": "rag_query_rewrite_enabled",
+        "label": "검색어 정제",
+        "group": "PIKE-RAG",
+        "widget": "toggle",
+        "scope": "live",
+        "description": (
+            "자료 검색 전에 solar 1콜로 학생 질문을 검색에 적합한 자연어 의문문으로 "
+            "정제한다(키워드 나열로 바꾸지 않는다 — 실측상 거리 악화). 실패하면 "
+            "원문 그대로 검색한다."
+        ),
+        "effect": "구어체·오타 질문의 검색 품질 ↑ ↔ 자료 턴당 약 +0.8초",
+    },
+    {
+        "key": "semantic_chunking_enabled",
+        "label": "LLM 의미 청킹",
+        "group": "PIKE-RAG",
+        "widget": "toggle",
+        "scope": "new-only",
+        "description": (
+            "켜면 상한 이하 크기의 문서에 한해 solar가 청크 경계를 의미 단위로 "
+            "재조정한다(문단 중간 절단 방지). 어떤 실패든 기존 정규식 청킹으로 "
+            "폴백하므로 인덱싱이 막히지는 않는다. 학생 세션 업로드에는 적용 안 됨."
+        ),
+        "effect": "청크 경계 품질 ↑ ↔ 인제스트 지연·LLM 비용",
+    },
+    {
+        "key": "semantic_chunking_max_chars",
+        "label": "의미 청킹 문서 상한",
+        "group": "PIKE-RAG",
+        "widget": "number",
+        "min": 10000,
+        "max": 500000,
+        "step": 10000,
+        "unit": "자",
+        "scope": "new-only",
+        "description": "이 글자 수를 넘는 문서는 의미 청킹 없이 정규식 청킹만 쓴다(비용 폭주 가드).",
+        "effect": "적용 범위 ↔ 대형 문서 인제스트 비용",
+    },
 ]
 
 _SPEC_BY_KEY = {s["key"]: s for s in _SPECS}
@@ -208,6 +315,7 @@ _GROUP_ORDER = [
     "세션 파일",
     "업로드",
     "교과서 도판",
+    "PIKE-RAG",
     "기타",
 ]
 
