@@ -1,28 +1,22 @@
-"""교과서 figure 후보 랭킹(D86·D93) — labs extract.py 이식.
+"""교과서 figure 추출(D86·D121) — labs extract.py 이식.
 
-좌표는 페이지 기준 0~1 정규화. D93(사용자 결정 2026-07-18): 위치기반 캡션
-매칭(수평 겹침·수직거리·아래쪽 우선)을 제거하고, 같은 페이지에서 bbox 중심
-유클리드 절대거리 top-K 후보만 뽑는다 — 캡션 확정은 비전 판정(figure_judge)이
-전담한다(판정 필수, 임베딩은 선택 캡션만). heading(figure 위쪽 최근접
-heading1, 없으면 페이지 첫 heading1)은 표시·디버그용으로만 수집한다.
+좌표는 페이지 기준 0~1 정규화. D121(사용자 결정 2026-07-30): 캡션은 비전
+생성(figure_caption)이 단독 확정한다 — D93의 절대거리 top-K 후보(candidates)와
+D103의 후보 선택 경로는 제거됐다. 여기서 뽑는 것은 생성 프롬프트의 입력이다:
 
-D103(2026-07-27 사용자 결정): 캡션 확정을 **2단 경로**로 바꾼다.
-  1순위 — 파서가 caption/footnote로 **라벨한** 요소가 가까이 있으면 그대로 캡션
-          (match_kind="parsed"). 비전 판정 불필요.
-  2순위 — 라벨이 없으면 candidates를 비전 판정이 고른다(D93 경로, 선택적).
-  둘 다 없으면 캡션 없이 실패. **추측한 캡션은 어느 경로에서도 만들지 않는다.**
+  - parsed 캡션(nearest_caption): 파서가 caption/footnote로 **라벨한** 요소 중
+    figure에 가까운 것(정규화 거리 0.25 이내). 확정값이 아니라 생성 프롬프트의
+    힌트(고유명사 보존용)로만 쓰인다.
+  - heading(figure 위쪽 최근접 heading1, 없으면 페이지 첫 heading1): 표시·디버그용.
+  - page_texts(페이지 본문): 생성 프롬프트의 컨텍스트(D118).
 
 실측 근거(labs): 파싱이 caption 카테고리를 paragraph로 흡수하는 교과서가 있고
-img alt를 항상 생성하지도 않는다 — 그래서 1순위가 항상 잡히지는 않는다. 다만
-라벨이 붙은 경우까지 버릴 이유는 없어 D103에서 1순위로 승격했다(비전 모델 없이
-동작하는 경로 확보). figure 요소의 텍스트(content)는 파서가 생성한 영어 설명이라
-캡션 후보가 아니다 — 후보군에서 figure 카테고리를 제외한다.
+img alt를 항상 생성하지도 않는다 — parsed 힌트는 있을 때만 실린다. figure
+요소의 텍스트(content)는 파서가 생성한 영어 설명이라 힌트가 아니다.
 
-DB·워커 계약: extract_figures가 반환하는 레코드 shape(키 목록)에 task4-6의
-워커가 의존한다 — 키를 임의로 바꾸지 않는다. caption·embed_text는 1순위에서
-잡히면 여기서 채워지고(match_kind="parsed"), 아니면 빈 값으로 두어 워커
-figure_batch의 판정이 확정한다. RAG 텍스트 청크는 text_from_elements가 figure
-설명을 배제해 오염을 막는다.
+DB·워커 계약: extract_figures가 반환하는 레코드 shape(키 목록)에 워커가
+의존한다 — 키를 임의로 바꾸지 않는다. RAG 텍스트 청크는 text_from_elements가
+figure 설명을 배제해 오염을 막는다.
 """
 from __future__ import annotations
 
@@ -65,29 +59,6 @@ def bbox(coords: list[dict]) -> tuple[float, float, float, float]:
 
 def _center(b) -> tuple[float, float]:
     return ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
-
-
-def rank_candidates(fig_box, candidates, k: int = 3) -> list[str]:
-    """캡션 후보 top-k — bbox 중심점 간 유클리드 절대거리 순.
-
-    판정(EXAONE)용이므로 방향(아래쪽 우선) 없이 물리적으로 가까운 태그를
-    고른다. 빈 텍스트 제외, 중복 텍스트는 1회만.
-    """
-    fcx, fcy = _center(fig_box)
-    scored: list[tuple[float, str]] = []
-    for cand_box, text in candidates:
-        if not text:
-            continue
-        ccx, ccy = _center(cand_box)
-        scored.append((math.hypot(ccx - fcx, ccy - fcy), text))
-    scored.sort(key=lambda s: s[0])
-    out: list[str] = []
-    for _, text in scored:
-        if text not in out:
-            out.append(text)
-        if len(out) == k:
-            break
-    return out
 
 
 def figure_description(html: str | None) -> str:
@@ -146,14 +117,13 @@ def _nearest_heading(fig_box, headings) -> str:
     return headings[0][1] if headings else ""
 
 
-def extract_figures(elements: list[dict], top_k: int = 3) -> list[dict]:
-    """Upstage 파싱 elements → figure 레코드 목록(절대거리 top-K 후보, D93).
+def extract_figures(elements: list[dict]) -> list[dict]:
+    """Upstage 파싱 elements → figure 레코드 목록(D121).
 
     elements는 전역 page/id 보정이 끝난 상태로 들어온다(task4-2
-    parse_document_full 공급). 페이지별로 그룹핑해 같은 페이지 텍스트만
-    후보로 쓴다(다른 페이지 텍스트는 후보가 아니다). 캡션은 여기서 확정하지
-    않는다 — candidates(bbox 중심 절대거리 top-K)를 비전 판정(figure_judge)이
-    선택해 워커가 caption·embed_text를 확정한다(D93 판정 필수).
+    parse_document_full 공급). 페이지별로 그룹핑해 같은 페이지의 라벨된
+    캡션(caption/footnote)만 parsed 힌트 후보로 쓴다. 캡션은 여기서 확정하지
+    않는다 — 비전 생성(figure_caption)이 워커에서 확정한다(D121).
 
     figure 카테고리 + coordinates + base64_encoding을 모두 갖춘 요소만
     처리한다. base64가 없으면 스킵하고 warning 로그를 남긴다. 반환 레코드
@@ -181,8 +151,7 @@ def extract_figures(elements: list[dict], top_k: int = 3) -> list[dict]:
             ]
 
         headings = cands({"heading1"})
-        all_texts = cands()
-        # D103: 파서가 캡션이라고 라벨한 요소만 따로 모은다(추측 아님).
+        # 파서가 캡션이라고 라벨한 요소만 따로 모은다(추측 아님) — 생성 힌트용.
         labeled_captions = cands(CAPTION_CATEGORIES)
 
         for el in els:
@@ -203,27 +172,23 @@ def extract_figures(elements: list[dict], top_k: int = 3) -> list[dict]:
             description = figure_description(fig_html)
             fig_type = figure_type(fig_html)
             heading = _nearest_heading(fig_box, headings)
-            candidates = rank_candidates(fig_box, all_texts, k=top_k)
 
-            # D103: 파서가 캡션으로 라벨한 요소가 가까이 있으면 그것을 캡션으로
-            # 확정한다(비전 판정 불필요). 없으면 D93대로 빈 값으로 두고 워커의
-            # 판정 경로가 candidates에서 고른다. 판정도 없으면 캡션 없이 실패 —
-            # 어느 경로든 **추측한 캡션은 만들지 않는다**.
+            # D121: 파서가 캡션으로 라벨한 요소가 가까이 있으면 parsed 힌트로
+            # 싣는다 — 확정값이 아니다(캡션 확정은 워커의 비전 생성이 전담).
+            # embed_text는 빈 값으로 두고 생성이 채운다.
             parsed = nearest_caption(fig_box, labeled_captions)
 
             records.append({
                 "page": page,
                 "element_id": el["id"],
                 "bbox": list(fig_box),
-                # 캡션이 곧 임베딩 텍스트다(D93: 캡션 단독).
-                "caption": parsed,
+                "caption": parsed,  # 생성 프롬프트 힌트(고유명사 보존용)
                 "alt": alt,
                 "description": description,
                 "figure_type": fig_type,
                 "heading": heading,
-                "candidates": candidates,
-                "embed_text": parsed,
-                "match_kind": "parsed" if parsed else "",
+                "embed_text": "",
+                "match_kind": "",
                 "image_bytes": raw,
                 "ext": ext,
             })

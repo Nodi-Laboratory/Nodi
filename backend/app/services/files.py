@@ -148,18 +148,14 @@ async def upload_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class_material/textbook requires space_kind='class'.",
         )
-    # D103: 판정(VLM) 미설정이 더 이상 업로드를 막지 않는다. 캡션 확정에 파서
-    # 라벨(caption/footnote) 경로가 생겨서, 판정 없이도 figure가 만들어질 수
-    # 있기 때문이다(figure_extract). 판정은 라벨이 없는 figure를 건지는
-    # 폴백으로 남는다 — 미설정이면 그 figure만 캡션 없이 실패한다.
-    #
-    # (D93에서는 판정이 유일한 캡션 출처라 업로드 자체를 503으로 막았다.
-    #  그 전제가 깨졌으므로 게이트도 함께 걷어낸다. 텍스트 RAG는 어느 경우에도
-    #  정상 동작하므로 교과서 업로드를 막을 이유가 없다.)
+    # D121: 비전(judge_*) 미설정이어도 업로드는 막지 않는다 — 텍스트 RAG는
+    # 어느 경우에도 정상 동작하므로 교과서 업로드를 막을 이유가 없다(D103에서
+    # 확립된 방침 유지). 다만 캡션이 비전 생성 단독이 되면서, 미설정이면 figure
+    # 전부가 캡션 없이 실패한다(no-caption failed — env 설정 후 retry로 복구).
     if kind == "textbook" and figure_judge.missing_config():
         logger.info(
-            "교과서 업로드 — figure 판정 미설정(%s). 파서가 캡션으로 라벨한 "
-            "figure만 처리된다.",
+            "교과서 업로드 — 비전(judge_*) 미설정(%s). figure는 전부 캡션 없이 "
+            "실패한다(텍스트 RAG는 정상, 설정 후 retry로 복구 가능).",
             ", ".join(figure_judge.missing_config()),
         )
     # D83: 세션 연결은 user_upload 전용 — 학급 자료는 세션에 귀속되지 않는다.

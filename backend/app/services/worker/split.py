@@ -150,7 +150,7 @@ async def _fanout_figures(
             "description": r["description"],
             "figure_type": r["figure_type"],
             "heading": r["heading"],
-            "candidates": r["candidates"],
+            # candidates(판정 후보)는 D121로 제거 — 컬럼 기본값('[]')이 채운다.
             "embed_text": r["embed_text"],
             "match_kind": r["match_kind"],
             "page_text": page_map.get(r["page"], ""),  # D118

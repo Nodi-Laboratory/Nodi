@@ -35,9 +35,7 @@ insert into public.app_settings (key, value) values
     ('atom_rag_max_distance',           '0.45'),
     ('atom_gen_concurrency',            '4'),
     ('rag_query_rewrite_enabled',       'false'),
-    -- D118 캡션 생성이 운영 기본(사용자 결정 2026-07-30) — judge_* env 필수.
-    -- config 기본값(false)은 시드 부재 시 보수 폴백으로 남긴다(D62 위계).
-    ('figure_caption_generate_enabled', 'true'),
+    -- (D121: figure_caption_generate_enabled 노브는 제거 — 캡션은 생성 단독)
     ('semantic_chunking_enabled',       'false'),
     ('semantic_chunking_max_chars',     '120000')
 on conflict (key) do nothing;

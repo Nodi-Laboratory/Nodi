@@ -162,7 +162,7 @@ async def get_figure(
         {
             "id": f"eq.{figure_id}",
             "select": (
-                "id,file_id,page,caption,alt,candidates,selected_index,image_path"
+                "id,file_id,page,caption,alt,candidates,selected_index,embed_text,image_path"
             ),
             "limit": "1",
         },

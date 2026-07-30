@@ -57,18 +57,6 @@ def test_bbox_from_corners():
     assert F.bbox(coords) == (0.2, 0.3, 0.8, 0.7)
 
 
-# ── rank_candidates ────────────────────────────────────────────────────
-def test_rank_by_center_distance_dedup_and_k():
-    fig = (0.4, 0.4, 0.6, 0.6)  # 중심 (0.5, 0.5)
-    near = ((0.4, 0.6, 0.6, 0.65), "near")  # 중심 (0.5, 0.625) 거리 0.125
-    mid = ((0.4, 0.7, 0.6, 0.75), "mid")  # 중심 (0.5, 0.725) 거리 0.225
-    far = ((0.4, 0.85, 0.6, 0.9), "far")  # 중심 (0.5, 0.875) 거리 0.375
-    dup = ((0.41, 0.6, 0.61, 0.65), "near")  # 동일 텍스트(중복) — 1회만
-    empty = ((0.4, 0.55, 0.6, 0.58), "")  # 빈 텍스트 제외
-    out = F.rank_candidates(fig, [far, mid, near, dup, empty], k=2)
-    assert out == ["near", "mid"]  # 거리순 + k 절단 + 중복 1회 + 빈 제외
-
-
 # ── figure_description / figure_type ───────────────────────────────────
 def test_figure_description_multiline_and_entity():
     html = (
@@ -128,23 +116,21 @@ def test_extract_figures_full_record():
     assert r["page"] == 1
     assert r["element_id"] == 10
     assert r["bbox"] == [0.1, 0.40, 0.5, 0.60]
-    # D103: 파서가 caption으로 라벨한 요소가 가까이 있으므로 여기서 확정된다
-    # (비전 판정 불필요). 캡션이 곧 임베딩 텍스트다.
+    # D121: 파서 라벨 캡션은 생성 프롬프트 힌트로만 실린다 — 확정값이 아니라
+    # embed_text·match_kind는 빈 값(캡션 확정은 워커의 비전 생성이 전담).
     assert r["caption"] == "그림 1 고구려의 전성기"
-    assert r["embed_text"] == "그림 1 고구려의 전성기"
-    assert r["match_kind"] == "parsed"
+    assert r["embed_text"] == ""
+    assert r["match_kind"] == ""
     assert r["alt"] == "고구려 지도"
     assert r["description"] == "A map of Goguryeo"
     assert r["figure_type"] == "map"
     assert r["heading"] == "1. 고대 국가"
-    # 후보는 절대거리 순(D93) — 캡션(0.13) < 헤딩(0.18).
-    assert r["candidates"] == ["그림 1 고구려의 전성기", "1. 고대 국가"]
     assert r["image_bytes"] == _JPG
     assert r["ext"] == "jpg"
-    # 계약 키 전체 존재(task4-6이 이 shape에 의존).
+    # 계약 키 전체 존재(워커가 이 shape에 의존).
     assert set(r) == {
         "page", "element_id", "bbox", "caption", "alt", "description",
-        "figure_type", "heading", "candidates", "embed_text", "match_kind",
+        "figure_type", "heading", "embed_text", "match_kind",
         "image_bytes", "ext",
     }
 
@@ -164,67 +150,20 @@ def test_extract_figures_skips_missing_base64(caplog):
     assert any("base64" in m for m in caplog.messages)
 
 
-def test_extract_figures_candidates_by_absolute_distance():
-    """D93: 후보는 방향(아래쪽) 우선 없이 bbox 중심 절대거리 순이다."""
-    fig = _fig_el(1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode())
-    # 위쪽이 더 가깝다: above 중심거리 0.13 < below 중심거리 0.17.
-    above = _text_el(2, "paragraph", (0.1, 0.34, 0.5, 0.40), "위 텍스트")
-    below = _text_el(3, "caption", (0.1, 0.64, 0.5, 0.70), "아래 캡션")
-    recs = F.extract_figures([fig, above, below])
-    assert recs[0]["candidates"] == ["위 텍스트", "아래 캡션"]
-
-
-def test_extract_figures_no_candidates_leaves_empty():
-    """같은 페이지에 텍스트가 없으면 candidates는 빈 목록(판정이 -1 처리)."""
-    fig = _fig_el(
-        1,
-        (0.1, 0.40, 0.5, 0.60),
-        b64=base64.b64encode(_JPG).decode(),
-        html='<img alt="지도만 있음">',
-    )
-    recs = F.extract_figures([fig])
-    assert recs[0]["candidates"] == []
-    assert recs[0]["caption"] == ""
-    assert recs[0]["match_kind"] == ""
-    assert recs[0]["alt"] == "지도만 있음"
-
-
-def test_extract_figures_candidates_scoped_to_same_page():
-    # 다른 페이지 텍스트는 후보가 아니다(페이지별 그룹핑).
-    fig = _fig_el(
-        1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode(), page=1,
-    )
-    other = _text_el(2, "caption", (0.1, 0.62, 0.5, 0.64), "다른 페이지", page=2)
-    recs = F.extract_figures([fig, other])
-    assert recs[0]["candidates"] == []
-
-
-def test_extract_figures_top_k_passthrough():
-    fig = _fig_el(1, (0.4, 0.4, 0.6, 0.6), b64=base64.b64encode(_JPG).decode())
-    c1 = _text_el(2, "caption", (0.4, 0.62, 0.6, 0.64), "c1")
-    c2 = _text_el(3, "paragraph", (0.4, 0.70, 0.6, 0.72), "c2")
-    c3 = _text_el(4, "heading1", (0.4, 0.80, 0.6, 0.82), "c3")
-    recs = F.extract_figures([fig, c1, c2, c3], top_k=1)
-    assert len(recs[0]["candidates"]) == 1
-
-
-# --- D103: 파서 라벨 캡션 -----------------------------------------------------
+# --- 파서 라벨 캡션(생성 프롬프트 힌트, D121) -----------------------------------------------------
 
 
 def test_parsed_caption_prefers_labeled_over_nearer_paragraph():
-    """더 가까운 paragraph가 있어도 캡션은 **라벨된** 요소에서 고른다.
+    """더 가까운 paragraph가 있어도 힌트는 **라벨된** 요소에서 고른다.
 
     거리만 보면 paragraph가 이기지만, 그건 본문일 수 있다. 파서가 caption이라고
-    라벨한 것만 캡션으로 확정하는 것이 D103의 요지다.
+    라벨한 것만 힌트로 싣는다(추측 금지 — D103에서 확립, D121에서도 유지).
     """
     fig = _fig_el(1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode())
     near_para = _text_el(2, "paragraph", (0.1, 0.61, 0.5, 0.62), "본문 문장")
     far_caption = _text_el(3, "caption", (0.1, 0.66, 0.5, 0.68), "그림 2 첨성대")
     recs = F.extract_figures([fig, near_para, far_caption])
     assert recs[0]["caption"] == "그림 2 첨성대"
-    assert recs[0]["match_kind"] == "parsed"
-    # candidates는 거리순 그대로 — 판정 폴백 경로가 쓰는 값이라 불변.
-    assert recs[0]["candidates"][0] == "본문 문장"
 
 
 def test_parsed_caption_accepts_footnote_category():
@@ -233,7 +172,6 @@ def test_parsed_caption_accepts_footnote_category():
     note = _text_el(2, "footnote", (0.1, 0.62, 0.5, 0.64), "▲ 무구정광대다라니경")
     recs = F.extract_figures([fig, note])
     assert recs[0]["caption"] == "▲ 무구정광대다라니경"
-    assert recs[0]["match_kind"] == "parsed"
 
 
 def test_parsed_caption_ignored_when_too_far():
@@ -242,18 +180,16 @@ def test_parsed_caption_ignored_when_too_far():
     far = _text_el(2, "caption", (0.75, 0.85, 0.95, 0.92), "다른 그림의 캡션")
     recs = F.extract_figures([fig, far])
     assert recs[0]["caption"] == ""
-    assert recs[0]["match_kind"] == ""
 
 
-def test_parsed_caption_absent_leaves_judge_path():
-    """라벨이 없으면 빈 값으로 남겨 판정 경로(D93)가 candidates에서 고른다."""
+def test_parsed_caption_absent_leaves_empty_hint():
+    """라벨이 없으면 힌트도 빈 값 — 생성이 이미지·페이지 본문만으로 캡션을 만든다."""
     fig = _fig_el(1, (0.1, 0.40, 0.5, 0.60), b64=base64.b64encode(_JPG).decode())
     para = _text_el(2, "paragraph", (0.1, 0.62, 0.5, 0.64), "캡션일 수도 아닐 수도")
     recs = F.extract_figures([fig, para])
     assert recs[0]["caption"] == ""
     assert recs[0]["embed_text"] == ""
     assert recs[0]["match_kind"] == ""
-    assert recs[0]["candidates"] == ["캡션일 수도 아닐 수도"]
 
 
 def test_parsed_caption_scoped_to_same_page():

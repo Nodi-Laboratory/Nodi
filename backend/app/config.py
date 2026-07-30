@@ -155,8 +155,7 @@ class Settings(BaseSettings):
     atom_batch_size: int = 16              # atom_batch 팬아웃 단위(스테일 120s 여유)
     # C. 질문 정제 (D117)
     rag_query_rewrite_enabled: bool = False
-    # D. figure 캡션 비전 생성 (D118) — off면 D103 경로 그대로
-    figure_caption_generate_enabled: bool = False
+    # D. figure 캡션 비전 생성 (D118·D121 — 생성 단독, 노브 없음)
     figure_page_text_max_chars: int = 4000  # 비전 프롬프트 페이지 컨텍스트 절단
     # B. LLM 의미 청킹 (D119)
     semantic_chunking_enabled: bool = False

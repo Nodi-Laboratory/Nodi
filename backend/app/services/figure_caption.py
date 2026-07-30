@@ -1,20 +1,20 @@
-"""교과서 figure 캡션 비전 생성(D118) — figure_judge와 동형 구조.
+"""교과서 figure 캡션 비전 생성(D118·D121) — 캡션의 유일한 확정 경로.
 
-figure_judge가 절대거리 top-K 후보 중 하나를 '선택'(D93/D103)했다면, 이 모듈은
-페이지 본문을 컨텍스트로 캡션을 직접 '생성'한다(D118). 잘라낸 figure 이미지
-(base64)와 페이지 텍스트·parsed 캡션·alt를 judge_* 비전 엔드포인트(OpenAI 호환)에
-보내 검색용 캡션 한두 문장을 받는다.
+페이지 본문을 컨텍스트로 캡션을 직접 '생성'한다. 잘라낸 figure 이미지(base64)와
+페이지 텍스트·parsed 캡션(파서 라벨 힌트)·alt를 judge_* 비전 엔드포인트
+(OpenAI 호환, 기본 EXAONE-4.5)에 보내 검색용 캡션 한두 문장을 받는다.
+D121(사용자 결정 2026-07-30): 구 선택 경로(D93/D103 — 후보 top-K 중 판정이
+선택)는 제거됐고, 임베딩되는 캡션은 이 모듈의 생성 결과뿐이다.
 
-**figure_judge와 같은 판정 계열을 재사용한다** — 같은 judge_base_url/judge_model/
-judge_api_key로 호출하고, `image_data_uri`·`is_configured`는 figure_judge에서
-임포트해 그대로 쓴다(복제 금지). 타임아웃(JUDGE_TIMEOUT)·회로차단 임계치
-(CIRCUIT_BREAK_THRESHOLD=5)·1회 재시도 규약도 동일하다 — 이유는 figure_judge
-독스트링 참조(죽은 엔드포인트에서 connect 대기 누적 방지, thinking off 공백루프
-잘림 대비 재시도).
+**judge_* 계열 인프라를 figure_judge에서 재사용한다** — 같은 judge_base_url/
+judge_model/judge_api_key로 호출하고, `image_data_uri`·`is_configured`·타임아웃
+(JUDGE_TIMEOUT)·회로차단 임계치(CIRCUIT_BREAK_THRESHOLD=5)를 임포트해 그대로
+쓴다(복제 금지). 1회 재시도 규약 포함 — 이유는 figure_judge 독스트링 참조
+(죽은 엔드포인트에서 connect 대기 누적 방지, thinking off 공백루프 잘림 대비).
 
-캡션 생성은 판정과 달리 자유 텍스트라 파싱이 단순하다(공백 정규화 + 500자 캡).
-파싱 후 빈 캡션은 None과 동일 취급 — 호출부(워커)가 parsed 캡션으로 폴백하거나
-캡션 없이 failed 처리한다(D118). 개별 실패는 raise하지 않고 None으로 강등한다.
+캡션은 자유 텍스트라 파싱이 단순하다(공백 정규화 + 500자 캡). 파싱 후 빈
+캡션은 None과 동일 취급 — 호출부(워커)가 해당 행을 caption-error failed로
+처리한다(폴백 없음, D121). 개별 실패는 raise하지 않고 None으로 강등한다.
 """
 from __future__ import annotations
 
@@ -165,10 +165,10 @@ async def caption_all(
     스테일 재클레임 오탐 방지).
 
     개별 실패(재시도 포함 최종 예외)·빈 캡션은 raise하지 않고 None을 반환한다 —
-    호출부(워커)가 parsed 캡션으로 폴백하거나 캡션 없이 failed 처리한다(D118).
+    호출부(워커)가 해당 행을 caption-error failed로 처리한다(폴백 없음, D121).
     연속 CIRCUIT_BREAK_THRESHOLD회 실패 시 잔여 항목 생성을 생략하고 전부 None으로
-    둔다(회로차단, figure_judge.judge_all 동형) — 스킵된 항목은 heartbeat도
-    부르지 않는다.
+    둔다(회로차단 — 죽은 엔드포인트에서 connect 대기 누적 방지) — 스킵된 항목은
+    heartbeat도 부르지 않는다.
     """
     results: list[str | None] = [None] * len(items)
     if not items:
