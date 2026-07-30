@@ -23,6 +23,7 @@ from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
 from ..config import get_settings
 from ..db.client import UserClient, get_service_client
 from ..services import admin_backup, admin_console, app_settings
+from ..services import figures as figures_svc
 
 logger = logging.getLogger("nodi.admin")
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -499,15 +500,31 @@ async def get_document(
             "order": "created_at.asc",
         },
     )
-    figures = await client.select(
+    figure_rows = await client.select(
         "textbook_figures",
         {
             "file_id": f"eq.{file_id}",
-            "select": "id,seq,page,caption,figure_type,status,selected_index",
+            # D121: 확정 캡션은 embed_text(생성 캡션)다 — caption 컬럼은 파서
+            # 라벨 힌트라 대부분 비어 있어, 그대로 내리면 콘솔에 '캡션 없음'으로
+            # 보인다. 검색·파일 상세와 같은 표시 규약(display_caption)으로 내린다.
+            "select": (
+                "id,seq,page,caption,alt,candidates,selected_index,"
+                "embed_text,match_kind,figure_type,status"
+            ),
             "order": "seq.asc",
             "limit": "200",
         },
     )
+    figures = [
+        {
+            "id": f["id"], "seq": f["seq"], "page": f["page"],
+            "caption": figures_svc.display_caption(f),
+            "figure_type": f["figure_type"], "status": f["status"],
+            "match_kind": f.get("match_kind") or "",
+            "selected_index": f.get("selected_index"),
+        }
+        for f in figure_rows
+    ]
     owners = await client.select(
         "profiles",
         {"id": f"eq.{files[0]['owner_id']}", "select": "id,email,role", "limit": "1"},
