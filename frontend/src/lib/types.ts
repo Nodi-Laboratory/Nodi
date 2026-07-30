@@ -605,6 +605,13 @@ export interface AdminDocumentDetail {
     status: string;
     selected_index: number | null;
   }[];
+  /** D129 지식 원자 — 청크별 예상 질문(atom_rag_enabled로 생성). 없으면 빈 배열. */
+  atoms: {
+    id: string;
+    chunk_seq: number;
+    question: string;
+    status: string;
+  }[];
 }
 
 export interface RagTestHit {

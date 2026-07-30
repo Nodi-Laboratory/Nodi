@@ -67,10 +67,13 @@ async def test_delete_file_purges_qdrant_points(monkeypatch):
 
     await F.delete_file(service, client, OWNER, FILE_ID)
 
-    assert len(fake_q.deletes) == 1
-    collection, selector = fake_q.deletes[0]
-    assert collection == qdrant_store.COL_FILE_CHUNKS
-    assert _filter_file_id(selector) == FILE_ID
+    # D129: file_chunks + chunk_atoms 두 컬렉션을 정리한다(textbook이 아니면
+    # figure 컬렉션은 건너뛴다).
+    assert len(fake_q.deletes) == 2
+    collections = {c for c, _ in fake_q.deletes}
+    assert collections == {qdrant_store.COL_FILE_CHUNKS, qdrant_store.COL_CHUNK_ATOMS}
+    for _, selector in fake_q.deletes:
+        assert _filter_file_id(selector) == FILE_ID
     assert ("delete_file_cascade", {"p_file_id": FILE_ID}) in client.rpc_calls
 
 
@@ -85,5 +88,6 @@ async def test_qdrant_purge_failure_does_not_block_delete(monkeypatch):
     # 예외가 전파되면 이 await에서 테스트가 실패한다.
     await F.delete_file(service, client, OWNER, FILE_ID)
 
-    assert len(fake_q.deletes) == 1  # 정리를 시도는 했고
+    # 각 컬렉션 정리는 독립 best-effort — 첫 실패가 다음 정리·삭제를 막지 않는다.
+    assert len(fake_q.deletes) == 2  # file_chunks + chunk_atoms 모두 시도(D129)
     assert ("delete_file_cascade", {"p_file_id": FILE_ID}) in client.rpc_calls  # 삭제 완료

@@ -17,6 +17,7 @@ Best-effort: any failure -> no RAG context, never blocks the turn.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -86,6 +87,135 @@ async def search(
                 "distance": distances[h["id"]],
             }
         )
+    return out
+
+
+async def dual_search(
+    client: UserClient, file_ids: list[str], query: str, k: int | None = None
+) -> list[dict[str, Any]]:
+    """청크·원자 이중 검색(D129, PIKE-RAG 지식 원자화) — search()의 상위 경로.
+
+    file_chunks(직접 벡터)와 chunk_atoms(청크당 solar가 생성한 예상 질문)를 한
+    질의 임베딩으로 동시에 검색해 병합한다. **게이트를 분리한다**: 직접 히트는
+    청크 거리(class_material_rag_max_distance, 0.60), 원자 히트는 원자 거리
+    (atom_rag_max_distance, 0.45)를 각각의 거리에 적용한다. 원자 경유 청크에는
+    청크 게이트를 재적용하지 **않는다** — "청크 벡터로는 멀지만 원자 질문으로는
+    정확한" 청크를 살리는 것이 원자화의 목적이기 때문이다(D129).
+
+    반환 shape: ``{file_id, chunk_id, seq, chunk_text, distance, via,
+    atom_distance}``.
+      - ``via``: ``"chunk"``(직접 히트) | ``"atom"``(원자 경유).
+      - ``distance``: 직접 히트면 청크 거리(1-score), 원자 경유면 청크 벡터
+        거리를 알 수 없어 **None**. **게이트는 이 함수 안에서 이미 끝났으므로
+        호출부는 distance로 재게이트하지 말 것**(None을 버리면 원자 경유 청크가
+        전부 죽는다).
+      - ``atom_distance``: ``via="atom"``일 때만 원자 거리, 그 외 None.
+
+    병합 규칙: 직접 히트(Qdrant 랭킹순) 먼저 → 원자 경유 청크 중 직접에 없는
+    것만 원자 거리 오름차순으로 append. chunk_id dedupe는 직접 우선. 총량은
+    rag_top_k+3으로 캡. 본문·상태는 USER 스코프로 file_chunks 1회 재조회
+    (status=embedded — 기존 search()와 동일 필터, Qdrant 신뢰 경계 아님).
+
+    Best-effort 상위(build_rag_context)에서 감싸는 계약은 search()와 같다.
+    """
+    if not file_ids or not query.strip():
+        return []
+    overlay = await app_settings.get_overlay()
+    if k is None:
+        k = app_settings.as_int(overlay, "rag_top_k", settings.rag_top_k, 1, 50)
+    atom_k = app_settings.as_int(
+        overlay, "atom_top_k", settings.atom_top_k, 1, 20
+    )
+    chunk_gate = app_settings.as_float(
+        overlay,
+        "class_material_rag_max_distance",
+        settings.class_material_rag_max_distance,
+        0.1,
+        0.9,
+    )
+    atom_gate = app_settings.as_float(
+        overlay, "atom_rag_max_distance", settings.atom_rag_max_distance, 0.1, 0.9
+    )
+    vec = await embedding.embed_texts([query], task_type="RETRIEVAL_QUERY")
+    if not vec:
+        return []
+    scoped = [str(f) for f in file_ids]
+    # 두 컬렉션 동시 검색 — 질의 임베딩 1회를 공유한다.
+    chunk_hits, atom_hits = await asyncio.gather(
+        qdrant_store.search(
+            qdrant_store.COL_FILE_CHUNKS, vec[0], k, file_ids=scoped
+        ),
+        qdrant_store.search(
+            qdrant_store.COL_CHUNK_ATOMS, vec[0], atom_k, file_ids=scoped
+        ),
+    )
+    # 직접 히트: 청크 게이트를 청크 거리에 적용, Qdrant 랭킹순 유지.
+    direct: list[tuple[str, float]] = []  # (chunk_id, chunk_distance)
+    direct_ids: set[str] = set()
+    for h in chunk_hits:
+        cid = h["id"]
+        dist = 1.0 - float(h["score"])
+        if dist > chunk_gate or cid in direct_ids:
+            continue
+        direct.append((cid, dist))
+        direct_ids.add(cid)
+    # 원자 히트: 원자 거리 게이트를 원자 거리에 적용, chunk_id별 최소 거리 채택.
+    atom_best: dict[str, float] = {}
+    for h in atom_hits:
+        src = (h.get("payload") or {}).get("chunk_id")
+        if not src:
+            continue
+        adist = 1.0 - float(h["score"])
+        if adist > atom_gate or src in direct_ids:
+            continue  # 직접 히트가 이긴다(dedupe)
+        prev = atom_best.get(src)
+        if prev is None or adist < prev:
+            atom_best[src] = adist
+    # 원자 경유 청크는 원자 거리 오름차순.
+    atom_via = sorted(atom_best.items(), key=lambda kv: kv[1])
+    cap = k + 3
+    # 재조회 대상 chunk_id 합집합(순서 보존: 직접 먼저, 원자 다음).
+    ordered: list[tuple[str, str, float | None, float | None]] = []
+    # (chunk_id, via, distance, atom_distance)
+    for cid, dist in direct:
+        ordered.append((cid, "chunk", dist, None))
+    for cid, adist in atom_via:
+        ordered.append((cid, "atom", None, adist))
+    ordered = ordered[:cap]
+    if not ordered:
+        return []
+    all_ids = [cid for cid, *_ in ordered]
+    rows = await client.select(
+        "file_chunks",
+        {
+            "id": f"in.({','.join(all_ids)})",
+            "status": "eq.embedded",
+            "select": "id,file_id,seq,chunk_text",
+        },
+    )
+    by_id = {str(r["id"]): r for r in rows}
+    out: list[dict[str, Any]] = []
+    for cid, via, dist, adist in ordered:
+        r = by_id.get(cid)
+        if not r:  # RLS/삭제로 못 읽는 id는 조용히 탈락
+            continue
+        out.append(
+            {
+                "file_id": r.get("file_id"),
+                "chunk_id": r.get("id"),
+                "seq": r.get("seq"),
+                "chunk_text": r.get("chunk_text"),
+                "distance": dist,
+                "via": via,
+                "atom_distance": adist,
+            }
+        )
+    logger.info(
+        "이중 검색: direct=%d atom_via=%d merged=%d",
+        len(direct),
+        len(atom_via),
+        len(out),
+    )
     return out
 
 

@@ -198,8 +198,16 @@ def _patch_figures_infra(
     async def fake_sign(row):
         return sign
 
+    async def fake_embed_query(text):
+        # 실 임베딩 호출(UPSTAGE_API_KEY 필요)을 막는다 — 검색은 fake_search가
+        # 가로채므로 벡터 내용은 무관하다. 미mock 시 search 앞에서 RuntimeError로
+        # 빠져 함수의 try/except가 삼키고, 도판 반환·score_threshold 전달 검증이
+        # 무력화된다(빈 목록으로 통과하거나 capture 미기록).
+        return [0.0]
+
     monkeypatch.setattr(R.rag, "textbook_file_ids", fake_textbook_ids)
     monkeypatch.setattr(R.app_settings, "get_overlay", fake_overlay)
+    monkeypatch.setattr(R.upstage, "embed_query", fake_embed_query)
     monkeypatch.setattr(R.qdrant_store, "search", fake_search)
     monkeypatch.setattr(R.figures, "sign_figure_url", fake_sign)
     return _FakeClient({"textbook_figures": lambda p: list(rows or [])})

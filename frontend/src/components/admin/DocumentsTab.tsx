@@ -2,9 +2,16 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, FileText, Image as ImageIcon, Search } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronRight,
+  FileText,
+  Image as ImageIcon,
+  Search,
+} from "lucide-react";
 import { getAdminDocument, getAdminDocuments } from "@/lib/api";
 import type {
+  AdminChunk,
   AdminDocument,
   AdminDocumentDetail,
   AdminDocumentsResponse,
@@ -206,12 +213,78 @@ function DocRow({ doc, onOpen }: { doc: AdminDocument; onOpen: () => void }) {
   );
 }
 
+/**
+ * 청크 카드 — 원문 + (원자화 자료면) 예상 질문 토글.
+ *
+ * D129: atom_rag_enabled로 만든 청크는 "이 청크로 답할 수 있는 예상 질문"을
+ * 갖는다. 검색은 이 질문과 학생 질의를 매칭한다(질문↔질문) — 그래서 헤더에
+ * 개수를 배지로 보여주고, 클릭하면 실제 질문 문장을 펼친다.
+ */
+function ChunkCard({
+  chunk,
+  atoms,
+}: {
+  chunk: AdminChunk;
+  atoms: AdminDocumentDetail["atoms"];
+}) {
+  const [open, setOpen] = useState(false);
+  const hasAtoms = atoms.length > 0;
+  return (
+    <div className="rounded border border-white/10 bg-[#221e17]">
+      <button
+        type="button"
+        onClick={() => hasAtoms && setOpen((v) => !v)}
+        disabled={!hasAtoms}
+        className="flex w-full items-center gap-2 border-b border-white/10 px-2.5 py-1 text-left disabled:cursor-default"
+      >
+        <Badge tone="gold">#{chunk.seq}</Badge>
+        <Badge tone={statusTone(chunk.status)}>{chunk.status}</Badge>
+        {hasAtoms && (
+          <span className="flex items-center gap-1 text-[10px] text-[#e0b64b]">
+            <ChevronRight
+              size={12}
+              className={`transition-transform ${open ? "rotate-90" : ""}`}
+            />
+            예상 질문 {atoms.length}
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-[#9a948a]">
+          {n(chunk.chunk_text.length)}자
+        </span>
+      </button>
+      {open && hasAtoms && (
+        <ul className="flex flex-col gap-1 border-b border-white/10 bg-[#1b1811] px-2.5 py-2">
+          {atoms.map((a) => (
+            <li key={a.id} className="flex items-start gap-2 text-[11px]">
+              <Badge tone={statusTone(a.status)}>{a.status}</Badge>
+              <span className="text-[#e0d9c8]">{a.question}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-[11px] leading-relaxed text-[#cfc9bd]">
+        {chunk.chunk_text}
+      </pre>
+    </div>
+  );
+}
+
 function DocumentDetail({ fileId, onBack }: { fileId: string; onBack: () => void }) {
   const [chunkOffset, setChunkOffset] = useState(0);
   const { data, isLoading, isError } = useQuery<AdminDocumentDetail>({
     queryKey: ["admin", "document", fileId, chunkOffset],
     queryFn: () => getAdminDocument(fileId, chunkOffset),
   });
+
+  // D129: 원자(예상 질문)를 청크 seq로 묶어 각 청크 카드에서 토글로 보여준다.
+  // 원자는 파일 전체(최대 500개)를 한 번에 받고, 청크는 페이지네이션되므로
+  // 현재 페이지에 없는 seq의 원자는 그냥 매칭되지 않는다(무해).
+  const atomsBySeq = new Map<number, AdminDocumentDetail["atoms"]>();
+  for (const a of data?.atoms ?? []) {
+    const list = atomsBySeq.get(a.chunk_seq) ?? [];
+    list.push(a);
+    atomsBySeq.set(a.chunk_seq, list);
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -318,18 +391,11 @@ function DocumentDetail({ fileId, onBack }: { fileId: string; onBack: () => void
             ) : (
               <div className="flex flex-col gap-2">
                 {data.chunks.map((c) => (
-                  <div key={c.id} className="rounded border border-white/10 bg-[#221e17]">
-                    <div className="flex items-center gap-2 border-b border-white/10 px-2.5 py-1">
-                      <Badge tone="gold">#{c.seq}</Badge>
-                      <Badge tone={statusTone(c.status)}>{c.status}</Badge>
-                      <span className="ml-auto text-[10px] text-[#9a948a]">
-                        {n(c.chunk_text.length)}자
-                      </span>
-                    </div>
-                    <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-[11px] leading-relaxed text-[#cfc9bd]">
-                      {c.chunk_text}
-                    </pre>
-                  </div>
+                  <ChunkCard
+                    key={c.id}
+                    chunk={c}
+                    atoms={atomsBySeq.get(c.seq) ?? []}
+                  />
                 ))}
               </div>
             )}

@@ -20,12 +20,54 @@ from fastapi import (
     status,
 )
 
+from fastapi.responses import Response
+
 from ..auth.deps import CurrentUser, get_current_user
+from ..db import storage
 from ..db.client import UserClient, get_service_client
 from ..services import app_settings, figures
 from ..services import files as svc
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+
+# 확장자 → Content-Type. figure 크롭은 jpg/png만 나오지만(figure_extract) 원본
+# 문서 서빙 가능성까지 최소한으로 커버한다. 모르는 확장자는 octet-stream.
+_BLOB_MIME = {
+    "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+    "webp": "image/webp", "pdf": "application/pdf",
+}
+
+
+@router.get("/blob/{bucket}/{blob_path:path}")
+async def serve_blob(bucket: str, blob_path: str, exp: int, sig: str) -> Response:
+    """서명 URL 서빙 (D104-5의 빠진 반쪽 — 2026-07-30 라이브 E2E에서 발견).
+
+    storage.sign()이 만드는 `/api/files/blob/…?exp=&sig=` URL의 소비자다.
+    **로그인 인증을 요구하지 않는다** — `<img src>`는 Authorization 헤더를 실을
+    수 없어서, 만료 있는 HMAC 서명이 인증을 대신한다(발급 시점에 RLS 재조회로
+    접근 권한을 이미 검증했다 — figures.sign_figure_url). 서명·만료가 어긋나면
+    403, 파일이 없으면 404. 경로 탈출은 storage._resolve가 거부한다.
+    """
+    if not storage.verify(bucket, blob_path, exp, sig):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="서명이 유효하지 않거나 만료됐습니다.",
+        )
+    try:
+        data = await storage.download(bucket, blob_path)
+    except storage.StorageError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="파일이 없습니다."
+        ) from None
+    ext = blob_path.rsplit(".", 1)[-1].lower() if "." in blob_path else ""
+    return Response(
+        content=data,
+        media_type=_BLOB_MIME.get(ext, "application/octet-stream"),
+        # 서명 만료와 무관하게 브라우저 캐시는 짧게 — 만료 후 재발급 URL이
+        # 캐시에 가려지지 않게 한다.
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.post("", status_code=201)
@@ -162,7 +204,7 @@ async def get_figure(
         {
             "id": f"eq.{figure_id}",
             "select": (
-                "id,file_id,page,caption,alt,candidates,selected_index,image_path"
+                "id,file_id,page,caption,alt,candidates,selected_index,embed_text,image_path"
             ),
             "limit": "1",
         },
