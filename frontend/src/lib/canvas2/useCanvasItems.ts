@@ -44,7 +44,13 @@ export interface CanvasItemsApi {
   /** 로컬 + 서버. 실패 시 롤백 + 오류 노출. */
   patch: (id: string, patch: ItemPatch, local?: Partial<CanvasItem>) => void;
   remove: (id: string) => void;
-  /** 마지막 삭제 되돌리기. 없으면 null. */
+  /**
+   * 마지막 조작 되돌리기(삭제·본문 수정·분류 변경·이동). 없으면 null.
+   *
+   * 그림(Excalidraw)의 되돌리기와 **섞지 않는다.** 한 곳에 합치면 Ctrl+Z가
+   * 무엇을 되돌릴지 학생이 예측할 수 없다 — 그림은 Excalidraw의 Ctrl+Z가,
+   * 글은 이 토스트가 맡는다.
+   */
   undo: UndoEntry | null;
   clearUndo: () => void;
   error: string | null;
@@ -53,11 +59,40 @@ export interface CanvasItemsApi {
   tagOptions: string[];
 }
 
+/** 되돌리기 안내가 떠 있는 시간(ms). */
+const UNDO_MS = 6000;
+
+/**
+ * 이 수정을 되돌릴 수 있게 보여 줄 것인가, 보여 준다면 뭐라고 할 것인가.
+ *
+ * **시스템이 붙이는 변경은 제외한다** — `data`(버튼 숨김 표시)나 `seq`를
+ * 되돌려 봐야 학생 눈에는 아무 일도 안 일어난다. 그런 것까지 토스트를 띄우면
+ * 정작 중요한 되돌리기가 묻힌다.
+ */
+function undoLabel(p: ItemPatch): string | null {
+  if (p.body !== undefined) return "글을 고쳤습니다";
+  if (p.tag !== undefined) return "분류를 바꿨습니다";
+  if (p.title !== undefined) return "제목을 고쳤습니다";
+  // 위치는 드래그와 "위치 정리" 둘 다 여기로 온다.
+  if (p.x !== undefined || p.y !== undefined) return "위치를 옮겼습니다";
+  return null;
+}
+
 export function useCanvasItems(): CanvasItemsApi {
   const [items, setItems] = useState<CanvasItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [undo, setUndo] = useState<UndoEntry | null>(null);
   const undoTimer = useRef<number | null>(null);
+
+  /**
+   * 되돌리기 항목을 띄운다. 타이머를 한 곳에서 관리해, 연달아 조작해도
+   * 마지막 것만 보이고 앞의 타이머가 새 항목을 지우지 않게 한다.
+   */
+  const showUndo = useCallback((entry: UndoEntry) => {
+    if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    setUndo(entry);
+    undoTimer.current = window.setTimeout(() => setUndo(null), UNDO_MS);
+  }, []);
 
   const replaceAll = useCallback((next: CanvasItem[]) => setItems(next), []);
 
@@ -163,12 +198,38 @@ export function useCanvasItems(): CanvasItemsApi {
         return;
       }
 
+      // 학생이 한 조작이면 되돌릴 수 있게 한다.
+      //
+      // 예전에는 **삭제만** 되돌릴 수 있었다. 본문을 고치거나 잘못 끌어 놓은
+      // 것도 되돌아가야 자연스러운데 그 경로가 없었다.
+      const label = undoLabel(serverPatch);
+      if (label) {
+        const revert: ItemPatch = {};
+        if (serverPatch.body !== undefined) revert.body = before.body;
+        if (serverPatch.tag !== undefined) revert.tag = before.tag;
+        if (serverPatch.title !== undefined) revert.title = before.title;
+        if (serverPatch.x !== undefined) revert.x = before.x;
+        if (serverPatch.y !== undefined) revert.y = before.y;
+        if (serverPatch.pinned !== undefined) revert.pinned = before.pinned;
+        showUndo({
+          label,
+          run: () => {
+            // 되돌리기는 다시 쌓지 않는다 — 무한 순환이 된다.
+            setItems((prev) => prev.map((i) => (i.id === id ? before : i)));
+            setUndo(null);
+            void apiPatch(id, revert).catch((e: Error) =>
+              setError(`되돌리지 못했습니다 — ${e.message}`),
+            );
+          },
+        });
+      }
+
       void apiPatch(id, serverPatch).catch((e: Error) => {
         setError(`저장하지 못했습니다 — ${e.message}`);
         setItems((prev) => prev.map((i) => (i.id === id ? before : i)));
       });
     },
-    [items],
+    [items, showUndo],
   );
 
   const remove = useCallback(
@@ -189,17 +250,15 @@ export function useCanvasItems(): CanvasItemsApi {
       // 되돌리기: 서버에서 이미 지웠으므로 되살리려면 다시 만들어야 한다.
       // 여기서는 로컬 복구만 하고 저장은 다음 편집·스트림 저장에 맡긴다 —
       // 삭제한 뒤 6초 안에 되돌리는 흔치 않은 경로에 새 저장 왕복을 넣지 않는다.
-      if (undoTimer.current) window.clearTimeout(undoTimer.current);
-      setUndo({
+      showUndo({
         label: "글을 지웠습니다",
         run: () => {
           setItems((prev) => insertAt(prev, { ...removed, _legacy: true }, index));
           setUndo(null);
         },
       });
-      undoTimer.current = window.setTimeout(() => setUndo(null), 6000);
     },
-    [items],
+    [items, showUndo],
   );
 
   /**
