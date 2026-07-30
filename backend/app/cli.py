@@ -17,7 +17,18 @@ import argparse
 import asyncio
 import sys
 
-from .db.client import UserClient
+# 출력은 **항상 UTF-8이다.**
+#
+# 이 CLI의 메시지가 전부 한국어인데, 윈도우 콘솔은 기본이 cp949다. 거기서는
+# `—`(em dash) 하나에 UnicodeEncodeError가 나고 명령이 0이 아닌 코드로 끝난다.
+# 실제로 그 일이 났다 — 비밀번호는 정상적으로 바뀌었는데 **명령은 실패로**
+# 보였다. 운영자가 그걸 보면 다시 실행하거나 다른 원인을 찾아 헤맨다.
+# 배포 서버(리눅스)는 원래 UTF-8이라 여기서만 문제가 된다.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+from .db.client import UserClient  # noqa: E402
 from .db.pool import close_pools, worker_conn
 from .services import accounts, admin_backup
 
