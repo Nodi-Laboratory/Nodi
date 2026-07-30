@@ -110,7 +110,10 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onA
         className="flex items-end gap-2 rounded-2xl border px-3 py-2 transition-shadow"
         style={{
           background: "var(--c-raised)",
-          borderColor: focused ? "var(--c-live)" : "var(--c-rule)",
+          // **포커스에 테두리를 칠하지 않는다**(사용자 지시). 누를 때마다
+          // 오커 링이 켜지는 게 거슬린다는 지적이었다. 포커스 여부는 그림자
+          // 깊이로만 알린다 — 알림은 남기되 색은 쓰지 않는다.
+          borderColor: "var(--c-rule)",
           boxShadow: focused ? "var(--c-shadow-lg)" : "var(--c-shadow-md)",
         }}
       >

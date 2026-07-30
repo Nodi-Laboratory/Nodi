@@ -122,21 +122,12 @@ export function ToolRail({ active, onSelect }: Props) {
         </div>
       ))}
 
-      <div className="mx-1.5 my-0.5 h-px" style={{ background: "var(--c-rule)" }} />
-      {/* 실행 취소는 **키보드로만** 제공한다.
-          Excalidraw는 undo/redo를 공개 API로 주지 않고(`history.clear()`만
-          있다), 합성 KeyboardEvent는 그 경로에 닿지 않는다 — 실측으로
-          확인했다(진짜 키보드 Ctrl+Z는 요소 10→9로 동작, 합성 이벤트는 무동작).
-          우리 스냅샷 스택으로 직접 만들어 봤으나 Excalidraw의 onChange와
-          맞물려 무한 렌더가 났다. **아무 일도 안 하는 버튼을 두는 것보다
-          없는 편이 낫다** — 대신 여기서 단축키를 알려 준다. */}
-      <div
-        className="label px-1 py-1.5 text-center leading-tight"
-        style={{ color: "var(--c-ink-faint)", letterSpacing: 0 }}
-        title="그림 되돌리기는 키보드 단축키를 씁니다"
-      >
-        ⌘Z
-      </div>
+      {/* 실행 취소 버튼은 없다. Excalidraw가 undo/redo를 공개 API로 주지 않고
+          (`history.clear()`만 있다) 합성 KeyboardEvent는 그 경로에 닿지 않는다
+          — 실측으로 확인했다(진짜 키보드 Ctrl+Z는 요소 10→9로 동작, 합성
+          이벤트는 무동작). 한동안 `⌘Z` 글자를 안내로 띄워 뒀는데 레일에
+          기호만 덩그러니 떠 있어 지웠다(사용자 지시). 되돌리기는 그대로
+          Ctrl/⌘+Z로 된다. */}
     </div>
   );
 }

@@ -131,6 +131,22 @@ body {
   outline-offset: 2px;
 }
 
+/*
+ * 글 입력칸에는 링을 그리지 않는다 (사용자 지시).
+ *
+ * "입력 공간을 클릭하면 테두리가 보이게 되는데 안 보이게" — 캔버스 위에 뜬
+ * 입력칸과 캔버스에 직접 쓰는 글 상자가 눌릴 때마다 오커 링이 켜져 거슬린다.
+ *
+ * **접근성을 버리는 게 아니다.** 텍스트 입력칸은 깜빡이는 **캐럿**이 포커스를
+ * 이미 알린다 — 링은 같은 정보를 두 번 말하는 것이다. 버튼·링크처럼 캐럿이
+ * 없는 요소는 링을 그대로 둔다(위 규칙). 키보드 사용자가 잃는 것이 없다.
+ */
+textarea:focus-visible,
+input[type="text"]:focus-visible,
+input[type="search"]:focus-visible {
+  outline: none;
+}
+
 /* 스크롤바 숨김(스크롤 동작은 유지) — 채팅/총괄AI 입력창 등 (D12) */
 .no-scrollbar {
   scrollbar-width: none; /* Firefox */
