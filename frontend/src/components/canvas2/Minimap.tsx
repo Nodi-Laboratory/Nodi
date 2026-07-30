@@ -188,7 +188,9 @@ export function Minimap({
             {...v.p}
             rx={1.5}
             fill={v.source === "ai" ? "var(--c-live)" : "var(--c-hand)"}
-            opacity={0.55}
+            // 0.55에서 올렸다 — 따뜻한 종이 위에서 반투명 오커와 반투명 틸이
+            // 둘 다 옅은 갈색으로 뭉개졌다(실측).
+            opacity={0.8}
           />
         ))}
         {/* 지금 보고 있는 영역 */}

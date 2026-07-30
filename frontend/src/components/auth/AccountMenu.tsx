@@ -43,7 +43,7 @@ export function AccountMenu({ dark = false }: { dark?: boolean }) {
   const panel = dark
     ? "border-white/15 bg-[#25211a] text-[#e7e3d8]"
     : "border-accent-border/50 bg-bg-elevated text-fg";
-  const itemHover = dark ? "hover:bg-white/5" : "hover:bg-accent/30";
+  const itemHover = dark ? "hover:bg-white/5" : "hover:bg-accent-soft";
   const avatar = dark
     ? "bg-[#e0a32e] text-[#2a2a24]"
     : "bg-accent text-accent-fg";

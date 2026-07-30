@@ -159,7 +159,7 @@ export function SessionList({ target }: { target: SpaceTarget }) {
           onClick={handleNew}
           disabled={creating}
           title="새 대화"
-          className="flex items-center gap-1 rounded-lg border border-accent-border bg-accent px-2 py-1 text-xs font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white disabled:opacity-60"
+          className="flex items-center gap-1 rounded-lg bg-accent-deep px-2 py-1 text-xs font-medium text-white transition-colors hover:brightness-110 disabled:opacity-60"
         >
           <Plus size={14} />
           새 대화
@@ -196,7 +196,7 @@ export function SessionList({ target }: { target: SpaceTarget }) {
               return (
                 <li key={s.id} className="group relative">
                   {editing ? (
-                    <div className="flex items-center gap-1 rounded-lg bg-accent/20 px-2 py-1.5">
+                    <div className="flex items-center gap-1 rounded-lg bg-accent-soft/60 px-2 py-1.5">
                       <input
                         autoFocus
                         value={editTitle}
@@ -227,7 +227,7 @@ export function SessionList({ target }: { target: SpaceTarget }) {
                   ) : (
                     <div
                       className={`flex items-center rounded-lg transition-colors ${
-                        active ? "bg-accent text-accent-fg" : "text-fg hover:bg-accent/30"
+                        active ? "bg-accent text-accent-fg" : "text-fg hover:bg-accent-soft"
                       }`}
                     >
                       <button
@@ -295,7 +295,7 @@ function SessionMenu({
       <button
         type="button"
         onClick={onRename}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-accent/30"
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-accent-soft"
       >
         <Pencil size={13} /> 이름 변경
       </button>

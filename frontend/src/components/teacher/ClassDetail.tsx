@@ -43,7 +43,7 @@ export function ClassDetail({ classId }: { classId: string }) {
         </nav>
 
         {current?.join_code && (
-          <span className="flex items-center gap-1 rounded-md bg-accent/30 px-2 py-1 text-xs font-medium text-accent-fg">
+          <span className="flex items-center gap-1 rounded-md bg-accent-soft px-2 py-1 text-xs font-medium text-accent-fg">
             코드 {current.join_code}
             <button
               type="button"

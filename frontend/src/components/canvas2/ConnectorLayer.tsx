@@ -64,7 +64,7 @@ export function ConnectorLayer({ items, positions, heights }: Props) {
         const y2 = l.y2 - minY;
         const mx = (x1 + x2) / 2;
         return (
-          <g key={l.id} style={{ color: "var(--c-live)" }}>
+          <g key={l.id} style={{ color: "var(--c-live-deep)" }}>
             <path
               d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
               fill="none"
@@ -79,7 +79,7 @@ export function ConnectorLayer({ items, positions, heights }: Props) {
               y={(y1 + y2) / 2 - 6}
               textAnchor="middle"
               fill="currentColor"
-              opacity={0.55}
+              opacity={0.75}
               style={{
                 fontFamily: "var(--font-label), monospace",
                 fontSize: 10,
