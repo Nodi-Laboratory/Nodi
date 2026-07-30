@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
   COL_GAP,
+  ITEM_MIN_W,
   ITEM_W,
   layoutItems,
   placeBesideParent,
@@ -25,6 +26,8 @@ function item(over: Partial<LayoutInput> & { id: string }): LayoutInput {
     tag: null,
     seq: 0,
     height: 200,
+    // 폭도 실측값이다(내용이 짧으면 좁아진다). 기본은 최대 폭.
+    width: ITEM_W,
     pinned: false,
     x: 0,
     y: 0,
@@ -38,7 +41,7 @@ function overlaps(items: readonly LayoutInput[], obstacles: readonly Rect[] = []
   const { positions } = layoutItems(items, obstacles);
   const rects = items.map((i) => ({
     id: i.id,
-    r: rectOf(positions.get(i.id)!, i.height),
+    r: rectOf(positions.get(i.id)!, { w: i.width, h: i.height }),
   }));
   const bad: string[] = [];
   for (let i = 0; i < rects.length; i++) {
@@ -86,6 +89,9 @@ describe("무겹침", () => {
           tag: tagPool[Math.floor(rnd() * tagPool.length)],
           seq: i,
           height: 50 + Math.floor(rnd() * 1950),
+          // 폭이 제각각이어도 겹치면 안 된다. 폭 고정이던 시절에는 이 축이
+          // 아예 없었다 — 폭을 내용에 맡긴 뒤로는 여기가 실제 위험 지점이다.
+          width: ITEM_MIN_W + Math.floor(rnd() * (ITEM_W - ITEM_MIN_W)),
           pinned: rnd() < 0.25,
           x: Math.floor(rnd() * 2000) - 500,
           y: Math.floor(rnd() * 2000) - 500,
@@ -105,9 +111,9 @@ describe("무겹침", () => {
       // 자동 배치 아이템이 무엇과도 안 겹치는지만 본다.
       const { positions } = layoutItems(items, obstacles);
       const auto = items.filter((i) => !i.pinned);
-      const all = items.map((i) => ({ i, r: rectOf(positions.get(i.id)!, i.height) }));
+      const all = items.map((i) => ({ i, r: rectOf(positions.get(i.id)!, { w: i.width, h: i.height }) }));
       for (const a of auto) {
-        const ar = rectOf(positions.get(a.id)!, a.height);
+        const ar = rectOf(positions.get(a.id)!, { w: a.width, h: a.height });
         for (const other of all) {
           if (other.i.id === a.id) continue;
           expect(
@@ -128,7 +134,7 @@ describe("무겹침", () => {
     const { positions } = layoutItems(items, [wall]);
     const p = positions.get("a")!;
     expect(p.y).toBeGreaterThanOrEqual(5000);
-    expect(intersects(rectOf(p, 100), wall)).toBe(false);
+    expect(intersects(rectOf(p, { w: ITEM_W, h: 100 }), wall)).toBe(false);
   });
 });
 
@@ -265,7 +271,7 @@ describe("AI 응답을 메모 옆에", () => {
   it("오른쪽이 막히면 아래로 밀린다", () => {
     const parent: Rect = { x: 0, y: 0, w: ITEM_W, h: 200 };
     const blocker: Rect = { x: ITEM_W, y: -1000, w: 2000, h: 1400 };
-    const spot = placeBesideParent(parent, 200, [blocker]);
+    const spot = placeBesideParent(parent, ITEM_W, 200, [blocker]);
     expect(intersects({ ...spot, w: ITEM_W, h: 200 }, blocker)).toBe(false);
     expect(spot.y).toBeGreaterThan(0);
   });
@@ -293,9 +299,9 @@ describe("위치 정리(reflowOne)", () => {
     const obstacles: Rect[] = [{ x: 0, y: 800, w: 300, h: 300 }];
     const target = item({ id: "t", tag: "가", seq: 2, height: 250 });
     const spot = reflowOne(target, others, obstacles, ["가"]);
-    const r = rectOf(spot, 250);
+    const r = rectOf(spot, { w: ITEM_W, h: 250 });
     for (const o of others) {
-      expect(intersects(r, rectOf({ x: o.x, y: o.y }, o.height))).toBe(false);
+      expect(intersects(r, rectOf({ x: o.x, y: o.y }, { w: o.width, h: o.height }))).toBe(false);
     }
     expect(intersects(r, obstacles[0])).toBe(false);
   });
