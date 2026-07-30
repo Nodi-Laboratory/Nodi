@@ -52,15 +52,30 @@ __all__ = [
 ]
 
 
+# 힌트(parsed 캡션·alt) 절단 상한(문자). 실측(2026-07-30): 파서가 img alt에
+# 페이지 전문(15KB, 탭·개행 포함)을 통째로 넣은 교과서가 있었고, 이를 그대로
+# 프롬프트에 실으면 모델이 빈 응답을 반복해 해당 figure만 결정론적으로
+# caption-error가 났다(judge의 CAND_LIMIT=200과 같은 계열의 방어). 힌트는
+# 고유명사 보존용이라 이 길이면 충분하다.
+HINT_LIMIT = 300
+
+
+def _clean_hint(text: str) -> str:
+    """힌트 정규화 — 연속 공백(탭·개행 포함) 단일화 + HINT_LIMIT 절단."""
+    return " ".join((text or "").split())[:HINT_LIMIT]
+
+
 def build_caption_messages(
     page_text: str, parsed_caption: str, alt: str, image_data_uri: str
 ) -> list[dict]:
     """D118: 캡션 '생성' — D93/D103의 후보 '선택'을 대체한다. 페이지 본문 용어를
     흡수해 검색력을 높이되, parsed 캡션의 고유명사를 보존하고 지어내기를 금지한다.
 
-    parsed 캡션·alt는 있을 때만 힌트 라벨로 얹는다(없으면 프롬프트 잡음 제거).
-    이미지 + 텍스트를 한 user 턴에 담는다(figure_judge.build_judge_messages 동형).
+    parsed 캡션·alt는 있을 때만 **정규화·절단해** 힌트 라벨로 얹는다(없으면
+    프롬프트 잡음 제거). 이미지 + 텍스트를 한 user 턴에 담는다.
     """
+    parsed_caption = _clean_hint(parsed_caption)
+    alt = _clean_hint(alt)
     hints = []
     if parsed_caption:
         hints.append(f"파서가 찾은 원문 캡션: {parsed_caption}")

@@ -68,6 +68,22 @@ def test_build_caption_messages_힌트_없으면_힌트블록_생략():
     assert "본문만 있다." in text
 
 
+def test_build_caption_messages_거대_힌트_정규화_절단():
+    """파서가 alt에 페이지 전문(탭·개행 포함 수 KB)을 넣어도 힌트는 HINT_LIMIT로
+    잘려 들어간다 — 실측(2026-07-30): 원본을 그대로 실으면 모델이 빈 응답을
+    반복해 해당 figure만 결정론적으로 caption-error가 났다."""
+    giant_alt = ("페이지\t전문\n덤프 " * 2000).strip()  # 탭·개행 섞인 ~14KB
+    msgs = FC.build_caption_messages(
+        "본문", "그림 1 첨성대\t\n관측", giant_alt, "data:image/png;base64,xx"
+    )
+    text = msgs[0]["content"][1]["text"]
+    hint_line = next(l for l in text.splitlines() if l.startswith("대체 텍스트: "))
+    assert len(hint_line) <= len("대체 텍스트: ") + FC.HINT_LIMIT
+    assert "\t" not in hint_line                 # 탭 정규화(reasoning 폭주 방지)
+    parsed_line = next(l for l in text.splitlines() if l.startswith("파서가 찾은 원문 캡션: "))
+    assert parsed_line == "파서가 찾은 원문 캡션: 그림 1 첨성대 관측"
+
+
 # --- parse_caption ----------------------------------------------------------
 
 def test_parse_caption_정규화_절단():
