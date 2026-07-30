@@ -31,7 +31,7 @@ import { useCanvasStream } from "@/lib/canvas2/useCanvasStream";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import { spaceTargetFromId } from "@/lib/api";
 import { useSessionDetail } from "@/lib/queries";
-import { union } from "@/lib/canvas2/rect";
+import { contains, union } from "@/lib/canvas2/rect";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
@@ -104,7 +104,11 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   const { sessionId } = useSessionBinding(spaceId);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  /**
+   * 선택된 아이템들. **집합이다** — 예전에는 하나뿐이라 올가미로 여럿을 잡아도
+   * 마지막 하나만 남았다(사용자 지적: "선택 도구가 여러 요소를 선택할 수 없다").
+   */
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
   const [quote, setQuote] = useState<{ id: string; text: string } | null>(null);
@@ -233,11 +237,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   const handlers = useMemo(
     () => ({
-      onSelect: (id: string | null) => setSelectedId(id),
+      onSelect: (id: string | null, additive?: boolean) => {
+        setSelectedIds((prev) => {
+          if (!id) return prev.size ? new Set<string>() : prev;
+          if (!additive) return prev.size === 1 && prev.has(id) ? prev : new Set([id]);
+          const next = new Set(prev);
+          // Shift는 토글이다 — 잘못 넣은 하나를 빼려고 다시 누르는 게 자연스럽다.
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+      },
 
       onStartEdit: (id: string) => {
         setEditingId(id);
-        setSelectedId(id);
+        setSelectedIds(new Set([id]));
       },
 
       onCancelEdit: () => setEditingId(null),
@@ -252,7 +266,12 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
       onDelete: (id: string) => {
         if (editingId === id) setEditingId(null);
-        if (selectedId === id) setSelectedId(null);
+        setSelectedIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
         remove(id);
       },
 
@@ -260,9 +279,27 @@ export function CanvasWorkspace({ spaceId }: Props) {
         patch(id, { tag }, { _needsReflow: true });
       },
 
-      // 드래그가 끝나면 학생이 정한 자리다 — 배치 엔진은 이제 이걸 읽기만 한다.
-      onDragEnd: (id: string, x: number, y: number) => {
-        patch(id, { x, y, pinned: true });
+      /**
+       * 드래그가 끝나면 학생이 정한 자리다 — 배치 엔진은 이제 이걸 읽기만 한다.
+       *
+       * 여럿이 선택돼 있고 그중 하나를 끌었으면 **전부 같은 양만큼** 옮긴다.
+       * 화면에서는 이미 함께 움직였으므로(TextItem이 DOM을 직접 밀었다) 여기서
+       * 좌표만 맞춰 주면 된다.
+       */
+      onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => {
+        if (!selectedIds.has(id) || selectedIds.size <= 1) {
+          patch(id, { x, y, pinned: true });
+          return;
+        }
+        for (const sid of selectedIds) {
+          if (sid === id) {
+            patch(sid, { x, y, pinned: true });
+            continue;
+          }
+          const p = layout.positions.get(sid);
+          if (!p) continue;
+          patch(sid, { x: p.x + dx, y: p.y + dy, pinned: true });
+        }
       },
 
       onReflow: (id: string) => {
@@ -276,7 +313,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
           // 다른 아이템의 "현재 자리"는 배치 결과다 — 원본 x/y가 아니다.
           x: layout.positions.get(i.id)?.x ?? i.x,
           y: layout.positions.get(i.id)?.y ?? i.y,
-          height: layout.heights.get(i.id) ?? FALLBACK_H,
+          width: layout.sizes.get(i.id)?.w ?? ITEM_W,
+          height: layout.sizes.get(i.id)?.h ?? FALLBACK_H,
           parentItemId: i.parentItemId,
         });
         const spot = reflowOne(
@@ -314,14 +352,50 @@ export function CanvasWorkspace({ spaceId }: Props) {
     // 새로 생겨 memo(TextItem)이 무력화된다 — 전 아이템이 60fps로 리렌더된다
     // (v1이 정확히 이 이유로 느렸다: useItemLayout.ts 헤더 주석 참조).
     // getObstacles는 [api]에만 의존하므로 안정적이다.
-    [items, patch, remove, editingId, selectedId, layout, getObs],
+    [items, patch, remove, editingId, selectedIds, layout, getObs],
   );
 
-  // 빈 곳 클릭 — 선택 해제. 편집 중이면 편집도 끝낸다.
+  /**
+   * 빈 곳 클릭 — 선택 해제. 편집 중이면 편집도 끝낸다.
+   *
+   * **먼저 blur를 시킨다.** 그냥 `setEditingId(null)`만 하면 textarea가
+   * 언마운트되면서 쓰던 내용이 통째로 사라진다 — 사용자가 지적한 "입력하다가
+   * 중간에 배경을 클릭해도 자동으로 저장되도록" 이 지점이다. blur는 동기라
+   * 아래 setState보다 먼저 onCommit이 돌고, 그 안에서 본문이 저장된다.
+   */
   const handleBackgroundClick = useCallback(() => {
-    setSelectedId(null);
+    document
+      .querySelector<HTMLTextAreaElement>('textarea[aria-label="본문 수정"]')
+      ?.blur();
+    setSelectedIds((prev) => (prev.size ? new Set<string>() : prev));
     setEditingId(null);
   }, []);
+
+  /**
+   * 올가미 — 사각형이 **완전히 품은** 아이템을 고른다.
+   *
+   * 교차 판정이 아니라 포함 판정인 이유는 **Excalidraw와 같은 규칙을 써야
+   * 하기 때문**이다. 같은 드래그가 저쪽 도형과 우리 글을 동시에 고르는데,
+   * 규칙이 다르면 "글은 잡혔는데 도형은 안 잡혔다"가 된다 — 사용자가 요구한
+   * "함께 묶이도록"이 바로 거기서 깨진다.
+   * (실측 2026-07-31: 도형에 걸치기만 한 올가미 → Excalidraw 미선택,
+   *  완전히 감싼 올가미 → 선택.)
+   */
+  const handleMarquee = useCallback(
+    (rect: { x: number; y: number; w: number; h: number }, add: boolean) => {
+      const hit = items
+        .filter((i) => {
+          const p = layout.positions.get(i.id);
+          if (!p) return false;
+          const s = layout.sizes.get(i.id) ?? { w: ITEM_W, h: FALLBACK_H };
+          return contains(rect, { x: p.x, y: p.y, w: s.w, h: s.h });
+        })
+        .map((i) => i.id);
+      setSelectedIds((prev) => (add ? new Set([...prev, ...hit]) : new Set(hit)));
+      setEditingId(null);
+    },
+    [items, layout],
+  );
 
   // 글쓰기 도구로 빈 곳 클릭 → 그 자리에 빈 글을 만들고 바로 편집 모드로.
   // 클릭한 자리가 곧 학생이 고른 자리이므로 pinned로 태어난다.
@@ -330,7 +404,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
     (world: { x: number; y: number }) => {
       if (!sessionId) return;
       const id = createNote(sessionId, world.x, world.y, nextSeq());
-      setSelectedId(id);
+      setSelectedIds(new Set([id]));
       setEditingId(id);
       // 글을 하나 놓았으면 계속 놓고 싶지는 않다 — 선택 도구로 돌아간다.
       setTool("selection");
@@ -359,7 +433,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
       .map((i) => {
         const p = layout.positions.get(i.id);
         if (!p) return null;
-        return { x: p.x, y: p.y, w: ITEM_W, h: layout.heights.get(i.id) ?? FALLBACK_H };
+        const s = layout.sizes.get(i.id) ?? { w: ITEM_W, h: FALLBACK_H };
+        return { x: p.x, y: p.y, w: s.w, h: s.h };
       })
       .filter((r): r is NonNullable<typeof r> => !!r);
     const box = union([...rects, ...getObstacles()]);
@@ -437,6 +512,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onSceneCommit={handleSceneCommit}
       onCanvasClick={handleCreateNote}
       onBackgroundClick={handleBackgroundClick}
+      onMarquee={handleMarquee}
       chrome={
         <>
           <CanvasTopBar
@@ -457,10 +533,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
           <Minimap
             items={items}
             positions={layout.positions}
-            heights={layout.heights}
+            sizes={layout.sizes}
             columnX={layout.columnX}
             tagOrder={layout.tagOrder}
-            getObstacles={getObstacles}
             camera={bridge.camera}
             viewport={vp}
             onJump={handleMinimapJump}
@@ -483,12 +558,12 @@ export function CanvasWorkspace({ spaceId }: Props) {
       <ItemLayer
         items={store.items}
         positions={layout.positions}
-        heights={layout.heights}
+        sizes={layout.sizes}
         columnX={layout.columnX}
         tagOrder={layout.tagOrder}
         tagOptions={store.tagOptions}
         zoom={bridge.camera.zoom}
-        selectedId={selectedId}
+        selectedIds={selectedIds}
         editingId={editingId}
         measureRef={layout.measureRef}
         handlers={handlers}

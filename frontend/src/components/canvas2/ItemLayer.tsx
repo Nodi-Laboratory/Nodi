@@ -12,6 +12,7 @@ import { ITEM_W } from "@/lib/canvas2/layout";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Placed } from "@/lib/canvas2/layout";
 import { UNTAGGED } from "@/lib/canvas2/layout";
+import type { Size } from "@/lib/canvas2/useItemLayout";
 import { ConnectorLayer } from "./ConnectorLayer";
 import { FigureItem } from "./FigureItem";
 import { TextItem } from "./TextItem";
@@ -19,22 +20,22 @@ import { TextItem } from "./TextItem";
 interface Props {
   items: CanvasItem[];
   positions: Map<string, Placed>;
-  heights: Map<string, number>;
+  sizes: Map<string, Size>;
   columnX: Map<string, number>;
   tagOrder: readonly string[];
   tagOptions: readonly string[];
   zoom: number;
-  selectedId: string | null;
+  selectedIds: ReadonlySet<string>;
   editingId: string | null;
   measureRef: (id: string) => (el: HTMLElement | null) => void;
   handlers: {
-    onSelect: (id: string | null) => void;
+    onSelect: (id: string | null, additive?: boolean) => void;
     onStartEdit: (id: string) => void;
     onCommitEdit: (id: string, body: string) => void;
     onCancelEdit: () => void;
     onDelete: (id: string) => void;
     onTagChange: (id: string, tag: string | null) => void;
-    onDragEnd: (id: string, x: number, y: number) => void;
+    onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
     onReflow: (id: string) => void;
     onDismissReflow: (id: string) => void;
     onAsk: (id: string) => void;
@@ -45,20 +46,35 @@ interface Props {
 export function ItemLayer({
   items,
   positions,
-  heights,
+  sizes,
   columnX,
   tagOrder,
   tagOptions,
   zoom,
-  selectedId,
+  selectedIds,
   editingId,
   measureRef,
   handlers,
 }: Props) {
+  /**
+   * 답 → 그 답을 부른 질문 원문.
+   *
+   * 질문도 캔버스의 아이템이므로 부모를 따라가면 된다. 학생이 쓴 글에 대한
+   * 답일 때만 띄운다 — AI 글에 딸린 AI 글은 "질문"이 아니다.
+   */
+  const questionOf = new Map<string, string>();
+  for (const it of items) {
+    if (!it.parentItemId) continue;
+    const parent = items.find((p) => p.id === it.parentItemId);
+    if (parent && parent.source === "user" && parent.body.trim()) {
+      questionOf.set(it.id, parent.body.trim());
+    }
+  }
+
   return (
     <>
       <ColumnLabels items={items} positions={positions} columnX={columnX} tagOrder={tagOrder} />
-      <ConnectorLayer items={items} positions={positions} heights={heights} />
+      <ConnectorLayer items={items} positions={positions} sizes={sizes} />
       {items.map((item) => {
         const p = positions.get(item.id);
         if (!p) return null;
@@ -80,8 +96,9 @@ export function ItemLayer({
             x={p.x}
             y={p.y}
             zoom={zoom}
-            selected={selectedId === item.id}
+            selected={selectedIds.has(item.id)}
             editing={editingId === item.id}
+            question={questionOf.get(item.id) ?? null}
             tagOptions={tagOptions}
             measureRef={measureRef(item.id)}
             {...handlers}

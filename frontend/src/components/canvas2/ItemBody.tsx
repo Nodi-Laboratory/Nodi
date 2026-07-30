@@ -150,6 +150,8 @@ function BodyEditor({
   const ref = useRef<HTMLTextAreaElement>(null);
   const [value, setValue] = useState(body);
   const composing = useRef(false);
+  /** 이미 저장했나. blur와 언마운트가 둘 다 불릴 수 있어 한 번으로 묶는다. */
+  const saved = useRef(false);
 
   // 내용에 맞춰 높이를 늘린다. 스크롤바가 생기면 캔버스 위에서 읽기가 최악이다.
   useLayoutEffect(() => {
@@ -166,6 +168,24 @@ function BodyEditor({
     el.setSelectionRange(el.value.length, el.value.length);
   }, []);
 
+  /**
+   * 저장은 **blur에서만** 한다.
+   *
+   * 배경을 클릭해도 내용이 남아야 하는데(사용자 지시), 한때 언마운트 정리에서
+   * 커밋하도록 만들었다가 정확히 반대 결과가 났다 — React StrictMode는 개발에서
+   * 이펙트를 mount → cleanup → mount로 두 번 돌리고, 그 가짜 cleanup이 빈
+   * 문자열로 즉시 확정해 **편집기가 뜨자마자 닫혔다.** 언마운트는 "학생이 편집을
+   * 끝냈다"는 신호가 아니다(세션 전환·삭제도 언마운트다).
+   *
+   * 대신 배경 클릭 쪽에서 textarea를 먼저 blur시킨다(CanvasWorkspace 참조).
+   * blur는 동기적으로 처리되므로 편집 상태가 꺼지기 전에 저장이 끝난다.
+   */
+  const commit = (next: string) => {
+    if (saved.current) return;
+    saved.current = true;
+    onCommit(next);
+  };
+
   return (
     <textarea
       ref={ref}
@@ -180,22 +200,28 @@ function BodyEditor({
         if (composing.current) return;
         if (e.key === "Escape") {
           e.preventDefault();
+          // 되돌리기다 — 언마운트 저장이 덮어쓰지 않게 잠근다.
+          saved.current = true;
           onCancel();
         }
         // Enter는 줄바꿈이다. 확정은 ⌘/Ctrl+Enter — 여러 문단을 쓰는 화면이라
         // Enter를 확정에 쓰면 글을 쓸 수가 없다.
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
-          onCommit(value);
+          commit(value);
         }
       }}
-      onBlur={() => onCommit(value)}
-      className="w-full resize-none bg-transparent outline-none"
+      onBlur={() => commit(value)}
+      // 테두리·바탕을 주지 않는다(사용자 지시) — 캔버스에 바로 쓰는 느낌이어야
+      // 하고, 입력 폼처럼 보이면 안 된다. outline-none은 브라우저 기본 포커스
+      // 링까지 없앤다.
+      className="w-full resize-none border-0 bg-transparent outline-none focus:outline-none focus:ring-0"
       style={{
         lineHeight: 1.75,
         color: "var(--c-ink)",
         caretColor: "var(--c-live)",
         minHeight: "3em",
+        boxShadow: "none",
       }}
       aria-label="본문 수정"
     />
