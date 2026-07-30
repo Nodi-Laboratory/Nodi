@@ -19,16 +19,22 @@
  * 그리기 도구가 활성이면 아이템도 `none`이 되어 글 위에도 선을 그을 수 있다.
  */
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { DrawingScene } from "@/lib/api/canvas";
 import type { Camera } from "@/lib/canvas2/types";
 import type { Bridge } from "@/lib/canvas2/useExcalidrawBridge";
-import { useWheelForwarding } from "@/lib/canvas2/useExcalidrawBridge";
+import {
+  useCameraFrame,
+  useMiddleDragPan,
+  useWheelForwarding,
+} from "@/lib/canvas2/useExcalidrawBridge";
 import { ExcalidrawLayer } from "./ExcalidrawLayer";
 import { ToolRail } from "./ToolRail";
 
 /** 도트 그리드 간격(world px). 줌에 따라 화면상 간격이 변한다. */
 const GRID = 28;
+/** 이보다 작게 끌면 올가미가 아니라 클릭으로 본다(world px). */
+const MARQUEE_MIN = 6;
 
 interface Props {
   bridge: Bridge;
@@ -42,6 +48,11 @@ interface Props {
   onCanvasClick?: (world: { x: number; y: number }) => void;
   /** 그 외 도구로 빈 캔버스를 클릭했을 때 — 선택 해제용. */
   onBackgroundClick?: () => void;
+  /**
+   * 선택 도구로 빈 곳을 끌었을 때 — 그 world 사각형에 걸친 아이템을 고른다.
+   * `add`면 기존 선택에 더한다(Shift).
+   */
+  onMarquee?: (rect: { x: number; y: number; w: number; h: number }, add: boolean) => void;
   viewOnly?: boolean;
   /** 화면 고정 UI(상단바·입력창 등) */
   chrome?: React.ReactNode;
@@ -56,44 +67,114 @@ export function CanvasStage({
   onSceneCommit,
   onCanvasClick,
   onBackgroundClick,
+  onMarquee,
   viewOnly = false,
   chrome,
   children,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-  const { camera, activeTool, overlayInteractive } = bridge;
+  const gridRef = useRef<HTMLDivElement>(null);
+  const { activeTool, overlayInteractive, subscribeFrame, panByScreen } = bridge;
 
   useWheelForwarding(overlayRef, overlayInteractive);
+  useMiddleDragPan(rootRef, panByScreen);
 
-  // 빈 캔버스 클릭.
+  /**
+   * 오버레이 변환 — **React가 아니라 여기가 소유한다.**
+   *
+   * style prop으로 두면 팬 프레임마다 리렌더가 필요하고, 그 리렌더가 아이템
+   * 트리와 미니맵을 통째로 다시 돌린다. 여기서 DOM을 직접 고치면 팬 중
+   * React는 한 번도 돌지 않는다.
+   */
+  useCameraFrame(
+    subscribeFrame,
+    overlayRef,
+    useCallback((el: HTMLElement, c: Camera) => {
+      el.style.transform = `translate(${c.scrollX * c.zoom}px, ${
+        c.scrollY * c.zoom
+      }px) scale(${c.zoom})`;
+    }, []),
+  );
+
+  // 격자도 같은 이유로 직접 고친다. 줌아웃이 심하면 점이 뭉쳐 회색 면이
+  // 되므로 그 아래로는 숨긴다.
+  useCameraFrame(
+    subscribeFrame,
+    gridRef,
+    useCallback((el: HTMLElement, c: Camera) => {
+      const step = GRID * c.zoom;
+      el.style.opacity = step < 9 ? "0" : "1";
+      el.style.backgroundSize = `${step}px ${step}px`;
+      el.style.backgroundPosition = `${c.scrollX * c.zoom}px ${c.scrollY * c.zoom}px`;
+    }, []),
+  );
+
+  // 빈 캔버스에서의 포인터.
   //
   //   글쓰기 도구  → 그 자리에 새 글을 만든다. Excalidraw가 먼저 먹지 않도록
   //                  **캡처 단계에서** 가로채고 전파를 끊는다.
-  //   그 외        → 선택 해제만. 전파는 끊지 않는다(팬·그리기가 계속 돌아야 한다).
+  //   선택 도구    → 끌면 올가미(marquee), 그냥 누르면 선택 해제.
+  //   그 외        → 아무것도 하지 않는다. 전파도 끊지 않는다(팬·그리기가
+  //                  계속 돌아야 한다).
+  const { toWorld } = bridge;
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
+
+    /** 올가미 시작점(world). null이면 올가미 중이 아니다. */
+    let from: { x: number; y: number } | null = null;
 
     const onDown = (e: PointerEvent) => {
       const t = e.target as HTMLElement;
       // 우리 UI(도구 레일·아이템) 위 클릭은 그쪽에 맡긴다.
       if (t.closest("[data-no-pan]") || t.closest("[data-canvas-item]")) return;
+      // 왼쪽 버튼만. 중클릭은 팬(useMiddleDragPan)이 가져간다.
+      if (e.button !== 0) return;
 
       if (activeTool === "note") {
         e.preventDefault();
         e.stopPropagation();
-        onCanvasClick?.(bridge.toWorld(e.clientX, e.clientY, root.getBoundingClientRect()));
+        onCanvasClick?.(toWorld(e.clientX, e.clientY, root.getBoundingClientRect()));
         return;
       }
       // 팬·그리기 중에는 선택을 건드리지 않는다 — 화면을 옮길 때마다 선택이
       // 풀리면 아이템을 고르고 이동해서 보려는 동작이 불가능하다.
-      if (activeTool === "selection") onBackgroundClick?.();
+      //
+      // **전파는 끊지 않는다.** Excalidraw가 같은 드래그로 자기 도형을 올가미로
+      // 잡아야 한다 — 그래야 도형과 글이 **한 번에** 묶인다(사용자 요구).
+      // 올가미 사각형도 저쪽이 그린다. 우리가 하나 더 그리면 두 겹이 된다.
+      if (activeTool === "selection") {
+        from = toWorld(e.clientX, e.clientY, root.getBoundingClientRect());
+      }
+    };
+
+    const onUp = (e: PointerEvent) => {
+      const f = from;
+      from = null;
+      if (!f) return;
+      const to = toWorld(e.clientX, e.clientY, root.getBoundingClientRect());
+      const w = Math.abs(to.x - f.x);
+      const h = Math.abs(to.y - f.y);
+      // 끌지 않았으면 그냥 클릭이다 — 선택 해제.
+      if (w < MARQUEE_MIN && h < MARQUEE_MIN) {
+        onBackgroundClick?.();
+        return;
+      }
+      onMarquee?.(
+        { x: Math.min(f.x, to.x), y: Math.min(f.y, to.y), w, h },
+        e.shiftKey,
+      );
     };
 
     root.addEventListener("pointerdown", onDown, { capture: true });
-    return () => root.removeEventListener("pointerdown", onDown, { capture: true });
-  }, [activeTool, onCanvasClick, onBackgroundClick, bridge]);
+    // window에서 받는다 — 캔버스 밖에서 손을 떼도 올가미가 끝나야 한다.
+    window.addEventListener("pointerup", onUp, { capture: true });
+    return () => {
+      root.removeEventListener("pointerdown", onDown, { capture: true });
+      window.removeEventListener("pointerup", onUp, { capture: true });
+    };
+  }, [activeTool, onCanvasClick, onBackgroundClick, onMarquee, toWorld]);
 
   return (
     <div
@@ -101,7 +182,10 @@ export function CanvasStage({
       className="canvas2 relative h-full w-full overflow-hidden"
       style={{ cursor: activeTool === "note" ? "text" : undefined }}
     >
-      <DotGrid camera={camera} />
+      {/* 격자는 변환 평면 **밖**에 두고 background-position으로 흉내 낸다 —
+          평면 안에 두면 scale(z)에 따라 점 자체가 커져 줌아웃에서 뭉개진다.
+          위치·간격은 useCameraFrame이 DOM에 직접 쓴다. */}
+      <div ref={gridRef} className="canvas2-grid" />
 
       <ExcalidrawLayer
         key={sceneKey ?? "none"}
@@ -117,9 +201,8 @@ export function CanvasStage({
         className="absolute inset-0"
         style={{
           pointerEvents: "none",
-          transform: `translate(${camera.scrollX * camera.zoom}px, ${
-            camera.scrollY * camera.zoom
-          }px) scale(${camera.zoom})`,
+          // transform은 여기서 주지 않는다 — useCameraFrame이 소유한다.
+          // React가 style로도 쓰면 팬 중 리렌더가 한 프레임 옛 값으로 되돌린다.
           transformOrigin: "0 0",
           // 팬/줌마다 합성 레이어를 다시 만들지 않게 미리 알린다.
           willChange: "transform",
@@ -148,25 +231,4 @@ export function CanvasStage({
   );
 }
 
-/**
- * 도트 그리드. **변환 평면 밖**에 두고 background-position으로 흉내 낸다 —
- * 평면 안에 두면 scale(z)에 따라 점 자체가 커져서 줌아웃 시 뭉개진다.
- * 점 크기는 고정, 간격만 줌에 비례하는 게 제도지의 감각이다.
- */
-function DotGrid({ camera }: { camera: Camera }) {
-  const step = GRID * camera.zoom;
-  // 줌아웃이 심하면 점이 뭉쳐 회색 면이 된다 — 그 아래로는 숨긴다.
-  if (step < 9) return null;
-  return (
-    <div
-      className="canvas2-grid"
-      style={{
-        backgroundSize: `${step}px ${step}px`,
-        backgroundPosition: `${camera.scrollX * camera.zoom}px ${
-          camera.scrollY * camera.zoom
-        }px`,
-      }}
-    />
-  );
-}
 

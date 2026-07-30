@@ -9,6 +9,23 @@ export function intersects(a: Rect, b: Rect): boolean {
   );
 }
 
+/**
+ * `outer`가 `inner`를 **완전히** 품는가.
+ *
+ * 올가미 선택의 판정이다. Excalidraw도 같은 규칙을 쓴다 — 실측으로 확인했다
+ * (도형에 걸치기만 한 올가미는 선택하지 않고, 완전히 감싸야 선택한다).
+ * 우리가 교차 판정을 쓰면 **같은 드래그가 글은 잡고 도형은 안 잡는다.**
+ * 사용자가 요구한 "함께 묶이도록"이 정확히 그 지점에서 깨진다.
+ */
+export function contains(outer: Rect, inner: Rect): boolean {
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.w <= outer.x + outer.w &&
+    inner.y + inner.h <= outer.y + outer.h
+  );
+}
+
 /** 사방으로 pad만큼 부풀린다. */
 export function inflate(r: Rect, pad: number): Rect {
   return { x: r.x - pad, y: r.y - pad, w: r.w + pad * 2, h: r.h + pad * 2 };
