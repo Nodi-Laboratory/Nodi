@@ -9,8 +9,9 @@
  * 충분하다.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toBlocks, toRuns } from "@/lib/canvas2/markup";
+import { useTypewriter } from "@/lib/canvas2/useTypewriter";
 import type { RenderBlock } from "@/lib/canvas2/types";
 
 /** 이 블록 수를 넘으면 접는다. 열이 화면 몇 개 높이로 길어지는 걸 막는다. */
@@ -33,16 +34,32 @@ export function ItemBody({ body, editing, onCommit, onCancel, streaming }: Props
 }
 
 function BodyView({ body, streaming }: { body: string; streaming?: boolean }) {
-  const blocks = toBlocks(body);
+  /**
+   * 글자 단위 타이핑 — 저장값(body 원문)과 표시값을 분리한다.
+   *
+   * `enabled`를 `streaming`으로 쓰면 안 된다. 스트림이 끝나는 순간
+   * `_pending=false`가 되어 enabled가 false로 떨어지고, **아직 안 드러난
+   * 글자가 한 번에 튀어나온다**. "한 번 타이핑을 시작했나"로 따로 기억해
+   * 스트림이 끝난 뒤에도 CATCHUP 속도로 마무리하게 둔다.
+   */
+  const { shown: chars, typing } = useTypewriter(body.length, !!streaming);
+  const visible = typing ? body.slice(0, chars) : body;
+
+  // 매 프레임 파싱을 피한다 — toBlocks는 글자당 토큰 객체를 만든다.
+  const blocks = useMemo(() => toBlocks(visible), [visible]);
   const [open, setOpen] = useState(false);
   // 스트리밍 중에는 접지 않는다 — 글이 자라는 걸 보는 게 이 화면의 재미다.
   const folded = !open && !streaming && blocks.length > FOLD_AFTER;
-  const shown = folded ? blocks.slice(0, FOLD_AFTER) : blocks;
+  const shownBlocks = folded ? blocks.slice(0, FOLD_AFTER) : blocks;
 
   return (
     <div>
-      {shown.map((b, i) => (
-        <Block key={i} block={b} last={streaming && i === shown.length - 1} />
+      {shownBlocks.map((b, i) => (
+        <Block
+          key={i}
+          block={b}
+          last={(typing || streaming) && i === shownBlocks.length - 1}
+        />
       ))}
       {folded && (
         <button

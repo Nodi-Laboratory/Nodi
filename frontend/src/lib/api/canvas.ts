@@ -5,6 +5,7 @@
  * (근거: backend/app/services/canvas_items.py 모듈 docstring).
  */
 import type { CanvasItem, ItemData, ItemKind, ItemSource } from "@/lib/canvas2/types";
+import { isRealId } from "@/lib/ids";
 import { API_BASE, authHeaders, ensureOk } from "./_core";
 
 /** 서버 행 → 도메인 객체. snake_case 경계를 여기 한 곳에만 둔다. */
@@ -122,6 +123,15 @@ export async function patchItem(
   itemId: string,
   patch: ItemPatch,
 ): Promise<CanvasItem> {
+  // D63의 방어선 — 임시 id가 DB 경계로 새면 uuid 파싱 실패로 502가 된다.
+  // 여기서 막으면 호출부마다 검사하지 않아도 된다.
+  if (!isRealId(itemId)) {
+    throw new Error(`저장되지 않은 항목은 수정할 수 없습니다: ${itemId}`);
+  }
+  if (patch.parent_item_id !== undefined && patch.parent_item_id !== null &&
+      !isRealId(patch.parent_item_id)) {
+    throw new Error("저장되지 않은 항목을 부모로 지정할 수 없습니다.");
+  }
   const res = await ensureOk(
     await fetch(`${API_BASE}/canvas/items/${itemId}`, {
       method: "PATCH",
@@ -133,6 +143,9 @@ export async function patchItem(
 }
 
 export async function deleteItem(itemId: string): Promise<void> {
+  if (!isRealId(itemId)) {
+    throw new Error(`저장되지 않은 항목은 삭제할 수 없습니다: ${itemId}`);
+  }
   await ensureOk(
     await fetch(`${API_BASE}/canvas/items/${itemId}`, {
       method: "DELETE",

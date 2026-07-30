@@ -12,7 +12,7 @@
  * 이 로직은 v1에서 실측으로 만들어진 것이라 형태를 그대로 가져왔다.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { getFigure } from "@/lib/api/retrieve";
@@ -37,6 +37,19 @@ export function FigureItem({ item, x, y, measureRef }: Props) {
   const [open, setOpen] = useState(false);
 
   const url = refreshed ?? fig?.url ?? "";
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  // 라이트박스: Escape로 닫고, 열릴 때 닫기 버튼에 포커스를 준다.
+  // role="dialog"인데 키보드로 나갈 방법이 없으면 갇힌다.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    closeRef.current?.focus();
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
 
   if (!fig) return null;
 
@@ -62,6 +75,10 @@ export function FigureItem({ item, x, y, measureRef }: Props) {
           width: ITEM_W,
           pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
           zIndex: 10,
+          // 글(TextItem)과 같은 이징. 없으면 재배치 때 글만 미끄러지고
+          // 도판은 즉시 점프해 280ms 동안 화면이 어긋나 보인다.
+          transition:
+            "left .28s cubic-bezier(.22,.9,.24,1), top .28s cubic-bezier(.22,.9,.24,1)",
         }}
       >
         <div
@@ -119,7 +136,7 @@ export function FigureItem({ item, x, y, measureRef }: Props) {
         createPortal(
           <div
             className="fixed inset-0 z-[100] flex items-center justify-center p-8"
-            style={{ background: "rgba(20,22,28,.78)" }}
+            style={{ background: "var(--c-overlay)" }}
             onClick={() => setOpen(false)}
             role="dialog"
             aria-modal="true"
@@ -132,11 +149,12 @@ export function FigureItem({ item, x, y, measureRef }: Props) {
               onClick={(e) => e.stopPropagation()}
             />
             <button
+              ref={closeRef}
               type="button"
               onClick={() => setOpen(false)}
               aria-label="닫기"
               className="absolute right-6 top-6 rounded-full p-2"
-              style={{ background: "rgba(255,255,255,.14)", color: "#fff" }}
+              style={{ background: "var(--c-on-dark)", color: "var(--c-paper)" }}
             >
               <X size={18} />
             </button>

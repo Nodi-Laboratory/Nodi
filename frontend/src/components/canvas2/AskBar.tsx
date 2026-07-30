@@ -164,7 +164,7 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onA
           disabled={!value.trim() || busy || disabled}
           aria-label="보내기"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-30"
-          style={{ background: "var(--c-live)", color: "#fff" }}
+          style={{ background: "var(--c-live-deep)", color: "var(--c-paper)" }}
         >
           <ArrowUp size={16} strokeWidth={2.4} />
         </button>

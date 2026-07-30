@@ -25,7 +25,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Camera, Rect, ToolName } from "./types";
-import { isDrawTool } from "./types";
+import { isPassThroughTool } from "./types";
 
 /** 우리가 쓰는 것만 추린 Excalidraw API 표면. */
 export interface ExcalidrawApi {
@@ -35,6 +35,10 @@ export interface ExcalidrawApi {
     zoom: { value: number };
     width: number;
     height: number;
+    /** 현재 도구. **이것이 진실이다** — 우리 state를 따로 두면 어긋난다. */
+    activeTool: { type: string; locked?: boolean };
+    /** 편집 중인 Excalidraw 텍스트 요소 id. 있으면 키 입력을 가로채면 안 된다. */
+    editingTextElement?: { id: string } | null;
   };
   getSceneElements: () => readonly ExcalidrawElementLike[];
   updateScene: (data: { appState?: Record<string, unknown> }) => void;
@@ -56,6 +60,18 @@ export interface ExcalidrawElementLike {
 
 const IDENTITY: Camera = { scrollX: 0, scrollY: 0, zoom: 1 };
 
+/** 우리 레일에 있는 도구 이름. Excalidraw가 그 밖의 도구를 켤 수도 있다. */
+const KNOWN_TOOLS = new Set<string>([
+  "selection",
+  "hand",
+  "freedraw",
+  "rectangle",
+  "ellipse",
+  "arrow",
+  "line",
+  "eraser",
+]);
+
 /** 그림 요소를 장애물로 쓸 때 두르는 여백. 글이 선에 닿아 보이지 않게. */
 export const OBSTACLE_PAD = 24;
 
@@ -68,7 +84,7 @@ export interface Bridge {
   cameraRef: React.RefObject<Camera>;
   activeTool: ToolName;
   setTool: (tool: ToolName) => void;
-  /** 오버레이가 포인터 이벤트를 먹어야 하는가(선택/손 도구일 때만). */
+  /** 오버레이가 포인터 이벤트를 먹어야 하는가(선택·글쓰기 도구일 때만). */
   overlayInteractive: boolean;
   /** 그림 요소들의 바운딩 박스(패딩 포함) — 배치 엔진의 장애물. */
   getObstacles: () => Rect[];
@@ -81,8 +97,19 @@ export interface Bridge {
 export function useExcalidrawBridge(): Bridge {
   const [api, setApi] = useState<ExcalidrawApi | null>(null);
   const [camera, setCamera] = useState<Camera>(IDENTITY);
-  const [activeTool, setActiveToolState] = useState<ToolName>("selection");
   const cameraRef = useRef<Camera>(IDENTITY);
+
+  /**
+   * 도구는 **Excalidraw가 소유한다.** 우리 state로 따로 들면 반드시 어긋난다 —
+   * 도형을 하나 그리면 Excalidraw가 스스로 선택 도구로 돌아가는데(툴 락이
+   * 꺼져 있을 때의 기본 동작) 우리 레일은 여전히 도형이 눌린 것으로 보였다.
+   * 사용자가 지적한 문제가 정확히 이것이다.
+   *
+   * 'note'만 우리 도구다. Excalidraw에는 selection을 물려 두므로 appState만
+   * 봐서는 구별할 수 없어, 마지막으로 note를 눌렀는지 따로 기억한다.
+   */
+  const [rawTool, setRawTool] = useState<string>("selection");
+  const [noteMode, setNoteMode] = useState(false);
 
   // 카메라는 onChange가 아니라 rAF 폴링으로 읽는다.
   //
@@ -104,6 +131,14 @@ export function useExcalidrawBridge(): Bridge {
         cameraRef.current = next;
         setCamera(next);
       }
+      // 도구도 같은 루프에서 따라간다. Excalidraw가 스스로 도구를 바꿀 때
+      // (도형 하나 그린 뒤, Esc, 자체 단축키) 우리 레일이 즉시 맞춰진다.
+      const t = s.activeTool?.type;
+      if (t) {
+        setRawTool((prevTool) => (prevTool === t ? prevTool : t));
+        // selection으로 돌아갔으면 note 모드도 끝난 것이다.
+        if (t !== "selection") setNoteMode(false);
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -112,13 +147,26 @@ export function useExcalidrawBridge(): Bridge {
 
   const setTool = useCallback(
     (tool: ToolName) => {
-      setActiveToolState(tool);
+      setNoteMode(tool === "note");
       // 'note'는 우리 도구다 — Excalidraw에는 선택 도구를 물려 두고
       // 캔버스 클릭을 오버레이가 가로챈다.
-      api?.setActiveTool({ type: tool === "note" ? "selection" : tool });
+      const type = tool === "note" ? "selection" : tool;
+      setRawTool(type);
+      api?.setActiveTool({ type });
     },
     [api],
   );
+
+  /**
+   * 화면에 보여 줄 도구.
+   *
+   * Excalidraw의 도구 이름을 우리 ToolName으로 좁힌다. 모르는 이름
+   * (image·frame·laser 등 우리 레일에 없는 것)은 selection으로 떨어뜨린다 —
+   * 레일에 아무것도 눌리지 않은 상태로 두면 학생이 무엇이 켜졌는지 모른다.
+   */
+  const activeTool: ToolName = noteMode
+    ? "note"
+    : (KNOWN_TOOLS.has(rawTool) ? (rawTool as ToolName) : "selection");
 
   const getObstacles = useCallback((): Rect[] => {
     if (!api) return [];
@@ -171,7 +219,8 @@ export function useExcalidrawBridge(): Bridge {
     [],
   );
 
-  const overlayInteractive = !isDrawTool(activeTool);
+  // hand도 놓아 준다 — 글자 위에서 끌어도 화면이 움직여야 한다(isPassThroughTool 참조).
+  const overlayInteractive = !isPassThroughTool(activeTool);
 
   return useMemo(
     () => ({
