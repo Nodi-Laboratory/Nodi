@@ -25,6 +25,14 @@ const Excalidraw = dynamic(
 /** 씬 저장 디바운스. 자유선 한 획이 수십 번의 onChange를 낸다. */
 const SAVE_DEBOUNCE_MS = 1500;
 
+/** 팔레트의 본문 잉크 색을 실제 값으로 읽는다(Excalidraw는 var()를 못 받는다). */
+function inkColor(): string {
+  if (typeof document === "undefined") return "#221e17";
+  const el = document.querySelector(".canvas2");
+  const v = el ? getComputedStyle(el).getPropertyValue("--c-ink").trim() : "";
+  return v || "#221e17";
+}
+
 interface Props {
   onApi: (api: ExcalidrawApi | null) => void;
   /** 최초 1회 복원할 씬. 이후 변경은 무시된다(Excalidraw가 씬을 소유한다). */
@@ -141,7 +149,11 @@ export function ExcalidrawLayer({
               : {}),
             // 따뜻한 먹. 학생의 자국을 틸로 강제하지 않는다 — 기본 색상
             // 패널을 숨겼으므로 강제하면 색을 고를 방법이 아예 없어진다.
-            currentItemStrokeColor: "#2e2a20",
+            //
+            // Excalidraw는 CSS 변수를 받지 못해 실제 값이 필요하다. 팔레트에서
+            // 읽어 오므로 --c-ink를 고치면 여기도 따라온다 — 예전에는 #2e2a20이
+            // 박혀 있어 팔레트와 어긋난 별개 값이었다.
+            currentItemStrokeColor: inkColor(),
             currentItemRoughness: 1,
             currentItemStrokeWidth: 2,
           },

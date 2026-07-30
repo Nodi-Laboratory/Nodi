@@ -184,7 +184,19 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [store.items],
   );
 
-  const stream = useCanvasStream({ sessionId, upsertLocal, onPersisted, nextSeq });
+  const hasFigure = useCallback(
+    (figureId: string) =>
+      store.items.some((i) => i.data.figure?.figureId === figureId),
+    [store.items],
+  );
+
+  const stream = useCanvasStream({
+    sessionId,
+    upsertLocal,
+    onPersisted,
+    nextSeq,
+    hasFigure,
+  });
 
   // --- 배치 ------------------------------------------------------------------
 
@@ -217,6 +229,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   // --- 조작 ------------------------------------------------------------------
 
   const { patch, remove, items } = store;
+  const { getObstacles: getObs, setTool } = bridge;
 
   const handlers = useMemo(
     () => ({
@@ -269,7 +282,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
         const spot = reflowOne(
           toInput(target),
           items.filter((i) => i.id !== id).map(toInput),
-          bridge.getObstacles(),
+          getObs(),
           layout.tagOrder,
         );
         // 정리 결과도 고정이다. 안 그러면 다음 배치에서 열 흐름이 다시 옮긴다.
@@ -296,7 +309,12 @@ export function CanvasWorkspace({ spaceId }: Props) {
         patch(id, { data: { ...cur?.data, askHidden: true } });
       },
     }),
-    [items, patch, remove, editingId, selectedId, layout, bridge],
+    // ⚠️ **bridge 전체를 넣으면 안 된다.** bridge는 camera를 deps로 가진
+    // useMemo라 팬/줌 중 매 프레임 새 객체가 되고, 그러면 handlers도 매 프레임
+    // 새로 생겨 memo(TextItem)이 무력화된다 — 전 아이템이 60fps로 리렌더된다
+    // (v1이 정확히 이 이유로 느렸다: useItemLayout.ts 헤더 주석 참조).
+    // getObstacles는 [api]에만 의존하므로 안정적이다.
+    [items, patch, remove, editingId, selectedId, layout, getObs],
   );
 
   // 빈 곳 클릭 — 선택 해제. 편집 중이면 편집도 끝낸다.
@@ -315,9 +333,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
       setSelectedId(id);
       setEditingId(id);
       // 글을 하나 놓았으면 계속 놓고 싶지는 않다 — 선택 도구로 돌아간다.
-      bridge.setTool("selection");
+      setTool("selection");
     },
-    [sessionId, createNote, nextSeq, bridge],
+    [sessionId, createNote, nextSeq, setTool],
   );
 
   // 화면 배율 — 뷰포트 중앙을 기준으로 확대·축소한다(커서 기준은 휠이 맡는다).
@@ -380,6 +398,28 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [sessionId, target, queryClient],
   );
 
+  /**
+   * 답이 생긴 자리로 카메라를 옮긴다 (사용자 지적).
+   *
+   * 스트림은 좌표를 모르므로 id만 알려 주고, **배치가 좌표를 낸 뒤** 여기서
+   * 옮긴다. 아이템 위쪽을 화면 상단 1/3에 두는데, 정중앙에 두면 글이 아래로
+   * 자라면서 곧 화면을 벗어난다.
+   */
+  const { focusId, clearFocus } = stream;
+  useEffect(() => {
+    if (!focusId) return;
+    const p = layout.positions.get(focusId);
+    if (!p) return; // 아직 배치 전 — 다음 렌더에 다시 시도한다
+    const { w, h: vh } = vp;
+    const z = cameraRef.current.zoom;
+    flyTo({
+      zoom: z,
+      scrollX: w / 2 / z - (p.x + ITEM_W / 2),
+      scrollY: vh / 3 / z - p.y,
+    });
+    clearFocus();
+  }, [focusId, layout.positions, vp, cameraRef, flyTo, clearFocus]);
+
   const banner =
     drawError ??
     store.error ??
@@ -411,12 +451,15 @@ export function CanvasWorkspace({ spaceId }: Props) {
             onClose={() => setDrawerOpen(false)}
             target={target}
           />
+          {items.length === 0 && <EmptyHint />}
           {banner && <SaveBanner message={banner} onClose={store.clearError} />}
           {store.undo && <UndoToast label={store.undo.label} onUndo={store.undo.run} />}
           <Minimap
             items={items}
             positions={layout.positions}
             heights={layout.heights}
+            columnX={layout.columnX}
+            tagOrder={layout.tagOrder}
             getObstacles={getObstacles}
             camera={bridge.camera}
             viewport={vp}
@@ -437,7 +480,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
         </>
       }
     >
-      {!sessionId && <EmptyHint />}
       <ItemLayer
         items={store.items}
         positions={layout.positions}
@@ -500,7 +542,7 @@ function UndoToast({ label, onUndo }: { label: string; onUndo: () => void }) {
         type="button"
         onClick={onUndo}
         className="flex items-center gap-1 rounded-full px-2 py-0.5 font-medium"
-        style={{ background: "rgba(255,255,255,.14)" }}
+        style={{ background: "var(--c-on-dark)" }}
       >
         <Undo2 size={13} />
         되돌리기
@@ -509,11 +551,17 @@ function UndoToast({ label, onUndo }: { label: string; onUndo: () => void }) {
   );
 }
 
+/**
+ * 빈 캔버스 안내.
+ *
+ * **화면 고정 UI다**(변환 평면 밖). 평면 안에 두면 카메라 초기 위치에 따라
+ * 화면 밖으로 나가서, 정작 아무것도 없을 때 안내가 안 보인다.
+ */
 function EmptyHint() {
   return (
     <div
-      className="ui pointer-events-none absolute select-none"
-      style={{ left: 0, top: 0, color: "var(--c-ink-faint)" }}
+      className="ui pointer-events-none absolute left-1/2 top-1/3 -translate-x-1/2 select-none text-center"
+      style={{ color: "var(--c-ink-faint)" }}
     >
       <p className="text-[15px]">아래에 질문을 적으면 여기에 답이 펼쳐집니다.</p>
       <p className="mt-1 text-[13px]">오른쪽 도구로 직접 쓰고 그릴 수도 있습니다.</p>

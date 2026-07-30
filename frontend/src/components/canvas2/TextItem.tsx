@@ -106,9 +106,24 @@ function TextItemImpl(props: TextItemProps) {
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (editing) return;
+      // 왼쪽 버튼만 드래그다. 중버튼(휠클릭)은 Excalidraw의 팬이므로 놓아 준다.
       if (e.button !== 0) return;
       const t = e.target as HTMLElement;
       if (t.closest("[data-no-pan]")) return; // 버튼·메뉴는 자기 일을 한다
+
+      // **본문 위에서는 드래그를 시작하지 않는다.**
+      //
+      // 예전에는 아이템 어디를 잡아도 이동이었다 — 그래서 글을 드래그해
+      // 선택·복사하려 하면 아이템이 따라 움직였다(사용자가 지적한 "글자를
+      // 선택할 수 없다"의 두 번째 원인). 이동은 여백·제목·좌측 괘선 쪽에서
+      // 시작한다. 학생이 본문에서도 옮기고 싶으면 Alt를 누른 채 끌면 된다.
+      const onText = !!t.closest("[data-item-text]");
+      if (onText && !e.altKey) {
+        // 선택은 브라우저에 맡기고, Excalidraw가 선택 상자를 그리지 않게만 막는다.
+        e.stopPropagation();
+        onSelect(item.id);
+        return;
+      }
 
       e.stopPropagation(); // Excalidraw가 선택 상자를 그리지 않게
       dragRef.current = { sx: e.clientX, sy: e.clientY, moved: false };
@@ -119,7 +134,7 @@ function TextItemImpl(props: TextItemProps) {
         // 편의일 뿐이라 없어도 드래그는 동작한다 — 콘솔만 더럽히지 않는다.
       }
     },
-    [editing],
+    [editing, item.id, onSelect],
   );
 
   const onPointerMove = useCallback(
@@ -175,7 +190,7 @@ function TextItemImpl(props: TextItemProps) {
         width: ITEM_W,
         pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
         zIndex: selected || editing ? 12 : dragging ? 11 : 10,
-        cursor: editing ? "auto" : dragging ? "grabbing" : "grab",
+        cursor: editing ? "auto" : dragging ? "grabbing" : "default",
         // 배치가 옮길 때는 부드럽게, 드래그 중에는 즉시.
         transition: dragging ? "none" : "left .28s cubic-bezier(.22,.9,.24,1), top .28s cubic-bezier(.22,.9,.24,1)",
       }}
@@ -188,6 +203,25 @@ function TextItemImpl(props: TextItemProps) {
       onDoubleClick={(e) => {
         e.stopPropagation();
         onStartEdit(item.id);
+      }}
+      // 키보드만으로도 다룰 수 있어야 한다 — 예전에는 선택·편집·삭제가 전부
+      // 포인터 전용이었다.
+      tabIndex={editing ? -1 : 0}
+      role="group"
+      aria-label={item.title ?? (item.source === "ai" ? "AI가 쓴 글" : "내가 쓴 글")}
+      onFocus={() => onSelect(item.id)}
+      onKeyDown={(e) => {
+        if (editing) return;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onStartEdit(item.id);
+        } else if (e.key === "Delete" || e.key === "Backspace") {
+          e.preventDefault();
+          onDelete(item.id);
+        } else if (e.key === "Escape") {
+          onSelect(null);
+          (e.currentTarget as HTMLElement).blur();
+        }
       }}
     >
       {/* hover/선택 박스 — 흐름 밖에 둬서 높이에 영향을 주지 않는다 */}
@@ -204,20 +238,24 @@ function TextItemImpl(props: TextItemProps) {
         }}
       />
 
-      {/* 좌측 괘선 — 유일한 상시 크롬. 색이 곧 출처다 */}
+      {/* 좌측 괘선 — 유일한 상시 크롬. 색이 곧 출처이고, **이동 손잡이**다.
+          본문에서 드래그를 뺐으므로(텍스트 선택을 위해) 잡을 곳이 보여야 한다.
+          hover하면 굵어지며 잡을 수 있음을 알린다. */}
       <div
         aria-hidden
-        className="absolute"
+        className="absolute transition-all duration-150"
+        title="끌어서 옮기기"
         style={{
           left: -16,
           top: 2,
           bottom: 2,
           // 학생의 자국을 조금 더 굵게. 색만으로는 축소했을 때 구분이 약하다 —
           // 굵기라는 두 번째 신호를 보태면 색약이 있어도 구별된다.
-          width: isAi ? 2 : 3,
+          width: active ? (isAi ? 4 : 5) : isAi ? 2 : 3,
           borderRadius: 2,
           background: accent,
-          opacity: item._pending ? 0.4 : 0.85,
+          opacity: item._pending ? 0.4 : active ? 1 : 0.85,
+          cursor: editing ? "auto" : "grab",
           transformOrigin: "top",
           animation: item._pending ? undefined : "c2-rule-draw .28s ease-out",
         }}
@@ -227,13 +265,19 @@ function TextItemImpl(props: TextItemProps) {
         {item.title && (
           <h3
             className="ui mb-2 text-[17px] font-semibold leading-snug"
-            style={{ color: "var(--c-ink)" }}
+            // 제목은 이동 손잡이다 — 본문에서 드래그를 뺏으면 잡을 곳이 필요하다.
+            style={{ color: "var(--c-ink)", cursor: editing ? "auto" : "grab" }}
           >
             {item.title}
           </h3>
         )}
 
-        <div className="text-[15px]" style={{ color: "var(--c-ink)" }}>
+        <div
+          data-item-text
+          className="text-[15px]"
+          // 본문은 선택 가능해야 한다 — 학생이 답을 복사해 옮겨 적는다.
+          style={{ color: "var(--c-ink)", userSelect: editing ? "auto" : "text" }}
+        >
           <ItemBody
             body={item.body}
             editing={editing}

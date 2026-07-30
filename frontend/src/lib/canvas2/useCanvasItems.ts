@@ -95,7 +95,7 @@ export function useCanvasItems(): CanvasItemsApi {
       }
       // 화면에 없던 저장분(경합으로 사라진 경우)은 뒤에 붙인다.
       for (const left of map.values()) if (left) out.push(left);
-      return out;
+      return remapParents(out, tempIds, saved);
     });
   }, []);
 
@@ -147,13 +147,17 @@ export function useCanvasItems(): CanvasItemsApi {
             if (!saved) return;
             // 저장되는 사이 학생이 더 고쳤을 수 있다 — 로컬 본문·위치를 지키고
             // id와 서버 소유 필드만 갈아 끼운다.
-            setItems((prev) =>
-              prev.map((i) =>
+            setItems((prev) => {
+              const next = prev.map((i) =>
                 i.id === id
                   ? { ...saved, body: i.body, x: i.x, y: i.y, pinned: i.pinned, tag: i.tag }
                   : i,
-              ),
-            );
+              );
+              // **자식의 parentItemId도 함께 갈아야 한다.** 안 하면 이 메모를
+              // 부모로 갖던 AI 응답이 사라진 id를 가리켜 연결선이 조용히
+              // 끊긴다(화면에서 관계가 없어진 것처럼 보인다).
+              return remapParents(next, [id], [saved]);
+            });
           })
           .catch((e: Error) => setError(`저장하지 못했습니다 — ${e.message}`));
         return;
@@ -282,6 +286,30 @@ function toLocal(p: ItemPatch): Partial<CanvasItem> {
   if (p.data !== undefined) out.data = p.data as ItemData;
   if (p.parent_item_id !== undefined) out.parentItemId = p.parent_item_id;
   return out;
+}
+
+/**
+ * 아이템 id가 바뀌면 그를 부모로 가리키던 자식도 갱신한다.
+ *
+ * 임시 id(스트리밍) 또는 로컬 id(메모)가 서버 uuid로 승격될 때 부모 참조를
+ * 함께 옮기지 않으면, 자식이 존재하지 않는 id를 가리켜 **연결선이 조용히
+ * 사라진다.** 화면에는 오류가 없고 관계만 없어지므로 원인을 찾기 어렵다.
+ */
+function remapParents(
+  list: CanvasItem[],
+  oldIds: readonly string[],
+  saved: readonly CanvasItem[],
+): CanvasItem[] {
+  const remap = new Map<string, string>();
+  oldIds.forEach((old, i) => {
+    const s = saved[i];
+    if (s && s.id !== old) remap.set(old, s.id);
+  });
+  if (!remap.size) return list;
+  return list.map((i) => {
+    const next = i.parentItemId ? remap.get(i.parentItemId) : undefined;
+    return next ? { ...i, parentItemId: next } : i;
+  });
 }
 
 function insertAt(list: CanvasItem[], item: CanvasItem, index: number): CanvasItem[] {
