@@ -35,8 +35,6 @@ export interface CanvasItemsApi {
   replaceAll: (items: CanvasItem[]) => void;
   /** 스트림 등에서 새 아이템을 밀어 넣는다(로컬 전용 — 저장은 호출부가). */
   upsertLocal: (items: CanvasItem[]) => void;
-  /** 로컬만 바꾼다(스트리밍 중 본문 누적 등). */
-  patchLocal: (id: string, patch: Partial<CanvasItem>) => void;
   /** 임시 id 아이템을 서버가 준 진짜 행으로 교체한다(스트림 저장 완료). */
   replaceTemp: (tempIds: string[], saved: CanvasItem[]) => void;
   /** 학생이 캔버스에 직접 쓴 글. 만들고 바로 저장한다. 반환은 임시 id. */
@@ -102,10 +100,6 @@ export function useCanvasItems(): CanvasItemsApi {
       for (const it of incoming) byId.set(it.id, { ...byId.get(it.id), ...it });
       return [...byId.values()];
     });
-  }, []);
-
-  const patchLocal = useCallback((id: string, patch: Partial<CanvasItem>) => {
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
   }, []);
 
   /**
@@ -319,7 +313,6 @@ export function useCanvasItems(): CanvasItemsApi {
     items,
     replaceAll,
     upsertLocal,
-    patchLocal,
     replaceTemp,
     createNote,
     patch,

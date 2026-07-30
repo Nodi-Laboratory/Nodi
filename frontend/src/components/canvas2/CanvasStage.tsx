@@ -21,7 +21,7 @@
 
 import { useEffect, useRef } from "react";
 import type { DrawingScene } from "@/lib/api/canvas";
-import type { Camera, ToolName } from "@/lib/canvas2/types";
+import type { Camera } from "@/lib/canvas2/types";
 import type { Bridge } from "@/lib/canvas2/useExcalidrawBridge";
 import { useWheelForwarding } from "@/lib/canvas2/useExcalidrawBridge";
 import { ExcalidrawLayer } from "./ExcalidrawLayer";
@@ -123,6 +123,15 @@ export function CanvasStage({
           transformOrigin: "0 0",
           // 팬/줌마다 합성 레이어를 다시 만들지 않게 미리 알린다.
           willChange: "transform",
+          /**
+           * **Excalidraw 캔버스가 z-index: 2다.** 우리 오버레이는 DOM에서 뒤에
+           * 있지만 z-index가 없어서, 히트 테스트에서 캔버스가 아이템을 통째로
+           * 덮었다 — 실제 마우스로는 글을 클릭할 수도, 끌 수도 없었다.
+           *
+           * 합성 이벤트(`el.dispatchEvent`)는 히트 테스트를 건너뛰므로 자동
+           * 검증에서 이 문제가 드러나지 않았다. 진짜 마우스로 눌러 봐야 보인다.
+           */
+          zIndex: 3,
           // 자식(아이템)이 pointer-events:auto를 켤지 여기서 정한다.
           ["--c2-item-events" as string]: overlayInteractive ? "auto" : "none",
         }}
@@ -161,10 +170,3 @@ function DotGrid({ camera }: { camera: Camera }) {
   );
 }
 
-/** 아이템 루트에 얹는 공통 스타일 — 오버레이의 pointer-events 정책을 받는다. */
-export const ITEM_BASE_STYLE: React.CSSProperties = {
-  position: "absolute",
-  pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
-};
-
-export type { ToolName };

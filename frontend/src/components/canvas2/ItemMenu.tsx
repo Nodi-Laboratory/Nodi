@@ -8,7 +8,7 @@
  */
 
 import { MoreHorizontal, Pencil, Tag, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { TagPicker } from "./TagPicker";
 
 interface Props {
@@ -23,6 +23,32 @@ export function ItemMenu({ tag, tagOptions, onEdit, onDelete, onTagChange }: Pro
   const [open, setOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * 화살표로 항목을 옮긴다.
+   *
+   * `role="menu"`를 붙여 놓고 키보드 이동을 안 주면 스크린리더가 "메뉴"라고
+   * 알려 준 뒤 학생이 그 안에서 움직일 방법이 없다 — 이름만 메뉴다.
+   */
+  const moveFocus = useCallback((dir: 1 | -1) => {
+    const el = menuRef.current;
+    if (!el) return;
+    const items = [...el.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next = at < 0 ? 0 : (at + dir + items.length) % items.length;
+    items[next]?.focus();
+  }, []);
+
+  // 열리면 첫 항목에 포커스를 준다. 안 주면 Tab이 메뉴 밖으로 나간다.
+  useEffect(() => {
+    if (!open || tagOpen) return;
+    const raf = requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [open, tagOpen]);
 
   useEffect(() => {
     if (!open || tagOpen) return;
@@ -31,6 +57,13 @@ export function ItemMenu({ tag, tagOptions, onEdit, onDelete, onTagChange }: Pro
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
+      else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        moveFocus(1);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        moveFocus(-1);
+      }
     };
     document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey);
@@ -38,7 +71,7 @@ export function ItemMenu({ tag, tagOptions, onEdit, onDelete, onTagChange }: Pro
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, tagOpen]);
+  }, [open, tagOpen, moveFocus]);
 
   return (
     <div ref={rootRef} data-no-pan className="absolute -top-1 right-0 z-20">
@@ -65,6 +98,7 @@ export function ItemMenu({ tag, tagOptions, onEdit, onDelete, onTagChange }: Pro
 
       {open && !tagOpen && (
         <div
+          ref={menuRef}
           className="ui absolute right-0 top-8 w-36 overflow-hidden rounded-lg border py-1"
           style={{
             background: "var(--c-raised)",

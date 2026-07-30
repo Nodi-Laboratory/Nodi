@@ -64,7 +64,10 @@ export function TagPicker({ current, options, onPick, onClose }: Props) {
         borderColor: "var(--c-rule)",
         boxShadow: "var(--c-shadow-lg)",
       }}
-      role="listbox"
+      // role="listbox" 안에 <button role="option">은 유효하지 않은 조합이다.
+      // 실제 동작(클릭·Tab·Enter)이 브라우저 기본으로 이미 되므로, 거짓
+      // 시맨틱을 붙이는 것보다 메뉴로 정직하게 표시하는 편이 낫다.
+      role="menu"
       aria-label="분류 선택"
     >
       <div className="label px-3 pb-1 pt-1.5" style={{ color: "var(--c-ink-faint)" }}>
@@ -73,8 +76,8 @@ export function TagPicker({ current, options, onPick, onClose }: Props) {
 
       <button
         type="button"
-        role="option"
-        aria-selected={current === null}
+        role="menuitemradio"
+        aria-checked={current === null}
         onClick={() => onPick(null)}
         className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm transition-colors hover:bg-[var(--c-sunk)]"
         style={{ color: "var(--c-ink-soft)" }}
@@ -88,8 +91,8 @@ export function TagPicker({ current, options, onPick, onClose }: Props) {
           <button
             key={t}
             type="button"
-            role="option"
-            aria-selected={t === current}
+            role="menuitemradio"
+            aria-checked={t === current}
             onClick={() => onPick(t)}
             className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm transition-colors hover:bg-[var(--c-sunk)]"
             style={{ color: "var(--c-ink)" }}
