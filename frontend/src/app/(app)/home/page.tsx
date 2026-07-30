@@ -20,7 +20,7 @@ import type { HomeRecentSession, SpaceKind } from "@/lib/types";
 function EmptyRecent() {
   return (
     <div className="flex flex-col items-center gap-3 px-4 py-10 text-center">
-      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-accent/40 text-accent-fg">
+      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-accent-soft text-accent-fg">
         <MessageSquare size={20} aria-hidden />
       </span>
       <div>
@@ -31,7 +31,7 @@ function EmptyRecent() {
       </div>
       <Link
         href="/space/personal"
-        className="mt-1 rounded-lg border border-accent-border bg-accent px-4 py-2 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-deep hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep"
+        className="mt-1 rounded-lg bg-accent-deep px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep"
       >
         첫 대화 시작하기
       </Link>
@@ -125,7 +125,7 @@ export default function HomePage() {
                     type="button"
                     onClick={() => handleOpenRecent(s)}
                     onMouseEnter={() => prefetchRecent(s.id)}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/30"
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent-soft"
                   >
                     <span className="shrink-0">
                       {s.emoji || (

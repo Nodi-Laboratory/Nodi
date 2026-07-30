@@ -212,7 +212,9 @@ function TextItemImpl(props: TextItemProps) {
           left: -16,
           top: 2,
           bottom: 2,
-          width: 2,
+          // 학생의 자국을 조금 더 굵게. 색만으로는 축소했을 때 구분이 약하다 —
+          // 굵기라는 두 번째 신호를 보태면 색약이 있어도 구별된다.
+          width: isAi ? 2 : 3,
           borderRadius: 2,
           background: accent,
           opacity: item._pending ? 0.4 : 0.85,

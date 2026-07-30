@@ -33,7 +33,7 @@ export function ReadOnlyThread({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      <div className="rounded-md bg-accent/20 px-3 py-1.5 text-xs text-accent-fg">
+      <div className="rounded-md bg-accent-soft/60 px-3 py-1.5 text-xs text-accent-fg">
         읽기 전용 — 학생 대화를 열람만 합니다.
       </div>
       {thread.map((n) => (
@@ -47,7 +47,7 @@ function Exchange({ node }: { node: NodeRow }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-accent px-4 py-2 text-sm text-accent-fg">
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-accent-soft px-4 py-2 text-sm text-accent-fg">
           {node.question}
         </div>
       </div>

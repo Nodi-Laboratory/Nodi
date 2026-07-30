@@ -59,19 +59,47 @@ export function ExcalidrawLayer({
     commitRef.current = onSceneCommit;
   }, [onSceneCommit]);
 
+  /**
+   * 마지막으로 저장(또는 불러온) 씬의 서명.
+   *
+   * **바뀌지 않았으면 저장하지 않는다.** `onChange`는 마운트·팬·줌에도 터지는데,
+   * 이 엔드포인트는 씬을 통째로 교체한다(PUT). 그래서 아무것도 안 그린 탭이
+   * 다른 탭이 방금 그린 것을 덮어쓸 수 있다 — 같은 세션을 두 탭에서 열면
+   * 나중에 타이머가 도는 쪽이 이긴다. 실측으로 이 경로를 밟았다(브라우저를
+   * 열어 둔 채 씬을 밖에서 바꾸니 곧 빈 배열로 되돌아갔다).
+   */
+  const savedSigRef = useRef<string>("");
+
   const handleChange = useCallback(
     (elements: readonly ExcalidrawElementLike[], _state: unknown, files: unknown) => {
       if (viewOnly) return;
+      const live = elements.filter((e) => !e.isDeleted);
+      // version은 요소를 고칠 때마다 오른다 — 좌표만 비교하면 색·굵기 변경을 놓친다.
+      const sig = live.map((e) => `${e.id}:${e.version ?? 0}`).join("|");
+      if (sig === savedSigRef.current) return;
+
       if (timerRef.current) window.clearTimeout(timerRef.current);
       timerRef.current = window.setTimeout(() => {
+        savedSigRef.current = sig;
         commitRef.current({
-          elements: elements.filter((e) => !e.isDeleted) as unknown[],
+          elements: live as unknown[],
           files: (files ?? {}) as Record<string, unknown>,
         });
       }, SAVE_DEBOUNCE_MS);
     },
     [viewOnly],
   );
+
+  // 불러온 씬을 "이미 저장된 것"으로 기록해 둔다 — 안 하면 마운트 직후의
+  // onChange가 같은 내용을 한 번 더 쓴다(무해하지만 불필요한 왕복이고, 그
+  // 왕복이 다른 탭의 작업을 덮는다).
+  useEffect(() => {
+    const els = (initialScene?.elements ?? []) as ExcalidrawElementLike[];
+    savedSigRef.current = els
+      .filter((e) => !e.isDeleted)
+      .map((e) => `${e.id}:${e.version ?? 0}`)
+      .join("|");
+  }, [initialScene]);
 
   // 언마운트 정리.
   //
@@ -111,7 +139,9 @@ export function ExcalidrawLayer({
                   zoom: { value: initialCamera.zoom as unknown as never },
                 }
               : {}),
-            currentItemStrokeColor: "#2b2620",
+            // 따뜻한 먹. 학생의 자국을 틸로 강제하지 않는다 — 기본 색상
+            // 패널을 숨겼으므로 강제하면 색을 고를 방법이 아예 없어진다.
+            currentItemStrokeColor: "#2e2a20",
             currentItemRoughness: 1,
             currentItemStrokeWidth: 2,
           },
