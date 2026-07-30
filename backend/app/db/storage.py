@@ -82,10 +82,17 @@ def _signature(bucket: str, path: str, expires_at: int) -> str:
 
 
 async def sign(bucket: str, path: str, expires_in: int) -> str:
-    """만료 있는 서명 URL(백엔드 경로). 파일 존재 여부는 확인하지 않는다."""
+    """만료 있는 서명 URL(백엔드 경로). 파일 존재 여부는 확인하지 않는다.
+
+    **/api 접두사를 포함한다** — 이 URL은 브라우저 `<img src>`에 상대경로로
+    그대로 들어가는데, 프론트 오리진(:3000)에서는 Next rewrite가 `/api/*`만
+    백엔드로 프록시한다(로컬 dev·배포 동일, next.config.ts). 접두사가 없으면
+    Next 서버 자신에게 요청이 가서 404 — figure가 무한 로딩으로 보였던 원인
+    (2026-07-30 라이브 E2E에서 발견: 서빙 라우트 부재와 함께 수정).
+    """
     expires_at = int(time.time()) + max(1, expires_in)
     sig = _signature(bucket, path, expires_at)
-    return f"/files/blob/{bucket}/{path}?exp={expires_at}&sig={sig}"
+    return f"/api/files/blob/{bucket}/{path}?exp={expires_at}&sig={sig}"
 
 
 def verify(bucket: str, path: str, expires_at: int, sig: str) -> bool:
