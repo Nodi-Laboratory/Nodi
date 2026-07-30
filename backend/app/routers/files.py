@@ -19,7 +19,6 @@ from fastapi import (
     UploadFile,
     status,
 )
-
 from fastapi.responses import Response
 
 from ..auth.deps import CurrentUser, get_current_user

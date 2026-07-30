@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from ..config import get_settings
 from . import embedding, solar

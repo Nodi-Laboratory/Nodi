@@ -11,7 +11,6 @@ import types
 
 from app.services import semantic_chunker as sc
 
-
 # --- 대역 배선 ------------------------------------------------------------
 
 

@@ -136,7 +136,8 @@ async def test_게이트_분리(monkeypatch):
 async def test_원자_게이트_초과는_탈락(monkeypatch):
     """원자 거리가 게이트(0.45)를 넘으면 원자 경유 청크도 탈락한다."""
     atom_hits = [
-        {"id": "atom-far", "score": 0.50, "chunk_id": "chunk-far", "_file": "fm"},  # dist 0.50 > 0.45
+        # 거리 0.50 > 게이트 0.45
+        {"id": "atom-far", "score": 0.50, "chunk_id": "chunk-far", "_file": "fm"},
     ]
     _patch_infra(monkeypatch, [], atom_hits)
     client = _FakeClient({"file_chunks": _chunk_rows_handler(["chunk-far"])})

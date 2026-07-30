@@ -77,10 +77,12 @@ def test_build_caption_messages_거대_힌트_정규화_절단():
         "본문", "그림 1 첨성대\t\n관측", giant_alt, "data:image/png;base64,xx"
     )
     text = msgs[0]["content"][1]["text"]
-    hint_line = next(l for l in text.splitlines() if l.startswith("대체 텍스트: "))
+    hint_line = next(ln for ln in text.splitlines() if ln.startswith("대체 텍스트: "))
     assert len(hint_line) <= len("대체 텍스트: ") + FC.HINT_LIMIT
     assert "\t" not in hint_line                 # 탭 정규화(reasoning 폭주 방지)
-    parsed_line = next(l for l in text.splitlines() if l.startswith("파서가 찾은 원문 캡션: "))
+    parsed_line = next(
+        ln for ln in text.splitlines() if ln.startswith("파서가 찾은 원문 캡션: ")
+    )
     assert parsed_line == "파서가 찾은 원문 캡션: 그림 1 첨성대 관측"
 
 

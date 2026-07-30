@@ -25,6 +25,7 @@ from collections.abc import Awaitable, Callable
 import httpx
 
 from ..config import get_settings
+
 # figure_judge와 같은 판정 계열 — 유틸은 임포트해 재사용한다(복제 금지, D131).
 from .figure_judge import (
     CIRCUIT_BREAK_THRESHOLD,
