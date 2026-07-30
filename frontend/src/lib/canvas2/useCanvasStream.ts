@@ -81,6 +81,42 @@ interface Deps {
 let tempCounter = 0;
 const tempId = () => `tmp-${++tempCounter}`;
 
+/**
+ * 아이템 하나를 저장 요청 형태로.
+ *
+ * `parent_item_id`는 **서버에 있는 id만 보낸다.** 학생이 메모를 쓰고 blur 전에
+ * 바로 "AI에게 묻기"를 누르면 그 메모는 아직 로컬 전용(local-note-…)이다.
+ * 그대로 보내면 FK 위반으로 **배치 전체가 실패**해 응답이 하나도 저장되지
+ * 않는다 — 화면에는 있는데 새로고침하면 사라진다. 연결선은 로컬 관계만으로도
+ * 그려지므로 그 경우에도 화면은 정상이다.
+ */
+function toPayload(it: CanvasItem): NewItemInput {
+  return {
+    kind: it.kind,
+    source: it.source,
+    node_id: it.nodeId,
+    parent_item_id: isRealId(it.parentItemId) ? it.parentItemId : null,
+    title: it.title,
+    body: it.body,
+    tag: it.tag,
+    // 배치가 자리를 정하게 둔다 — 학생이 옮기면 그때 pinned가 된다.
+    x: it.x,
+    y: it.y,
+    pinned: false,
+    seq: it.seq,
+    // 도판은 data에 메타가 있다. url은 빼고 보낸다(만료되는 값, D87).
+    // 그 외에는 렌더 힌트만 남긴다 — 특히 `askHidden`을 흘리면 이미 물어본
+    // 질문 글에 "AI에게 묻기" 버튼이 새로고침마다 되살아난다.
+    data:
+      it.kind === "figure" && it.data.figure
+        ? { figure: { ...it.data.figure, url: "" } }
+        : {
+            ...(it.data.askHidden ? { askHidden: true } : {}),
+            ...(it.data.reflowDismissed ? { reflowDismissed: true } : {}),
+          },
+  };
+}
+
 export function useCanvasStream({
   sessionId,
   upsertLocal,
@@ -144,6 +180,26 @@ export function useCanvasStream({
         upsertLocal([questionItem]);
       }
       const parentItemId = askedFrom ?? questionItem?.id ?? null;
+
+      /**
+       * 질문 아이템을 **먼저, 따로** 저장한다.
+       *
+       * 한 번에 몰아 보내면 저장 시점에 질문의 서버 id가 아직 없다(`tmp-1`).
+       * 그러면 아래 `isRealId` 가드에 걸려 응답들의 `parent_item_id`가 전부
+       * null로 떨어진다 — 화면에는 연결선이 보이는데(로컬 관계는 살아 있다)
+       * 새로고침하면 사라진다. **실측 2026-07-31: canvas_items의
+       * parent_item_id가 전 행 null이었다.** 사용자가 계속 지적한 "ai 응답이
+       * 캔버스에서 제대로 연결되지 않음"의 실제 원인이 이것이다.
+       *
+       * 스트림을 기다리지 않고 바로 띄운다 — 응답이 나오는 동안 왕복이
+       * 끝나므로 체감 지연이 없다. 실패하면 null 부모로 떨어질 뿐 턴은 산다.
+       */
+      const questionSaved: Promise<CanvasItem | null> = questionItem
+        ? createItems(sessionId, [toPayload(questionItem)]).then(
+            (rows) => rows[0] ?? null,
+            () => null,
+          )
+        : Promise.resolve(null);
 
       const flush = () => {
         if (made.length) upsertLocal([...made]);
@@ -264,36 +320,25 @@ export function useCanvasStream({
       flush();
       setBusy(false);
 
-      if (!made.length) return;
+      // 먼저 보낸 질문이 서버에 자리를 잡았으면 임시 id를 갈아 끼우고,
+      // 이 턴의 자식들이 그 **진짜 id**를 부모로 들게 한다.
+      const savedQuestion = await questionSaved;
+      if (questionItem && savedQuestion) {
+        for (const it of made) {
+          if (it.parentItemId === questionItem.id) it.parentItemId = savedQuestion.id;
+        }
+        onPersisted([questionItem.id], [savedQuestion]);
+      }
 
-      // 완료 시 한 번에 저장한다(스트리밍 중 매 토큰 PATCH는 수백 왕복이 된다).
-      const payload: NewItemInput[] = made.map((it) => ({
-        kind: it.kind,
-        source: it.source,
-        node_id: it.nodeId,
-        // **서버에 있는 id만 보낸다.** 학생이 메모를 쓰고 blur 전에 바로
-        // "AI에게 묻기"를 누르면 그 메모는 아직 로컬 전용(local-note-…)이다.
-        // 그대로 보내면 FK 위반으로 **배치 전체가 실패**해 응답이 하나도
-        // 저장되지 않는다 — 화면에는 있는데 새로고침하면 사라진다.
-        // 연결선은 로컬 관계만으로도 그려지므로 화면은 정상이다.
-        parent_item_id: isRealId(it.parentItemId) ? it.parentItemId : null,
-        // 질문 아이템은 학생이 옮길 일이 많다 — 배치가 자리를 정하게 둔다.
-        title: it.title,
-        body: it.body,
-        tag: it.tag,
-        x: it.x,
-        y: it.y,
-        pinned: false,
-        seq: it.seq,
-        // 도판은 data에 메타가 있다. url은 빼고 보낸다(만료되는 값).
-        data:
-          it.kind === "figure" && it.data.figure
-            ? { figure: { ...it.data.figure, url: "" } }
-            : {},
-      }));
+      // 질문은 이미 저장했다 — 두 번 보내면 캔버스에 같은 글이 둘 생긴다.
+      const rest = questionItem ? made.filter((m) => m.id !== questionItem.id) : made;
+      if (!rest.length) return;
+
+      // 나머지는 완료 시 한 번에(스트리밍 중 매 토큰 PATCH는 수백 왕복이 된다).
+      const payload: NewItemInput[] = rest.map(toPayload);
       try {
         const saved = await createItems(sessionId, payload);
-        const tempIds = made.map((i) => i.id);
+        const tempIds = rest.map((i) => i.id);
         onPersisted(tempIds, saved);
         // 임시 id가 서버 id로 바뀌면 추종 대상도 갱신해야 한다 —
         // 안 하면 사라진 id를 쫓다가 조용히 실패한다.
