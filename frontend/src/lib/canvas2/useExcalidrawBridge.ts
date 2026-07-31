@@ -444,6 +444,19 @@ export function useWheelForwarding(
     if (!el || !enabled) return;
 
     const onWheel = (e: WheelEvent) => {
+      /**
+       * **우리 UI 위에서 굴린 휠은 넘기지 않는다.**
+       *
+       * 이 리스너는 오버레이 컨테이너 한 곳에 붙어 자식에서 버블링된 휠까지
+       * 전부 받는다. 그래서 분류 드롭다운처럼 **스스로 스크롤되는 목록** 위에서
+       * 굴려도 캔버스가 팬됐다 — 목록은 꼼짝 않고 화면만 움직인다(사용자 지적).
+       *
+       * `data-no-pan`은 "여기는 캔버스가 아니라 UI다"라는 표시이고, 포인터
+       * 쪽에서 이미 같은 뜻으로 쓰고 있다. 휠도 같은 경계를 따른다 —
+       * preventDefault를 하지 않으므로 브라우저가 평소대로 스크롤한다.
+       */
+      if ((e.target as HTMLElement | null)?.closest?.("[data-no-pan]")) return;
+
       const canvas = document.querySelector<HTMLCanvasElement>(
         ".excalidraw__canvas.interactive",
       );
