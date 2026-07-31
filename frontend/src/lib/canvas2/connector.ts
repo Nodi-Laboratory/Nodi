@@ -17,10 +17,25 @@
 
 import type { Rect } from "./rect";
 
-/** 끝점을 박스 밖으로 물리는 거리. */
-export const END_GAP = 7;
+/**
+ * 끝점이 앉는 **패딩 상자**의 두께 (사용자 지시 2026-07-31).
+ *
+ * 글자 사각형이 아니라 그 바깥에 씌운 상자의 변에 끝점을 둔다. 값은 hover 시
+ * 깔리는 박스(`TextItem`의 `inset: -12px -16px`)에 맞춘 것이다 — 눈에 보이는
+ * 상자와 선이 만나는 자리가 같아야 "저 상자에서 나온 선"으로 읽힌다.
+ * 가로가 더 두꺼운 것도 그 상자를 따른 것이다.
+ */
+export const PAD_X = 16;
+export const PAD_Y = 12;
+/** 패딩 상자에서 한 번 더 띄우는 거리. 도트가 테두리에 걸치지 않게. */
+export const END_GAP = 4;
 /** 변 위에서 앵커가 모서리에 붙지 않도록 남기는 여백. */
 export const EDGE_INSET = 18;
+
+/** 패딩을 씌운 상자. 연결선이 실제로 붙는 대상이다. */
+export function padded(r: Rect): Rect {
+  return { x: r.x - PAD_X, y: r.y - PAD_Y, w: r.w + PAD_X * 2, h: r.h + PAD_Y * 2 };
+}
 
 export type Side = "right" | "left" | "top" | "bottom";
 
@@ -90,8 +105,15 @@ export function normal(side: Side): Point {
   }
 }
 
-/** 부모 → 자식 연결선의 전체 기하. */
-export function linkGeometry(parent: Rect, child: Rect): LinkGeometry {
+/**
+ * 부모 → 자식 연결선의 전체 기하.
+ *
+ * 인자는 **글자 사각형**을 받고, 안에서 패딩 상자로 부풀려 그 변에 앉힌다.
+ * 호출부가 패딩을 신경 쓸 필요가 없다.
+ */
+export function linkGeometry(rawParent: Rect, rawChild: Rect): LinkGeometry {
+  const parent = padded(rawParent);
+  const child = padded(rawChild);
   const a0 = anchor(parent, center(child));
   const b0 = anchor(child, center(parent));
   const na = normal(a0.side);

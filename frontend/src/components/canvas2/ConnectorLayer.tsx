@@ -6,34 +6,35 @@
  * "AI의 응답"이라는 것이 보여야 한다는 지시였다. 선 하나로는 방향이 안
  * 읽히므로 **곡선 + 양끝 도트 + 중간 라벨**로 셋을 갖춘다.
  *
+ * 선이 생기는 경우는 하나뿐이다 — 학생이 자기 글에서 **"AI에게 묻기"**를 했을
+ * 때. 하단 입력창의 평범한 질문은 상자를 더 만들지 않는다(useCanvasStream).
+ *
  * ## 붙는 자리는 고정이 아니다
  *
- * 예전에는 언제나 "부모 오른쪽 변 → 자식 왼쪽 변"이었다. 학생이 답을 질문
- * **위쪽**으로 끌어 올리면 선이 오른쪽으로 나갔다가 크게 되돌아왔고, 답이 둘이면
- * 시작점이 같은 한 점이라 두 선이 겹쳐 지나갔다(사용자가 보낸 이미지의 문제).
+ * 예전에는 언제나 "부모 오른쪽 변 → 자식 왼쪽 변"이었다. 답을 질문 **위쪽**으로
+ * 끌어 올리면 선이 오른쪽으로 나갔다 크게 되돌아왔고, 답이 둘이면 시작점이 같은
+ * 한 점이라 두 선이 겹쳐 지나갔다. 지금은 두 사각형의 **상대 위치**로 변을 고르고,
+ * 변 위 지점도 상대에 맞춰 미끄러진다(`lib/canvas2/connector.ts`).
  *
- * 지금은 두 사각형의 **상대 위치**로 어느 변에서 나갈지 정한다:
+ * 끝점은 글자 사각형이 아니라 **패딩 상자**의 변에 앉는다 — hover 시 깔리는
+ * 박스와 같은 크기라, 눈에 보이는 상자에서 선이 나오는 것으로 읽힌다.
  *
- *     답이 오른쪽에  →  부모 오른쪽 변  →  자식 왼쪽 변
- *     답이 아래에    →  부모 아래 변    →  자식 윗 변
- *     답이 위에      →  부모 윗 변      →  자식 아래 변
+ * ## 드래그를 따라간다
  *
- * 게다가 변 위에서의 **위치**도 상대에 맞춰 미끄러진다 — 답이 둘이면 하나는
- * 위쪽에서, 하나는 아래쪽에서 나가므로 겹치지 않는다.
- *
- * ## 끝점은 박스 **밖**에 선다
- *
- * 예전에는 변 좌표를 그대로 써서 도트가 박스 테두리에 걸치거나 안쪽에 박혔다.
- * `END_GAP`만큼 바깥으로 물려서 "여기서 나왔다"가 보이게 한다.
+ * 아이템은 드래그 중 React를 거치지 않고 DOM transform으로 움직인다. 그래서
+ * 여기도 React 밖에서 따라가야 한다 — `dragBus`로 이동량을 받아 path·도트·라벨
+ * 속성을 직접 고친다. 안 그러면 상자만 가고 선은 제자리에 남는다(사용자 지적).
  *
  * 오버레이 안에 있으므로 좌표는 그대로 world다 — 팬/줌은 부모 변환이 처리한다.
  */
 
+import { useEffect, useRef } from "react";
 import type { Placed } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Rect } from "@/lib/canvas2/rect";
 import { linkGeometry, midpoint } from "@/lib/canvas2/connector";
+import { getDragOffsets, subscribeDrag, type DragOffset } from "@/lib/canvas2/dragBus";
 
 interface Props {
   items: CanvasItem[];
@@ -44,71 +45,114 @@ interface Props {
 const FALLBACK: Size = { w: 460, h: 180 };
 /** 도트 반지름. */
 const DOT_R = 3.5;
+/** SVG 화폭 여유. 드래그로 선이 밖으로 나가도 `overflow:visible`이 받아 준다. */
+const PAD = 400;
+
+interface Link {
+  id: string;
+  parentId: string;
+  parent: Rect;
+  child: Rect;
+}
+
+function shift(r: Rect, o: DragOffset | undefined): Rect {
+  return o ? { ...r, x: r.x + o.dx, y: r.y + o.dy } : r;
+}
 
 export function ConnectorLayer({ items, positions, sizes }: Props) {
-  const links = items
+  const links: Link[] = items
     .filter((i) => i.parentItemId && positions.has(i.id) && positions.has(i.parentItemId))
     .map((child) => {
       const cp = positions.get(child.id)!;
       const pp = positions.get(child.parentItemId!)!;
       const cs = sizes.get(child.id) ?? FALLBACK;
       const ps = sizes.get(child.parentItemId!) ?? FALLBACK;
-
-      const parent: Rect = { x: pp.x, y: pp.y, w: ps.w, h: ps.h };
-      const kid: Rect = { x: cp.x, y: cp.y, w: cs.w, h: cs.h };
-      const g = linkGeometry(parent, kid);
-      const m = midpoint(g);
-
       return {
         id: child.id,
-        x1: g.a.x,
-        y1: g.a.y,
-        x2: g.b.x,
-        y2: g.b.y,
-        c1x: g.c1.x,
-        c1y: g.c1.y,
-        c2x: g.c2.x,
-        c2y: g.c2.y,
-        mx: m.x,
-        my: m.y,
+        parentId: child.parentItemId!,
+        parent: { x: pp.x, y: pp.y, w: ps.w, h: ps.h },
+        child: { x: cp.x, y: cp.y, w: cs.w, h: cs.h },
       };
     });
 
-  if (!links.length) return null;
+  // 화폭 — 드래그 중에는 갱신하지 않는다(SVG는 overflow:visible이라 밖에도 그려진다).
+  const geos = links.map((l) => linkGeometry(l.parent, l.child));
+  const xs = geos.flatMap((g) => [g.a.x, g.b.x, g.c1.x, g.c2.x]);
+  const ys = geos.flatMap((g) => [g.a.y, g.b.y, g.c1.y, g.c2.y]);
+  const minX = xs.length ? Math.min(...xs) - PAD : 0;
+  const minY = ys.length ? Math.min(...ys) - PAD : 0;
+  const w = xs.length ? Math.max(...xs) - minX + PAD : 0;
+  const h = ys.length ? Math.max(...ys) - minY + PAD : 0;
 
-  // SVG 하나로 전부 그린다. 링크마다 SVG를 만들면 요소가 폭발한다.
-  const pad = 400;
-  const xs = links.flatMap((l) => [l.x1, l.x2, l.c1x, l.c2x]);
-  const ys = links.flatMap((l) => [l.y1, l.y2, l.c1y, l.c2y]);
-  const minX = Math.min(...xs) - pad;
-  const minY = Math.min(...ys) - pad;
-  const w = Math.max(...xs) - minX + pad;
-  const h = Math.max(...ys) - minY + pad;
+  const svgRef = useRef<SVGSVGElement>(null);
+  // 드래그 콜백이 최신 링크·원점을 보게 한다(구독은 한 번만 건다).
+  // **렌더 중에 ref를 쓰지 않는다** — React Compiler가 막는다(react-hooks/refs).
+  const stateRef = useRef({ links, minX, minY });
+  useEffect(() => {
+    stateRef.current = { links, minX, minY };
+  });
+
+  useEffect(() => {
+    const draw = (offsets: ReadonlyMap<string, DragOffset>) => {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const { links: ls, minX: ox, minY: oy } = stateRef.current;
+      for (const l of ls) {
+        // 노드마다 ref를 다는 대신 조회한다. ref 콜백을 렌더에서 만들면
+        // 그 안의 `ref.current` 접근이 렌더 중 접근으로 잡힌다.
+        const g0 = svg.querySelector<SVGGElement>(`[data-link="${CSS.escape(l.id)}"]`);
+        const path = g0?.querySelector("path");
+        if (!path) continue;
+        const n = {
+          path,
+          from: g0!.querySelector<SVGCircleElement>('[data-end="from"]'),
+          to: g0!.querySelector<SVGCircleElement>('[data-end="to"]'),
+          label: g0!.querySelector("text"),
+        };
+        const g = linkGeometry(
+          shift(l.parent, offsets.get(l.parentId)),
+          shift(l.child, offsets.get(l.id)),
+        );
+        const m = midpoint(g);
+        path.setAttribute(
+          "d",
+          `M ${g.a.x - ox} ${g.a.y - oy} C ${g.c1.x - ox} ${g.c1.y - oy}, ` +
+            `${g.c2.x - ox} ${g.c2.y - oy}, ${g.b.x - ox} ${g.b.y - oy}`,
+        );
+        n.from?.setAttribute("cx", String(g.a.x - ox));
+        n.from?.setAttribute("cy", String(g.a.y - oy));
+        n.to?.setAttribute("cx", String(g.b.x - ox));
+        n.to?.setAttribute("cy", String(g.b.y - oy));
+        n.label?.setAttribute("x", String(m.x - ox));
+        n.label?.setAttribute("y", String(m.y - oy - 6));
+      }
+    };
+    // 마운트 직후에도 한 번 맞춘다 — 드래그 도중에 아이템이 새로 그려지면
+    // React가 낸 정적 좌표로 되돌아가 있을 수 있다.
+    draw(getDragOffsets());
+    return subscribeDrag(draw);
+  }, []);
+
+  if (!links.length) return null;
 
   return (
     <svg
       aria-hidden
+      ref={svgRef}
       className="pointer-events-none absolute"
       style={{ left: minX, top: minY, width: w, height: h, overflow: "visible" }}
       viewBox={`0 0 ${w} ${h}`}
     >
-      {links.map((l) => {
-        const x1 = l.x1 - minX;
-        const y1 = l.y1 - minY;
-        const x2 = l.x2 - minX;
-        const y2 = l.y2 - minY;
-        const c1x = l.c1x - minX;
-        const c1y = l.c1y - minY;
-        const c2x = l.c2x - minX;
-        const c2y = l.c2y - minY;
-        // 라벨은 곡선의 t=0.5 위에 얹는다(connector.ts). 두 끝의 중점에 두면
-        // 곡선이 휜 만큼 선에서 떨어져 보인다.
-        const mx = l.mx - minX;
-        const my = l.my - minY;
+      {links.map((l, i) => {
+        const g = geos[i];
+        const m = midpoint(g);
         return (
-          <g key={l.id} style={{ color: "var(--c-live-deep)" }}>
+          <g key={l.id} data-link={l.id} style={{ color: "var(--c-live-deep)" }}>
             <path
-              d={`M ${x1} ${y1} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${x2} ${y2}`}
+              d={
+                `M ${g.a.x - minX} ${g.a.y - minY} C ${g.c1.x - minX} ${g.c1.y - minY}, ` +
+                `${g.c2.x - minX} ${g.c2.y - minY}, ${g.b.x - minX} ${g.b.y - minY}`
+              }
               fill="none"
               stroke="currentColor"
               strokeWidth={1.5}
@@ -116,11 +160,19 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
               opacity={0.4}
             />
             {/* 양끝 도트 — 어디서 나와 어디로 갔는지가 한눈에 보인다.
-                가운데를 종이색으로 비워 선이 도트를 관통해 보이지 않게 한다. */}
-            <circle cx={x1} cy={y1} r={DOT_R} fill="currentColor" opacity={0.85} />
+                받는 쪽만 가운데를 종이색으로 비워 방향을 표시한다. */}
             <circle
-              cx={x2}
-              cy={y2}
+              data-end="from"
+              cx={g.a.x - minX}
+              cy={g.a.y - minY}
+              r={DOT_R}
+              fill="currentColor"
+              opacity={0.85}
+            />
+            <circle
+              data-end="to"
+              cx={g.b.x - minX}
+              cy={g.b.y - minY}
               r={DOT_R}
               fill="var(--c-paper)"
               stroke="currentColor"
@@ -128,8 +180,8 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
               opacity={0.95}
             />
             <text
-              x={mx}
-              y={my - 6}
+              x={m.x - minX}
+              y={m.y - minY - 6}
               textAnchor="middle"
               fill="currentColor"
               opacity={0.75}

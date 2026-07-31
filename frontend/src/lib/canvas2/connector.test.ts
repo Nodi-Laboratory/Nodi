@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { END_GAP, anchor, linkGeometry, midpoint } from "./connector";
+import { END_GAP, PAD_X, anchor, linkGeometry, midpoint, padded } from "./connector";
 import type { Rect } from "./rect";
 
 const box = (x: number, y: number, w = 460, h = 200): Rect => ({ x, y, w, h });
@@ -46,15 +46,16 @@ describe("붙는 변은 상대 위치가 정한다", () => {
   });
 });
 
-describe("끝점은 박스 밖에 선다", () => {
-  it("양끝 모두 어느 박스 안에도 들어가지 않는다", () => {
-    const cases: [Rect, Rect][] = [
-      [box(0, 0), box(900, 0)],
-      [box(0, 0), box(0, 900)],
-      [box(0, 0), box(0, -900)],
-      [box(0, 0), box(-900, 40)],
-      [box(0, 0, 200, 120), box(300, 800, 460, 900)],
-    ];
+describe("끝점은 패딩 상자 밖에 선다", () => {
+  const cases: [Rect, Rect][] = [
+    [box(0, 0), box(900, 0)],
+    [box(0, 0), box(0, 900)],
+    [box(0, 0), box(0, -900)],
+    [box(0, 0), box(-900, 40)],
+    [box(0, 0, 200, 120), box(300, 800, 460, 900)],
+  ];
+
+  it("글자 사각형 안에 들어가지 않는다", () => {
     for (const [p, c] of cases) {
       const g = linkGeometry(p, c);
       expect(inside(g.a, p), `시작점이 부모 안: ${JSON.stringify(g.a)}`).toBe(false);
@@ -62,11 +63,26 @@ describe("끝점은 박스 밖에 선다", () => {
     }
   });
 
-  it("정확히 END_GAP만큼 떨어져 있다", () => {
+  it("**패딩 상자** 안에도 들어가지 않는다 — 눈에 보이는 상자가 기준이다", () => {
+    for (const [p, c] of cases) {
+      const g = linkGeometry(p, c);
+      expect(inside(g.a, padded(p)), `시작점이 부모 패딩 안`).toBe(false);
+      expect(inside(g.b, padded(c)), `끝점이 자식 패딩 안`).toBe(false);
+    }
+  });
+
+  it("패딩 상자 변에서 정확히 END_GAP만큼 떨어져 있다", () => {
     const g = linkGeometry(box(0, 0), box(900, 0));
-    // 오른쪽 변이 x=460이므로 시작점은 467.
-    expect(g.a.x).toBe(460 + END_GAP);
-    expect(g.b.x).toBe(900 - END_GAP);
+    // 글자 오른쪽 변 460 → 패딩 상자 476 → 끝점 480.
+    expect(g.a.x).toBe(460 + PAD_X + END_GAP);
+    expect(g.b.x).toBe(900 - PAD_X - END_GAP);
+  });
+
+  it("패딩만큼 떨어지므로 글자에서 END_GAP보다 멀다", () => {
+    // "더 바깥부분에 위치하도록" — 요구가 지켜지는지 수치로 못 박는다.
+    const g = linkGeometry(box(0, 0), box(900, 0));
+    expect(g.a.x - 460).toBeGreaterThan(END_GAP);
+    expect(g.a.x - 460).toBe(PAD_X + END_GAP);
   });
 });
 

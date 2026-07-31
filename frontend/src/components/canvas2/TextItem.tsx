@@ -35,6 +35,7 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";
+import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import { AskFromNoteButton } from "./AskFromNoteButton";
 import { ItemBody } from "./ItemBody";
@@ -232,11 +233,21 @@ function TextItemImpl(props: TextItemProps) {
       }
       // React를 거치지 않는다 — 60fps로 리렌더하면 긴 문단에서 즉시 버벅인다.
       // 함께 선택된 것들도 같은 양만큼 민다.
-      const shift = `translate(${dx / zoom}px, ${dy / zoom}px)`;
-      for (const el of peerEls(d.group, rootRef.current)) {
+      const wx = dx / zoom;
+      const wy = dy / zoom;
+      const shift = `translate(${wx}px, ${wy}px)`;
+      const peers = peerEls(d.group, rootRef.current);
+      for (const el of peers) {
         el.style.transition = "none";
         el.style.transform = shift;
       }
+      // 연결선도 같이 움직여야 한다 — 상자만 가고 선이 남으면 관계가 끊겨
+      // 보인다(사용자 지적). 역시 React를 거치지 않는다.
+      setDragOffsets(
+        peers.map((el) => el.getAttribute("data-canvas-item") ?? "").filter(Boolean),
+        wx,
+        wy,
+      );
     },
     [zoom],
   );
@@ -248,6 +259,8 @@ function TextItemImpl(props: TextItemProps) {
       if (!d) return;
 
       const peers = peerEls(d.group, rootRef.current);
+      // 연결선은 이제 React가 낸 최종 좌표를 쓴다.
+      clearDragOffsets();
       if (!d.moved) {
         // 움직이지 않은 클릭. 선택은 pointerdown에서 이미 정해졌고, 남은 경우는
         // 하나뿐이다 — 여럿이 잡힌 상태에서 그중 하나를 그냥 눌렀을 때
