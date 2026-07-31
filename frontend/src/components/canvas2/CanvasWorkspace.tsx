@@ -537,7 +537,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
             items={items}
             positions={layout.positions}
             sizes={layout.sizes}
-            columnX={layout.columnX}
             tagOrder={layout.tagOrder}
             camera={bridge.camera}
             viewport={vp}
