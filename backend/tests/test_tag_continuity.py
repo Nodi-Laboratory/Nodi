@@ -6,6 +6,9 @@
 """
 
 
+import pytest
+
+from app.services import canvas_items as ci
 from app.services.gemini import _WRAP_TAGS, compose_system_structured
 from app.services.solar import extract_used_tags
 
@@ -135,10 +138,6 @@ def test_tag_guide_absent_when_none_is_regression():
 # 껐는데, 그 스킬은 모델이 부를지 정하는 선택지라 실제로는 거의 불리지 않았다.
 # 결과(실측 2026-07-31): 개념 18개가 태그 10종으로 흩어져 열당 1.5~1.8개 —
 # "태그끼리 묶는다"가 작동하지 않았다.
-
-import pytest
-
-from app.services import canvas_items as ci
 
 aio = pytest.mark.asyncio
 
