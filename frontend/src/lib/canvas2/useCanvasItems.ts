@@ -22,6 +22,7 @@ import {
   deleteItem as apiDelete,
   patchItem as apiPatch,
 } from "@/lib/api/canvas";
+import { isRealId } from "@/lib/ids";
 import type { CanvasItem, ItemData } from "./types";
 
 export interface UndoEntry {
@@ -39,6 +40,18 @@ export interface CanvasItemsApi {
   replaceTemp: (tempIds: string[], saved: CanvasItem[]) => void;
   /** 학생이 캔버스에 직접 쓴 글. 만들고 바로 저장한다. 반환은 임시 id. */
   createNote: (sessionId: string, x: number, y: number, seq: number) => string;
+  /**
+   * 어떤 글에 딸린 학생 글을 만들고 **바로 저장한다** (D138 인출 연습).
+   *
+   * `createNote`와 달리 로컬에만 두지 않는다 — 인출 결과는 학생이 이미 다 쓴
+   * 산출물이라 편집 대기 상태로 둘 이유가 없고, 새로고침에 날아가면 안 된다.
+   */
+  addChildNote: (
+    sessionId: string,
+    parentItemId: string,
+    body: string,
+    seq: number,
+  ) => Promise<void>;
   /** 로컬 + 서버. 실패 시 롤백 + 오류 노출. */
   patch: (id: string, patch: ItemPatch, local?: Partial<CanvasItem>) => void;
   remove: (id: string) => void;
@@ -301,6 +314,55 @@ export function useCanvasItems(): CanvasItemsApi {
     [],
   );
 
+  const addChildNote = useCallback(
+    async (sessionId: string, parentItemId: string, body: string, seq: number) => {
+      const temp = `local-recall-${Date.now()}`;
+      const local: CanvasItem = {
+        id: temp,
+        sessionId,
+        nodeId: null,
+        parentItemId,
+        kind: "note",
+        source: "user",
+        title: null,
+        body,
+        tag: null,
+        x: 0,
+        y: 0,
+        pinned: false,
+        seq,
+        // 이미 학생이 쓴 글이다 — "AI에게 묻기"를 권할 자리가 아니다.
+        data: { askHidden: true },
+      };
+      setItems((prev) => [...prev, local]);
+      try {
+        const saved = await apiCreate(sessionId, [
+          {
+            kind: "note",
+            source: "user",
+            node_id: null,
+            // 부모가 아직 서버에 없으면(로컬 메모) 연결은 화면에만 남는다.
+            parent_item_id: isRealId(parentItemId) ? parentItemId : null,
+            title: null,
+            body,
+            tag: null,
+            x: 0,
+            y: 0,
+            pinned: false,
+            seq,
+            data: { askHidden: true },
+          },
+        ]);
+        if (saved[0]) {
+          setItems((prev) => prev.map((i) => (i.id === temp ? saved[0] : i)));
+        }
+      } catch (e) {
+        setError(`기록을 저장하지 못했습니다 — ${(e as Error).message}`);
+      }
+    },
+    [],
+  );
+
   const tagOptions = useMemo(() => {
     const seen: string[] = [];
     for (const it of [...items].sort((a, b) => a.seq - b.seq)) {
@@ -315,6 +377,7 @@ export function useCanvasItems(): CanvasItemsApi {
     upsertLocal,
     replaceTemp,
     createNote,
+    addChildNote,
     patch,
     remove,
     undo,

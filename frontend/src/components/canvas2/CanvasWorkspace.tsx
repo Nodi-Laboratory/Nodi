@@ -232,7 +232,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   // --- 조작 ------------------------------------------------------------------
 
-  const { patch, remove, items } = store;
+  const { patch, remove, items, addChildNote } = store;
   const { getObstacles: getObs, setTool } = bridge;
 
   const handlers = useMemo(
@@ -346,13 +346,28 @@ export function CanvasWorkspace({ spaceId }: Props) {
         const cur = items.find((i) => i.id === id);
         patch(id, { data: { ...cur?.data, askHidden: true } });
       },
+
+      /**
+       * 인출 연습 결과를 캔버스에 남긴다 (D138).
+       *
+       * 학생이 쓴 회상은 **그 카드의 자식 글**이 된다 — 배치가 옆에 놓고
+       * 연결선이 이어 준다. 사라지면 산출물이 아니고, 다음에 이 카드를 볼 때
+       * "내가 그때 이만큼 기억했구나"가 함께 보여야 의미가 있다.
+       *
+       * `askHidden`을 켜 둔다: 이건 이미 학생이 스스로 쓴 글이라 "AI에게 묻기"를
+       * 권할 자리가 아니다.
+       */
+      onRecall: (id: string, text: string) => {
+        if (!sessionId) return;
+        void addChildNote(sessionId, id, text, nextSeq());
+      },
     }),
     // ⚠️ **bridge 전체를 넣으면 안 된다.** bridge는 camera를 deps로 가진
     // useMemo라 팬/줌 중 매 프레임 새 객체가 되고, 그러면 handlers도 매 프레임
     // 새로 생겨 memo(TextItem)이 무력화된다 — 전 아이템이 60fps로 리렌더된다
     // (v1이 정확히 이 이유로 느렸다: useItemLayout.ts 헤더 주석 참조).
     // getObstacles는 [api]에만 의존하므로 안정적이다.
-    [items, patch, remove, editingId, selectedIds, layout, getObs],
+    [items, patch, remove, editingId, selectedIds, layout, getObs, sessionId, addChildNote, nextSeq],
   );
 
   /**

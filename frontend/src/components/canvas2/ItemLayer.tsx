@@ -40,6 +40,7 @@ interface Props {
     onDismissReflow: (id: string) => void;
     onAsk: (id: string) => void;
     onDismissAsk: (id: string) => void;
+    onRecall: (id: string, text: string) => void;
   };
 }
 

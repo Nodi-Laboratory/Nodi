@@ -34,12 +34,14 @@
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { EyeOff } from "lucide-react";
 import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import { AskFromNoteButton } from "./AskFromNoteButton";
 import { ItemBody } from "./ItemBody";
 import { ItemMenu } from "./ItemMenu";
+import { RecallPanel } from "./RecallPanel";
 import { QuestionTip } from "./QuestionTip";
 import { ReflowButton } from "./ReflowButton";
 
@@ -93,6 +95,8 @@ export interface TextItemProps {
   onDismissReflow: (id: string) => void;
   onAsk: (id: string) => void;
   onDismissAsk: (id: string) => void;
+  /** 인출 연습에서 학생이 쓴 회상을 자식 글로 남긴다 (D138). */
+  onRecall: (id: string, text: string) => void;
 }
 
 function TextItemImpl(props: TextItemProps) {
@@ -117,12 +121,18 @@ function TextItemImpl(props: TextItemProps) {
     onDismissReflow,
     onAsk,
     onDismissAsk,
+    onRecall,
   } = props;
 
   const [hover, setHover] = useState(false);
   const [dragging, setDragging] = useState(false);
   /** ⋯ 메뉴가 펼쳐져 있나. 펼친 동안은 마우스가 나가도 메뉴를 붙잡아 둔다. */
   const [menuOpen, setMenuOpen] = useState(false);
+  /**
+   * 인출 연습 중인가 (D138). `hidden`이면 본문을 가린다 — **보면서 쓰면
+   * 인출이 아니라 베끼기다.** 쓰고 나면 `compare`로 넘어가 원문을 다시 보인다.
+   */
+  const [recall, setRecall] = useState<"off" | "hidden" | "compare">("off");
   const rootRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     sx: number;
@@ -292,6 +302,19 @@ function TextItemImpl(props: TextItemProps) {
   const showReflow = item._needsReflow && !item.data.reflowDismissed && !editing;
   const showAsk =
     item.source === "user" && !item.data.askHidden && !editing && (hover || selected);
+  /**
+   * 인출 버튼은 **AI가 쓴 개념 글에만** 붙인다 (D138).
+   *
+   * 학생이 쓴 글은 이미 자기가 산출한 것이라 다시 꺼낼 대상이 아니고,
+   * 스트리밍 중인 글은 아직 읽지도 않았다.
+   */
+  const showRecall =
+    isAi &&
+    item.kind === "concept" &&
+    !item._pending &&
+    !editing &&
+    recall === "off" &&
+    (hover || selected);
 
   return (
     <div
@@ -418,7 +441,22 @@ function TextItemImpl(props: TextItemProps) {
           </h3>
         )}
 
-        <div data-item-text className="text-[15px]" style={{ color: "var(--c-ink)" }}>
+        <div
+          data-item-text
+          className="text-[15px]"
+          style={{
+            color: "var(--c-ink)",
+            // **인출 중에는 본문을 가린다** — 보면서 쓰면 베끼기가 된다(D138).
+            // 지우지 않고 흐리는 이유: 높이가 바뀌면 배치가 흔들리고, 뒤에 글이
+            // 있다는 사실 자체는 보여야 "가려 뒀다"로 읽힌다.
+            filter: recall === "hidden" ? "blur(6px)" : undefined,
+            opacity: recall === "hidden" ? 0.35 : 1,
+            userSelect: recall === "hidden" ? "none" : undefined,
+            pointerEvents: recall === "hidden" ? "none" : undefined,
+            transition: "filter .18s ease, opacity .18s ease",
+          }}
+          aria-hidden={recall === "hidden"}
+        >
           <ItemBody
             body={item.body}
             editing={editing}
@@ -428,8 +466,36 @@ function TextItemImpl(props: TextItemProps) {
           />
         </div>
 
-        {(showReflow || showAsk) && (
+        {recall !== "off" && (
+          <RecallPanel
+            onCommit={(text) => onRecall(item.id, text)}
+            onCancel={() => setRecall("off")}
+            onReveal={() => setRecall("compare")}
+          />
+        )}
+
+        {(showReflow || showAsk || showRecall) && (
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            {showRecall && (
+              <button
+                type="button"
+                data-no-pan
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRecall("hidden");
+                }}
+                title="본문을 가리고 기억나는 만큼 써 봅니다"
+                className="label flex items-center gap-1 rounded-full px-2 py-1 transition-colors"
+                style={{
+                  background: "var(--c-hand-wash)",
+                  color: "var(--c-hand)",
+                  letterSpacing: 0,
+                }}
+              >
+                <EyeOff size={12} />
+                안 보고 다시 말해보기
+              </button>
+            )}
             {showReflow && (
               <ReflowButton
                 onReflow={() => onReflow(item.id)}
