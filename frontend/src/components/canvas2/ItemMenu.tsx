@@ -3,8 +3,13 @@
 /**
  * 아이템 `⋯` 메뉴 — 삭제 · 수정 · 분류 변경.
  *
- * 선택된 아이템의 **우상단**에 뜬다(사용자 지시). 평소에는 아무것도 안 보이고,
- * 아이템을 클릭했을 때만 나타난다 — 캔버스에 버튼이 널려 있으면 글이 안 읽힌다.
+ * 아이템의 **우상단**에 뜬다(사용자 지시). 평소에는 아무것도 안 보이고,
+ * 마우스를 올리거나 클릭했을 때만 나타난다 — 캔버스에 버튼이 널려 있으면
+ * 글이 안 읽힌다.
+ *
+ * 열림 상태를 상위(`TextItem`)에도 알린다. hover만으로 뜨게 되면서, 메뉴를
+ * 펼쳐 둔 채 마우스가 글 밖으로 나가면 **메뉴가 통째로 사라지는** 상황이
+ * 생기기 때문이다. 상위가 그동안은 계속 그려 준다.
  */
 
 import { MoreHorizontal, Pencil, Tag, Trash2 } from "lucide-react";
@@ -17,11 +22,27 @@ interface Props {
   onEdit: () => void;
   onDelete: () => void;
   onTagChange: (tag: string | null) => void;
+  /** 메뉴(또는 분류 목록)가 펼쳐져 있나. */
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function ItemMenu({ tag, tagOptions, onEdit, onDelete, onTagChange }: Props) {
+export function ItemMenu({
+  tag,
+  tagOptions,
+  onEdit,
+  onDelete,
+  onTagChange,
+  onOpenChange,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
+
+  const expanded = open || tagOpen;
+  useEffect(() => {
+    onOpenChange?.(expanded);
+  }, [expanded, onOpenChange]);
+  // 사라질 때도 알려 준다 — 안 그러면 상위가 "열려 있다"고 믿은 채 남는다.
+  useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 

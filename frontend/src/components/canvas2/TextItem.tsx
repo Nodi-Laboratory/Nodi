@@ -121,6 +121,8 @@ function TextItemImpl(props: TextItemProps) {
 
   const [hover, setHover] = useState(false);
   const [dragging, setDragging] = useState(false);
+  /** ⋯ 메뉴가 펼쳐져 있나. 펼친 동안은 마우스가 나가도 메뉴를 붙잡아 둔다. */
+  const [menuOpen, setMenuOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     sx: number;
@@ -443,13 +445,17 @@ function TextItemImpl(props: TextItemProps) {
           </div>
         )}
 
-        {(selected || editing) && (
+        {/* hover만으로도 뜬다(사용자 지시) — 메뉴를 쓰려고 먼저 클릭해야 하는
+            단계를 없앤다. `menuOpen`을 함께 보는 이유는, 메뉴를 펼쳐 둔 채
+            마우스가 글 밖으로 나가면 메뉴가 통째로 사라지기 때문이다. */}
+        {(hover || selected || editing || menuOpen) && (
           <ItemMenu
             tag={item.tag}
             tagOptions={tagOptions}
             onEdit={() => onStartEdit(item.id)}
             onDelete={() => onDelete(item.id)}
             onTagChange={(t) => onTagChange(item.id, t)}
+            onOpenChange={setMenuOpen}
           />
         )}
       </div>
