@@ -57,15 +57,21 @@ export function ItemLayer({
   handlers,
 }: Props) {
   /**
-   * 답 → 그 답을 부른 질문 원문.
+   * 답 → 그 답을 부른 질문 원문. 출처가 둘이다:
    *
-   * 질문도 캔버스의 아이템이므로 부모를 따라가면 된다. 학생이 쓴 글에 대한
-   * 답일 때만 띄운다 — AI 글에 딸린 AI 글은 "질문"이 아니다.
+   *   하단 입력창   `data.askedQuestion` (질문은 아이템으로 만들지 않는다)
+   *   "AI에게 묻기"  부모 글의 본문
    */
   const questionOf = new Map<string, string>();
   for (const it of items) {
+    const carried = it.data.askedQuestion?.trim();
+    if (carried) {
+      questionOf.set(it.id, carried);
+      continue;
+    }
     if (!it.parentItemId) continue;
     const parent = items.find((p) => p.id === it.parentItemId);
+    // 학생이 쓴 글에 대한 답일 때만 — AI 글에 딸린 AI 글은 "질문"이 아니다.
     if (parent && parent.source === "user" && parent.body.trim()) {
       questionOf.set(it.id, parent.body.trim());
     }

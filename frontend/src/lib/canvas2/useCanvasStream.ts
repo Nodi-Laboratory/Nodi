@@ -111,6 +111,7 @@ function toPayload(it: CanvasItem): NewItemInput {
       it.kind === "figure" && it.data.figure
         ? { figure: { ...it.data.figure, url: "" } }
         : {
+            ...(it.data.askedQuestion ? { askedQuestion: it.data.askedQuestion } : {}),
             ...(it.data.askHidden ? { askHidden: true } : {}),
             ...(it.data.reflowDismissed ? { reflowDismissed: true } : {}),
           },
@@ -145,61 +146,22 @@ export function useCanvasStream({
       let current: CanvasItem | null = null;
 
       /**
-       * 질문을 캔버스에 남긴다 — **"AI 응답이 연결되지 않는다"의 근본 원인**.
+       * **연결선은 "AI에게 묻기"에서만 생긴다** (사용자 지시 2026-07-31).
        *
-       * 지금까지 연결선이 그려지는 유일한 경로는 "AI에게 묻기"였다. 입력창에
-       * 그냥 물으면 부모가 없었고, 질문 자체도 캔버스에 남지 않아 **연결할
-       * 대상이 아예 없었다.** 학생 화면에는 답만 덩그러니 생기고 무엇을 물었는지
-       * 알 수 없었다.
+       * 한때 하단 입력창의 질문도 학생 글(kind='note')로 캔버스에 남기고 답을
+       * 그 자식으로 달았다. 그러면 평범한 질문 한 번에 상자가 둘 생기고 캔버스가
+       * 금세 어수선해진다. 부모-자식 관계는 **학생이 자기 글을 짚어 물었을 때**만
+       * 의미가 있다 — 그때만 "이 글에 대한 답"이라는 관계가 실재한다.
        *
-       * 이제 질문이 학생 글(kind='note')로 남고 그 턴의 모든 응답·도판이 그
-       * 자식이 된다. 배치(layout.ts)가 자식을 부모 오른쪽에 두고 연결선이
-       * 자동으로 따라온다.
+       * 대신 질문 원문은 답 아이템의 `data.askedQuestion`에 실어 둔다. 상자를
+       * 하나 더 만들지 않으면서도 hover 툴팁이 "무엇을 물어본 답인지" 보여 줄 수
+       * 있다(QuestionTip).
        */
       const askedFrom = opts?.parentItemId ?? null;
-      const questionItem: CanvasItem | null = askedFrom
-        ? null // "AI에게 묻기" — 이미 있는 메모가 부모다
-        : {
-            id: tempId(),
-            sessionId,
-            nodeId: null,
-            parentItemId: null,
-            kind: "note",
-            source: "user",
-            title: null,
-            body: q,
-            tag: null,
-            x: 0,
-            y: 0,
-            pinned: false,
-            seq: baseSeq,
-            data: { askHidden: true }, // 이미 물어본 글이다 — 버튼을 또 띄우지 않는다
-          };
-      if (questionItem) {
-        made.push(questionItem);
-        upsertLocal([questionItem]);
-      }
-      const parentItemId = askedFrom ?? questionItem?.id ?? null;
-
-      /**
-       * 질문 아이템을 **먼저, 따로** 저장한다.
-       *
-       * 한 번에 몰아 보내면 저장 시점에 질문의 서버 id가 아직 없다(`tmp-1`).
-       * 그러면 아래 `isRealId` 가드에 걸려 응답들의 `parent_item_id`가 전부
-       * null로 떨어진다 — 화면에는 연결선이 보이는데(로컬 관계는 살아 있다)
-       * 새로고침하면 사라진다. **실측 2026-07-31: canvas_items의
-       * parent_item_id가 전 행 null이었다.** 사용자가 계속 지적한 "ai 응답이
-       * 캔버스에서 제대로 연결되지 않음"의 실제 원인이 이것이다.
-       *
-       * 스트림을 기다리지 않고 바로 띄운다 — 응답이 나오는 동안 왕복이
-       * 끝나므로 체감 지연이 없다. 실패하면 null 부모로 떨어질 뿐 턴은 산다.
-       */
-      const questionSaved: Promise<CanvasItem | null> = questionItem
-        ? createItems(sessionId, [toPayload(questionItem)]).then(
-            (rows) => rows[0] ?? null,
-            () => null,
-          )
-        : Promise.resolve(null);
+      const parentItemId = askedFrom;
+      // 하단 입력창으로 물었을 때만 원문을 싣는다. "AI에게 묻기"는 부모 글이
+      // 곧 질문이라 중복이다.
+      const askedQuestion = askedFrom ? undefined : q;
 
       const flush = () => {
         if (made.length) upsertLocal([...made]);
@@ -225,7 +187,9 @@ export function useCanvasStream({
               y: 0,
               pinned: false,
               seq: baseSeq + made.length,
-              data: {},
+              // 하단 입력창으로 물었으면 원문을 싣는다 — 상자를 하나 더 만들지
+              // 않고도 hover 툴팁이 "무엇을 물어본 답인지" 보여 준다.
+              data: askedQuestion ? { askedQuestion } : {},
               _pending: true,
             };
             made.push(current);
@@ -291,6 +255,7 @@ export function useCanvasStream({
                   pinned: false,
                   seq: baseSeq + made.length,
                   data: {
+                    ...(askedQuestion ? { askedQuestion } : {}),
                     figure: {
                       figureId: f.figure_id,
                       fileId: f.file_id,
@@ -320,25 +285,13 @@ export function useCanvasStream({
       flush();
       setBusy(false);
 
-      // 먼저 보낸 질문이 서버에 자리를 잡았으면 임시 id를 갈아 끼우고,
-      // 이 턴의 자식들이 그 **진짜 id**를 부모로 들게 한다.
-      const savedQuestion = await questionSaved;
-      if (questionItem && savedQuestion) {
-        for (const it of made) {
-          if (it.parentItemId === questionItem.id) it.parentItemId = savedQuestion.id;
-        }
-        onPersisted([questionItem.id], [savedQuestion]);
-      }
+      if (!made.length) return;
 
-      // 질문은 이미 저장했다 — 두 번 보내면 캔버스에 같은 글이 둘 생긴다.
-      const rest = questionItem ? made.filter((m) => m.id !== questionItem.id) : made;
-      if (!rest.length) return;
-
-      // 나머지는 완료 시 한 번에(스트리밍 중 매 토큰 PATCH는 수백 왕복이 된다).
-      const payload: NewItemInput[] = rest.map(toPayload);
+      // 완료 시 한 번에 저장한다(스트리밍 중 매 토큰 PATCH는 수백 왕복이 된다).
+      const payload: NewItemInput[] = made.map(toPayload);
       try {
         const saved = await createItems(sessionId, payload);
-        const tempIds = rest.map((i) => i.id);
+        const tempIds = made.map((i) => i.id);
         onPersisted(tempIds, saved);
         // 임시 id가 서버 id로 바뀌면 추종 대상도 갱신해야 한다 —
         // 안 하면 사라진 id를 쫓다가 조용히 실패한다.
