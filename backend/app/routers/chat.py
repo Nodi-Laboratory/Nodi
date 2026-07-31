@@ -39,6 +39,7 @@ from ..config import get_settings
 from ..db.client import UserClient
 from ..services import (
     app_settings,
+    canvas_items,
     figure_search,
     gemini,
     rag,
@@ -226,19 +227,36 @@ async def chat_stream(
     session_file_sources = session_file_result["files"] if session_file_result else []
     existing_root = session.get("root_node_id")
 
-    # D89: 이 세션에서 이미 쓰인 분류 태그를 tag_guide 블록으로 주입해 같은 주제
-    # 새 개념이 기존 태그를 재사용하게 한다. 이미 로드된 nodes(created_at.asc)를
-    # 재사용 — 추가 DB 조회 없음. 순수 함수라 예외 여지가 거의 없지만 컨텍스트
-    # 빌더 best-effort 불변식에 맞춰 방어적으로 None 폴백.
-    # D109: ReAct에서는 `list_session_concepts` 스킬이 이 일을 대신한다 —
-    # 첫 질문이나 분류가 자명한 턴에는 아예 조회하지 않는다.
+    # D89/D135: 이 세션에서 이미 쓰인 분류 태그를 tag_guide 블록으로 **항상**
+    # 주입한다. 같은 주제의 새 개념이 기존 태그를 글자 그대로 재사용해야
+    # 캔버스에서 한 열로 묶인다.
+    #
+    # D109에서 ReAct로 옮기며 이 주입을 껐다 — `list_session_concepts` 스킬이
+    # 대신한다고 봤기 때문이다. **그게 틀렸다.** 그 스킬은 모델이 부를지 말지
+    # 정하는 선택지이고("분류가 자명하면 부르지 않아도 된다"), 실제로 거의
+    # 부르지 않는다. 보장이 권유로 바뀌면서 태그가 매 턴 새로 만들어졌다.
+    #
+    # 실측(2026-07-31, 로컬 세션 2개):
+    #   개념 18개 → 태그 10종, 열당 평균 1.5~1.8개
+    #   "생명과학"/"생명과학 기초", "교육"/"교육 기술"처럼 같은 주제가 갈리고
+    #   광합성 개념 셋이 서로 다른 세 열로 흩어졌다 — 묶기가 아예 작동하지 않았다.
+    #
+    # 태그 출처도 canvas_items로 옮긴다. nodes.answer 파싱은 **학생이 직접 바꾼
+    # 분류를 못 본다**(D122로 태그의 소유자가 canvas_items가 됐다). 레거시 세션
+    # (canvas_items가 비어 있음)만 옛 파서로 떨어진다.
     tag_context = None
-    if not react_on:
-        try:
+    try:
+        used_tags = await canvas_items.session_tags(client, body.session_id)
+        if not used_tags:
             used_tags = solar.extract_used_tags(nodes)
-            tag_context = ", ".join(used_tags) if used_tags else None
-        except Exception:
-            tag_context = None
+        tag_context = ", ".join(used_tags) if used_tags else None
+    except Exception:
+        # 컨텍스트 빌더는 best-effort — 태그 안내가 없다고 턴을 죽이지 않는다.
+        # **다만 조용히 넘기지는 않는다.** 이 기능이 처음 망가진 방식이 정확히
+        # "실패가 아무 흔적도 남기지 않는 것"이었다(실제로 여기서 미지원 필터
+        # 문법으로 예외가 났는데 로그가 없어 재사용이 되는 줄 알았다).
+        logger.warning("태그 목록 조회 실패 — 이번 턴은 태그 안내 없이 간다", exc_info=True)
+        tag_context = None
 
     # Turn log (D25) + structured prompt composition (D35). compose_system_structured
     # is the SINGLE source of truth for both the system prompt string AND each

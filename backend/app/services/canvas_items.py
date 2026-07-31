@@ -108,6 +108,41 @@ async def list_canvas(client: UserClient, session_id: str) -> dict[str, Any]:
     }
 
 
+async def session_tags(
+    client: UserClient, session_id: str, cap: int = 40
+) -> list[str]:
+    """이 세션에서 이미 쓰인 분류 태그 — **첫 등장 순서**로 (D135).
+
+    ## 왜 canvas_items에서 읽나
+
+    태그의 진짜 소유자는 이 표다. 예전 경로(`solar.extract_used_tags`)는
+    `nodes.answer` 본문에서 `@concept:` 줄을 정규식으로 긁었는데, 그러면
+    **학생이 ⋯ 메뉴로 직접 바꾼 분류가 AI에게 안 보인다.** 학생이 "생명과학
+    기초"를 "생명과학"으로 고쳐 놔도 모델은 계속 옛 태그를 만들어 낸다.
+
+    실패해도 턴을 막지 않는다 — 태그 안내는 있으면 좋은 것이지 필수가 아니다
+    ("RAG는 채팅을 절대 막지 않는다"와 같은 정신).
+    """
+    # `not.is.null`은 이 클라이언트가 지원하지 않는다(`is.null`만 있다).
+    # 넣었다가 UnsupportedQuery로 조용히 죽었다 — 걸러내기는 파이썬에서 한다.
+    rows = await client.select(
+        "canvas_items",
+        {
+            "select": "tag,seq",
+            "session_id": f"eq.{session_id}",
+            "order": "seq.asc",
+        },
+    )
+    out: list[str] = []
+    for r in rows:
+        t = (r.get("tag") or "").strip()
+        if t and t not in out:
+            out.append(t)
+        if len(out) >= cap:
+            break
+    return out
+
+
 def _clean_new(session_id: str, raw: dict[str, Any]) -> dict[str, Any]:
     """생성 입력 1건 검증 + 정규화. 알 수 없는 키는 버린다."""
     kind = str(raw.get("kind") or "concept")
