@@ -54,6 +54,8 @@ export function useSessionBinding(spaceId: string): {
     resolvedFor.current = spaceId;
 
     let cancelled = false;
+    /** 이번 시도가 끝까지 갔나. 안 갔으면 표시를 되돌려 다시 시도하게 둔다. */
+    let settled = false;
     const target = spaceTargetFromId(spaceId);
     void (async () => {
       try {
@@ -61,10 +63,14 @@ export function useSessionBinding(spaceId: string): {
         if (cancelled) return;
         if (list.length) {
           setActiveSession(list[0].id);
+          settled = true;
           return;
         }
         const made = await createSession(target);
-        if (!cancelled) setActiveSession(made.id);
+        if (!cancelled) {
+          setActiveSession(made.id);
+          settled = true;
+        }
       } catch {
         // 세션을 못 만들면 캔버스는 읽기 전용으로 뜬다. 상위가 배너를 띄운다.
         if (!cancelled) resolvedFor.current = null;
@@ -72,6 +78,22 @@ export function useSessionBinding(spaceId: string): {
     })();
     return () => {
       cancelled = true;
+      /**
+       * **끝내지 못한 시도는 표시를 지운다.**
+       *
+       * 표시를 비동기 작업 *전에* 찍는데, 개발의 React StrictMode는 이펙트를
+       * mount → cleanup → mount로 두 번 돌린다. 1차가 표시를 찍고 시작한 조회는
+       * cleanup에서 취소되고, 2차는 "이미 해결했다"며 그냥 돌아온다 — **아무도
+       * 세션을 정하지 않은 채 끝난다.**
+       *
+       * 실측(2026-07-31): 홈에서 링크로 캔버스에 들어가면 `/canvas` 요청이 아예
+       * 나가지 않고 입력창이 "세션을 준비하는 중이에요"로 영구히 비활성이었다.
+       * 같은 주소를 새로고침하면 정상이라 눈에 잘 안 띄었다.
+       *
+       * 완료한 시도만 표시를 남기므로, 세션이 없을 때 새로 만드는 일이 반복되지
+       * 않는다는 원래 보호는 그대로다(성공하면 activeSessionId가 차서 위 가드가 막는다).
+       */
+      if (!settled) resolvedFor.current = null;
     };
   }, [spaceId, activeSessionId, setActiveSession]);
 

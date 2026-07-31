@@ -530,7 +530,12 @@ export function CanvasWorkspace({ spaceId }: Props) {
             onClose={() => setDrawerOpen(false)}
             target={target}
           />
-          {items.length === 0 && <EmptyHint />}
+          {/* **비었다고 말하기 전에 비었는지 알아야 한다.**
+              `items.length === 0`만 보면 불러오는 동안에도 "여기에 답이
+              펼쳐집니다"가 뜬다 — 글이 20개 든 세션을 열어도 몇 초간
+              빈 캔버스라고 말하는 셈이다(실측: 191ms부터 4초 내내).
+              세션이 잡히고 스냅샷이 도착한 뒤에만 판단한다. */}
+          {!!sessionId && !!snapshot && items.length === 0 && <EmptyHint />}
           {banner && <SaveBanner message={banner} onClose={store.clearError} />}
           {store.undo && <UndoToast label={store.undo.label} onUndo={store.undo.run} />}
           <Minimap
