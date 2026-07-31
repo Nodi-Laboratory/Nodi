@@ -372,16 +372,17 @@ export function CanvasWorkspace({ spaceId }: Props) {
   }, []);
 
   /**
-   * 올가미 — 사각형에 **조금이라도 걸친** 아이템을 고른다 (사용자 지시
-   * 2026-07-31: "요소의 일부만 들어가도 선택에 포함되도록").
+   * 올가미 — 사각형에 **조금이라도 걸친** 것을 고른다 (사용자 지시 2026-07-31:
+   * "요소의 일부만 들어가도 선택에 포함되도록", "모든 요소가 동일하게 선택").
    *
    * 한때 Excalidraw와 규칙을 맞추려고 완전 포함으로 뒀는데, 긴 문단을 고르려면
-   * 화면을 다 덮도록 끌어야 해서 실제로 쓰기 나빴다. 사용자 판단이 맞다.
+   * 화면을 다 덮도록 끌어야 해서 실제로 쓰기 나빴다.
    *
-   * **다만 Excalidraw의 도형 선택은 여전히 완전 포함이다**(저쪽 규칙이라 우리가
-   * 못 바꾼다. 실측 2026-07-31). 즉 한 번의 드래그로 글은 걸치기만 해도 잡히고
-   * 도형은 감싸야 잡힌다 — 이 비대칭은 알고 남겨 둔 것이다.
+   * **글과 도형이 같은 규칙을 쓴다.** Excalidraw의 올가미는 완전 포함이라
+   * 그대로 두면 같은 드래그가 글은 잡고 도형은 놓친다. 저쪽 판정을 바꿀 수는
+   * 없으므로 선택 **결과**를 우리가 계산해 덮어쓴다(`bridge.selectElementsIn`).
    */
+  const { selectElementsIn } = bridge;
   const handleMarquee = useCallback(
     (rect: { x: number; y: number; w: number; h: number }, add: boolean) => {
       const hit = items
@@ -394,8 +395,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
         .map((i) => i.id);
       setSelectedIds((prev) => (add ? new Set([...prev, ...hit]) : new Set(hit)));
       setEditingId(null);
+      selectElementsIn(rect, add);
     },
-    [items, layout],
+    [items, layout, selectElementsIn],
   );
 
   // 글쓰기 도구로 빈 곳 클릭 → 그 자리에 빈 글을 만들고 바로 편집 모드로.

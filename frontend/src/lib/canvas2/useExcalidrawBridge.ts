@@ -26,6 +26,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Camera, Rect, ToolName } from "./types";
 import { isPassThroughTool } from "./types";
+import { inflate, intersects } from "./rect";
 
 /** 우리가 쓰는 것만 추린 Excalidraw API 표면. */
 export interface ExcalidrawApi {
@@ -39,6 +40,8 @@ export interface ExcalidrawApi {
     activeTool: { type: string; locked?: boolean };
     /** 편집 중인 Excalidraw 텍스트 요소 id. 있으면 키 입력을 가로채면 안 된다. */
     editingTextElement?: { id: string } | null;
+    /** 지금 선택된 도형들. 올가미 결과를 덮어쓸 때 기준이 된다. */
+    selectedElementIds?: Record<string, boolean>;
   };
   getSceneElements: () => readonly ExcalidrawElementLike[];
   updateScene: (data: { appState?: Record<string, unknown> }) => void;
@@ -56,6 +59,18 @@ export interface ExcalidrawElementLike {
   isDeleted?: boolean;
   /** 요소를 고칠 때마다 오른다. 변경 감지에 쓴다(ExcalidrawLayer). */
   version?: number;
+  /** 그룹 소속. 하나가 잡히면 같은 그룹 전체가 잡혀야 한다. */
+  groupIds?: readonly string[];
+}
+
+/** 음수 폭/높이(역방향으로 그린 도형)를 정규화한 사각형. */
+function boundsOf(el: ExcalidrawElementLike): Rect {
+  return {
+    x: el.width < 0 ? el.x + el.width : el.x,
+    y: el.height < 0 ? el.y + el.height : el.y,
+    w: Math.abs(el.width),
+    h: Math.abs(el.height),
+  };
 }
 
 const IDENTITY: Camera = { scrollX: 0, scrollY: 0, zoom: 1 };
@@ -98,6 +113,11 @@ export interface Bridge {
   overlayInteractive: boolean;
   /** 그림 요소들의 바운딩 박스(패딩 포함) — 배치 엔진의 장애물. */
   getObstacles: () => Rect[];
+  /**
+   * 올가미 사각형에 **걸친** 도형을 고른다(Excalidraw 선택을 우리가 정한다).
+   * `additive`면 기존 선택에 더한다.
+   */
+  selectElementsIn: (rect: Rect, additive: boolean) => void;
   /** 카메라를 직접 설정(스프링·미니맵 이동용). */
   applyCamera: (c: Camera) => void;
   /** screen(클라이언트) 좌표 → world */
@@ -235,19 +255,48 @@ export function useExcalidrawBridge(): Bridge {
       if (el.isDeleted) continue;
       // 음수 폭/높이(역방향으로 그린 도형)를 정규화한다 — 그대로 두면
       // 사각형 교차 판정이 전부 거짓이 되어 장애물이 무시된다.
-      const x = el.width < 0 ? el.x + el.width : el.x;
-      const y = el.height < 0 ? el.y + el.height : el.y;
-      const w = Math.abs(el.width);
-      const h = Math.abs(el.height);
-      out.push({
-        x: x - OBSTACLE_PAD,
-        y: y - OBSTACLE_PAD,
-        w: w + OBSTACLE_PAD * 2,
-        h: h + OBSTACLE_PAD * 2,
-      });
+      out.push(inflate(boundsOf(el), OBSTACLE_PAD));
     }
     return out;
   }, [api]);
+
+  /**
+   * 올가미 결과를 **우리가 정해서 Excalidraw에 밀어 넣는다**.
+   *
+   * 사용자 요구는 "모든 요소가 동일하게 선택되어야 한다"인데, Excalidraw의
+   * 올가미는 **완전히 감싸야** 도형을 잡는다(실측). 그 규칙은 저쪽 내부라
+   * 바꿀 수 없어서, 대신 선택 **결과**를 덮어쓴다.
+   *
+   * 다음 프레임에 적용하는 것이 핵심이다. 우리 pointerup 리스너는 window
+   * 캡처라 Excalidraw보다 **먼저** 돈다 — 같은 프레임에 쓰면 저쪽이 자기
+   * 판정으로 곧바로 덮어쓴다.
+   *
+   * 그룹은 통째로 잡는다. 한 조각만 선택되면 이동·삭제가 그룹을 쪼갠다.
+   */
+  const selectElementsIn = useCallback(
+    (rect: Rect, additive: boolean) => {
+      if (!api) return;
+      requestAnimationFrame(() => {
+        const els = api.getSceneElements().filter((e) => !e.isDeleted);
+        const hit = els.filter((e) => intersects(rect, boundsOf(e)));
+
+        const groups = new Set(hit.flatMap((e) => e.groupIds ?? []));
+        const ids = new Set(hit.map((e) => e.id));
+        if (groups.size) {
+          for (const e of els) {
+            if ((e.groupIds ?? []).some((g) => groups.has(g))) ids.add(e.id);
+          }
+        }
+
+        const next: Record<string, boolean> = additive
+          ? { ...(api.getAppState().selectedElementIds ?? {}) }
+          : {};
+        for (const id of ids) next[id] = true;
+        api.updateScene({ appState: { selectedElementIds: next } });
+      });
+    },
+    [api],
+  );
 
   const applyCamera = useCallback(
     (c: Camera) => {
@@ -317,6 +366,7 @@ export function useExcalidrawBridge(): Bridge {
       setTool,
       overlayInteractive,
       getObstacles,
+      selectElementsIn,
       applyCamera,
       toWorld,
     }),
@@ -329,6 +379,7 @@ export function useExcalidrawBridge(): Bridge {
       setTool,
       overlayInteractive,
       getObstacles,
+      selectElementsIn,
       applyCamera,
       toWorld,
     ],
