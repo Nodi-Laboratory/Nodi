@@ -1433,6 +1433,8 @@ $$;
 -- ===========================================================================
 
 
+-- 드래그 한 번이 UPDATE 한 번이다 — 같은 페이지에 새 버전을 쓸 자리를
+-- 남겨야 HOT 갱신이 되고 인덱스를 안 건드린다 (D146, 실측: HOT 1.7% → 56.7%).
 CREATE TABLE IF NOT EXISTS public.canvas_items (
     id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id     uuid NOT NULL REFERENCES public.sessions(id) ON DELETE CASCADE,
@@ -1462,8 +1464,10 @@ CREATE TABLE IF NOT EXISTS public.canvas_items (
 
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
-);
+)
+WITH (fillfactor = 80);
 
+-- 획 하나마다 장면 전체를 다시 쓴다 (D146).
 CREATE TABLE IF NOT EXISTS public.canvas_drawings (
     -- 세션당 1행. Excalidraw 요소는 개수가 많고 자주 바뀌어서 요소당 1행은
     -- 너무 잦다. 씬 전체를 담고 프론트가 디바운스 저장한다.
@@ -1471,7 +1475,8 @@ CREATE TABLE IF NOT EXISTS public.canvas_drawings (
     elements   jsonb NOT NULL DEFAULT '[]'::jsonb,
     files      jsonb NOT NULL DEFAULT '{}'::jsonb,
     updated_at timestamptz NOT NULL DEFAULT now()
-);
+)
+WITH (fillfactor = 85);
 
 CREATE INDEX IF NOT EXISTS idx_canvas_items_session
     ON public.canvas_items (session_id, seq, created_at);
