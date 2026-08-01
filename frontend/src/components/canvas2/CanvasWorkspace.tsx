@@ -32,6 +32,7 @@ import type { CanvasItem } from "@/lib/canvas2/types";
 import { spaceTargetFromId } from "@/lib/api";
 import { useSessionDetail } from "@/lib/queries";
 import { intersects, union } from "@/lib/canvas2/rect";
+import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
@@ -478,6 +479,49 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [cameraRef, flyTo],
   );
 
+  /**
+   * 도형을 끄는 동안 **함께 선택된 우리 글도 같이 옮긴다** (D120).
+   *
+   * Excalidraw가 도형을 옮기는 사이 우리 글이 제자리에 남으면, 함께 골라 놓고
+   * 움직였는데 절반만 따라오는 셈이다. 아이템 드래그와 같은 방식으로 —
+   * 끄는 동안은 DOM transform만 고치고(React를 거치면 60fps에 버벅인다),
+   * 손을 뗄 때 한 번 저장한다.
+   */
+  const handleShapeDrag = useCallback(
+    (dx: number, dy: number, done: boolean) => {
+      if (!selectedIds.size) return;
+      const ids = [...selectedIds];
+      if (!done) {
+        const shift = `translate(${dx}px, ${dy}px)`;
+        for (const id of ids) {
+          const el = document.querySelector<HTMLElement>(
+            `[data-canvas-item="${CSS.escape(id)}"]`,
+          );
+          if (!el) continue;
+          el.style.transition = "none";
+          el.style.transform = shift;
+        }
+        setDragOffsets(ids, dx, dy);
+        return;
+      }
+      clearDragOffsets();
+      for (const id of ids) {
+        const el = document.querySelector<HTMLElement>(
+          `[data-canvas-item="${CSS.escape(id)}"]`,
+        );
+        if (el) el.style.transition = "";
+      }
+      // 움직이지 않았으면(그냥 클릭) 저장할 것이 없다.
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+      for (const id of ids) {
+        const pos = layout.positions.get(id);
+        if (!pos) continue;
+        patch(id, { x: pos.x + dx, y: pos.y + dy, pinned: true });
+      }
+    },
+    [selectedIds, layout, patch],
+  );
+
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
   const sessionTitle = detail?.session?.title?.trim() || "새 대화";
 
@@ -535,6 +579,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onCanvasClick={handleCreateNote}
       onBackgroundClick={handleBackgroundClick}
       onMarquee={handleMarquee}
+      onShapeDrag={handleShapeDrag}
       chrome={
         <>
           <CanvasTopBar

@@ -117,6 +117,11 @@ export interface Bridge {
    * `additive`면 기존 선택에 더한다.
    */
   selectElementsIn: (rect: Rect, additive: boolean) => void;
+  /**
+   * 이 world 점에 도형의 **몸**이 있나(잉크 기준, D141).
+   * 올가미를 시작해도 되는 빈 곳인지 가리는 데 쓴다.
+   */
+  elementAtPoint: (p: { x: number; y: number }, tolerance: number) => boolean;
   /** 지금 Excalidraw 도형이 하나라도 선택돼 있나. */
   hasElementSelection: () => boolean;
   /** 도형 선택을 비운다(우리 글을 단독 선택할 때). */
@@ -345,6 +350,22 @@ export function useExcalidrawBridge(): Bridge {
     [applyCamera],
   );
 
+  const elementAtPoint = useCallback(
+    (p: { x: number; y: number }, tolerance: number) => {
+      if (!api) return false;
+      const r: Rect = {
+        x: p.x - tolerance,
+        y: p.y - tolerance,
+        w: tolerance * 2,
+        h: tolerance * 2,
+      };
+      return api
+        .getSceneElements()
+        .some((e) => !e.isDeleted && elementHitsRect(e, r));
+    },
+    [api],
+  );
+
   const hasElementSelection = useCallback(() => {
     const ids = api?.getAppState().selectedElementIds;
     return !!ids && Object.values(ids).some(Boolean);
@@ -381,6 +402,7 @@ export function useExcalidrawBridge(): Bridge {
       overlayInteractive,
       getObstacles,
       selectElementsIn,
+      elementAtPoint,
       hasElementSelection,
       clearElementSelection,
       applyCamera,
@@ -396,6 +418,7 @@ export function useExcalidrawBridge(): Bridge {
       overlayInteractive,
       getObstacles,
       selectElementsIn,
+      elementAtPoint,
       hasElementSelection,
       clearElementSelection,
       applyCamera,

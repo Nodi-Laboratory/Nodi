@@ -54,6 +54,8 @@ const MARQUEE_MIN_PX = 5;
  * 안 풀린다.** 여유를 두되 사람이 느끼지 못할 만큼만.
  */
 const SELECTION_SETTLE_MS = 90;
+/** 도형을 "집었다"고 볼 화면 반경(px). Excalidraw의 잡기 여유와 비슷하게. */
+const GRAB_TOLERANCE_PX = 10;
 
 interface Props {
   bridge: Bridge;
@@ -72,6 +74,11 @@ interface Props {
    * `add`면 기존 선택에 더한다(Shift).
    */
   onMarquee?: (rect: { x: number; y: number; w: number; h: number }, add: boolean) => void;
+  /**
+   * 도형을 끄는 동안(Excalidraw가 도형을 옮긴다) world 이동량을 알린다.
+   * 함께 선택된 우리 글도 같이 따라가야 한다. `done`이면 마지막 호출이다.
+   */
+  onShapeDrag?: (dx: number, dy: number, done: boolean) => void;
   viewOnly?: boolean;
   /** 화면 고정 UI(상단바·입력창 등) */
   chrome?: React.ReactNode;
@@ -87,6 +94,7 @@ export function CanvasStage({
   onCanvasClick,
   onBackgroundClick,
   onMarquee,
+  onShapeDrag,
   viewOnly = false,
   chrome,
   children,
@@ -136,13 +144,15 @@ export function CanvasStage({
   //   선택 도구    → 끌면 올가미(marquee), 그냥 누르면 선택 해제.
   //   그 외        → 아무것도 하지 않는다. 전파도 끊지 않는다(팬·그리기가
   //                  계속 돌아야 한다).
-  const { toWorld, hasElementSelection } = bridge;
+  const { toWorld, hasElementSelection, elementAtPoint, cameraRef } = bridge;
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
 
     /** 올가미 시작점. 화면·world를 함께 들고 있는다. null이면 올가미 중이 아니다. */
     let from: { sx: number; sy: number; wx: number; wy: number } | null = null;
+    /** 도형을 끄는 중이면 그 시작 화면 좌표. 우리 글도 같이 옮긴다. */
+    let shapeFrom: { sx: number; sy: number } | null = null;
 
     const onDown = (e: PointerEvent) => {
       const t = e.target as HTMLElement;
@@ -165,11 +175,41 @@ export function CanvasStage({
       // 올가미 사각형도 저쪽이 그린다. 우리가 하나 더 그리면 두 겹이 된다.
       if (activeTool === "selection") {
         const w = toWorld(e.clientX, e.clientY, root.getBoundingClientRect());
+        /**
+         * **도형 위에서 시작한 드래그는 올가미가 아니다** — 그 도형을 옮기는
+         * 중이다(Excalidraw가 처리한다).
+         *
+         * 이걸 가리지 않으면 도형을 끌 때마다 우리가 올가미로 오해하고, 그
+         * 사각형에 걸린 글이 없으면 **선택을 통째로 비운다.** 실측: 글+도형을
+         * 함께 고른 뒤 도형을 끌면 글 선택이 1 → 0으로 사라졌다.
+         *
+         * 판정은 잉크 기준이다(D141) — 속이 빈 도형의 가운데에서 시작한
+         * 드래그는 Excalidraw도 잡지 않으므로 올가미가 맞다.
+         */
+        const tol = GRAB_TOLERANCE_PX / (cameraRef.current.zoom || 1);
+        if (elementAtPoint(w, tol)) {
+          // 함께 선택된 우리 글도 같은 양만큼 따라가게 이동량을 흘린다.
+          shapeFrom = { sx: e.clientX, sy: e.clientY };
+          return;
+        }
         from = { sx: e.clientX, sy: e.clientY, wx: w.x, wy: w.y };
       }
     };
 
+    const onShapeMove = (e: PointerEvent) => {
+      if (!shapeFrom) return;
+      const z = cameraRef.current.zoom || 1;
+      onShapeDrag?.((e.clientX - shapeFrom.sx) / z, (e.clientY - shapeFrom.sy) / z, false);
+    };
+
     const onUp = (e: PointerEvent) => {
+      if (shapeFrom) {
+        const z = cameraRef.current.zoom || 1;
+        const dx = (e.clientX - shapeFrom.sx) / z;
+        const dy = (e.clientY - shapeFrom.sy) / z;
+        shapeFrom = null;
+        onShapeDrag?.(dx, dy, true);
+      }
       const f = from;
       from = null;
       if (!f) return;
@@ -210,12 +250,14 @@ export function CanvasStage({
 
     root.addEventListener("pointerdown", onDown, { capture: true });
     // window에서 받는다 — 캔버스 밖에서 손을 떼도 올가미가 끝나야 한다.
+    window.addEventListener("pointermove", onShapeMove, { capture: true });
     window.addEventListener("pointerup", onUp, { capture: true });
     return () => {
       root.removeEventListener("pointerdown", onDown, { capture: true });
+      window.removeEventListener("pointermove", onShapeMove, { capture: true });
       window.removeEventListener("pointerup", onUp, { capture: true });
     };
-  }, [activeTool, onCanvasClick, onBackgroundClick, onMarquee, toWorld, hasElementSelection]);
+  }, [activeTool, onCanvasClick, onBackgroundClick, onMarquee, toWorld, hasElementSelection, elementAtPoint, cameraRef, onShapeDrag]);
 
   return (
     <div
