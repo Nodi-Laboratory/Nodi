@@ -335,6 +335,36 @@ CREATE TABLE public.class_members (
     CONSTRAINT class_members_role_in_class_check CHECK ((role_in_class = ANY (ARRAY['student'::text, 'teacher'::text])))
 );
 
+-- D144: 정책이 **행마다** 부르지 않도록, 같은 판정을 집합으로 돌려주는 형태.
+-- 정책에서 `x IN (SELECT ...)`로 쓰면 우변이 상관되지 않아 플래너가 한 번만
+-- 실행하고 해시로 만든다. 조건은 위 is_* 함수들의 본문과 **글자 그대로 같다**
+-- (실측: 캔버스 읽기 42.7ms → 2.2ms, 대량 수정 382ms → 38.6ms).
+
+CREATE FUNCTION public.accessible_session_ids() RETURNS SETOF uuid
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+    AS $$
+    SELECT s.id
+    FROM public.sessions s
+    WHERE s.owner_id = auth.uid()
+       OR (s.space_kind = 'class' AND public.is_class_teacher(s.space_ref));
+$$;
+
+CREATE FUNCTION public.my_class_ids() RETURNS SETOF uuid
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+    AS $$
+    SELECT cm.class_id FROM public.class_members cm WHERE cm.user_id = auth.uid();
+$$;
+
+CREATE FUNCTION public.my_taught_class_ids() RETURNS SETOF uuid
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+    AS $$
+    SELECT cm.class_id
+    FROM public.class_members cm
+    WHERE cm.user_id = auth.uid() AND cm.role_in_class = 'teacher'
+    UNION
+    SELECT c.id FROM public.classes c WHERE c.teacher_id = auth.uid();
+$$;
+
 CREATE FUNCTION public.join_class_by_code(p_code text) RETURNS public.class_members
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
@@ -749,26 +779,26 @@ ALTER TABLE public.ai_logs ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY ai_logs_insert_own ON public.ai_logs FOR INSERT WITH CHECK ((owner_id = ( SELECT auth.uid() AS uid)));
 
-CREATE POLICY ai_logs_select_admin ON public.ai_logs FOR SELECT USING (public.is_admin());
+CREATE POLICY ai_logs_select_admin ON public.ai_logs FOR SELECT USING ((SELECT public.is_admin()));
 
 CREATE POLICY ai_logs_select_own ON public.ai_logs FOR SELECT USING ((owner_id = ( SELECT auth.uid() AS uid)));
 
 ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY app_settings_admin_insert ON public.app_settings FOR INSERT WITH CHECK (public.is_admin());
+CREATE POLICY app_settings_admin_insert ON public.app_settings FOR INSERT WITH CHECK ((SELECT public.is_admin()));
 
-CREATE POLICY app_settings_admin_select ON public.app_settings FOR SELECT USING (public.is_admin());
+CREATE POLICY app_settings_admin_select ON public.app_settings FOR SELECT USING ((SELECT public.is_admin()));
 
-CREATE POLICY app_settings_admin_update ON public.app_settings FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
+CREATE POLICY app_settings_admin_update ON public.app_settings FOR UPDATE USING ((SELECT public.is_admin())) WITH CHECK ((SELECT public.is_admin()));
 
 ALTER TABLE public.class_members ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY class_members_delete_self ON public.class_members FOR DELETE USING ((user_id = ( SELECT auth.uid() AS uid)));
 
-CREATE POLICY class_members_select ON public.class_members FOR SELECT USING (((user_id = ( SELECT auth.uid() AS uid)) OR public.is_class_member(class_id)));
+CREATE POLICY class_members_select ON public.class_members FOR SELECT USING (((user_id = ( SELECT auth.uid() AS uid)) OR class_id IN (SELECT public.my_class_ids())));
 
 -- D113: 관리자 전역 읽기 — "이 대화가 어느 학급의 누구인가"를 콘솔이 잇는다.
-CREATE POLICY class_members_select_admin ON public.class_members FOR SELECT USING (public.is_admin());
+CREATE POLICY class_members_select_admin ON public.class_members FOR SELECT USING ((SELECT public.is_admin()));
 
 ALTER TABLE public.classes ENABLE ROW LEVEL SECURITY;
 
@@ -776,11 +806,11 @@ CREATE POLICY classes_insert_teacher ON public.classes FOR INSERT WITH CHECK (((
    FROM public.profiles p
   WHERE ((p.id = ( SELECT auth.uid() AS uid)) AND (p.role = 'teacher'::text))))));
 
-CREATE POLICY classes_select_member ON public.classes FOR SELECT USING (((teacher_id = ( SELECT auth.uid() AS uid)) OR public.is_class_member(id)));
+CREATE POLICY classes_select_member ON public.classes FOR SELECT USING (((teacher_id = ( SELECT auth.uid() AS uid)) OR id IN (SELECT public.my_class_ids())));
 
 -- D113: 관리자 전역 읽기. 없으면 관리자에게 학급 목록이 **통째로 비어**
 -- (실측 0건) RAG 테스트의 검색 범위를 고를 수조차 없다.
-CREATE POLICY classes_select_admin ON public.classes FOR SELECT USING (public.is_admin());
+CREATE POLICY classes_select_admin ON public.classes FOR SELECT USING ((SELECT public.is_admin()));
 
 CREATE POLICY classes_update_teacher ON public.classes FOR UPDATE USING ((teacher_id = ( SELECT auth.uid() AS uid))) WITH CHECK ((teacher_id = ( SELECT auth.uid() AS uid)));
 
@@ -788,7 +818,7 @@ ALTER TABLE public.file_chunks ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY file_chunks_select_class ON public.file_chunks FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.files f
-  WHERE ((f.id = file_chunks.file_id) AND (f.kind = ANY (ARRAY['class_material'::text, 'textbook'::text])) AND public.is_class_member(f.space_ref)))));
+  WHERE ((f.id = file_chunks.file_id) AND (f.kind = ANY (ARRAY['class_material'::text, 'textbook'::text])) AND f.space_ref IN (SELECT public.my_class_ids())))));
 
 CREATE POLICY file_chunks_select_own ON public.file_chunks FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.files f
@@ -798,7 +828,7 @@ CREATE POLICY file_chunks_select_own ON public.file_chunks FOR SELECT USING ((EX
 -- 임베딩 상태)와 RAG 테스트 결과를 보여주려면 소유자·학급과 무관하게 읽어야
 -- 한다. **읽기 전용**이며 sessions_select_admin·ai_logs_select_admin과 같은
 -- 형태다 — 권한은 계속 DB가 강제한다(D104).
-CREATE POLICY file_chunks_select_admin ON public.file_chunks FOR SELECT USING (public.is_admin());
+CREATE POLICY file_chunks_select_admin ON public.file_chunks FOR SELECT USING ((SELECT public.is_admin()));
 
 -- D129: chunk_atoms SELECT는 file_chunks 정책과 동형 — 부모 파일 접근 가능 시 열람
 -- (매칭된 원자 질문 관측용). 쓰기는 워커(BYPASSRLS) 전용 — nodi_app은 RLS write
@@ -808,32 +838,32 @@ ALTER TABLE public.chunk_atoms ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY chunk_atoms_select_class ON public.chunk_atoms FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.files f
-  WHERE ((f.id = chunk_atoms.file_id) AND (f.kind = ANY (ARRAY['class_material'::text, 'textbook'::text])) AND public.is_class_member(f.space_ref)))));
+  WHERE ((f.id = chunk_atoms.file_id) AND (f.kind = ANY (ARRAY['class_material'::text, 'textbook'::text])) AND f.space_ref IN (SELECT public.my_class_ids())))));
 
 CREATE POLICY chunk_atoms_select_own ON public.chunk_atoms FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.files f
   WHERE ((f.id = chunk_atoms.file_id) AND (f.owner_id = ( SELECT auth.uid() AS uid))))));
 
-CREATE POLICY chunk_atoms_select_admin ON public.chunk_atoms FOR SELECT USING (public.is_admin());
+CREATE POLICY chunk_atoms_select_admin ON public.chunk_atoms FOR SELECT USING ((SELECT public.is_admin()));
 
 ALTER TABLE public.files ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY files_delete_own ON public.files FOR DELETE USING ((owner_id = ( SELECT auth.uid() AS uid)));
 
-CREATE POLICY files_insert_own ON public.files FOR INSERT WITH CHECK (((owner_id = ( SELECT auth.uid() AS uid)) AND ((kind <> ALL (ARRAY['class_material'::text, 'textbook'::text])) OR public.is_class_teacher(space_ref))));
+CREATE POLICY files_insert_own ON public.files FOR INSERT WITH CHECK (((owner_id = ( SELECT auth.uid() AS uid)) AND ((kind <> ALL (ARRAY['class_material'::text, 'textbook'::text])) OR space_ref IN (SELECT public.my_taught_class_ids()))));
 
-CREATE POLICY files_select_class ON public.files FOR SELECT USING (((kind = ANY (ARRAY['class_material'::text, 'textbook'::text])) AND public.is_class_member(space_ref)));
+CREATE POLICY files_select_class ON public.files FOR SELECT USING (((kind = ANY (ARRAY['class_material'::text, 'textbook'::text])) AND space_ref IN (SELECT public.my_class_ids())));
 
 CREATE POLICY files_select_own ON public.files FOR SELECT USING ((owner_id = ( SELECT auth.uid() AS uid)));
 
 -- D113: 관리자 전역 읽기(읽기 전용 — insert/update/delete 정책은 그대로).
-CREATE POLICY files_select_admin ON public.files FOR SELECT USING (public.is_admin());
+CREATE POLICY files_select_admin ON public.files FOR SELECT USING ((SELECT public.is_admin()));
 
-CREATE POLICY files_update_own ON public.files FOR UPDATE USING ((owner_id = ( SELECT auth.uid() AS uid))) WITH CHECK (((owner_id = ( SELECT auth.uid() AS uid)) AND ((kind <> ALL (ARRAY['class_material'::text, 'textbook'::text])) OR public.is_class_teacher(space_ref))));
+CREATE POLICY files_update_own ON public.files FOR UPDATE USING ((owner_id = ( SELECT auth.uid() AS uid))) WITH CHECK (((owner_id = ( SELECT auth.uid() AS uid)) AND ((kind <> ALL (ARRAY['class_material'::text, 'textbook'::text])) OR space_ref IN (SELECT public.my_taught_class_ids()))));
 
 ALTER TABLE public.jobs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY jobs_select_own ON public.jobs FOR SELECT USING (((owner_id = ( SELECT auth.uid() AS uid)) OR public.is_admin()));
+CREATE POLICY jobs_select_own ON public.jobs FOR SELECT USING (((owner_id = ( SELECT auth.uid() AS uid)) OR (SELECT public.is_admin())));
 
 ALTER TABLE public.nodes ENABLE ROW LEVEL SECURITY;
 
@@ -845,12 +875,12 @@ CREATE POLICY nodes_insert_owner ON public.nodes FOR INSERT WITH CHECK ((EXISTS 
    FROM public.sessions s
   WHERE ((s.id = nodes.session_id) AND (s.owner_id = ( SELECT auth.uid() AS uid))))));
 
-CREATE POLICY nodes_select ON public.nodes FOR SELECT USING (public.can_access_session(session_id));
+CREATE POLICY nodes_select ON public.nodes FOR SELECT USING (session_id IN (SELECT public.accessible_session_ids()));
 
 -- D113: 관리자 전역 읽기. can_access_session()을 고치지 않고 별도 정책으로 둔다 —
 -- 그 함수의 뜻은 "세션 소유자 또는 담임"이고, 거기에 admin을 섞으면 함수를 쓰는
 -- 다른 곳까지 조용히 넓어진다. sessions_select_admin과 같은 패턴.
-CREATE POLICY nodes_select_admin ON public.nodes FOR SELECT USING (public.is_admin());
+CREATE POLICY nodes_select_admin ON public.nodes FOR SELECT USING ((SELECT public.is_admin()));
 
 CREATE POLICY nodes_update_owner ON public.nodes FOR UPDATE USING ((EXISTS ( SELECT 1
    FROM public.sessions s
@@ -858,7 +888,7 @@ CREATE POLICY nodes_update_owner ON public.nodes FOR UPDATE USING ((EXISTS ( SEL
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY profiles_select_admin ON public.profiles FOR SELECT USING (public.is_admin());
+CREATE POLICY profiles_select_admin ON public.profiles FOR SELECT USING ((SELECT public.is_admin()));
 
 CREATE POLICY profiles_select_own ON public.profiles FOR SELECT USING ((id = ( SELECT auth.uid() AS uid)));
 
@@ -868,11 +898,11 @@ ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY sessions_delete_owner ON public.sessions FOR DELETE USING ((owner_id = ( SELECT auth.uid() AS uid)));
 
-CREATE POLICY sessions_insert_owner ON public.sessions FOR INSERT WITH CHECK (((owner_id = ( SELECT auth.uid() AS uid)) AND ((space_kind = 'personal'::text) OR public.is_class_member(space_ref))));
+CREATE POLICY sessions_insert_owner ON public.sessions FOR INSERT WITH CHECK (((owner_id = ( SELECT auth.uid() AS uid)) AND ((space_kind = 'personal'::text) OR space_ref IN (SELECT public.my_class_ids()))));
 
-CREATE POLICY sessions_select ON public.sessions FOR SELECT USING (((owner_id = ( SELECT auth.uid() AS uid)) OR ((space_kind = 'class'::text) AND public.is_class_teacher(space_ref))));
+CREATE POLICY sessions_select ON public.sessions FOR SELECT USING (((owner_id = ( SELECT auth.uid() AS uid)) OR ((space_kind = 'class'::text) AND space_ref IN (SELECT public.my_taught_class_ids()))));
 
-CREATE POLICY sessions_select_admin ON public.sessions FOR SELECT USING (public.is_admin());
+CREATE POLICY sessions_select_admin ON public.sessions FOR SELECT USING ((SELECT public.is_admin()));
 
 CREATE POLICY sessions_update_owner ON public.sessions FOR UPDATE USING ((owner_id = ( SELECT auth.uid() AS uid))) WITH CHECK ((owner_id = ( SELECT auth.uid() AS uid)));
 
@@ -880,10 +910,10 @@ ALTER TABLE public.textbook_figures ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY textbook_figures_select ON public.textbook_figures FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.files f
-  WHERE ((f.id = textbook_figures.file_id) AND ((f.owner_id = ( SELECT auth.uid() AS uid)) OR ((f.kind = 'textbook'::text) AND public.is_class_member(f.space_ref)))))));
+  WHERE ((f.id = textbook_figures.file_id) AND ((f.owner_id = ( SELECT auth.uid() AS uid)) OR ((f.kind = 'textbook'::text) AND f.space_ref IN (SELECT public.my_class_ids())))))));
 
 -- D113: 관리자 전역 읽기(도판 인제스트 상태 확인용, 읽기 전용).
-CREATE POLICY textbook_figures_select_admin ON public.textbook_figures FOR SELECT USING (public.is_admin());
+CREATE POLICY textbook_figures_select_admin ON public.textbook_figures FOR SELECT USING ((SELECT public.is_admin()));
 
 
 -- ===========================================================================
@@ -1464,46 +1494,46 @@ DROP POLICY IF EXISTS canvas_items_update_owner  ON public.canvas_items;
 DROP POLICY IF EXISTS canvas_items_delete_owner  ON public.canvas_items;
 
 CREATE POLICY canvas_items_select ON public.canvas_items
-    FOR SELECT USING (public.can_access_session(session_id));
+    FOR SELECT USING (session_id IN (SELECT public.accessible_session_ids()));
 
 -- D113과 같은 이유로 별도 정책: can_access_session()을 고치지 않고 관리자
 -- 전역 읽기를 더한다.
 CREATE POLICY canvas_items_select_admin ON public.canvas_items
-    FOR SELECT USING (public.is_admin());
+    FOR SELECT USING ((SELECT public.is_admin()));
 
 CREATE POLICY canvas_items_insert_owner ON public.canvas_items
     FOR INSERT WITH CHECK (EXISTS (
         SELECT 1 FROM public.sessions s
-        WHERE s.id = canvas_items.session_id AND s.owner_id = auth.uid()));
+        WHERE s.id = canvas_items.session_id AND s.owner_id = (SELECT auth.uid())));
 
 CREATE POLICY canvas_items_update_owner ON public.canvas_items
     FOR UPDATE USING (EXISTS (
         SELECT 1 FROM public.sessions s
-        WHERE s.id = canvas_items.session_id AND s.owner_id = auth.uid()));
+        WHERE s.id = canvas_items.session_id AND s.owner_id = (SELECT auth.uid())));
 
 CREATE POLICY canvas_items_delete_owner ON public.canvas_items
     FOR DELETE USING (EXISTS (
         SELECT 1 FROM public.sessions s
-        WHERE s.id = canvas_items.session_id AND s.owner_id = auth.uid()));
+        WHERE s.id = canvas_items.session_id AND s.owner_id = (SELECT auth.uid())));
 
 DROP POLICY IF EXISTS canvas_drawings_select       ON public.canvas_drawings;
 DROP POLICY IF EXISTS canvas_drawings_select_admin ON public.canvas_drawings;
 DROP POLICY IF EXISTS canvas_drawings_write_owner  ON public.canvas_drawings;
 
 CREATE POLICY canvas_drawings_select ON public.canvas_drawings
-    FOR SELECT USING (public.can_access_session(session_id));
+    FOR SELECT USING (session_id IN (SELECT public.accessible_session_ids()));
 
 CREATE POLICY canvas_drawings_select_admin ON public.canvas_drawings
-    FOR SELECT USING (public.is_admin());
+    FOR SELECT USING ((SELECT public.is_admin()));
 
 -- 그림은 부분 수정이 없다(씬 전체 교체) — insert/update/delete를 한 정책으로.
 CREATE POLICY canvas_drawings_write_owner ON public.canvas_drawings
     FOR ALL USING (EXISTS (
         SELECT 1 FROM public.sessions s
-        WHERE s.id = canvas_drawings.session_id AND s.owner_id = auth.uid()))
+        WHERE s.id = canvas_drawings.session_id AND s.owner_id = (SELECT auth.uid())))
     WITH CHECK (EXISTS (
         SELECT 1 FROM public.sessions s
-        WHERE s.id = canvas_drawings.session_id AND s.owner_id = auth.uid()));
+        WHERE s.id = canvas_drawings.session_id AND s.owner_id = (SELECT auth.uid())));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.canvas_items    TO nodi_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.canvas_drawings TO nodi_app;
