@@ -35,6 +35,7 @@ import { intersects, union } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W } from "@/lib/canvas2/layout";
+import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
@@ -234,7 +235,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   // --- 조작 ------------------------------------------------------------------
 
-  const { patch, remove, items, addChildNote } = store;
+  const { patch, moveMany, remove, items, addChildNote } = store;
   const { getObstacles: getObs, setTool, clearElementSelection } = bridge;
 
   const handlers = useMemo(
@@ -486,6 +487,40 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [cameraRef, flyTo],
   );
 
+  /**
+   * 재배치 — 태그 무리를 최소한으로 움직여 서로 갈라 놓는다 (D143).
+   *
+   * 열 배치를 다시 돌리는 것이 아니다. 지금 자리를 출발점으로 삼으므로
+   * 학생이 정리해 둔 모양이 남고, **이미 잘 나뉘어 있으면 아무것도 움직이지
+   * 않는다.** 옮긴 자리는 학생이 정한 것과 같은 취급(pinned)이다.
+   *
+   * 그림(캔버스 도구) 요소는 보지 않는다(사용자 지시).
+   *
+   * @returns 실제로 옮겼나. 호출부가 "이미 나뉘어 있다"를 알려 준다.
+   */
+  const handleRegroup = useCallback((): boolean => {
+    const input: RegroupItem[] = items.map((i) => {
+      const p = layout.positions.get(i.id);
+      const size = layout.sizes.get(i.id);
+      return {
+        id: i.id,
+        tag: i.tag,
+        parentItemId: i.parentItemId,
+        x: p?.x ?? i.x,
+        y: p?.y ?? i.y,
+        w: size?.w ?? ITEM_W,
+        h: size?.h ?? FALLBACK_H,
+      };
+    });
+    const { moves } = regroup(input);
+    if (!moves.size) return false;
+    moveMany(
+      [...moves].map(([id, at]) => ({ id, x: at.x, y: at.y })),
+      "재배치했습니다",
+    );
+    return true;
+  }, [items, layout, moveMany]);
+
   const handleFit = useCallback(() => {
     const rects = items
       .map((i) => {
@@ -623,6 +658,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
             onOpenSessions={() => setDrawerOpen(true)}
             onZoom={handleZoom}
             onFit={handleFit}
+            onRegroup={handleRegroup}
           />
           <SessionDrawer
             open={drawerOpen}

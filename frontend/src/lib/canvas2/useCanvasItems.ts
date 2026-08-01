@@ -54,6 +54,14 @@ export interface CanvasItemsApi {
   ) => Promise<void>;
   /** 로컬 + 서버. 실패 시 롤백 + 오류 노출. */
   patch: (id: string, patch: ItemPatch, local?: Partial<CanvasItem>) => void;
+  /**
+   * 여러 글을 한꺼번에 옮긴다 (D143 재배치).
+   *
+   * `patch`를 반복해서 부르면 안 된다 — 되돌리기가 **마지막 하나만** 남아,
+   * 스무 개를 옮겨 놓고 되돌리면 하나만 제자리로 온다. 여기서는 전체를 한
+   * 항목으로 되돌린다.
+   */
+  moveMany: (moves: readonly { id: string; x: number; y: number }[], label: string) => void;
   remove: (id: string) => void;
   /**
    * 마지막 조작 되돌리기(삭제·본문 수정·분류 변경·이동). 없으면 null.
@@ -252,6 +260,66 @@ export function useCanvasItems(): CanvasItemsApi {
     [items, showUndo],
   );
 
+  const moveMany = useCallback(
+    (moves: readonly { id: string; x: number; y: number }[], label: string) => {
+      const before = new Map<string, CanvasItem>();
+      for (const m of moves) {
+        const it = items.find((i) => i.id === m.id);
+        if (it) before.set(m.id, it);
+      }
+      const targets = moves.filter((m) => before.has(m.id));
+      if (!targets.length) return;
+
+      // 서버에 아직 행이 없는 것(로컬 메모·스트리밍 중)은 승격 경로를 타야 한다.
+      const special = targets.filter((m) => {
+        const b = before.get(m.id)!;
+        return b._legacy || b._pending;
+      });
+      const plain = targets.filter((m) => {
+        const b = before.get(m.id)!;
+        return !b._legacy && !b._pending;
+      });
+
+      const byId = new Map(plain.map((m) => [m.id, m]));
+      setItems((prev) =>
+        prev.map((i) => {
+          const m = byId.get(i.id);
+          return m ? { ...i, x: m.x, y: m.y, pinned: true } : i;
+        }),
+      );
+      for (const m of special) patch(m.id, { x: m.x, y: m.y, pinned: true });
+
+      const rollback = () =>
+        setItems((prev) => prev.map((i) => before.get(i.id) ?? i));
+
+      void Promise.all(
+        plain.map((m) => apiPatch(m.id, { x: m.x, y: m.y, pinned: true })),
+      ).catch((e: Error) => {
+        setError(`저장하지 못했습니다 — ${e.message}`);
+        rollback();
+      });
+
+      // patch()가 special마다 되돌리기를 쌓았을 수 있다 — 마지막에 덮어써서
+      // **전체를 한 번에** 되돌리게 한다.
+      showUndo({
+        label,
+        run: () => {
+          rollback();
+          setUndo(null);
+          void Promise.all(
+            targets
+              .filter((m) => isRealId(m.id))
+              .map((m) => {
+                const b = before.get(m.id)!;
+                return apiPatch(m.id, { x: b.x, y: b.y, pinned: b.pinned });
+              }),
+          ).catch((e: Error) => setError(`되돌리지 못했습니다 — ${e.message}`));
+        },
+      });
+    },
+    [items, patch, showUndo],
+  );
+
   const remove = useCallback(
     (id: string) => {
       const index = items.findIndex((i) => i.id === id);
@@ -392,6 +460,7 @@ export function useCanvasItems(): CanvasItemsApi {
     createNote,
     addChildNote,
     patch,
+    moveMany,
     remove,
     undo,
     clearUndo: useCallback(() => setUndo(null), []),
