@@ -26,7 +26,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Camera, Rect, ToolName } from "./types";
 import { isPassThroughTool } from "./types";
-import { inflate, intersects } from "./rect";
+import { inflate } from "./rect";
+import { boundsOf, elementHitsRect } from "./elementHit";
 
 /** 우리가 쓰는 것만 추린 Excalidraw API 표면. */
 export interface ExcalidrawApi {
@@ -61,16 +62,14 @@ export interface ExcalidrawElementLike {
   version?: number;
   /** 그룹 소속. 하나가 잡히면 같은 그룹 전체가 잡혀야 한다. */
   groupIds?: readonly string[];
-}
-
-/** 음수 폭/높이(역방향으로 그린 도형)를 정규화한 사각형. */
-function boundsOf(el: ExcalidrawElementLike): Rect {
-  return {
-    x: el.width < 0 ? el.x + el.width : el.x,
-    y: el.height < 0 ? el.y + el.height : el.y,
-    w: Math.abs(el.width),
-    h: Math.abs(el.height),
-  };
+  // --- 올가미 히트 테스트용 (elementHit.ts) ---
+  type?: string;
+  /** 회전 각(라디안). */
+  angle?: number;
+  /** 선형 요소의 점들(요소 원점 기준 상대 좌표). */
+  points?: readonly (readonly number[])[];
+  /** "transparent"면 속이 비었다 — 테두리만 몸이다. */
+  backgroundColor?: string;
 }
 
 const IDENTITY: Camera = { scrollX: 0, scrollY: 0, zoom: 1 };
@@ -282,7 +281,9 @@ export function useExcalidrawBridge(): Bridge {
       if (!api) return;
       requestAnimationFrame(() => {
         const els = api.getSceneElements().filter((e) => !e.isDeleted);
-        const hit = els.filter((e) => intersects(rect, boundsOf(e)));
+        // **바운딩 박스가 아니라 실제 잉크로 판정한다**(D141). 박스로 보면
+        // 속이 빈 도형의 가운데나 대각선의 빈 모서리를 끌어도 잡혔다.
+        const hit = els.filter((e) => elementHitsRect(e, rect));
 
         const groups = new Set(hit.flatMap((e) => e.groupIds ?? []));
         const ids = new Set(hit.map((e) => e.id));
