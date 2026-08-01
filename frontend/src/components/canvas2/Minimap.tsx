@@ -23,13 +23,14 @@
  * 찍힌다.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Map as MapIcon, X } from "lucide-react";
 import { ITEM_W, UNTAGGED, type Placed } from "@/lib/canvas2/layout";
 import type { Rect } from "@/lib/canvas2/rect";
 import { union } from "@/lib/canvas2/rect";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { Camera, CanvasItem } from "@/lib/canvas2/types";
+import { useCollapsible } from "@/lib/canvas2/useCollapsible";
 
 /** 펼쳤을 때 크기. 점과 라벨이 겹치지 않으려면 이만큼은 필요하다(v1과 같은 값). */
 const W = 340;
@@ -57,8 +58,15 @@ const LABEL_H = 16;
  * 오른쪽 위에서 서로 겹친다.
  */
 const COLLAPSE_BELOW = 1024;
-/** 도구 레일이 오른쪽에서 차지하는 폭(실측 66) + 여유. */
-const RIGHT = 76;
+/**
+ * 오른쪽 여백.
+ *
+ * 도구 레일이 **오른쪽 아래**로 내려갔으므로(D140) 지도는 모서리에 붙일 수
+ * 있다 — 사용자 지시: "지도를 더 우측 상단으로".
+ */
+const RIGHT = 16;
+/** 위 여백. 상단바는 왼쪽(left-4)이라 부딪히지 않는다. */
+const TOP = 16;
 const FALLBACK: Size = { w: ITEM_W, h: 180 };
 
 function radius(count: number): number {
@@ -86,9 +94,8 @@ export function Minimap({
   viewport,
   onJump,
 }: Props) {
-  // 학생이 직접 열고 닫은 적이 있으면 그 선택을 따르고, 아니면 폭으로 정한다.
-  const [override, setOverride] = useState<boolean | null>(null);
-  const open = override ?? viewport.w >= COLLAPSE_BELOW;
+  // 학생이 접어 두면 **접힌 채로 남는다**(D140). 처음 방문은 화면 폭으로 정한다.
+  const { open, setOpen } = useCollapsible("map", viewport.w >= COLLAPSE_BELOW);
 
   const model = useMemo(() => {
     /** 태그 → 그 태그 글들의 사각형. */
@@ -217,12 +224,13 @@ export function Minimap({
       <button
         type="button"
         data-no-pan
-        onClick={() => setOverride(true)}
+        onClick={() => setOpen(true)}
         aria-label="개념 지도 열기"
         title="개념 지도"
-        className="ui absolute top-16 z-30 flex h-9 w-9 items-center justify-center rounded-lg border transition-colors"
+        className="ui absolute z-30 flex h-9 w-9 items-center justify-center rounded-lg border transition-colors"
         style={{
           right: RIGHT,
+          top: TOP,
           background: "var(--c-raised)",
           borderColor: "var(--c-rule)",
           color: "var(--c-ink-soft)",
@@ -238,9 +246,10 @@ export function Minimap({
     <div
       data-no-pan
       // 오른쪽 위 — 사용자 지시. 도구 레일은 피한다.
-      className="ui absolute top-16 z-30 overflow-hidden rounded-lg border"
+      className="ui absolute z-30 overflow-hidden rounded-lg border"
       style={{
         right: RIGHT,
+        top: TOP,
         background: "var(--c-raised)",
         borderColor: "var(--c-rule)",
         boxShadow: "var(--c-shadow-md)",
@@ -248,7 +257,7 @@ export function Minimap({
     >
       <button
         type="button"
-        onClick={() => setOverride(false)}
+        onClick={() => setOpen(false)}
         aria-label="개념 지도 닫기"
         className="absolute right-1 top-1 z-10 rounded p-1 transition-colors hover:bg-[var(--c-sunk)]"
         style={{ color: "var(--c-ink-faint)" }}
