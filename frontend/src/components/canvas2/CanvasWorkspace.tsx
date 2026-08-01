@@ -233,11 +233,15 @@ export function CanvasWorkspace({ spaceId }: Props) {
   // --- 조작 ------------------------------------------------------------------
 
   const { patch, remove, items, addChildNote } = store;
-  const { getObstacles: getObs, setTool } = bridge;
+  const { getObstacles: getObs, setTool, clearElementSelection } = bridge;
 
   const handlers = useMemo(
     () => ({
       onSelect: (id: string | null, additive?: boolean) => {
+        // **그냥 클릭은 교체다** — 도형 선택도 함께 비운다. 안 그러면 글 하나만
+        // 골랐는데 아까 잡아 둔 도형이 계속 잡혀 있어, 지우거나 옮길 때 딸려
+        // 온다. Shift일 때는 더하는 것이므로 저쪽 선택을 건드리지 않는다.
+        if (!additive) clearElementSelection();
         setSelectedIds((prev) => {
           if (!id) return prev.size ? new Set<string>() : prev;
           if (!additive) return prev.size === 1 && prev.has(id) ? prev : new Set([id]);
@@ -367,7 +371,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
     // 새로 생겨 memo(TextItem)이 무력화된다 — 전 아이템이 60fps로 리렌더된다
     // (v1이 정확히 이 이유로 느렸다: useItemLayout.ts 헤더 주석 참조).
     // getObstacles는 [api]에만 의존하므로 안정적이다.
-    [items, patch, remove, editingId, selectedIds, layout, getObs, sessionId, addChildNote, nextSeq],
+    [items, patch, remove, editingId, selectedIds, layout, getObs, sessionId, addChildNote, nextSeq, clearElementSelection],
   );
 
   /**

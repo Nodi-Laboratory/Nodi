@@ -33,8 +33,27 @@ import { ToolRail } from "./ToolRail";
 
 /** 도트 그리드 간격(world px). 줌에 따라 화면상 간격이 변한다. */
 const GRID = 28;
-/** 이보다 작게 끌면 올가미가 아니라 클릭으로 본다(world px). */
-const MARQUEE_MIN = 6;
+/**
+ * 이보다 작게 끌면 올가미가 아니라 클릭으로 본다 — **화면 px**이다.
+ *
+ * world px로 재던 것이 버그였다. `toWorld`는 현재 카메라를 쓰는데, 카메라가
+ * 아직 정착 중이면 **마우스가 가만히 있어도** 같은 화면 점이 다른 world 점으로
+ * 바뀐다. 그러면 클릭이 빈 올가미로 둔갑해 선택이 통째로 지워졌다(실측: 글을
+ * 고른 뒤 Shift로 도형을 더하려 하면 둘 다 사라짐). 줌이 작을수록 심하다 —
+ * 배율 0.23에서는 6 world px이 화면 1.4px이라 거의 모든 클릭이 올가미가 된다.
+ *
+ * 클릭이냐 드래그냐는 입력 차원의 구분이므로 화면에서 재는 것이 옳다.
+ */
+const MARQUEE_MIN_PX = 5;
+/**
+ * Excalidraw의 선택 상태를 읽기 전에 기다리는 시간(ms).
+ *
+ * 저쪽은 pointerup 즉시가 아니라 조금 뒤에 선택을 비운다 — **실측 31ms**
+ * (빈 곳 클릭 후 선택 표시가 사라진 시점, 약 2프레임). 한 프레임(16ms)만
+ * 기다리면 옛 선택을 보고 "도형을 눌렀다"고 오판해 **빈 곳을 눌러도 선택이
+ * 안 풀린다.** 여유를 두되 사람이 느끼지 못할 만큼만.
+ */
+const SELECTION_SETTLE_MS = 90;
 
 interface Props {
   bridge: Bridge;
@@ -117,13 +136,13 @@ export function CanvasStage({
   //   선택 도구    → 끌면 올가미(marquee), 그냥 누르면 선택 해제.
   //   그 외        → 아무것도 하지 않는다. 전파도 끊지 않는다(팬·그리기가
   //                  계속 돌아야 한다).
-  const { toWorld } = bridge;
+  const { toWorld, hasElementSelection } = bridge;
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
 
-    /** 올가미 시작점(world). null이면 올가미 중이 아니다. */
-    let from: { x: number; y: number } | null = null;
+    /** 올가미 시작점. 화면·world를 함께 들고 있는다. null이면 올가미 중이 아니다. */
+    let from: { sx: number; sy: number; wx: number; wy: number } | null = null;
 
     const onDown = (e: PointerEvent) => {
       const t = e.target as HTMLElement;
@@ -145,7 +164,8 @@ export function CanvasStage({
       // 잡아야 한다 — 그래야 도형과 글이 **한 번에** 묶인다(사용자 요구).
       // 올가미 사각형도 저쪽이 그린다. 우리가 하나 더 그리면 두 겹이 된다.
       if (activeTool === "selection") {
-        from = toWorld(e.clientX, e.clientY, root.getBoundingClientRect());
+        const w = toWorld(e.clientX, e.clientY, root.getBoundingClientRect());
+        from = { sx: e.clientX, sy: e.clientY, wx: w.x, wy: w.y };
       }
     };
 
@@ -153,16 +173,37 @@ export function CanvasStage({
       const f = from;
       from = null;
       if (!f) return;
-      const to = toWorld(e.clientX, e.clientY, root.getBoundingClientRect());
-      const w = Math.abs(to.x - f.x);
-      const h = Math.abs(to.y - f.y);
-      // 끌지 않았으면 그냥 클릭이다 — 선택 해제.
-      if (w < MARQUEE_MIN && h < MARQUEE_MIN) {
-        onBackgroundClick?.();
+      // **화면에서 판정한다.** world로 재면 카메라가 움직이는 동안의 클릭이
+      // 올가미로 둔갑한다(위 상수 주석 참고).
+      const movedPx = Math.hypot(e.clientX - f.sx, e.clientY - f.sy);
+      if (movedPx < MARQUEE_MIN_PX) {
+        /**
+         * 끌지 않았으면 클릭이다. 그런데 **빈 곳을 눌렀을 때만** 선택을 푼다.
+         *
+         * 예전에는 무조건 풀었다. 그래서 글을 고른 뒤 Shift로 도형을 더하려고
+         * 누르면, 그 클릭이 캔버스로 가면서 우리 글 선택이 통째로 날아갔다
+         * (실측: 도형 클릭 → Shift+글 = 함께 선택됨, 반대 순서 = 둘 다 사라짐).
+         *
+         * 무엇이 눌렸는지는 Excalidraw만 안다 — 히트 테스트 API가 공개돼 있지
+         * 않으므로 **다음 프레임에 저쪽 선택을 보고** 판단한다. 도형이 잡혔으면
+         * 빈 곳이 아니었다는 뜻이다.
+         *
+         * Shift/⌘를 누른 채면 애초에 "더하겠다"는 뜻이므로 절대 풀지 않는다.
+         */
+        if (e.shiftKey || e.metaKey || e.ctrlKey) return;
+        window.setTimeout(() => {
+          if (!hasElementSelection()) onBackgroundClick?.();
+        }, SELECTION_SETTLE_MS);
         return;
       }
+      const to = toWorld(e.clientX, e.clientY, root.getBoundingClientRect());
       onMarquee?.(
-        { x: Math.min(f.x, to.x), y: Math.min(f.y, to.y), w, h },
+        {
+          x: Math.min(f.wx, to.x),
+          y: Math.min(f.wy, to.y),
+          w: Math.abs(to.x - f.wx),
+          h: Math.abs(to.y - f.wy),
+        },
         e.shiftKey,
       );
     };
@@ -174,7 +215,7 @@ export function CanvasStage({
       root.removeEventListener("pointerdown", onDown, { capture: true });
       window.removeEventListener("pointerup", onUp, { capture: true });
     };
-  }, [activeTool, onCanvasClick, onBackgroundClick, onMarquee, toWorld]);
+  }, [activeTool, onCanvasClick, onBackgroundClick, onMarquee, toWorld, hasElementSelection]);
 
   return (
     <div

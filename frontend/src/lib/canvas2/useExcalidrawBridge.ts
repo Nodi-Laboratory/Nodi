@@ -118,6 +118,10 @@ export interface Bridge {
    * `additive`면 기존 선택에 더한다.
    */
   selectElementsIn: (rect: Rect, additive: boolean) => void;
+  /** 지금 Excalidraw 도형이 하나라도 선택돼 있나. */
+  hasElementSelection: () => boolean;
+  /** 도형 선택을 비운다(우리 글을 단독 선택할 때). */
+  clearElementSelection: () => void;
   /** 카메라를 직접 설정(스프링·미니맵 이동용). */
   applyCamera: (c: Camera) => void;
   /** screen(클라이언트) 좌표 → world */
@@ -340,6 +344,15 @@ export function useExcalidrawBridge(): Bridge {
     [applyCamera],
   );
 
+  const hasElementSelection = useCallback(() => {
+    const ids = api?.getAppState().selectedElementIds;
+    return !!ids && Object.values(ids).some(Boolean);
+  }, [api]);
+
+  const clearElementSelection = useCallback(() => {
+    api?.updateScene({ appState: { selectedElementIds: {} } });
+  }, [api]);
+
   const toWorld = useCallback(
     (clientX: number, clientY: number, rootRect: DOMRect) => {
       const { scrollX, scrollY, zoom } = cameraRef.current;
@@ -367,6 +380,8 @@ export function useExcalidrawBridge(): Bridge {
       overlayInteractive,
       getObstacles,
       selectElementsIn,
+      hasElementSelection,
+      clearElementSelection,
       applyCamera,
       toWorld,
     }),
@@ -380,6 +395,8 @@ export function useExcalidrawBridge(): Bridge {
       overlayInteractive,
       getObstacles,
       selectElementsIn,
+      hasElementSelection,
+      clearElementSelection,
       applyCamera,
       toWorld,
     ],
