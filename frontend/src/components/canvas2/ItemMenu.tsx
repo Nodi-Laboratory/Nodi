@@ -12,7 +12,7 @@
  * 생기기 때문이다. 상위가 그동안은 계속 그려 준다.
  */
 
-import { MoreHorizontal, Pencil, Tag, Trash2 } from "lucide-react";
+import { Maximize2, MoreHorizontal, Pencil, Tag, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TagPicker } from "./TagPicker";
 
@@ -22,6 +22,9 @@ interface Props {
   onEdit: () => void;
   onDelete: () => void;
   onTagChange: (tag: string | null) => void;
+  /** 손잡이로 크기를 바꾼 상태인가 — 그때만 되돌리기를 보여 준다 (D142). */
+  resized?: boolean;
+  onResetSize?: () => void;
   /** 메뉴(또는 분류 목록)가 펼쳐져 있나. */
   onOpenChange?: (open: boolean) => void;
 }
@@ -32,6 +35,8 @@ export function ItemMenu({
   onEdit,
   onDelete,
   onTagChange,
+  resized,
+  onResetSize,
   onOpenChange,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -141,6 +146,16 @@ export function ItemMenu({
             label="분류 변경"
             onClick={() => setTagOpen(true)}
           />
+          {resized && onResetSize && (
+            <MenuItem
+              icon={<Maximize2 size={14} />}
+              label="크기 되돌리기"
+              onClick={() => {
+                setOpen(false);
+                onResetSize();
+              }}
+            />
+          )}
           <div className="mx-2 my-1 h-px" style={{ background: "var(--c-rule)" }} />
           <MenuItem
             icon={<Trash2 size={14} />}

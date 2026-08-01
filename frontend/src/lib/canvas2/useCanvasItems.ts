@@ -80,10 +80,22 @@ const UNDO_MS = 6000;
  * 되돌려 봐야 학생 눈에는 아무 일도 안 일어난다. 그런 것까지 토스트를 띄우면
  * 정작 중요한 되돌리기가 묻힌다.
  */
-function undoLabel(p: ItemPatch): string | null {
+function undoLabel(p: ItemPatch, before: CanvasItem): string | null {
   if (p.body !== undefined) return "글을 고쳤습니다";
   if (p.tag !== undefined) return "분류를 바꿨습니다";
   if (p.title !== undefined) return "제목을 고쳤습니다";
+  /**
+   * 크기 조절은 위치보다 먼저 본다 (D142).
+   *
+   * 왼쪽·위 손잡이로 줄이면 좌표도 함께 바뀌는데, 그걸 "위치를 옮겼습니다"로
+   * 부르면 되돌리기가 자리만 되돌리고 크기는 그대로 둔다 — 학생이 보기에
+   * 되돌리기가 반만 듣는다. `data` 전체를 되돌리므로 둘이 같이 돌아온다.
+   */
+  const size = (p.data as ItemData | undefined)?.size;
+  const had = before.data.size;
+  if (p.data !== undefined && (size?.w !== had?.w || size?.h !== had?.h)) {
+    return size ? "크기를 바꿨습니다" : "크기를 되돌렸습니다";
+  }
   // 위치는 드래그와 "위치 정리" 둘 다 여기로 온다.
   if (p.x !== undefined || p.y !== undefined) return "위치를 옮겼습니다";
   return null;
@@ -209,7 +221,7 @@ export function useCanvasItems(): CanvasItemsApi {
       //
       // 예전에는 **삭제만** 되돌릴 수 있었다. 본문을 고치거나 잘못 끌어 놓은
       // 것도 되돌아가야 자연스러운데 그 경로가 없었다.
-      const label = undoLabel(serverPatch);
+      const label = undoLabel(serverPatch, before);
       if (label) {
         const revert: ItemPatch = {};
         if (serverPatch.body !== undefined) revert.body = before.body;
@@ -218,6 +230,7 @@ export function useCanvasItems(): CanvasItemsApi {
         if (serverPatch.x !== undefined) revert.x = before.x;
         if (serverPatch.y !== undefined) revert.y = before.y;
         if (serverPatch.pinned !== undefined) revert.pinned = before.pinned;
+        if (serverPatch.data !== undefined) revert.data = before.data;
         showUndo({
           label,
           run: () => {

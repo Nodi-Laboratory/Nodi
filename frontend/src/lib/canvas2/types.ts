@@ -34,6 +34,17 @@ export interface ItemData {
   askHidden?: boolean;
   /** "위치 정리" 버튼을 ×로 지웠나. 수정/태그변경 후에만 뜬다. */
   reflowDismissed?: boolean;
+  /**
+   * 학생이 손잡이로 정한 상자 크기 (D142). 없으면 내용이 크기를 정한다.
+   *
+   * 스키마에 열을 더하지 않고 여기 둔다 — 좌표와 달리 **배치 엔진의 입력이
+   * 아니라 렌더 힌트**다. 폭·높이는 어차피 ResizeObserver 실측으로 배치에
+   * 들어가므로, 화면이 이 값을 반영하면 배치는 자동으로 따라온다.
+   *
+   * `h`는 **최소** 높이다. 내용보다 낮게 줄이면 글이 잘리는데, 캔버스에서
+   * 잘린 글은 안 보인다는 사실조차 드러나지 않는다.
+   */
+  size?: { w: number; h: number };
 }
 
 export interface CanvasItem {

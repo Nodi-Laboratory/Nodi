@@ -15,6 +15,7 @@ import { UNTAGGED } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { ConnectorLayer } from "./ConnectorLayer";
 import { FigureItem } from "./FigureItem";
+import type { ResizeCommit } from "./ResizeHandles";
 import { TextItem } from "./TextItem";
 
 interface Props {
@@ -41,6 +42,8 @@ interface Props {
     onAsk: (id: string) => void;
     onDismissAsk: (id: string) => void;
     onRecall: (id: string, text: string) => void;
+    onResize: (id: string, next: ResizeCommit) => void;
+    onResetSize: (id: string) => void;
   };
 }
 

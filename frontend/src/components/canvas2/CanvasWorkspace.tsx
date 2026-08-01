@@ -32,6 +32,7 @@ import type { CanvasItem } from "@/lib/canvas2/types";
 import { spaceTargetFromId } from "@/lib/api";
 import { useSessionDetail } from "@/lib/queries";
 import { intersects, union } from "@/lib/canvas2/rect";
+import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
@@ -305,6 +306,40 @@ export function CanvasWorkspace({ spaceId }: Props) {
           if (!p) continue;
           patch(sid, { x: p.x + dx, y: p.y + dy, pinned: true });
         }
+      },
+
+      /**
+       * 손잡이로 정한 크기를 저장한다 (D142).
+       *
+       * 크기는 `data.size`다 — 좌표와 달리 배치 엔진의 입력이 아니라 렌더
+       * 힌트고, 화면이 반영하면 ResizeObserver를 거쳐 배치가 알아서 따라온다.
+       *
+       * 왼쪽·위 손잡이로 줄이면 원점이 움직인다. 그때는 **드래그와 같은 취급**
+       * 이다 — 학생이 자리를 정한 것이므로 pinned가 된다. 안 그러면 다음
+       * 배치에서 열 흐름이 도로 끌어간다.
+       */
+      onResize: (id: string, next: ResizeCommit) => {
+        const cur = items.find((i) => i.id === id);
+        const data = { ...cur?.data, size: { w: next.w, h: next.h } };
+        if (!next.dx && !next.dy) {
+          patch(id, { data });
+          return;
+        }
+        const p = layout.positions.get(id);
+        patch(id, {
+          data,
+          x: (p?.x ?? cur?.x ?? 0) + next.dx,
+          y: (p?.y ?? cur?.y ?? 0) + next.dy,
+          pinned: true,
+        });
+      },
+
+      onResetSize: (id: string) => {
+        const cur = items.find((i) => i.id === id);
+        if (!cur?.data.size) return;
+        const rest = { ...cur.data };
+        delete rest.size;
+        patch(id, { data: rest });
       },
 
       onReflow: (id: string) => {
