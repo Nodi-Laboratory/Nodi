@@ -28,7 +28,7 @@ interface Props {
   zoom: number;
   selectedIds: ReadonlySet<string>;
   editingId: string | null;
-  measureRef: (id: string) => (el: HTMLElement | null) => void;
+  measure: (id: string, el: HTMLElement | null) => void;
   handlers: {
     onSelect: (id: string | null, additive?: boolean) => void;
     onStartEdit: (id: string) => void;
@@ -57,7 +57,7 @@ export function ItemLayer({
   zoom,
   selectedIds,
   editingId,
-  measureRef,
+  measure,
   handlers,
 }: Props) {
   /**
@@ -95,7 +95,7 @@ export function ItemLayer({
               item={item}
               x={p.x}
               y={p.y}
-              measureRef={measureRef(item.id)}
+              measure={measure}
             />
           );
         }
@@ -110,7 +110,7 @@ export function ItemLayer({
             editing={editingId === item.id}
             question={questionOf.get(item.id) ?? null}
             tagOptions={tagOptions}
-            measureRef={measureRef(item.id)}
+            measure={measure}
             {...handlers}
           />
         );

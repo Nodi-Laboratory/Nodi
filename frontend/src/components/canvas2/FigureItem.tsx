@@ -23,10 +23,10 @@ interface Props {
   item: CanvasItem;
   x: number;
   y: number;
-  measureRef: (el: HTMLElement | null) => void;
+  measure: (id: string, el: HTMLElement | null) => void;
 }
 
-export function FigureItem({ item, x, y, measureRef }: Props) {
+export function FigureItem({ item, x, y, measure }: Props) {
   const fig = item.data.figure;
   // 재발급으로 얻은 url만 상태로 들고, 평소에는 prop을 그대로 쓴다.
   //
@@ -66,7 +66,7 @@ export function FigureItem({ item, x, y, measureRef }: Props) {
   return (
     <>
       <div
-        ref={measureRef}
+        ref={(el) => measure(item.id, el)}
         data-canvas-item={item.id}
         className="absolute"
         style={{

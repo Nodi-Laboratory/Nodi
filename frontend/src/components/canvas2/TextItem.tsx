@@ -82,7 +82,8 @@ export interface TextItemProps {
   question?: string | null;
   /** 현재 줌. 화면 이동량을 world로 바꾸는 데 필요하다. */
   zoom: number;
-  measureRef: (el: HTMLElement | null) => void;
+  /** 크기 실측 등록. 호출부에서 안정적인 함수다(useItemLayout 참조). */
+  measure: (id: string, el: HTMLElement | null) => void;
   /** `additive`(Shift·⌘)면 기존 선택에 더한다. */
   onSelect: (id: string | null, additive?: boolean) => void;
   onStartEdit: (id: string) => void;
@@ -114,7 +115,7 @@ function TextItemImpl(props: TextItemProps) {
     tagOptions,
     question,
     zoom,
-    measureRef,
+    measure,
     onSelect,
     onStartEdit,
     onCommitEdit,
@@ -163,9 +164,9 @@ function TextItemImpl(props: TextItemProps) {
   const setNode = useCallback(
     (el: HTMLDivElement | null) => {
       rootRef.current = el;
-      measureRef(el);
+      measure(item.id, el);
     },
-    [measureRef],
+    [measure, item.id],
   );
 
   /**

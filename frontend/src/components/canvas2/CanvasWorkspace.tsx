@@ -36,6 +36,7 @@ import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
+import { useEventCallback } from "@/lib/canvas2/useEventCallback";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
@@ -238,177 +239,199 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const { patch, moveMany, remove, items, addChildNote } = store;
   const { getObstacles: getObs, setTool, clearElementSelection } = bridge;
 
+  const onSelect = useEventCallback((id: string | null, additive?: boolean) => {
+    // **그냥 클릭은 교체다** — 도형 선택도 함께 비운다. 안 그러면 글 하나만
+    // 골랐는데 아까 잡아 둔 도형이 계속 잡혀 있어, 지우거나 옮길 때 딸려
+    // 온다. Shift일 때는 더하는 것이므로 저쪽 선택을 건드리지 않는다.
+    if (!additive) clearElementSelection();
+    setSelectedIds((prev) => {
+      if (!id) return prev.size ? new Set<string>() : prev;
+      if (!additive) return prev.size === 1 && prev.has(id) ? prev : new Set([id]);
+      const next = new Set(prev);
+      // Shift는 토글이다 — 잘못 넣은 하나를 빼려고 다시 누르는 게 자연스럽다.
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  });
+
+  const onStartEdit = useEventCallback((id: string) => {
+    setEditingId(id);
+    setSelectedIds(new Set([id]));
+  });
+
+  const onCancelEdit = useEventCallback(() => setEditingId(null));
+
+  const onCommitEdit = useEventCallback((id: string, body: string) => {
+    setEditingId(null);
+    // 내용이 그대로면 아무 일도 하지 않는다 — "위치 정리" 버튼이 괜히 뜬다.
+    const cur = items.find((i) => i.id === id);
+    if (!cur || cur.body === body) return;
+    patch(id, { body }, { _needsReflow: true });
+  });
+
+  const onDelete = useEventCallback((id: string) => {
+    if (editingId === id) setEditingId(null);
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    remove(id);
+  });
+
+  const onTagChange = useEventCallback((id: string, tag: string | null) => {
+    patch(id, { tag }, { _needsReflow: true });
+  });
+
+  /**
+   * 드래그가 끝나면 학생이 정한 자리다 — 배치 엔진은 이제 이걸 읽기만 한다.
+   *
+   * 여럿이 선택돼 있고 그중 하나를 끌었으면 **전부 같은 양만큼** 옮긴다.
+   * 화면에서는 이미 함께 움직였으므로(TextItem이 DOM을 직접 밀었다) 여기서
+   * 좌표만 맞춰 주면 된다.
+   */
+  const onDragEnd = useEventCallback((id: string, x: number, y: number, dx: number, dy: number) => {
+    if (!selectedIds.has(id) || selectedIds.size <= 1) {
+      patch(id, { x, y, pinned: true });
+      return;
+    }
+    for (const sid of selectedIds) {
+      if (sid === id) {
+        patch(sid, { x, y, pinned: true });
+        continue;
+      }
+      const p = layout.positions.get(sid);
+      if (!p) continue;
+      patch(sid, { x: p.x + dx, y: p.y + dy, pinned: true });
+    }
+  });
+
+  /**
+   * 손잡이로 정한 크기를 저장한다 (D142).
+   *
+   * 크기는 `data.size`다 — 좌표와 달리 배치 엔진의 입력이 아니라 렌더
+   * 힌트고, 화면이 반영하면 ResizeObserver를 거쳐 배치가 알아서 따라온다.
+   *
+   * 왼쪽·위 손잡이로 줄이면 원점이 움직인다. 그때는 **드래그와 같은 취급**
+   * 이다 — 학생이 자리를 정한 것이므로 pinned가 된다. 안 그러면 다음
+   * 배치에서 열 흐름이 도로 끌어간다.
+   */
+  const onResize = useEventCallback((id: string, next: ResizeCommit) => {
+    const cur = items.find((i) => i.id === id);
+    const data = { ...cur?.data, size: { w: next.w, h: next.h } };
+    if (!next.dx && !next.dy) {
+      patch(id, { data });
+      return;
+    }
+    const p = layout.positions.get(id);
+    patch(id, {
+      data,
+      x: (p?.x ?? cur?.x ?? 0) + next.dx,
+      y: (p?.y ?? cur?.y ?? 0) + next.dy,
+      pinned: true,
+    });
+  });
+
+  const onResetSize = useEventCallback((id: string) => {
+    const cur = items.find((i) => i.id === id);
+    if (!cur?.data.size) return;
+    const rest = { ...cur.data };
+    delete rest.size;
+    patch(id, { data: rest });
+  });
+
+  const onReflow = useEventCallback((id: string) => {
+    const target = items.find((i) => i.id === id);
+    if (!target) return;
+    const toInput = (i: (typeof items)[number]): LayoutInput => ({
+      id: i.id,
+      tag: i.tag,
+      seq: i.seq,
+      pinned: i.pinned,
+      // 다른 아이템의 "현재 자리"는 배치 결과다 — 원본 x/y가 아니다.
+      x: layout.positions.get(i.id)?.x ?? i.x,
+      y: layout.positions.get(i.id)?.y ?? i.y,
+      width: layout.sizes.get(i.id)?.w ?? ITEM_W,
+      height: layout.sizes.get(i.id)?.h ?? FALLBACK_H,
+      parentItemId: i.parentItemId,
+    });
+    const spot = reflowOne(
+      toInput(target),
+      items.filter((i) => i.id !== id).map(toInput),
+      getObs(),
+      layout.tagOrder,
+    );
+    // 정리 결과도 고정이다. 안 그러면 다음 배치에서 열 흐름이 다시 옮긴다.
+    patch(id, { x: spot.x, y: spot.y, pinned: true }, { _needsReflow: false });
+  });
+
+  const onDismissReflow = useEventCallback((id: string) => {
+    const cur = items.find((i) => i.id === id);
+    patch(
+      id,
+      { data: { ...cur?.data, reflowDismissed: true } },
+      { _needsReflow: false },
+    );
+  });
+
+  // 학생 글 → 그 내용이 인용된 채 입력창이 열린다(D126).
+  const onAsk = useEventCallback((id: string) => {
+    const it = items.find((i) => i.id === id);
+    if (it) setQuote({ id, text: it.body.slice(0, 200) });
+  });
+
+  const onDismissAsk = useEventCallback((id: string) => {
+    const cur = items.find((i) => i.id === id);
+    patch(id, { data: { ...cur?.data, askHidden: true } });
+  });
+
+  /**
+   * 인출 연습 결과를 캔버스에 남긴다 (D138).
+   *
+   * 학생이 쓴 회상은 **그 카드의 자식 글**이 된다 — 배치가 옆에 놓고
+   * 연결선이 이어 준다. 사라지면 산출물이 아니고, 다음에 이 카드를 볼 때
+   * "내가 그때 이만큼 기억했구나"가 함께 보여야 의미가 있다.
+   *
+   * `askHidden`을 켜 둔다: 이건 이미 학생이 스스로 쓴 글이라 "AI에게 묻기"를
+   * 권할 자리가 아니다.
+   */
+  const onRecall = useEventCallback((id: string, text: string) => {
+    if (!sessionId) return;
+    void addChildNote(sessionId, id, text, nextSeq());
+  });
+
+  /**
+   * 핸들러 묶음. 안의 함수가 전부 신원 고정이라 **이 객체도 고정**이고,
+   * 그래서 `memo(TextItem)`이 실제로 일한다 (D145).
+   *
+   * 예전에는 여기에 `items`·`layout`·`selectedIds`가 의존성으로 들어 있었다.
+   * 그 중 하나만 바뀌어도 묶음이 새 객체가 되고, 그걸 받는 **모든** 아이템의
+   * memo가 깨진다 — 실측으로 글 하나를 클릭할 때 128회 렌더됐다.
+   *
+   * ⚠️ 여기에 매 프레임 바뀌는 값(bridge 등)을 **다시 넣지 마라.** bridge는
+   * camera를 deps로 가진 useMemo라 팬/줌 중 매 프레임 새 객체가 된다 —
+   * v1이 정확히 그래서 느렸다(useItemLayout.ts 머리말 참조).
+   */
   const handlers = useMemo(
     () => ({
-      onSelect: (id: string | null, additive?: boolean) => {
-        // **그냥 클릭은 교체다** — 도형 선택도 함께 비운다. 안 그러면 글 하나만
-        // 골랐는데 아까 잡아 둔 도형이 계속 잡혀 있어, 지우거나 옮길 때 딸려
-        // 온다. Shift일 때는 더하는 것이므로 저쪽 선택을 건드리지 않는다.
-        if (!additive) clearElementSelection();
-        setSelectedIds((prev) => {
-          if (!id) return prev.size ? new Set<string>() : prev;
-          if (!additive) return prev.size === 1 && prev.has(id) ? prev : new Set([id]);
-          const next = new Set(prev);
-          // Shift는 토글이다 — 잘못 넣은 하나를 빼려고 다시 누르는 게 자연스럽다.
-          if (next.has(id)) next.delete(id);
-          else next.add(id);
-          return next;
-        });
-      },
-
-      onStartEdit: (id: string) => {
-        setEditingId(id);
-        setSelectedIds(new Set([id]));
-      },
-
-      onCancelEdit: () => setEditingId(null),
-
-      onCommitEdit: (id: string, body: string) => {
-        setEditingId(null);
-        // 내용이 그대로면 아무 일도 하지 않는다 — "위치 정리" 버튼이 괜히 뜬다.
-        const cur = items.find((i) => i.id === id);
-        if (!cur || cur.body === body) return;
-        patch(id, { body }, { _needsReflow: true });
-      },
-
-      onDelete: (id: string) => {
-        if (editingId === id) setEditingId(null);
-        setSelectedIds((prev) => {
-          if (!prev.has(id)) return prev;
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-        remove(id);
-      },
-
-      onTagChange: (id: string, tag: string | null) => {
-        patch(id, { tag }, { _needsReflow: true });
-      },
-
-      /**
-       * 드래그가 끝나면 학생이 정한 자리다 — 배치 엔진은 이제 이걸 읽기만 한다.
-       *
-       * 여럿이 선택돼 있고 그중 하나를 끌었으면 **전부 같은 양만큼** 옮긴다.
-       * 화면에서는 이미 함께 움직였으므로(TextItem이 DOM을 직접 밀었다) 여기서
-       * 좌표만 맞춰 주면 된다.
-       */
-      onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => {
-        if (!selectedIds.has(id) || selectedIds.size <= 1) {
-          patch(id, { x, y, pinned: true });
-          return;
-        }
-        for (const sid of selectedIds) {
-          if (sid === id) {
-            patch(sid, { x, y, pinned: true });
-            continue;
-          }
-          const p = layout.positions.get(sid);
-          if (!p) continue;
-          patch(sid, { x: p.x + dx, y: p.y + dy, pinned: true });
-        }
-      },
-
-      /**
-       * 손잡이로 정한 크기를 저장한다 (D142).
-       *
-       * 크기는 `data.size`다 — 좌표와 달리 배치 엔진의 입력이 아니라 렌더
-       * 힌트고, 화면이 반영하면 ResizeObserver를 거쳐 배치가 알아서 따라온다.
-       *
-       * 왼쪽·위 손잡이로 줄이면 원점이 움직인다. 그때는 **드래그와 같은 취급**
-       * 이다 — 학생이 자리를 정한 것이므로 pinned가 된다. 안 그러면 다음
-       * 배치에서 열 흐름이 도로 끌어간다.
-       */
-      onResize: (id: string, next: ResizeCommit) => {
-        const cur = items.find((i) => i.id === id);
-        const data = { ...cur?.data, size: { w: next.w, h: next.h } };
-        if (!next.dx && !next.dy) {
-          patch(id, { data });
-          return;
-        }
-        const p = layout.positions.get(id);
-        patch(id, {
-          data,
-          x: (p?.x ?? cur?.x ?? 0) + next.dx,
-          y: (p?.y ?? cur?.y ?? 0) + next.dy,
-          pinned: true,
-        });
-      },
-
-      onResetSize: (id: string) => {
-        const cur = items.find((i) => i.id === id);
-        if (!cur?.data.size) return;
-        const rest = { ...cur.data };
-        delete rest.size;
-        patch(id, { data: rest });
-      },
-
-      onReflow: (id: string) => {
-        const target = items.find((i) => i.id === id);
-        if (!target) return;
-        const toInput = (i: (typeof items)[number]): LayoutInput => ({
-          id: i.id,
-          tag: i.tag,
-          seq: i.seq,
-          pinned: i.pinned,
-          // 다른 아이템의 "현재 자리"는 배치 결과다 — 원본 x/y가 아니다.
-          x: layout.positions.get(i.id)?.x ?? i.x,
-          y: layout.positions.get(i.id)?.y ?? i.y,
-          width: layout.sizes.get(i.id)?.w ?? ITEM_W,
-          height: layout.sizes.get(i.id)?.h ?? FALLBACK_H,
-          parentItemId: i.parentItemId,
-        });
-        const spot = reflowOne(
-          toInput(target),
-          items.filter((i) => i.id !== id).map(toInput),
-          getObs(),
-          layout.tagOrder,
-        );
-        // 정리 결과도 고정이다. 안 그러면 다음 배치에서 열 흐름이 다시 옮긴다.
-        patch(id, { x: spot.x, y: spot.y, pinned: true }, { _needsReflow: false });
-      },
-
-      onDismissReflow: (id: string) => {
-        const cur = items.find((i) => i.id === id);
-        patch(
-          id,
-          { data: { ...cur?.data, reflowDismissed: true } },
-          { _needsReflow: false },
-        );
-      },
-
-      // 학생 글 → 그 내용이 인용된 채 입력창이 열린다(D126).
-      onAsk: (id: string) => {
-        const it = items.find((i) => i.id === id);
-        if (it) setQuote({ id, text: it.body.slice(0, 200) });
-      },
-
-      onDismissAsk: (id: string) => {
-        const cur = items.find((i) => i.id === id);
-        patch(id, { data: { ...cur?.data, askHidden: true } });
-      },
-
-      /**
-       * 인출 연습 결과를 캔버스에 남긴다 (D138).
-       *
-       * 학생이 쓴 회상은 **그 카드의 자식 글**이 된다 — 배치가 옆에 놓고
-       * 연결선이 이어 준다. 사라지면 산출물이 아니고, 다음에 이 카드를 볼 때
-       * "내가 그때 이만큼 기억했구나"가 함께 보여야 의미가 있다.
-       *
-       * `askHidden`을 켜 둔다: 이건 이미 학생이 스스로 쓴 글이라 "AI에게 묻기"를
-       * 권할 자리가 아니다.
-       */
-      onRecall: (id: string, text: string) => {
-        if (!sessionId) return;
-        void addChildNote(sessionId, id, text, nextSeq());
-      },
+      onSelect,
+      onStartEdit,
+      onCancelEdit,
+      onCommitEdit,
+      onDelete,
+      onTagChange,
+      onDragEnd,
+      onResize,
+      onResetSize,
+      onReflow,
+      onDismissReflow,
+      onAsk,
+      onDismissAsk,
+      onRecall,
     }),
-    // ⚠️ **bridge 전체를 넣으면 안 된다.** bridge는 camera를 deps로 가진
-    // useMemo라 팬/줌 중 매 프레임 새 객체가 되고, 그러면 handlers도 매 프레임
-    // 새로 생겨 memo(TextItem)이 무력화된다 — 전 아이템이 60fps로 리렌더된다
-    // (v1이 정확히 이 이유로 느렸다: useItemLayout.ts 헤더 주석 참조).
-    // getObstacles는 [api]에만 의존하므로 안정적이다.
-    [items, patch, remove, editingId, selectedIds, layout, getObs, sessionId, addChildNote, nextSeq, clearElementSelection],
+    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onDismissAsk, onRecall],
   );
 
   /**
@@ -707,7 +730,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
         zoom={bridge.camera.zoom}
         selectedIds={selectedIds}
         editingId={editingId}
-        measureRef={layout.measureRef}
+        measure={layout.measure}
         handlers={handlers}
       />
     </CanvasStage>

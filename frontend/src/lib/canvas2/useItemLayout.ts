@@ -63,8 +63,11 @@ export interface UseItemLayout {
   tagOrder: string[];
   /** 실측 크기. 폭도 값이다 — 아이템이 내용만큼만 차지한다. */
   sizes: Map<string, Size>;
-  /** 아이템 루트에 붙이는 ref 콜백. 크기를 실측한다. */
-  measureRef: (id: string) => (el: HTMLElement | null) => void;
+  /**
+   * 아이템 루트를 등록한다. 호출부가 `useCallback([measure, id])`로 자기
+   * ref 콜백을 만든다 — 그래야 그 콜백이 렌더마다 바뀌지 않는다.
+   */
+  measure: (id: string, el: HTMLElement | null) => void;
   /** 외부 사정으로 다시 배치해야 할 때(그림이 바뀐 직후 등). */
   invalidate: () => void;
 }
@@ -125,33 +128,46 @@ export function useItemLayout(
 
   const invalidate = useCallback(() => setNonce((n) => n + 1), []);
 
-  const measureRef = useCallback((id: string) => {
-    return (el: HTMLElement | null) => {
-      const map = observers.current;
-      map.get(id)?.disconnect();
-      map.delete(id);
-      if (!el) return;
+  /**
+   * 아이템 크기를 실측한다. **id마다 함수를 만들지 않는다.**
+   *
+   * 예전 계약은 `measureRef(id)`가 ref 콜백을 돌려주는 것이었는데, 그러면
+   * 렌더마다 새 함수가 나온다:
+   *
+   *   (a) `memo(TextItem)`이 매번 깨진다 — prop 하나가 늘 새 값이다.
+   *   (b) React가 ref를 **떼었다 다시 붙인다**(옛 콜백에 null, 새 콜백에 el).
+   *       ResizeObserver가 그때마다 끊겼다 다시 붙는다.
+   *
+   * 실측: 글 21개에서 하나를 클릭하면 128회 렌더됐다.
+   *
+   * 이 함수는 의존성이 없어 **영원히 같은 값**이고, 호출부는 자기 id만
+   * 곁들여 자기 콜백을 memo한다.
+   */
+  const measure = useCallback((id: string, el: HTMLElement | null) => {
+    const map = observers.current;
+    map.get(id)?.disconnect();
+    map.delete(id);
+    if (!el) return;
 
-      const apply = (w: number, h: number) => {
-        setSizes((prev) => {
-          const cur = prev.get(id);
-          // 1px 미만 변화는 무시 — 폰트 로딩·서브픽셀로 계속 흔들린다.
-          if (cur && Math.abs(cur.w - w) < 1 && Math.abs(cur.h - h) < 1) return prev;
-          const next = new Map(prev);
-          next.set(id, { w, h });
-          return next;
-        });
-      };
-
-      const ob = new ResizeObserver((entries) => {
-        const box = entries[0]?.borderBoxSize?.[0];
-        apply(box?.inlineSize ?? el.offsetWidth, box?.blockSize ?? el.offsetHeight);
+    const apply = (w: number, h: number) => {
+      setSizes((prev) => {
+        const cur = prev.get(id);
+        // 1px 미만 변화는 무시 — 폰트 로딩·서브픽셀로 계속 흔들린다.
+        if (cur && Math.abs(cur.w - w) < 1 && Math.abs(cur.h - h) < 1) return prev;
+        const next = new Map(prev);
+        next.set(id, { w, h });
+        return next;
       });
-      ob.observe(el);
-      map.set(id, ob);
-      // 첫 측정은 즉시 — 옵저버 콜백은 다음 프레임이라 한 프레임 깜빡인다.
-      if (el.offsetHeight > 0) apply(el.offsetWidth, el.offsetHeight);
     };
+
+    const ob = new ResizeObserver((entries) => {
+      const box = entries[0]?.borderBoxSize?.[0];
+      apply(box?.inlineSize ?? el.offsetWidth, box?.blockSize ?? el.offsetHeight);
+    });
+    ob.observe(el);
+    map.set(id, ob);
+    // 첫 측정은 즉시 — 옵저버 콜백은 다음 프레임이라 한 프레임 깜빡인다.
+    if (el.offsetHeight > 0) apply(el.offsetWidth, el.offsetHeight);
   }, []);
 
   useEffect(() => {
@@ -168,9 +184,9 @@ export function useItemLayout(
       columnX: state.result.columnX,
       tagOrder: state.result.tagOrder,
       sizes,
-      measureRef,
+      measure,
       invalidate,
     }),
-    [state, sizes, measureRef, invalidate],
+    [state, sizes, measure, invalidate],
   );
 }
