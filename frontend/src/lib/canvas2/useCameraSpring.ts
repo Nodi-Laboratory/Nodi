@@ -36,7 +36,18 @@ const PERIOD = 0.42;
 const EPS_SCROLL = 0.4;
 const EPS_ZOOM = 0.002;
 /** 사용자 조작 판정 임계 — 우리가 쓴 값과 이만큼 벌어지면 사람이 만진 것. */
-const HIJACK_EPS = 1.5;
+/**
+ * 사용자가 가로챘다고 볼 어긋남(px).
+ *
+ * 1.5였는데 **우리 자신의 왕복 지연을 사용자 조작으로 오인**했다. 스프링이 쓴
+ * 값은 `applyCamera`가 ref에 즉시 넣지만, 브리지의 rAF 폴링은 Excalidraw의
+ * 실제 상태(한 프레임 늦은 값)를 다시 ref에 덮어쓴다. 그 1~2px 차이가 매번
+ * 취소를 불러 **"전체 보기"·지도 클릭·답변 추종이 40px쯤 움직이다 멈췄다**
+ * (실측 2026-08-01: 카메라 47 → 5에서 정지, 대상은 화면 밖 4334px).
+ *
+ * 진짜 조작(드래그·휠)은 한 프레임에도 이보다 훨씬 크게 벌어진다.
+ */
+const HIJACK_EPS = 24;
 /** 한 프레임 최대 dt. 탭이 백그라운드였다 돌아올 때 폭주를 막는다. */
 const MAX_DT = 1 / 30;
 
@@ -96,15 +107,22 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
         return;
       }
 
-      const cur = cameraRef.current;
+      const actual = cameraRef.current;
+      /**
+       * 적분은 **우리가 마지막으로 쓴 값**에서 이어 간다.
+       *
+       * `cameraRef`에서 읽으면 브리지 폴링이 되돌려 놓은 한 프레임 늦은 값을
+       * 출발점으로 삼아, 매 프레임 제자리로 끌려가며 앞으로 못 나간다.
+       */
+      const cur = wroteRef.current ?? actual;
 
       // 사용자 조작 감지 — 우리가 쓴 값과 실제가 어긋났으면 사람이 만진 것이다.
       const wrote = wroteRef.current;
       if (
         wrote &&
-        (Math.abs(wrote.scrollX - cur.scrollX) > HIJACK_EPS ||
-          Math.abs(wrote.scrollY - cur.scrollY) > HIJACK_EPS ||
-          Math.abs(wrote.zoom - cur.zoom) > EPS_ZOOM * 4)
+        (Math.abs(wrote.scrollX - actual.scrollX) > HIJACK_EPS ||
+          Math.abs(wrote.scrollY - actual.scrollY) > HIJACK_EPS ||
+          Math.abs(wrote.zoom - actual.zoom) > EPS_ZOOM * 20)
       ) {
         cancel();
         lastTsRef.current = ts;
