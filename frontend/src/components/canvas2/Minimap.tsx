@@ -1,28 +1,26 @@
 "use client";
 
 /**
- * 개념 지도 — **어떤 개념 뭉치가 어디 있는지**를 이름으로 보여 준다 (D136).
+ * 개념 지도 — **태그 하나 = 점 하나** (D139).
  *
- * ## 축소 사진은 이 배치에 맞지 않았다
+ * ## 두 번 헤맨 끝에 옛 방식으로 돌아왔다
  *
- * 한동안 world 기하를 196×124px로 축소해 그렸다. 그런데 배치가 **태그 열**이라
- * 열이 늘수록 가로로 벌어진다 — 열 8개면 world 폭이 4천 px을 넘고, 축척이
- * 0.04까지 떨어져 열 하나가 18px짜리 얼룩이 된다. 라벨을 그릴 자리가 없어
- * 실측 결과 **사각형 9개에 이름은 1개만** 보였다. 사용자 지적 그대로다:
- * "지도에 개념들이 잘 보이지도 않아."
+ * v1이 쓰던 방식이 이것이다: 태그를 실제 위치의 축소 점으로 찍고, 점 크기로
+ * 개수를, 라벨로 이름을 보여 준다. 그 사이 두 가지를 시도했다가 둘 다 사용자
+ * 지적을 받았다.
  *
- * ## 이름이 먼저다
+ *   아이템마다 사각형   글이 20개면 사각형이 20개다. 같은 열 안에서 세로로
+ *                       포개져 **겹쳐 보였다** — "겹치는 부분이 많아서 오히려
+ *                       보기 힘들다."
+ *   이름 목록           겹침은 없앴지만 **공간 정보가 사라졌다**. 어디에 있는지가
+ *                       아니라 무엇이 있는지만 남았다.
  *
- * 이 배치에서 위치 정보는 사실상 1차원이다 — **몇 번째 열인가**. 그래서 2차원
- * 축소도를 버리고 열 순서를 그대로 세로 목록으로 편다:
+ * 점 방식은 둘을 동시에 만족한다. 태그당 하나라 **원리적으로 태그 수만큼만**
+ * 그려지고(열이 8개면 점도 8개), 자리는 실제 열 좌표를 축소한 것이라 공간
+ * 정보가 살아 있다. 라벨은 점에 붙어 다니므로 축척과 무관하게 읽힌다.
  *
- *     ▊ 지구과학    6      ← 색 막대 = 그 열이 차지한 세로 분량
- *     ▊ 생명과학    2
- *     ▊ 화학        1
- *
- * 위의 가는 띠가 열들의 가로 배열과 **지금 보고 있는 구간**을 나타낸다. 목록을
- * 누르면 그 열로 날아간다. 이름·개수·위치가 전부 읽히고, 무엇보다 축척에
- * 상관없이 항상 읽힌다.
+ * 열 간격(`COL_GAP` 240)을 넓힌 것과 한 쌍이다 — 열이 붙어 있으면 점도 붙어
+ * 찍힌다.
  */
 
 import { useMemo, useState } from "react";
@@ -33,24 +31,25 @@ import { union } from "@/lib/canvas2/rect";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { Camera, CanvasItem } from "@/lib/canvas2/types";
 
-/** 패널 폭. 태그 이름이 잘리지 않을 만큼은 필요하다. */
-const W = 216;
-/**
- * 오른쪽 여백 — **도구 레일을 피한다.**
- *
- * 레일은 `right-4`에 폭 36 + 패딩 12로 서 있고 세로 중앙 정렬이라, 지도를
- * 그냥 `right-4`에 두면 목록이 길어질 때 레일 아래로 파고든다(실측: "화학"
- * 행이 레일에 가렸다). 높이를 줄여 피하는 방법도 있지만 화면이 낮아지면
- * 다시 겹친다 — 아예 옆으로 비킨다.
- *
- * 레일이 오른쪽에서 차지하는 폭은 실측 66px(테두리 포함)이고 여기에 여유
- * 10px을 더했다. 레일 크기를 바꾸면 이 값도 같이 봐야 한다.
- */
-const RIGHT = 76;
-/** 목록 최대 높이 — 넘으면 스크롤한다(휠은 캔버스로 새지 않는다). */
-const LIST_MAX_H = 176;
-/** 열 배열 띠의 높이. */
-const STRIP_H = 20;
+/** 펼쳤을 때 크기. 점과 라벨이 겹치지 않으려면 이만큼은 필요하다(v1과 같은 값). */
+const W = 340;
+const H = 250;
+/** 가장자리 여백 — 점 반지름(≤24)과 라벨이 잘리지 않을 만큼. */
+const PAD = 46;
+
+/** 점 반지름 = clamp(BASE + √count × GROWTH). 글이 많은 태그일수록 큰 점. */
+const R_MIN = 7;
+const R_MAX = 24;
+const R_BASE = 7;
+const R_GROWTH = 3.2;
+
+/** 라벨은 이 길이에서 자른다. */
+const LABEL_MAX = 9;
+/** 라벨 글자 하나의 대략 폭(px). 한글은 폰트 크기와 거의 같다. */
+const LABEL_CH = 9.5;
+/** 점 아래 라벨이 차지하는 높이(px). */
+const LABEL_H = 16;
+
 /**
  * 이 폭 아래에서는 기본으로 접는다.
  *
@@ -58,29 +57,24 @@ const STRIP_H = 20;
  * 오른쪽 위에서 서로 겹친다.
  */
 const COLLAPSE_BELOW = 1024;
+/** 도구 레일이 오른쪽에서 차지하는 폭(실측 66) + 여유. */
+const RIGHT = 76;
 const FALLBACK: Size = { w: ITEM_W, h: 180 };
+
+function radius(count: number): number {
+  return Math.max(R_MIN, Math.min(R_MAX, R_BASE + Math.sqrt(count) * R_GROWTH));
+}
 
 interface Props {
   items: CanvasItem[];
   positions: Map<string, Placed>;
   sizes: Map<string, Size>;
-  /** 태그 순서(첫 등장). 목록에 세울 순서다. */
+  /** 태그 순서(첫 등장). */
   tagOrder: readonly string[];
   camera: Camera;
   viewport: { w: number; h: number };
   /** world 좌표로 이동. */
   onJump: (world: { x: number; y: number }) => void;
-}
-
-interface Group {
-  tag: string;
-  /** 사용자에게 보일 이름. 분류 없는 열은 따로 부른다. */
-  label: string;
-  count: number;
-  /** 이 열이 차지한 world 영역. */
-  box: Rect;
-  /** AI가 쓴 글의 비율(0~1). 막대 색을 정한다. */
-  aiRatio: number;
 }
 
 export function Minimap({
@@ -97,6 +91,7 @@ export function Minimap({
   const open = override ?? viewport.w >= COLLAPSE_BELOW;
 
   const model = useMemo(() => {
+    /** 태그 → 그 태그 글들의 사각형. */
     const byTag = new Map<string, { rects: Rect[]; ai: number }>();
     for (const it of items) {
       const p = positions.get(it.id);
@@ -110,29 +105,109 @@ export function Minimap({
     }
     if (!byTag.size) return null;
 
-    // 열 순서대로. tagOrder에 없는 태그(방금 생긴 것)는 뒤에 붙인다.
     const order = [...tagOrder, ...byTag.keys()].filter(
       (t, i, a) => a.indexOf(t) === i && byTag.has(t),
     );
 
-    const groups: Group[] = order.map((tag) => {
+    // 태그 하나당 점 하나. 자리는 그 태그가 차지한 영역의 중심이다.
+    const dots = order.map((tag) => {
       const g = byTag.get(tag)!;
+      const b = union(g.rects)!;
       return {
         tag,
         label: tag === UNTAGGED ? "분류 없음" : tag,
         count: g.rects.length,
-        box: union(g.rects)!,
         aiRatio: g.ai / g.rects.length,
+        wx: b.x + b.w / 2,
+        wy: b.y + b.h / 2,
       };
     });
 
-    const most = Math.max(...groups.map((g) => g.count));
-    const all = union(groups.map((g) => g.box))!;
-    // 지금 보고 있는 가로 구간(world). world = screen/zoom - scroll
-    const viewX0 = -camera.scrollX;
-    const viewX1 = viewX0 + viewport.w / camera.zoom;
+    // 지금 보고 있는 영역(world). world = screen/zoom - scroll
+    const view: Rect = {
+      x: -camera.scrollX,
+      y: -camera.scrollY,
+      w: viewport.w / camera.zoom,
+      h: viewport.h / camera.zoom,
+    };
 
-    return { groups, most, all, viewX0, viewX1 };
+    // 점과 뷰포트를 모두 담는 범위. 점은 크기가 없으므로 1px 사각형으로 친다.
+    const box = union([...dots.map((d) => ({ x: d.wx, y: d.wy, w: 1, h: 1 })), view])!;
+
+    // **양축에 같은 배율**을 쓴다 — 다르게 주면 실제로 나란한 열이 지도에서
+    // 비스듬해 보여 공간 정보가 거짓이 된다.
+    const s = Math.min(
+      (W - PAD * 2) / Math.max(1, box.w),
+      (H - PAD * 2) / Math.max(1, box.h),
+    );
+    const ox = PAD + (W - PAD * 2 - box.w * s) / 2;
+    const oy = PAD + (H - PAD * 2 - box.h * s) / 2;
+    const px = (x: number) => ox + (x - box.x) * s;
+    const py = (y: number) => oy + (y - box.y) * s;
+
+    /**
+     * 점이 겹치면 살짝 밀어 떼어 놓는다.
+     *
+     * 클러스터가 실제로 공간에서 겹칠 수 있다 — 특히 "분류 없음"은 학생이
+     * 여기저기 끌어다 둔 메모라 중심이 다른 열 위에 얹힌다. 위치를 그대로
+     * 두면 두 점이 포개져 **읽을 수 없다**(사용자 지적: "겹치는 부분이 많아서
+     * 오히려 보기 힘들다").
+     *
+     * 원래 자리에서 조금씩만 밀므로 공간 정보는 거의 그대로다. 클릭 시 이동은
+     * 밀린 좌표가 아니라 **원래 world 좌표**(`wx`,`wy`)로 하므로 정확하다.
+     */
+    const placed = dots.map((d) => {
+      const r = radius(d.count);
+      const text = d.label.length > LABEL_MAX ? LABEL_MAX + 1 : d.label.length;
+      return {
+        ...d,
+        cx: px(d.wx),
+        cy: py(d.wy),
+        r,
+        // **라벨까지 포함한 반폭·반높이.** 원만 떼어 놓으면 이름끼리 겹친다
+        // (실측: 점은 안 겹치는데 "지구과학"과 "상태"가 포개졌다). 한글은
+        // 폰트 크기와 글자 폭이 거의 같아 글자 수 × LABEL_CH로 잡는다.
+        hw: Math.max(r, (text * LABEL_CH) / 2),
+        hh: r + LABEL_H,
+      };
+    });
+    const GAP = 4;
+    for (let pass = 0; pass < 40; pass++) {
+      let moved = false;
+      for (let i = 0; i < placed.length; i++) {
+        for (let j = i + 1; j < placed.length; j++) {
+          const a = placed[i];
+          const b = placed[j];
+          const dx = b.cx - a.cx;
+          const dy = b.cy - a.cy;
+          const ox = a.hw + b.hw + GAP - Math.abs(dx);
+          const oy = a.hh + b.hh + GAP - Math.abs(dy);
+          if (ox <= 0 || oy <= 0) continue; // 어느 한 축이라도 벌어져 있으면 안 겹친다
+          moved = true;
+          // **덜 밀어도 되는 축**으로 가른다 — 원래 자리에서 최소한만 벗어난다.
+          if (ox < oy) {
+            const s2 = (dx >= 0 ? 1 : -1) * (ox / 2);
+            a.cx -= s2;
+            b.cx += s2;
+          } else {
+            const s2 = (dy >= 0 ? 1 : -1) * (oy / 2);
+            a.cy -= s2;
+            b.cy += s2;
+          }
+        }
+      }
+      if (!moved) break;
+    }
+    // 민 뒤에 화폭을 벗어날 수 있다 — 라벨까지 들어오게 가둔다.
+    for (const d of placed) {
+      d.cx = Math.min(W - d.hw - 2, Math.max(d.hw + 2, d.cx));
+      d.cy = Math.min(H - d.hh - 2, Math.max(d.r + 6, d.cy));
+    }
+
+    return {
+      dots: placed,
+      view: { x: px(view.x), y: py(view.y), w: view.w * s, h: view.h * s },
+    };
   }, [items, positions, sizes, tagOrder, camera, viewport]);
 
   if (!model) return null;
@@ -159,115 +234,101 @@ export function Minimap({
     );
   }
 
-  const span = Math.max(1, model.all.w);
-  /** world x → 띠 안의 비율(0~1). */
-  const at = (x: number) => Math.min(1, Math.max(0, (x - model.all.x) / span));
-
   return (
     <div
       data-no-pan
-      // 오른쪽 위 — 사용자 지시.
+      // 오른쪽 위 — 사용자 지시. 도구 레일은 피한다.
       className="ui absolute top-16 z-30 overflow-hidden rounded-lg border"
       style={{
         right: RIGHT,
-        width: W,
         background: "var(--c-raised)",
         borderColor: "var(--c-rule)",
         boxShadow: "var(--c-shadow-md)",
       }}
     >
-      <div className="flex items-center justify-between px-2.5 pt-2">
-        <span className="label" style={{ color: "var(--c-ink-faint)", letterSpacing: 0 }}>
-          개념 지도
-        </span>
-        <button
-          type="button"
-          onClick={() => setOverride(false)}
-          aria-label="개념 지도 닫기"
-          className="rounded p-0.5 transition-colors hover:bg-[var(--c-sunk)]"
-          style={{ color: "var(--c-ink-faint)" }}
-        >
-          <X size={12} />
-        </button>
-      </div>
-
-      {/* 열들의 가로 배열 + 지금 보는 구간. 위치 감각은 여기서 준다. */}
-      <div
-        aria-hidden
-        className="relative mx-2.5 mt-1.5"
-        style={{ height: STRIP_H, background: "var(--c-sunk)", borderRadius: 3 }}
+      <button
+        type="button"
+        onClick={() => setOverride(false)}
+        aria-label="개념 지도 닫기"
+        className="absolute right-1 top-1 z-10 rounded p-1 transition-colors hover:bg-[var(--c-sunk)]"
+        style={{ color: "var(--c-ink-faint)" }}
       >
-        {model.groups.map((g) => (
-          <div
-            key={g.tag}
-            className="absolute"
-            style={{
-              left: `${at(g.box.x) * 100}%`,
-              width: `${Math.max(2, (g.box.w / span) * 100)}%`,
-              top: 3,
-              bottom: 3,
-              borderRadius: 2,
-              background: "var(--c-live)",
-              opacity: 0.18 + (g.count / model.most) * 0.34,
-            }}
-          />
-        ))}
-        {/* 지금 보고 있는 가로 구간 */}
-        <div
-          className="absolute"
-          style={{
-            left: `${at(model.viewX0) * 100}%`,
-            width: `${Math.max(3, (at(model.viewX1) - at(model.viewX0)) * 100)}%`,
-            top: 0,
-            bottom: 0,
-            border: "1.5px solid var(--c-ink)",
-            borderRadius: 3,
-            opacity: 0.5,
-          }}
+        <X size={12} />
+      </button>
+
+      <svg width={W} height={H} className="block" aria-label="개념 지도">
+        {/* 지금 보고 있는 영역. 점보다 뒤에 옅게 — 정보는 점이 준다. */}
+        <rect
+          x={model.view.x}
+          y={model.view.y}
+          width={Math.max(4, model.view.w)}
+          height={Math.max(4, model.view.h)}
+          rx={3}
+          fill="var(--c-ink)"
+          fillOpacity={0.04}
+          stroke="var(--c-ink)"
+          strokeOpacity={0.35}
+          strokeWidth={1}
         />
-      </div>
 
-      {/* 이름 목록 — 이 화면의 요지. 축척과 무관하게 항상 읽힌다. */}
-      <ul
-        className="mt-1.5 overflow-auto pb-1.5"
-        style={{ maxHeight: LIST_MAX_H }}
-        aria-label="개념 분류 목록"
-      >
-        {model.groups.map((g) => (
-          <li key={g.tag}>
-            <button
-              type="button"
-              onClick={() =>
-                onJump({ x: g.box.x + g.box.w / 2, y: g.box.y + Math.min(g.box.h / 2, 260) })
-              }
-              title={`${g.label} — 글 ${g.count}개. 눌러서 이동`}
-              className="flex w-full items-center gap-2 px-2.5 py-1 text-left transition-colors hover:bg-[var(--c-sunk)]"
+        {model.dots.map((d) => (
+          <g
+            key={d.tag}
+            transform={`translate(${d.cx},${d.cy})`}
+            style={{ cursor: "pointer" }}
+            onClick={() => onJump({ x: d.wx, y: d.wy })}
+          >
+            <title>{`${d.label} — 글 ${d.count}개. 눌러서 이동`}</title>
+            {/* **보이지 않는 클릭 영역.**
+                SVG는 그려진 부분만 히트 테스트한다. 점과 아래 라벨 사이의 빈
+                틈을 누르면 아무것도 안 잡혀 이동이 안 됐다(실측: 카메라가
+                15px만 움직임). 점+라벨을 함께 덮는 원을 깔아 둔다 —
+                `fill="none"`은 안 잡히므로 투명 채움 + pointerEvents가 필요하다. */}
+            <circle
+              r={d.r + 16}
+              fill="transparent"
+              style={{ pointerEvents: "all" }}
+            />
+            {/* 색은 누가 채웠나(오커 AI · 틸 학생), 크기는 글 수 */}
+            <circle
+              r={d.r}
+              fill={d.aiRatio >= 0.5 ? "var(--c-live)" : "var(--c-hand)"}
+              fillOpacity={0.3}
+              stroke={d.aiRatio >= 0.5 ? "var(--c-live)" : "var(--c-hand)"}
+              strokeOpacity={0.75}
+              strokeWidth={1.5}
+            />
+            <text
+              textAnchor="middle"
+              dy={4}
+              style={{
+                fontFamily: "var(--font-label), monospace",
+                fontSize: 10,
+                fill: "var(--c-ink)",
+              }}
             >
-              {/* 막대 길이 = 그 열의 분량, 색 = 누가 썼나(오커 AI · 틸 학생) */}
-              <span
-                aria-hidden
-                className="shrink-0 rounded-full"
-                style={{
-                  width: 3,
-                  height: 12 + (g.count / model.most) * 8,
-                  background: g.aiRatio >= 0.5 ? "var(--c-live)" : "var(--c-hand)",
-                }}
-              />
-              <span
-                className="min-w-0 flex-1 truncate text-[12px]"
-                style={{
-                  color: g.tag === UNTAGGED ? "var(--c-ink-faint)" : "var(--c-ink)",
-                }}
-              >
-                {g.label}
-              </span>
-              <span className="label shrink-0" style={{ color: "var(--c-ink-faint)" }}>
-                {g.count}
-              </span>
-            </button>
-          </li>
+              {d.count}
+            </text>
+            {/* 라벨은 점 **아래**에 둔다. 옆에 두면 열이 촘촘할 때 이웃 점을 덮는다.
+                종이색 외곽선을 깔아 점 위로 지나가도 글자가 읽히게 한다. */}
+            <text
+              textAnchor="middle"
+              y={d.r + 12}
+              style={{
+                fontFamily: "var(--font-label), monospace",
+                fontSize: 9.5,
+                fill: "var(--c-ink-soft)",
+                paintOrder: "stroke",
+                stroke: "var(--c-raised)",
+                strokeWidth: 3,
+                strokeLinejoin: "round",
+              }}
+            >
+              {d.label.length > LABEL_MAX ? `${d.label.slice(0, LABEL_MAX)}…` : d.label}
+            </text>
+          </g>
         ))}
-      </ul>
+      </svg>
     </div>
   );
 }
