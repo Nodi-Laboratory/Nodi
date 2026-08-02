@@ -15,7 +15,6 @@ import {
   layoutItems,
   placeBesideParent,
   rectOf,
-  reflowOne,
   UNTAGGED,
   type LayoutInput,
 } from "./layout";
@@ -274,50 +273,6 @@ describe("AI 응답을 메모 옆에", () => {
     const spot = placeBesideParent(parent, ITEM_W, 200, [blocker]);
     expect(intersects({ ...spot, w: ITEM_W, h: 200 }, blocker)).toBe(false);
     expect(spot.y).toBeGreaterThan(0);
-  });
-});
-
-// --- 불변식 6: reflowOne -----------------------------------------------------
-
-describe("위치 정리(reflowOne)", () => {
-  it("다른 아이템을 움직이지 않는다", () => {
-    const target = item({ id: "t", tag: "가", seq: 2, height: 900, pinned: true, x: 9, y: 9 });
-    const others = [
-      item({ id: "a", tag: "가", seq: 0, height: 200, pinned: true, x: 0, y: 0 }),
-      item({ id: "b", tag: "가", seq: 1, height: 200, pinned: true, x: 0, y: 300 }),
-    ];
-    const before = others.map((o) => ({ x: o.x, y: o.y }));
-    reflowOne(target, others, [], ["가"]);
-    expect(others.map((o) => ({ x: o.x, y: o.y }))).toEqual(before);
-  });
-
-  it("정리 후 다른 아이템·장애물과 겹치지 않는다", () => {
-    const others = [
-      item({ id: "a", tag: "가", seq: 0, height: 300, pinned: true, x: 0, y: 0 }),
-      item({ id: "b", tag: "가", seq: 1, height: 300, pinned: true, x: 0, y: 400 }),
-    ];
-    const obstacles: Rect[] = [{ x: 0, y: 800, w: 300, h: 300 }];
-    const target = item({ id: "t", tag: "가", seq: 2, height: 250 });
-    const spot = reflowOne(target, others, obstacles, ["가"]);
-    const r = rectOf(spot, { w: ITEM_W, h: 250 });
-    for (const o of others) {
-      expect(intersects(r, rectOf({ x: o.x, y: o.y }, { w: o.width, h: o.height }))).toBe(false);
-    }
-    expect(intersects(r, obstacles[0])).toBe(false);
-  });
-
-  it("같은 열에서 seq가 앞선 아이템보다 아래에 놓인다", () => {
-    const others = [
-      item({ id: "a", tag: "가", seq: 0, height: 300, pinned: true, x: 0, y: 0 }),
-    ];
-    const target = item({ id: "t", tag: "가", seq: 1, height: 200 });
-    expect(reflowOne(target, others, [], ["가"]).y).toBeGreaterThanOrEqual(300);
-  });
-
-  it("태그를 바꾸면 그 태그의 열로 간다", () => {
-    const order = ["가", "나"];
-    const target = item({ id: "t", tag: "나", seq: 0, height: 200 });
-    expect(reflowOne(target, [], [], order).x).toBe(ITEM_W + COL_GAP);
   });
 });
 

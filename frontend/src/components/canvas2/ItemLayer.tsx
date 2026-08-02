@@ -137,8 +137,16 @@ export function ItemLayer({
 /**
  * 열 머리의 분류 라벨.
  *
- * 열 안에서 **가장 위에 있는 아이템** 위에 붙인다. 열의 y=0에 고정하면
+ * 그 태그에서 **가장 위에 있는 글** 위에 붙인다. 열의 y=0에 고정하면
  * pinned 아이템 때문에 열이 아래에서 시작할 때 라벨만 허공에 뜬다.
+ *
+ * ## x를 열 시작과 비교하면 안 된다 (D161)
+ *
+ * 예전에는 `columnX.get(tag) === p.x`인 글만 기준으로 삼았다. 세로로 쌓던
+ * 시절에는 그게 "열의 본류"를 고르는 방법이었다. **tidy tree(D159)에서는
+ * 뿌리가 자식들 위 가운데에 놓이므로 그 조건에 맞는 글이 하나도 없다** —
+ * 라벨이 통째로 사라졌다. 지금은 가장 위에 있는 글을 그냥 고르고, 라벨도
+ * 그 글의 왼쪽 위에 붙인다.
  */
 function ColumnLabels({
   items,
@@ -151,24 +159,25 @@ function ColumnLabels({
   columnX: Map<string, number>;
   tagOrder: readonly string[];
 }) {
-  const topByTag = new Map<string, number>();
+  /** 태그별로 가장 위에 있는 글의 자리. 라벨은 그 위에 붙는다. */
+  const topByTag = new Map<string, Placed>();
   for (const it of items) {
     const p = positions.get(it.id);
     if (!p) continue;
     const tag = it.tag || UNTAGGED;
-    // 열 x와 실제 x가 다르면 pinned이거나 자식이다 — 열 라벨의 기준이 아니다.
-    if (columnX.get(tag) !== p.x) continue;
     const cur = topByTag.get(tag);
-    if (cur === undefined || p.y < cur) topByTag.set(tag, p.y);
+    if (cur === undefined || p.y < cur.y) topByTag.set(tag, p);
   }
 
   return (
     <>
       {tagOrder.map((tag) => {
         if (tag === UNTAGGED) return null;
-        const y = topByTag.get(tag);
-        const x = columnX.get(tag);
-        if (y === undefined || x === undefined) return null;
+        const at = topByTag.get(tag);
+        if (!at) return null;
+        // 열 시작보다 왼쪽으로 나가지 않게 한다(뿌리가 가운데일 수 있다).
+        const x = Math.max(columnX.get(tag) ?? at.x, at.x);
+        const y = at.y;
         return (
           <div
             key={tag}

@@ -426,41 +426,6 @@ export function placeBesideParent(
   return { x, y };
 }
 
-/**
- * 아이템 하나만 다시 놓는다 ("위치 정리" 버튼).
- *
- * 다른 아이템은 **절대 움직이지 않는다** — 본문을 고쳤을 뿐인데 캔버스 전체가
- * 재배치되면 학생이 자기가 어디에 뭘 뒀는지 잃어버린다.
- */
-export function reflowOne(
-  item: LayoutInput,
-  others: readonly LayoutInput[],
-  obstacles: readonly Rect[],
-  tagOrder: readonly string[],
-): Placed {
-  const blocks: Rect[] = [
-    ...obstacles,
-    ...others
-      .filter((o) => o.id !== item.id)
-      .map((o) => ({ x: o.x, y: o.y, w: o.width, h: o.height })),
-  ];
-
-  const tag = item.tag || UNTAGGED;
-  const order = tagOrder.includes(tag) ? [...tagOrder] : [...tagOrder, tag];
-  const x = columnXFor(order, tag);
-
-  // 같은 열의 다른 아이템 중 이 아이템보다 seq가 앞선 것들의 아래에서 시작한다
-  // — 열 안의 순서를 지킨다.
-  const sameColAbove = others.filter(
-    (o) => o.id !== item.id && (o.tag || UNTAGGED) === tag && o.seq < item.seq,
-  );
-  const start = sameColAbove.length
-    ? Math.max(...sameColAbove.map((o) => o.y + o.height)) + ROW_GAP
-    : COL_TOP;
-
-  return { x, y: pushDown(x, start, item.width, item.height, blocks) };
-}
-
 /** 배치 결과 + 실측 크기 → 사각형. 카메라 이동·미니맵·연결선이 쓴다. */
 export function rectOf(pos: Placed, size: { w: number; h: number }): Rect {
   return { x: pos.x, y: pos.y, w: size.w, h: size.h };

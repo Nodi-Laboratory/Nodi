@@ -25,7 +25,6 @@ import { useExcalidrawBridge } from "@/lib/canvas2/useExcalidrawBridge";
 import { useCameraSpring } from "@/lib/canvas2/useCameraSpring";
 import { useItemLayout, type LayoutSource } from "@/lib/canvas2/useItemLayout";
 import { useCanvasItems } from "@/lib/canvas2/useCanvasItems";
-import { reflowOne, type LayoutInput } from "@/lib/canvas2/layout";
 import { sanitizeScene } from "@/lib/canvas2/sanitizeScene";
 import { itemsFromNodes } from "@/lib/canvas2/legacyItems";
 import { planHydration } from "@/lib/canvas2/hydration";
@@ -314,7 +313,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   // --- 조작 ------------------------------------------------------------------
 
   const { patch, moveMany, tagMany, patchMany, remove, items } = store;
-  const { getObstacles: getObs, setTool, clearElementSelection } = bridge;
+  const { setTool, clearElementSelection } = bridge;
 
   const onSelect = useEventCallback((id: string | null, additive?: boolean) => {
     // **그냥 클릭은 교체다** — 도형 선택도 함께 비운다. 안 그러면 글 하나만
@@ -483,29 +482,19 @@ export function CanvasWorkspace({ spaceId }: Props) {
     patch(id, { data: rest });
   });
 
+  /**
+   * "위치 정리" — **고정을 푼다** (D161).
+   *
+   * 예전에는 빈 자리를 직접 찾아 그 좌표에 다시 고정했다(`reflowOne`). 그
+   * 함수는 열이 고정 피치라는 전제 위에 있었는데, tidy tree(D159)에서 열 x는
+   * **누적**이라 그 계산이 엉뚱한 자리를 냈다.
+   *
+   * 지금은 배치 엔진이 트리 모양을 스스로 만든다. 그러니 "정리"의 뜻은
+   * 하나뿐이다 — **엔진에게 맡긴다.** 고정을 풀면 다음 배치에서 제자리를
+   * 찾아간다. 계산이 두 곳에 있지 않으니 어긋날 자리도 없다.
+   */
   const onReflow = useEventCallback((id: string) => {
-    const target = items.find((i) => i.id === id);
-    if (!target) return;
-    const toInput = (i: (typeof items)[number]): LayoutInput => ({
-      id: i.id,
-      tag: i.tag,
-      seq: i.seq,
-      pinned: i.pinned,
-      // 다른 아이템의 "현재 자리"는 배치 결과다 — 원본 x/y가 아니다.
-      x: layout.positions.get(i.id)?.x ?? i.x,
-      y: layout.positions.get(i.id)?.y ?? i.y,
-      width: layout.sizes.get(i.id)?.w ?? ITEM_W,
-      height: layout.sizes.get(i.id)?.h ?? FALLBACK_H,
-      parentItemId: i.parentItemId,
-    });
-    const spot = reflowOne(
-      toInput(target),
-      items.filter((i) => i.id !== id).map(toInput),
-      getObs(),
-      layout.tagOrder,
-    );
-    // 정리 결과도 고정이다. 안 그러면 다음 배치에서 열 흐름이 다시 옮긴다.
-    patch(id, { x: spot.x, y: spot.y, pinned: true }, { _needsReflow: false });
+    patch(id, { pinned: false }, { _needsReflow: false });
   });
 
   const onDismissReflow = useEventCallback((id: string) => {
@@ -855,7 +844,17 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const handleShapeDrag = useCallback(
     (dx: number, dy: number, done: boolean) => {
       if (!selectedIds.size) return;
-      const ids = [...selectedIds];
+      /**
+       * 도형과 함께 끌 때도 **가지가 따라온다** (D161).
+       *
+       * 글을 직접 끌 때는 자손이 함께 갔는데(D154) 이 경로만 빠져 있었다.
+       * 같은 동작이 어디서 시작했느냐에 따라 다르게 굴면 학생은 규칙을
+       * 배울 수 없다.
+       */
+      const roots = [...selectedIds];
+      const withKids = new Set(roots);
+      for (const r of roots) for (const d of descendants(items, r)) withKids.add(d);
+      const ids = [...withKids];
       if (!done) {
         const shift = `translate(${dx}px, ${dy}px)`;
         for (const id of ids) {
@@ -884,7 +883,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
         patch(id, { x: pos.x + dx, y: pos.y + dy, pinned: true });
       }
     },
-    [selectedIds, layout, patch],
+    [selectedIds, items, layout, patch],
   );
 
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
