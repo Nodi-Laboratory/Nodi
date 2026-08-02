@@ -43,11 +43,7 @@ import { ItemBody } from "./ItemBody";
 import { ItemMenu } from "./ItemMenu";
 import { RecallPanel } from "./RecallPanel";
 import { QuestionTip } from "./QuestionTip";
-import { ResizeHandles, type ResizeCommit } from "./ResizeHandles";
 import { ReflowButton } from "./ReflowButton";
-
-/** 리사이즈 커밋 뒤 남은 transform을 걷어내는 안전망(ms). */
-const DROP_FALLBACK_MS = 300;
 
 export interface TextItemProps {
   item: CanvasItem;
@@ -80,10 +76,11 @@ export interface TextItemProps {
   onDismissAsk: (id: string) => void;
   /** 인출 연습에서 학생이 쓴 회상을 자식 글로 남긴다 (D138). */
   onRecall: (id: string, text: string) => void;
-  /** 손잡이로 상자 크기를 바꿨다 (D142). */
-  onResize: (id: string, next: ResizeCommit) => void;
-  /** 상자를 자동 크기로 되돌린다. */
-  onResetSize: (id: string) => void;
+  /**
+   * 크기 조절은 **도판만** 한다(사용자 지시 2026-08-02, D147). onResize·
+   * onResetSize는 공유 handlers 묶음으로 함께 오지만 글 상자는 쓰지 않는다 —
+   * 그래서 여기서 선언하지도, 구조분해하지도 않는다.
+   */
 }
 
 function TextItemImpl(props: TextItemProps) {
@@ -109,8 +106,6 @@ function TextItemImpl(props: TextItemProps) {
     onAsk,
     onDismissAsk,
     onRecall,
-    onResize,
-    onResetSize,
   } = props;
 
   const [hover, setHover] = useState(false);
@@ -122,8 +117,6 @@ function TextItemImpl(props: TextItemProps) {
    */
   const [recall, setRecall] = useState<"off" | "hidden" | "compare">("off");
   const rootRef = useRef<HTMLDivElement>(null);
-  /** 학생이 손잡이로 정한 크기. 없으면 내용이 정한다 (D142). */
-  const size = item.data.size;
   const isAi = item.source === "ai";
   const accent = isAi ? "var(--c-live)" : "var(--c-hand)";
   const wash = isAi ? "var(--c-live-wash)" : "var(--c-hand-wash)";
@@ -199,13 +192,10 @@ function TextItemImpl(props: TextItemProps) {
          * 편집 중에는 최대 폭으로 고정한다 — 글자를 지울 때마다 입력 상자가
          * 줄어들면 쓸 수가 없다.
          */
-        // 학생이 손잡이로 정했으면 그 값이 우선이다 — 읽기 폭 상한(ITEM_W)도
-        // 학생의 결정 앞에서는 물러난다(D142).
-        width: size ? size.w : editing ? ITEM_W : "max-content",
-        maxWidth: size ? undefined : ITEM_W,
+        // 글은 내용이 폭·높이를 정한다 — 크기 조절은 도판만 한다(D147).
+        width: editing ? ITEM_W : "max-content",
+        maxWidth: ITEM_W,
         minWidth: editing ? undefined : ITEM_MIN_W,
-        // **최소** 높이다. 내용이 더 길면 상자가 늘어난다(잘린 글은 사고다).
-        minHeight: size?.h,
         pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
         zIndex: selected || editing ? 12 : dragging ? 11 : 10,
         cursor: editing ? "auto" : dragging ? "grabbing" : "grab",
@@ -276,21 +266,7 @@ function TextItemImpl(props: TextItemProps) {
         }}
       />
 
-      {/* 고른 상자는 도형과 같은 모습이어야 한다 — 테두리 + 여덟 손잡이 (D142) */}
-      {selected && !editing && !dragging && (
-        <ResizeHandles
-          zoom={zoom}
-          color={accent}
-          getEl={() => rootRef.current}
-          onCommit={(next) => {
-            onResize(item.id, next);
-            // 새 좌표가 끝내 안 오는 경우(폭만 바꿨을 때)의 안전망 — 남은
-            // transform을 걷어낸다.
-            window.setTimeout(settle, DROP_FALLBACK_MS);
-          }}
-          onReset={() => onResetSize(item.id)}
-        />
-      )}
+      {/* 글 상자는 크기 손잡이가 없다 — 크기 조절은 도판만 한다(D147). */}
 
       {/* 이 답을 부른 질문 — hover하면 위쪽에 한 줄로 뜬다 */}
       {question && (hover || selected) && !editing && <QuestionTip text={question} />}
@@ -404,8 +380,6 @@ function TextItemImpl(props: TextItemProps) {
             onEdit={() => onStartEdit(item.id)}
             onDelete={() => onDelete(item.id)}
             onTagChange={(t) => onTagChange(item.id, t)}
-            resized={!!size}
-            onResetSize={() => onResetSize(item.id)}
             onOpenChange={setMenuOpen}
           />
         )}
