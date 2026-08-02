@@ -338,7 +338,24 @@ export function useCanvasStream({
       try {
         const saved = await createItems(sessionId, payload);
         const tempIds = made.map((i) => i.id);
-        onPersisted(tempIds, saved);
+        const realOf = new Map(tempIds.map((t, i) => [t, saved[i]?.id]));
+
+        /**
+         * 서버가 돌려준 행에 **우리가 아는 부모를 채워 넣는다** (D151).
+         *
+         * 같은 턴 안에서 이어 붙인 부모는 임시 id라 저장에 싣지 못했다(FK).
+         * 그래서 서버 행의 `parentItemId`는 비어 있는데, 그 행으로 로컬을
+         * 통째 교체하면 **화면에서 방금 그려진 선이 사라진다** — DB에는
+         * 있는데 새로고침 전까지 안 보이는 상태가 된다(실측으로 잡았다:
+         * 카드 셋이 전부 뿌리로 그려져 지도에 간선이 하나도 없었다).
+         */
+        const linked = saved.map((row, i) => {
+          const p = made[i]?.parentItemId;
+          if (!row || !p || isRealId(p)) return row;
+          const real = realOf.get(p);
+          return real ? { ...row, parentItemId: real } : row;
+        });
+        onPersisted(tempIds, linked);
 
         /**
          * 같은 턴 안에서 이어 붙인 부모를 서버에도 잇는다 (D151).
@@ -349,7 +366,6 @@ export function useCanvasStream({
          * (replaceTemp가 부모 참조까지 옮긴다) 이 왕복이 늦어도 티가 나지
          * 않고, 실패해도 다음 새로고침에서 선 하나가 빠질 뿐 글은 남는다.
          */
-        const realOf = new Map(tempIds.map((t, i) => [t, saved[i]?.id]));
         const relink = made
           .map((m, i) => {
             const p = m.parentItemId;
