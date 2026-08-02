@@ -1,35 +1,44 @@
 "use client";
 
 /**
- * 개념 지도 — **태그 하나 = 점 하나** (D139).
+ * 개념 지도 — 축척에 따라 **두 가지를 보여 준다** (D139 → D151).
  *
- * ## 두 번 헤맨 끝에 옛 방식으로 돌아왔다
+ * ```
+ *   축소  태그 하나 = 점 하나          "무엇이 어디에 있나"
+ *   확대  노드 하나 = 점 하나 + 방향선  "무엇에서 무엇이 나왔나"
+ * ```
  *
- * v1이 쓰던 방식이 이것이다: 태그를 실제 위치의 축소 점으로 찍고, 점 크기로
- * 개수를, 라벨로 이름을 보여 준다. 그 사이 두 가지를 시도했다가 둘 다 사용자
- * 지적을 받았다.
+ * ## 왜 축척으로 가르나
  *
- *   아이템마다 사각형   글이 20개면 사각형이 20개다. 같은 열 안에서 세로로
- *                       포개져 **겹쳐 보였다** — "겹치는 부분이 많아서 오히려
- *                       보기 힘들다."
- *   이름 목록           겹침은 없앴지만 **공간 정보가 사라졌다**. 어디에 있는지가
- *                       아니라 무엇이 있는지만 남았다.
+ * 둘 다 필요한데 한 화면에 같이 두면 못 쓴다. 글이 20개면 노드 20개 + 선
+ * 19개가 340×250 안에 들어가고, 그 위에 태그 점까지 겹치면 아무것도 안 읽힌다.
+ * 예전에 "아이템마다 사각형"으로 그렸다가 사용자에게 정확히 그 지적을 받았다
+ * ("겹치는 부분이 많아서 오히려 보기 힘들다").
  *
- * 점 방식은 둘을 동시에 만족한다. 태그당 하나라 **원리적으로 태그 수만큼만**
- * 그려지고(열이 8개면 점도 8개), 자리는 실제 열 좌표를 축소한 것이라 공간
- * 정보가 살아 있다. 라벨은 점에 붙어 다니므로 축척과 무관하게 읽힌다.
+ * 축척은 **무엇을 묻고 있는지**를 나눈다. 멀리서 보면 "어느 주제가 어디쯤"이
+ * 궁금하고, 당겨 보면 "이 주제가 어떻게 뻗어 나갔나"가 궁금하다.
  *
- * 열 간격(`COL_GAP` 240)을 넓힌 것과 한 쌍이다 — 열이 붙어 있으면 점도 붙어
- * 찍힌다.
+ * ## 확대하면 중심이 바뀐다
+ *
+ * 축소 상태에서는 전체를 담고, 확대하면 **지금 보고 있는 영역**을 중심에 둔다.
+ * 전체 중심에 고정한 채 확대하면 캔버스 한쪽 끝에서 작업 중일 때 지도가 엉뚱한
+ * 곳을 크게 보여 준다.
+ *
+ * ## 선은 지도의 것이다
+ *
+ * 트리 간선은 원래 지도에서만 보이는 선이다(사용자 지시 2026-08-02). 다만
+ * 캔버스에도 겹쳐 볼 수 있게 토글을 둔다 — **기본은 켬**. ConnectorLayer가
+ * 같은 저장 키를 보므로 둘은 어긋날 수 없다.
  */
 
-import { useMemo } from "react";
-import { Map as MapIcon, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Link2, Link2Off, Map as MapIcon, Minus, Plus, X } from "lucide-react";
 import { ITEM_W, UNTAGGED, type Placed } from "@/lib/canvas2/layout";
 import type { Rect } from "@/lib/canvas2/rect";
 import { union } from "@/lib/canvas2/rect";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { Camera, CanvasItem } from "@/lib/canvas2/types";
+import { buildTrees, treeEdges } from "@/lib/canvas2/tree";
 import { useCollapsible } from "@/lib/canvas2/useCollapsible";
 
 /** 펼쳤을 때 크기. 점과 라벨이 겹치지 않으려면 이만큼은 필요하다(v1과 같은 값). */
@@ -52,20 +61,36 @@ const LABEL_CH = 9.5;
 const LABEL_H = 16;
 
 /**
- * 이 폭 아래에서는 기본으로 접는다.
+ * 이 배율부터 노드 지도로 바뀐다.
  *
- * 교실에서 태블릿을 쓴다. 세로로 세운 아이패드에서는 지도·상단바·도구 레일이
- * 오른쪽 위에서 서로 겹친다.
+ * 1.8이면 화면에 담기던 것이 대략 세 배 면적으로 퍼진다 — 노드 스무 개가
+ * 서로 떨어져 찍히기 시작하는 지점이다(그보다 낮으면 점이 붙어 선이 안 읽힌다).
  */
-const COLLAPSE_BELOW = 1024;
+const NODE_ZOOM = 1.8;
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 6;
+const ZOOM_STEP = 1.35;
+
+/** 노드 지도의 점 반지름. */
+const NODE_R = 4.5;
+
 /**
- * 오른쪽 여백.
+ * 트리 색. 태그 순서대로 돌려 쓴다.
  *
- * 도구 레일이 **오른쪽 아래**로 내려갔으므로(D140) 지도는 모서리에 붙일 수
- * 있다 — 사용자 지시: "지도를 더 우측 상단으로".
+ * 트리가 여럿일 때 **선이 어느 트리 것인지**가 색으로 갈려야 마인드맵으로
+ * 읽힌다. 캔버스 본문의 오커/틸과 부딪히지 않게 채도를 낮춰 골랐다.
  */
+const TREE_COLORS = [
+  "#b4692a",
+  "#2f7d76",
+  "#5a5fa8",
+  "#8a5a86",
+  "#4d7a3a",
+  "#a05252",
+];
+
+const COLLAPSE_BELOW = 1024;
 const RIGHT = 16;
-/** 위 여백. 상단바는 왼쪽(left-4)이라 부딪히지 않는다. */
 const TOP = 16;
 const FALLBACK: Size = { w: ITEM_W, h: 180 };
 
@@ -81,6 +106,8 @@ interface Props {
   tagOrder: readonly string[];
   camera: Camera;
   viewport: { w: number; h: number };
+  /** 지금 이어 묻고 있는 트리 노드 (D151). 지도에서도 또렷해야 한다. */
+  pickedId: string | null;
   /** world 좌표로 이동. */
   onJump: (world: { x: number; y: number }) => void;
 }
@@ -92,10 +119,18 @@ export function Minimap({
   tagOrder,
   camera,
   viewport,
+  pickedId,
   onJump,
 }: Props) {
   // 학생이 접어 두면 **접힌 채로 남는다**(D140). 처음 방문은 화면 폭으로 정한다.
   const { open, setOpen } = useCollapsible("map", viewport.w >= COLLAPSE_BELOW);
+  // 캔버스에도 트리 선을 그릴 것인가 — ConnectorLayer가 같은 키를 본다.
+  const { open: edgesOnCanvas, setOpen: setEdgesOnCanvas } = useCollapsible(
+    "canvas-edges",
+    true,
+  );
+  const [zoom, setZoom] = useState(1);
+  const nodeView = zoom >= NODE_ZOOM;
 
   const model = useMemo(() => {
     /** 태그 → 그 태그 글들의 사각형. */
@@ -115,6 +150,8 @@ export function Minimap({
     const order = [...tagOrder, ...byTag.keys()].filter(
       (t, i, a) => a.indexOf(t) === i && byTag.has(t),
     );
+    const colorOf = (tag: string) =>
+      TREE_COLORS[Math.max(0, order.indexOf(tag)) % TREE_COLORS.length];
 
     // 태그 하나당 점 하나. 자리는 그 태그가 차지한 영역의 중심이다.
     const dots = order.map((tag) => {
@@ -143,14 +180,52 @@ export function Minimap({
 
     // **양축에 같은 배율**을 쓴다 — 다르게 주면 실제로 나란한 열이 지도에서
     // 비스듬해 보여 공간 정보가 거짓이 된다.
-    const s = Math.min(
+    const fit = Math.min(
       (W - PAD * 2) / Math.max(1, box.w),
       (H - PAD * 2) / Math.max(1, box.h),
     );
-    const ox = PAD + (W - PAD * 2 - box.w * s) / 2;
-    const oy = PAD + (H - PAD * 2 - box.h * s) / 2;
-    const px = (x: number) => ox + (x - box.x) * s;
-    const py = (y: number) => oy + (y - box.y) * s;
+    const s = fit * zoom;
+    // 확대하면 지금 보고 있는 곳이 중심이다(머리말 참조).
+    const cx = zoom > 1 ? view.x + view.w / 2 : box.x + box.w / 2;
+    const cy = zoom > 1 ? view.y + view.h / 2 : box.y + box.h / 2;
+    const px = (x: number) => W / 2 + (x - cx) * s;
+    const py = (y: number) => H / 2 + (y - cy) * s;
+
+    // --- 노드 지도 (확대 상태) ---------------------------------------------
+    const trees = buildTrees(items);
+    const depthOf = new Map<string, number>();
+    for (const t of trees) for (const [id, d] of t.depth) depthOf.set(id, d);
+    const center = (id: string) => {
+      const p = positions.get(id);
+      if (!p) return null;
+      const sz = sizes.get(id) ?? FALLBACK;
+      return { x: px(p.x + sz.w / 2), y: py(p.y + sz.h / 2) };
+    };
+    const nodes = trees.flatMap((t) =>
+      t.order.flatMap((id) => {
+        const c = center(id);
+        if (!c) return [];
+        const it = items.find((i) => i.id === id);
+        return [
+          {
+            id,
+            tag: t.tag,
+            label: it?.title?.trim() || it?.body.slice(0, 20) || "",
+            root: (depthOf.get(id) ?? 0) === 0,
+            color: colorOf(t.tag),
+            ...c,
+            // 클릭 이동은 축소된 자리가 아니라 **원래 world 좌표**로 한다.
+            wx: (positions.get(id)?.x ?? 0) + (sizes.get(id)?.w ?? FALLBACK.w) / 2,
+            wy: (positions.get(id)?.y ?? 0) + (sizes.get(id)?.h ?? FALLBACK.h) / 2,
+          },
+        ];
+      }),
+    );
+    const edges = treeEdges(items).flatMap((e) => {
+      const a = center(e.from);
+      const b = center(e.to);
+      return a && b ? [{ ...e, a, b, color: colorOf(e.tag) }] : [];
+    });
 
     /**
      * 점이 겹치면 살짝 밀어 떼어 놓는다.
@@ -171,6 +246,7 @@ export function Minimap({
         cx: px(d.wx),
         cy: py(d.wy),
         r,
+        color: colorOf(d.tag),
         // **라벨까지 포함한 반폭·반높이.** 원만 떼어 놓으면 이름끼리 겹친다
         // (실측: 점은 안 겹치는데 "지구과학"과 "상태"가 포개졌다). 한글은
         // 폰트 크기와 글자 폭이 거의 같아 글자 수 × LABEL_CH로 잡는다.
@@ -205,17 +281,22 @@ export function Minimap({
       }
       if (!moved) break;
     }
-    // 민 뒤에 화폭을 벗어날 수 있다 — 라벨까지 들어오게 가둔다.
-    for (const d of placed) {
-      d.cx = Math.min(W - d.hw - 2, Math.max(d.hw + 2, d.cx));
-      d.cy = Math.min(H - d.hh - 2, Math.max(d.r + 6, d.cy));
+    // 민 뒤에 화폭을 벗어날 수 있다 — 라벨까지 들어오게 가둔다. 확대 상태에서는
+    // 가두지 않는다(밖으로 나간 것은 클리핑이 잘라 낸다 — 그게 확대의 뜻이다).
+    if (zoom === 1) {
+      for (const d of placed) {
+        d.cx = Math.min(W - d.hw - 2, Math.max(d.hw + 2, d.cx));
+        d.cy = Math.min(H - d.hh - 2, Math.max(d.r + 6, d.cy));
+      }
     }
 
     return {
       dots: placed,
+      nodes,
+      edges,
       view: { x: px(view.x), y: py(view.y), w: view.w * s, h: view.h * s },
     };
-  }, [items, positions, sizes, tagOrder, camera, viewport]);
+  }, [items, positions, sizes, tagOrder, camera, viewport, zoom]);
 
   if (!model) return null;
 
@@ -242,6 +323,9 @@ export function Minimap({
     );
   }
 
+  const zoomBy = (f: number) =>
+    setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z * f)));
+
   return (
     <div
       data-no-pan
@@ -255,89 +339,228 @@ export function Minimap({
         boxShadow: "var(--c-shadow-md)",
       }}
     >
-      <button
-        type="button"
-        onClick={() => setOpen(false)}
-        aria-label="개념 지도 닫기"
-        className="absolute right-1 top-1 z-10 rounded p-1 transition-colors hover:bg-[var(--c-sunk)]"
-        style={{ color: "var(--c-ink-faint)" }}
+      {/* 조작 줄 — 축척과 선 토글. 축척이 무엇을 바꾸는지도 여기서 알린다. */}
+      <div
+        className="flex items-center gap-1 border-b px-1.5 py-1"
+        style={{ borderColor: "var(--c-rule)" }}
       >
-        <X size={12} />
-      </button>
+        <MapBtn label="지도 축소" onClick={() => zoomBy(1 / ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>
+          <Minus size={12} />
+        </MapBtn>
+        <MapBtn label="지도 확대" onClick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}>
+          <Plus size={12} />
+        </MapBtn>
+        <span
+          className="label ml-0.5 select-none truncate"
+          style={{ color: "var(--c-ink-faint)", letterSpacing: 0 }}
+        >
+          {nodeView ? "노드 연결" : "태그 묶음"}
+        </span>
+        <div className="flex-1" />
+        <MapBtn
+          label={edgesOnCanvas ? "캔버스의 선 숨기기" : "캔버스에도 선 보이게 하기"}
+          onClick={() => setEdgesOnCanvas(!edgesOnCanvas)}
+          on={edgesOnCanvas}
+        >
+          {edgesOnCanvas ? <Link2 size={12} /> : <Link2Off size={12} />}
+        </MapBtn>
+        <MapBtn label="개념 지도 닫기" onClick={() => setOpen(false)}>
+          <X size={12} />
+        </MapBtn>
+      </div>
 
-      <svg width={W} height={H} className="block" aria-label="개념 지도">
-        {/* 지금 보고 있는 영역. 점보다 뒤에 옅게 — 정보는 점이 준다. */}
-        <rect
-          x={model.view.x}
-          y={model.view.y}
-          width={Math.max(4, model.view.w)}
-          height={Math.max(4, model.view.h)}
-          rx={3}
-          fill="var(--c-ink)"
-          fillOpacity={0.04}
-          stroke="var(--c-ink)"
-          strokeOpacity={0.35}
-          strokeWidth={1}
-        />
+      <svg
+        width={W}
+        height={H}
+        className="block"
+        aria-label="개념 지도"
+        onWheel={(e) => {
+          // 지도 위 휠은 지도의 축척이다 — 캔버스로 넘기지 않는다.
+          e.stopPropagation();
+          zoomBy(e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+        }}
+      >
+        <defs>
+          <clipPath id="c2-map-clip">
+            <rect x={0} y={0} width={W} height={H} />
+          </clipPath>
+          {TREE_COLORS.map((c, i) => (
+            <marker
+              key={i}
+              id={`c2-arrow-${i}`}
+              viewBox="0 0 8 8"
+              refX={7}
+              refY={4}
+              markerWidth={5}
+              markerHeight={5}
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 1 L 7 4 L 0 7 z" fill={c} opacity={0.85} />
+            </marker>
+          ))}
+        </defs>
 
-        {model.dots.map((d) => (
-          <g
-            key={d.tag}
-            transform={`translate(${d.cx},${d.cy})`}
-            style={{ cursor: "pointer" }}
-            onClick={() => onJump({ x: d.wx, y: d.wy })}
-          >
-            <title>{`${d.label} — 글 ${d.count}개. 눌러서 이동`}</title>
-            {/* **보이지 않는 클릭 영역.**
-                SVG는 그려진 부분만 히트 테스트한다. 점과 아래 라벨 사이의 빈
-                틈을 누르면 아무것도 안 잡혀 이동이 안 됐다(실측: 카메라가
-                15px만 움직임). 점+라벨을 함께 덮는 원을 깔아 둔다 —
-                `fill="none"`은 안 잡히므로 투명 채움 + pointerEvents가 필요하다. */}
-            <circle
-              r={d.r + 16}
-              fill="transparent"
-              style={{ pointerEvents: "all" }}
-            />
-            {/* 색은 누가 채웠나(오커 AI · 틸 학생), 크기는 글 수 */}
-            <circle
-              r={d.r}
-              fill={d.aiRatio >= 0.5 ? "var(--c-live)" : "var(--c-hand)"}
-              fillOpacity={0.3}
-              stroke={d.aiRatio >= 0.5 ? "var(--c-live)" : "var(--c-hand)"}
-              strokeOpacity={0.75}
-              strokeWidth={1.5}
-            />
-            <text
-              textAnchor="middle"
-              dy={4}
-              style={{
-                fontFamily: "var(--font-label), monospace",
-                fontSize: 10,
-                fill: "var(--c-ink)",
-              }}
-            >
-              {d.count}
-            </text>
-            {/* 라벨은 점 **아래**에 둔다. 옆에 두면 열이 촘촘할 때 이웃 점을 덮는다.
-                종이색 외곽선을 깔아 점 위로 지나가도 글자가 읽히게 한다. */}
-            <text
-              textAnchor="middle"
-              y={d.r + 12}
-              style={{
-                fontFamily: "var(--font-label), monospace",
-                fontSize: 9.5,
-                fill: "var(--c-ink-soft)",
-                paintOrder: "stroke",
-                stroke: "var(--c-raised)",
-                strokeWidth: 3,
-                strokeLinejoin: "round",
-              }}
-            >
-              {d.label.length > LABEL_MAX ? `${d.label.slice(0, LABEL_MAX)}…` : d.label}
-            </text>
-          </g>
-        ))}
+        <g clipPath="url(#c2-map-clip)">
+          {/* 지금 보고 있는 영역. 점보다 뒤에 옅게 — 정보는 점이 준다. */}
+          <rect
+            x={model.view.x}
+            y={model.view.y}
+            width={Math.max(4, model.view.w)}
+            height={Math.max(4, model.view.h)}
+            rx={3}
+            fill="var(--c-ink)"
+            fillOpacity={0.04}
+            stroke="var(--c-ink)"
+            strokeOpacity={0.35}
+            strokeWidth={1}
+          />
+
+          {nodeView ? (
+            <>
+              {/* 방향 그래프 — 부모에서 자식으로. 화살촉이 방향을 말한다. */}
+              {model.edges.map((e) => (
+                <line
+                  key={`${e.from}->${e.to}`}
+                  x1={e.a.x}
+                  y1={e.a.y}
+                  x2={e.b.x}
+                  y2={e.b.y}
+                  stroke={e.color}
+                  strokeOpacity={0.55}
+                  strokeWidth={1.2}
+                  markerEnd={`url(#c2-arrow-${TREE_COLORS.indexOf(e.color)})`}
+                />
+              ))}
+              {model.nodes.map((n) => (
+                <g
+                  key={n.id}
+                  transform={`translate(${n.x},${n.y})`}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => onJump({ x: n.wx, y: n.wy })}
+                >
+                  <title>{`${n.label} — 눌러서 이동`}</title>
+                  <circle r={NODE_R + 8} fill="transparent" style={{ pointerEvents: "all" }} />
+                  <circle
+                    r={n.id === pickedId ? NODE_R + 2.5 : n.root ? NODE_R + 1 : NODE_R}
+                    fill={n.id === pickedId ? n.color : "var(--c-raised)"}
+                    stroke={n.color}
+                    strokeWidth={n.root ? 2 : 1.4}
+                    strokeOpacity={0.9}
+                  />
+                </g>
+              ))}
+              {/* 이름은 뿌리에만 — 노드마다 달면 글자가 선을 덮는다. */}
+              {model.nodes
+                .filter((n) => n.root && n.tag !== UNTAGGED)
+                .map((n) => (
+                  <text
+                    key={`l-${n.id}`}
+                    x={n.x}
+                    y={n.y - NODE_R - 6}
+                    textAnchor="middle"
+                    style={{
+                      fontFamily: "var(--font-label), monospace",
+                      fontSize: 9.5,
+                      fill: n.color,
+                      paintOrder: "stroke",
+                      stroke: "var(--c-raised)",
+                      strokeWidth: 3,
+                      strokeLinejoin: "round",
+                    }}
+                  >
+                    {n.tag.length > LABEL_MAX ? `${n.tag.slice(0, LABEL_MAX)}…` : n.tag}
+                  </text>
+                ))}
+            </>
+          ) : (
+            model.dots.map((d) => (
+              <g
+                key={d.tag}
+                transform={`translate(${d.cx},${d.cy})`}
+                style={{ cursor: "pointer" }}
+                onClick={() => onJump({ x: d.wx, y: d.wy })}
+              >
+                <title>{`${d.label} — 글 ${d.count}개. 눌러서 이동`}</title>
+                {/* **보이지 않는 클릭 영역.**
+                    SVG는 그려진 부분만 히트 테스트한다. 점과 아래 라벨 사이의 빈
+                    틈을 누르면 아무것도 안 잡혀 이동이 안 됐다(실측: 카메라가
+                    15px만 움직임). 점+라벨을 함께 덮는 원을 깔아 둔다 —
+                    `fill="none"`은 안 잡히므로 투명 채움 + pointerEvents가 필요하다. */}
+                <circle r={d.r + 16} fill="transparent" style={{ pointerEvents: "all" }} />
+                {/* 색은 트리(태그), 크기는 글 수 */}
+                <circle
+                  r={d.r}
+                  fill={d.color}
+                  fillOpacity={0.22}
+                  stroke={d.color}
+                  strokeOpacity={0.8}
+                  strokeWidth={1.5}
+                />
+                <text
+                  textAnchor="middle"
+                  dy={4}
+                  style={{
+                    fontFamily: "var(--font-label), monospace",
+                    fontSize: 10,
+                    fill: "var(--c-ink)",
+                  }}
+                >
+                  {d.count}
+                </text>
+                {/* 라벨은 점 **아래**에 둔다. 옆에 두면 열이 촘촘할 때 이웃 점을 덮는다.
+                    종이색 외곽선을 깔아 점 위로 지나가도 글자가 읽히게 한다. */}
+                <text
+                  textAnchor="middle"
+                  y={d.r + 12}
+                  style={{
+                    fontFamily: "var(--font-label), monospace",
+                    fontSize: 9.5,
+                    fill: "var(--c-ink-soft)",
+                    paintOrder: "stroke",
+                    stroke: "var(--c-raised)",
+                    strokeWidth: 3,
+                    strokeLinejoin: "round",
+                  }}
+                >
+                  {d.label.length > LABEL_MAX ? `${d.label.slice(0, LABEL_MAX)}…` : d.label}
+                </text>
+              </g>
+            ))
+          )}
+        </g>
       </svg>
     </div>
+  );
+}
+
+function MapBtn({
+  label,
+  onClick,
+  disabled,
+  on,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  on?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      aria-pressed={on}
+      title={label}
+      className="flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-[var(--c-sunk)] disabled:opacity-30"
+      style={{
+        color: on ? "var(--c-live)" : "var(--c-ink-faint)",
+        background: on ? "var(--c-live-wash)" : undefined,
+      }}
+    >
+      {children}
+    </button>
   );
 }

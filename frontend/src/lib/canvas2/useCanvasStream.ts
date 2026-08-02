@@ -260,7 +260,14 @@ export function useCanvasStream({
 
       try {
         await streamChat(
-          { session_id: sessionId, question: q },
+          {
+            session_id: sessionId,
+            question: q,
+            // 고른 노드의 분류가 곧 "지금 보고 있는 트리"다 (D151).
+            focus_tag: picked
+              ? (getItems().find((i) => i.id === picked)?.tag ?? null)
+              : null,
+          },
           {
             onToken: (delta) => parser.push(delta),
             onToolCall: (name) => setReply(TOOL_LABELS[name] ?? "찾아보고 있어요…"),

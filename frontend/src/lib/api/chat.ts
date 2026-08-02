@@ -12,6 +12,14 @@ export interface ChatStreamBody {
   session_id: string;
   question: string;
   parent_node_id?: string | null;
+  /**
+   * 학생이 지금 고른 트리(태그) — D151.
+   *
+   * 컨텍스트를 **자르는 값이 아니다.** 서버는 모든 카드를 태그별 트리 순서로
+   * 다 넣고, 이 값으로 "지금 여기를 보고 있다"만 알린다(사용자 결정:
+   * "모든 컨텍스트를 다 붙여도 돼. 대신 AI가 그걸 판단할 수 있도록").
+   */
+  focus_tag?: string | null;
   /** Wave A(D15): 브랜치 참조 — 이 턴만 참조할 노드들(일회성, 비영속). */
   reference_node_ids?: string[];
   /**

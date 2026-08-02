@@ -796,6 +796,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
             tagOrder={layout.tagOrder}
             camera={bridge.camera}
             viewport={vp}
+            pickedId={pickedId}
             onJump={handleMinimapJump}
           />
           <div className="ui absolute bottom-28 left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2">
