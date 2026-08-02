@@ -70,6 +70,21 @@ _SCOPE_TABLES: dict[str, list[tuple[str, str, str]]] = {
             "duration_ms,created_at",
             "created_at.asc",
         ),
+        # D152: **캔버스가 곧 대화 내용이다**(D122). 이게 빠져 있으면 백업을
+        # 뜨고 초기화한 뒤 복원해도 세션 껍데기만 돌아온다 — 학생이 읽고
+        # 고치고 옮긴 글은 전부 canvas_items에 있다. 백업 파일에도 복원
+        # 결과에도 오류가 없어서, 캔버스를 열어 보기 전까지 아무도 모른다.
+        (
+            "canvas_items",
+            "id,session_id,node_id,parent_item_id,kind,source,title,body,tag,"
+            "x,y,pinned,seq,data,created_at,updated_at",
+            "created_at.asc",
+        ),
+        (
+            "canvas_drawings",
+            "session_id,elements,files,updated_at",
+            "updated_at.asc",
+        ),
     ],
     "documents": [
         (
@@ -351,7 +366,11 @@ async def restore_backup(
 
     result: dict[str, Any] = {"name": name, "scopes": picked, "restored": {}}
     if "conversations" in picked:
-        payload = {k: data.get(k, []) for k in ("sessions", "nodes", "ai_logs")}
+        # 넘길 표 목록을 **백업 스코프에서 파생**한다 (D152). 여기에 이름을
+        # 손으로 적어 두면 백업에 표를 더해도 복원은 조용히 옛 목록만 넘긴다 —
+        # 실제로 그 상태였다: canvas_items를 백업에 넣었는데 복원은 계속
+        # 0개를 돌려줬고, 백업 파일에도 복원 결과에도 오류가 없었다.
+        payload = {t: data.get(t, []) for t, _, _ in _SCOPE_TABLES["conversations"]}
         out = await client.rpc("admin_restore_conversations", {"p_data": payload})
         result["restored"]["conversations"] = out
     if "settings" in picked:
