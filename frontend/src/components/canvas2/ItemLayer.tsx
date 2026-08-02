@@ -95,7 +95,14 @@ export function ItemLayer({
               item={item}
               x={p.x}
               y={p.y}
+              zoom={zoom}
+              selected={selectedIds.has(item.id)}
               measure={measure}
+              onSelect={handlers.onSelect}
+              onDragEnd={handlers.onDragEnd}
+              onDelete={handlers.onDelete}
+              onResize={handlers.onResize}
+              onResetSize={handlers.onResetSize}
             />
           );
         }
