@@ -599,6 +599,136 @@ git commit -m "[feat]: TextItem이 공유 훅 useItemDrag를 쓰도록 리팩터
 
 ---
 
+## Task 3B: TextItem에서 리사이즈 제거 (도판 전용화)
+
+사용자 지시(2026-08-02): 크기 조절은 **도판만** 가능. TextItem의 `ResizeHandles`·
+`data.size` 사용·ItemMenu "크기 되돌리기"를 걷어낸다. 이동·선택·편집·삭제는 유지.
+
+**Files:**
+- Modify: `frontend/src/components/canvas2/TextItem.tsx`
+- Modify: `frontend/src/components/canvas2/ItemMenu.tsx`
+- Modify: `frontend/src/lib/canvas2/types.ts` (주석만)
+
+**Interfaces:**
+- `TextItemProps`에서 `onResize`·`onResetSize`를 제거한다. ItemLayer가 `{...handlers}`로
+  넘기지만, JSX 스프레드는 초과 프로퍼티를 허용하므로 타입 오류가 나지 않는다
+  (Step 4의 `tsc`로 검증). `ItemMenu` props에서 `resized`·`onResetSize`를 제거한다.
+
+- [ ] **Step 1: TextItem에서 size·ResizeHandles 제거**
+
+`TextItem.tsx`에서:
+
+제거할 import:
+```ts
+import { ResizeHandles, type ResizeCommit } from "./ResizeHandles";
+```
+(단 `ITEM_MIN_W`·`ITEM_W`는 폭 계산에 계속 쓰이므로 `import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";`는 유지.)
+
+`DROP_FALLBACK_MS` 상수는 리사이즈 커밋 안전망에서만 쓰였다 → **제거**한다(드래그
+안전망은 `useItemDrag` 내부에 있다).
+
+`const size = item.data.size;` 줄과, 그것을 쓰는 주석 블록을 제거한다.
+
+`TextItemProps`에서 아래 두 줄을 제거:
+```ts
+  /** 손잡이로 상자 크기를 바꿨다 (D142). */
+  onResize: (id: string, next: ResizeCommit) => void;
+  /** 상자를 자동 크기로 되돌린다. */
+  onResetSize: (id: string) => void;
+```
+그리고 `TextItemImpl` 구조분해에서 `onResize`·`onResetSize`를 제거한다.
+
+- [ ] **Step 2: 루트 style의 size 의존 제거**
+
+루트 `<div>` style에서 size를 걷어낸다. **글은 다시 내용이 폭·높이를 정한다**
+(D122 원래 모습):
+
+```tsx
+        // 글은 내용이 폭을 정한다 — 크기 조절은 도판만 한다(사용자 지시).
+        width: editing ? ITEM_W : "max-content",
+        maxWidth: ITEM_W,
+        minWidth: editing ? undefined : ITEM_MIN_W,
+```
+`minHeight: size?.h,` 줄을 제거한다.
+
+- [ ] **Step 3: ResizeHandles 렌더 블록과 ItemMenu 리사이즈 props 제거**
+
+`{selected && !editing && !dragging && ( <ResizeHandles ... /> )}` 블록 전체를 제거한다.
+
+`ItemMenu` 사용부에서 `resized`·`onResetSize` props 전달을 제거한다:
+```tsx
+          <ItemMenu
+            tag={item.tag}
+            tagOptions={tagOptions}
+            onEdit={() => onStartEdit(item.id)}
+            onDelete={() => onDelete(item.id)}
+            onTagChange={(t) => onTagChange(item.id, t)}
+            onOpenChange={setMenuOpen}
+          />
+```
+
+`ItemMenu.tsx`에서 `resized`·`onResetSize` props와 "크기 되돌리기" MenuItem,
+그리고 `Maximize2` import를 제거한다:
+
+```ts
+import { MoreHorizontal, Pencil, Tag, Trash2 } from "lucide-react";
+```
+Props 인터페이스에서:
+```ts
+  onTagChange: (tag: string | null) => void;
+  /** 메뉴(또는 분류 목록)가 펼쳐져 있나. */
+  onOpenChange?: (open: boolean) => void;
+```
+(그 사이 `resized`·`onResetSize` 두 줄 삭제)
+
+구조분해와 아래 블록 제거:
+```tsx
+          {resized && onResetSize && (
+            <MenuItem
+              icon={<Maximize2 size={14} />}
+              label="크기 되돌리기"
+              onClick={() => { setOpen(false); onResetSize(); }}
+            />
+          )}
+```
+
+- [ ] **Step 4: types.ts의 `data.size` 주석을 도판 전용으로**
+
+`frontend/src/lib/canvas2/types.ts`의 `size?: { w: number; h: number }` 주석
+(현재 D142 설명)을 도판 전용임을 밝히도록 고친다:
+
+```ts
+  /**
+   * 손잡이로 정한 도판 상자 크기 (D142 → D147: 도판 전용).
+   *
+   * 글 상자는 크기를 조절하지 않는다(사용자 지시 2026-08-02) — 이 필드는
+   * 이제 교과서 도판(kind='figure')만 쓴다. 스키마에 열을 더하지 않고 여기
+   * 두는 이유는 좌표와 달리 배치 엔진의 입력이 아니라 렌더 힌트이기 때문이다 —
+   * 화면이 이 값을 반영하면 ResizeObserver 실측으로 배치가 자동으로 따라온다.
+   */
+  size?: { w: number; h: number };
+```
+
+- [ ] **Step 5: 타입/린트/테스트 확인**
+
+Run: `cd frontend && npm test && npx tsc --noEmit && npx eslint src/components/canvas2/TextItem.tsx src/components/canvas2/ItemMenu.tsx`
+Expected: 전부 PASS, 오류 없음. (`tsc`가 `{...handlers}`의 초과 프로퍼티를 허용함을 확인)
+
+- [ ] **Step 6: 수동 검증 (dev 서버)**
+
+- 글 상자를 선택해도 **크기 손잡이가 뜨지 않는다.**
+- ⋯ 메뉴에 "크기 되돌리기"가 없다(수정·분류 변경·삭제만).
+- 글 상자 드래그·편집·삭제·선택은 여전히 된다.
+
+- [ ] **Step 7: 커밋**
+
+```bash
+git add frontend/src/components/canvas2/TextItem.tsx frontend/src/components/canvas2/ItemMenu.tsx frontend/src/lib/canvas2/types.ts
+git commit -m "[feat]: 글 상자 리사이즈 제거 — 크기 조절은 도판만 (D147)"
+```
+
+---
+
 ## Task 4: FigureItem 드래그·선택·이동 영속 + ItemLayer 배선
 
 도판을 끌어 옮기고 선택할 수 있게 한다. 옮긴 자리는 `pinned=true` + `x/y`로 저장돼 새로고침 후 유지된다(기존 경로 재사용, 새 저장 로직 없음).
@@ -1102,6 +1232,7 @@ git commit -m "[feat]: 교과서 도판 × 삭제 버튼 (D147)"
 **Spec 커버리지**
 - 이동 + 위치 영속 → Task 4 (드래그 → `pinned=true` + x/y, 새로고침 유지). ✔
 - 리사이즈(비율 고정) + 영속 → Task 1(aspect 계산) + Task 5(FigureItem 배선, `data.size` 저장). ✔
+- **글 상자 리사이즈 제거(도판 전용)** → Task 3B (TextItem·ItemMenu·types 주석). ✔
 - 삭제 → Task 4(키보드) + Task 6(× 버튼). ✔
 - 선택(클릭·올가미·그룹) → Task 4(`useItemDrag`의 선택, `data-selected`, 테두리). 올가미는 기존 `handleMarquee`가 `items`(도판 포함)·`layout.sizes`로 이미 판정하며, 이제 FigureItem이 `selected`를 반영해 하이라이트된다. ✔
 - 공유 훅(판단 1) → Task 2(추출) + Task 3(TextItem) + Task 4(FigureItem). ✔
