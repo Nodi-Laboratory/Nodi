@@ -72,6 +72,8 @@ export interface TextItemProps {
   y: number;
   selected: boolean;
   editing: boolean;
+  /** 지금 이 노드에서 이어 묻는 중인가 (D151). */
+  picked: boolean;
   tagOptions: readonly string[];
   /**
    * 이 글이 답인 질문의 원문. 하단 입력창으로 물어 만든 글에만 있다.
@@ -93,8 +95,13 @@ export interface TextItemProps {
   onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
   onReflow: (id: string) => void;
   onDismissReflow: (id: string) => void;
-  /** "다시 질문하기" — 이 답을 인용한 채 입력창을 연다 (D149). */
+  /** "다시 질문하기" — 이 답을 골라 둔다 (D149 → D151). */
   onAsk: (id: string) => void;
+  /**
+   * **끌지 않고 눌렀다** (D151). 이 가지에서 이어 묻겠다는 뜻이다.
+   * 드래그는 절대 이걸 부르지 않는다(사용자 지시).
+   */
+  onPick: (id: string) => void;
   /** 손잡이로 상자 크기를 바꿨다 (D142). */
   onResize: (id: string, next: ResizeCommit) => void;
   /** 상자를 자동 크기로 되돌린다. */
@@ -108,6 +115,7 @@ function TextItemImpl(props: TextItemProps) {
     y,
     selected,
     editing,
+    picked,
     tagOptions,
     question,
     zoom,
@@ -122,6 +130,7 @@ function TextItemImpl(props: TextItemProps) {
     onReflow,
     onDismissReflow,
     onAsk,
+    onPick,
     onResize,
     onResetSize,
   } = props;
@@ -148,7 +157,9 @@ function TextItemImpl(props: TextItemProps) {
   const wash = isAi ? "var(--c-live-wash)" : "var(--c-hand-wash)";
   // **편집 중에는 박스를 그리지 않는다**(사용자 지시). 글을 쓰는 중에 테두리와
   // 바탕이 깔리면 캔버스가 아니라 입력 폼처럼 보인다.
-  const active = !editing && (hover || selected);
+  // 고른 노드는 마우스를 치워도 계속 보여야 한다 — "지금 여기서 이어 묻는
+  // 중"이라는 상태를 화면이 계속 말해 줘야 한다 (D151).
+  const active = !editing && (hover || selected || picked);
 
   const setNode = useCallback(
     (el: HTMLDivElement | null) => {
@@ -277,6 +288,8 @@ function TextItemImpl(props: TextItemProps) {
         // 하나뿐이다 — 여럿이 잡힌 상태에서 그중 하나를 그냥 눌렀을 때
         // **그 하나로 좁힌다.**
         if (!d.additive && d.wasSelected) onSelect(item.id, false);
+        // **움직이지 않은 클릭만** 고른 것이다 (D151). 끌었으면 여기 오지 않는다.
+        if (!d.additive) onPick(item.id);
         setDragging(false);
         for (const el of peers) el.style.transition = "";
         return;
@@ -290,7 +303,7 @@ function TextItemImpl(props: TextItemProps) {
       // 좌표가 끝내 안 바뀌는 경우(같은 자리 재배치)의 안전망.
       window.setTimeout(settle, DROP_FALLBACK_MS);
     },
-    [item.id, onDragEnd, onSelect, settle, x, y, zoom],
+    [item.id, onDragEnd, onPick, onSelect, settle, x, y, zoom],
   );
 
   // 언마운트 시 남은 타이머의 커서·스타일 잔재를 정리한다.
@@ -306,7 +319,7 @@ function TextItemImpl(props: TextItemProps) {
    * 것보다, 답을 읽다 막힌 자리에서 바로 잇는 편이 실제로 묻는 자리다.
    * 스트리밍 중인 글은 아직 다 나오지도 않았다.
    */
-  const showAsk = isAi && !item._pending && !editing && (hover || selected);
+  const showAsk = isAi && !item._pending && !editing && (hover || selected || picked);
 
   return (
     <div
@@ -401,8 +414,8 @@ function TextItemImpl(props: TextItemProps) {
           background: active ? wash : "transparent",
           // 고른 상태는 도형 선택과 같은 굵기로 또렷하게. zoom으로 나눠
           // 어느 배율에서나 같은 두께로 보인다(도형 쪽이 그렇다).
-          border: `${selected ? Math.max(1, 1.5 / zoom) : 1}px solid ${
-            selected ? accent : active ? "var(--c-rule)" : "transparent"
+          border: `${selected || picked ? Math.max(1, 1.5 / zoom) : 1}px solid ${
+            selected || picked ? accent : active ? "var(--c-rule)" : "transparent"
           }`,
           opacity: active ? 1 : 0,
           boxShadow: dragging ? "var(--c-shadow-lg)" : "none",
@@ -479,7 +492,7 @@ function TextItemImpl(props: TextItemProps) {
                 onDismiss={() => onDismissReflow(item.id)}
               />
             )}
-            {showAsk && <AskAgainButton onAsk={() => onAsk(item.id)} />}
+            {showAsk && <AskAgainButton picked={picked} onAsk={() => onAsk(item.id)} />}
           </div>
         )}
 

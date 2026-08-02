@@ -342,3 +342,88 @@ describe("경계", () => {
     expect(overlaps(items).bad).toEqual([]);
   });
 });
+
+// --- 트리 배치 (D151) ----------------------------------------------------
+
+/** 트리에 들어가는 AI 개념 카드. */
+function card(
+  id: string,
+  tag: string,
+  parentItemId: string | null,
+  seq: number,
+): LayoutInput {
+  return item({ id, tag, parentItemId, seq, kind: "concept", source: "ai" });
+}
+
+describe("트리 배치 (D151)", () => {
+  it("곧게 이어지는 대화는 들여쓰지 않는다", () => {
+    const items = [
+      card("a", "물리", null, 0),
+      card("b", "물리", "a", 1),
+      card("c", "물리", "b", 2),
+    ];
+    const { positions } = layoutItems(items);
+    const xs = items.map((i) => positions.get(i.id)!.x);
+    expect(new Set(xs).size).toBe(1); // 한 줄로 곧게
+    // 순서도 유지된다
+    const ys = items.map((i) => positions.get(i.id)!.y);
+    expect(ys[0]).toBeLessThan(ys[1]);
+    expect(ys[1]).toBeLessThan(ys[2]);
+  });
+
+  it("갈라진 곳만 한 칸 들여쓴다", () => {
+    const items = [
+      card("r", "물리", null, 0),
+      card("c1", "물리", "r", 1), // 첫째 — 부모 칸 그대로
+      card("c2", "물리", "r", 2), // 둘째 — 한 칸 들어감
+    ];
+    const { positions } = layoutItems(items);
+    const x = (id: string) => positions.get(id)!.x;
+    expect(x("c1")).toBe(x("r"));
+    expect(x("c2")).toBeGreaterThan(x("r"));
+  });
+
+  it("가지 하나가 통째로 이어져 내려간다 (seq 순서가 아니라 트리 순서)", () => {
+    // c1의 손자 g1이 c1의 형제 c2보다 seq는 크지만, 트리 순서로는 먼저다.
+    const items = [
+      card("r", "물리", null, 0),
+      card("c1", "물리", "r", 1),
+      card("c2", "물리", "r", 2),
+      card("g1", "물리", "c1", 3),
+    ];
+    const { positions } = layoutItems(items);
+    const y = (id: string) => positions.get(id)!.y;
+    expect(y("g1")).toBeLessThan(y("c2"));
+  });
+
+  it("들여쓰기가 옆 열을 침범하지 않는다", () => {
+    // 계속 갈라져 상한을 넘기게 만든다.
+    const items: LayoutInput[] = [card("r", "물리", null, 0)];
+    let prev = "r";
+    for (let i = 0; i < 8; i++) {
+      items.push(card(`x${i}`, "물리", prev, i * 2 + 1));
+      items.push(card(`y${i}`, "물리", prev, i * 2 + 2)); // 둘째 자식 → 들여쓰기
+      prev = `y${i}`;
+    }
+    items.push(card("other", "생명", null, 100));
+    const { positions, columnX } = layoutItems(items);
+    const nextCol = columnX.get("생명")!;
+    for (const i of items) {
+      if (i.tag !== "물리") continue;
+      expect(positions.get(i.id)!.x + ITEM_W).toBeLessThanOrEqual(nextCol + ITEM_W);
+      expect(positions.get(i.id)!.x).toBeLessThan(nextCol);
+    }
+  });
+
+  it("트리가 있어도 겹치지 않는다", () => {
+    const items = [
+      card("r", "물리", null, 0),
+      card("c1", "물리", "r", 1),
+      card("c2", "물리", "r", 2),
+      card("g1", "물리", "c1", 3),
+      card("s", "생명", null, 4),
+      item({ id: "memo", tag: "물리", seq: 5, source: "user", kind: "note" }),
+    ];
+    expect(overlaps(items).bad).toEqual([]);
+  });
+});

@@ -15,10 +15,10 @@ interface Props {
   busy: boolean;
   /** 스트리밍 중 말풍선 문구. */
   reply: string;
-  /** "다시 질문하기"로 열렸을 때 인용할 답. */
-  quote: { id: string; text: string } | null;
+  /** 지금 고른 트리 노드 — 다음 답이 여기에 붙는다 (D151). */
+  quote: { id: string; text: string; tag?: string | null } | null;
   onClearQuote: () => void;
-  onSend: (question: string, parentItemId: string | null) => void;
+  onSend: (question: string) => void;
   disabled?: boolean;
   /** 세션 컨텍스트 파일 첨부 (D83). 없으면 버튼을 숨긴다. */
   onAttach?: (file: File) => void;
@@ -46,9 +46,8 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onA
   const submit = () => {
     const q = value.trim();
     if (!q || busy || disabled) return;
-    onSend(q, quote?.id ?? null);
+    onSend(q);
     setValue("");
-    onClearQuote();
   };
 
   const showStatus = busy && reply;
@@ -95,11 +94,19 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onA
           }}
         >
           <Quote size={13} style={{ color: "var(--c-live)", marginTop: 3 }} />
-          <span className="min-w-0 flex-1 line-clamp-2">{quote.text}</span>
+          <span className="min-w-0 flex-1">
+            {/* 어느 트리에 붙는지가 인용문보다 중요하다 (D151) */}
+            {quote.tag && (
+              <span className="mr-1.5 font-medium" style={{ color: "var(--c-live)" }}>
+                [{quote.tag}]
+              </span>
+            )}
+            <span className="line-clamp-2">{quote.text}</span>
+          </span>
           <button
             type="button"
             onClick={onClearQuote}
-            aria-label="인용 지우기"
+            aria-label="이어 묻기 그만두기"
             style={{ color: "var(--c-ink-faint)" }}
           >
             <X size={14} />
@@ -146,7 +153,7 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onA
             disabled
               ? "세션을 준비하는 중이에요"
               : quote
-                ? "이 답에 이어서 물어보세요"
+                ? `${quote.tag ? `[${quote.tag}] ` : ""}이 답에 이어서 물어보세요`
                 : "무엇이 궁금한가요?"
           }
           onChange={(e) => setValue(e.target.value)}

@@ -28,6 +28,8 @@ interface Props {
   zoom: number;
   selectedIds: ReadonlySet<string>;
   editingId: string | null;
+  /** 지금 이어 묻고 있는 트리 노드 (D151). */
+  pickedId: string | null;
   measure: (id: string, el: HTMLElement | null) => void;
   handlers: {
     onSelect: (id: string | null, additive?: boolean) => void;
@@ -40,6 +42,7 @@ interface Props {
     onReflow: (id: string) => void;
     onDismissReflow: (id: string) => void;
     onAsk: (id: string) => void;
+    onPick: (id: string) => void;
     onResize: (id: string, next: ResizeCommit) => void;
     onResetSize: (id: string) => void;
   };
@@ -55,6 +58,7 @@ export function ItemLayer({
   zoom,
   selectedIds,
   editingId,
+  pickedId,
   measure,
   handlers,
 }: Props) {
@@ -109,6 +113,7 @@ export function ItemLayer({
             zoom={zoom}
             selected={selectedIds.has(item.id)}
             editing={editingId === item.id}
+            picked={pickedId === item.id}
             question={questionOf.get(item.id) ?? null}
             tagOptions={tagOptions}
             measure={measure}

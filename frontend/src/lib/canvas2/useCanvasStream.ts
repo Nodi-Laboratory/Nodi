@@ -27,7 +27,8 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { createItems, type NewItemInput } from "@/lib/api/canvas";
+import { createItems, patchItem, type NewItemInput } from "@/lib/api/canvas";
+import { assignParents } from "./tree";
 import { streamChat } from "@/lib/api/chat";
 import { isRealId } from "@/lib/ids";
 import type { ChatDoneEvent } from "@/lib/types";
@@ -49,8 +50,18 @@ export interface CanvasStreamApi {
   /** 말풍선 문구(스트리밍 중 진행 상황 포함). */
   reply: string;
   busy: boolean;
-  /** 질문을 보낸다. parentItemId가 있으면 응답이 그 아이템의 자식이 된다. */
-  send: (question: string, opts?: { parentItemId?: string | null }) => Promise<void>;
+  /**
+   * 질문을 보낸다.
+   *
+   * `pickedId`는 학생이 고른 트리 노드다 (D151). 답이 그 노드에서 갈라져
+   * 나오고, 서버 프롬프트에도 "지금 이 트리를 보고 있다"로 실린다. 답의
+   * 실제 부모는 **태그가 정한다** — 고른 노드와 답의 분류가 다르면 답은
+   * 자기 태그의 트리로 간다(tree.ts `assignParents`).
+   */
+  send: (
+    question: string,
+    opts?: { pickedId?: string | null },
+  ) => Promise<{ id: string; tag: string | null }[]>;
   /** 마지막 오류. */
   error: string | null;
   /**
@@ -68,6 +79,13 @@ export interface CanvasStreamApi {
 
 interface Deps {
   sessionId: string | null;
+  /**
+   * 지금 캔버스에 있는 것들 — 새 카드의 부모를 정하는 데 필요하다 (D151).
+   *
+   * 값이 아니라 **함수**로 받는다. 배열로 받으면 아이템이 하나 늘 때마다
+   * `send`의 신원이 바뀌고, 스트리밍 중에 그 일이 계속 일어난다.
+   */
+  getItems: () => readonly CanvasItem[];
   /** 로컬 아이템 목록에 반영한다. */
   upsertLocal: (items: CanvasItem[]) => void;
   /** 저장된 아이템으로 로컬을 갈아 끼운다(임시 id → 서버 id). */
@@ -118,6 +136,7 @@ function toPayload(it: CanvasItem): NewItemInput {
 
 export function useCanvasStream({
   sessionId,
+  getItems,
   upsertLocal,
   onPersisted,
   nextSeq,
@@ -130,9 +149,9 @@ export function useCanvasStream({
   const abortRef = useRef<AbortController | null>(null);
 
   const send = useCallback(
-    async (question: string, opts?: { parentItemId?: string | null }) => {
+    async (question: string, opts?: { pickedId?: string | null }) => {
       const q = question.trim();
-      if (!q || !sessionId || busy) return;
+      if (!q || !sessionId || busy) return [];
 
       setBusy(true);
       setError(null);
@@ -155,16 +174,29 @@ export function useCanvasStream({
        * 하나 더 만들지 않으면서도 hover 툴팁이 "무엇을 물어본 답인지" 보여 줄 수
        * 있다(QuestionTip).
        */
-      const parentItemId = opts?.parentItemId ?? null;
+      const picked = opts?.pickedId ?? null;
       /**
        * 학생이 친 질문은 **언제나** 답에 실어 둔다 (D149).
        *
        * 한때는 "AI에게 묻기"로 물었을 때만 뺐다 — 그때는 부모가 학생이 쓴
-       * 질문 글이라 중복이었기 때문이다. 지금 "다시 질문하기"의 부모는
-       * **AI가 쓴 답**이라 질문이 아니다. 안 실으면 학생이 뭘 물었는지가
-       * 캔버스 어디에도 남지 않는다.
+       * 질문 글이라 중복이었기 때문이다. 지금 답의 부모는 **같은 태그의 앞
+       * 카드**라 질문이 아니다. 안 실으면 학생이 뭘 물었는지가 캔버스
+       * 어디에도 남지 않는다.
        */
       const askedQuestion = q;
+
+      /**
+       * 이번 턴 카드의 부모를 정한다 (D151).
+       *
+       * 태그를 아는 순간(`cstart`)에 바로 정한다 — 나중에 몰아서 정하면
+       * 스트리밍 중에는 부모 없는 상태로 그려지다가 끝나는 순간 선이 우르르
+       * 생긴다. 지금 자리에서 자라나는 것처럼 보여야 한다.
+       */
+      const turnCards: { id: string; tag: string | null }[] = [];
+      const parentFor = (id: string, tag: string | null): string | null => {
+        turnCards.push({ id, tag });
+        return assignParents(getItems(), turnCards, picked).get(id) ?? null;
+      };
 
       const flush = () => {
         if (made.length) upsertLocal([...made]);
@@ -176,11 +208,12 @@ export function useCanvasStream({
             setReply(ev.text);
             break;
           case "cstart": {
+            const id = tempId();
             current = {
-              id: tempId(),
+              id,
               sessionId,
               nodeId: null,
-              parentItemId,
+              parentItemId: parentFor(id, ev.tag || null),
               kind: "concept",
               source: "ai",
               title: ev.title || null,
@@ -247,7 +280,8 @@ export function useCanvasStream({
                   id: tempId(),
                   sessionId,
                   nodeId: null,
-                  parentItemId,
+                  // 도판은 트리 노드가 아니다 — 부모를 주면 배치가 옆에 붙인다.
+                  parentItemId: null,
                   kind: "figure",
                   source: "ai",
                   title: null,
@@ -288,7 +322,9 @@ export function useCanvasStream({
       flush();
       setBusy(false);
 
-      if (!made.length) return;
+      // 만들어진 카드를 돌려준다 — 호출부가 초점을 어디로 옮길지 정한다(D151).
+      const created = () => made.map((m) => ({ id: m.id, tag: m.tag }));
+      if (!made.length) return [];
 
       // 완료 시 한 번에 저장한다(스트리밍 중 매 토큰 PATCH는 수백 왕복이 된다).
       const payload: NewItemInput[] = made.map(toPayload);
@@ -296,6 +332,31 @@ export function useCanvasStream({
         const saved = await createItems(sessionId, payload);
         const tempIds = made.map((i) => i.id);
         onPersisted(tempIds, saved);
+
+        /**
+         * 같은 턴 안에서 이어 붙인 부모를 서버에도 잇는다 (D151).
+         *
+         * `toPayload`는 임시 id를 부모로 보내지 않는다 — 아직 행이 없는
+         * 것을 가리키면 FK 위반으로 **배치 전체가 실패**한다. 그래서 저장
+         * 뒤에 진짜 id로 한 번 더 이어 준다. 화면에는 이미 이어져 있으므로
+         * (replaceTemp가 부모 참조까지 옮긴다) 이 왕복이 늦어도 티가 나지
+         * 않고, 실패해도 다음 새로고침에서 선 하나가 빠질 뿐 글은 남는다.
+         */
+        const realOf = new Map(tempIds.map((t, i) => [t, saved[i]?.id]));
+        const relink = made
+          .map((m, i) => {
+            const p = m.parentItemId;
+            const child = saved[i];
+            if (!child || !p || isRealId(p)) return null;
+            const real = realOf.get(p);
+            return real ? patchItem(child.id, { parent_item_id: real }) : null;
+          })
+          .filter((v): v is NonNullable<typeof v> => !!v);
+        if (relink.length) {
+          await Promise.all(relink).catch((e: Error) =>
+            setError(`연결을 저장하지 못했습니다 — ${e.message}`),
+          );
+        }
         // 임시 id가 서버 id로 바뀌면 추종 대상도 갱신해야 한다 —
         // 안 하면 사라진 id를 쫓다가 조용히 실패한다.
         setFocusId((cur) => {
@@ -303,12 +364,16 @@ export function useCanvasStream({
           const at = tempIds.indexOf(cur);
           return at >= 0 && saved[at] ? saved[at].id : cur;
         });
+        // 저장된 뒤에는 **서버 id**를 돌려준다. 임시 id를 넘기면 호출부가
+        // 곧 사라질 id를 초점으로 잡는다.
+        return made.map((m, i) => ({ id: saved[i]?.id ?? m.id, tag: m.tag }));
       } catch (e) {
         // 저장 실패가 학습을 막지 않는다. 화면의 아이템은 그대로 두고 알린다.
         setError(`저장하지 못했습니다 — ${(e as Error).message}`);
       }
+      return created();
     },
-    [sessionId, busy, upsertLocal, onPersisted, nextSeq, hasFigure],
+    [sessionId, busy, getItems, upsertLocal, onPersisted, nextSeq, hasFigure],
   );
 
   const clearFocus = useCallback(() => setFocusId(null), []);

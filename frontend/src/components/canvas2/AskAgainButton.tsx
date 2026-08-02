@@ -12,9 +12,19 @@
  * 막힌 지점**이라 자리를 옮겼다.
  */
 
-import { MessageCircleQuestion } from "lucide-react";
+import { CornerDownRight, MessageCircleQuestion } from "lucide-react";
 
-export function AskAgainButton({ onAsk }: { onAsk: () => void }) {
+/**
+ * `picked`면 이미 이 노드에서 이어 묻는 중이다 (D151). 버튼이 **상태 표시로
+ * 바뀐다** — 누를 것이 아니라 "여기에 붙습니다"를 알리는 자리가 된다.
+ */
+export function AskAgainButton({
+  onAsk,
+  picked,
+}: {
+  onAsk: () => void;
+  picked: boolean;
+}) {
   return (
     <button
       type="button"
@@ -24,16 +34,16 @@ export function AskAgainButton({ onAsk }: { onAsk: () => void }) {
         e.stopPropagation();
         onAsk();
       }}
-      title="이 답에 이어서 물어봅니다"
+      title={picked ? "다음 답이 이 아래에 붙습니다" : "이 답에 이어서 물어봅니다"}
       className="ui inline-flex items-center gap-1.5 rounded-full border py-1 pl-2.5 pr-3 text-[12px] font-medium transition-colors"
       style={{
         borderColor: "var(--c-live)",
-        background: "var(--c-live-wash)",
-        color: "var(--c-live)",
+        background: picked ? "var(--c-live)" : "var(--c-live-wash)",
+        color: picked ? "var(--c-paper)" : "var(--c-live)",
       }}
     >
-      <MessageCircleQuestion size={12} />
-      다시 질문하기
+      {picked ? <CornerDownRight size={12} /> : <MessageCircleQuestion size={12} />}
+      {picked ? "여기에 이어서" : "다시 질문하기"}
     </button>
   );
 }

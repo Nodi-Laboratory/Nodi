@@ -38,6 +38,7 @@ import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
+import { nextFocus } from "@/lib/canvas2/tree";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
@@ -114,9 +115,17 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 마지막 하나만 남았다(사용자 지적: "선택 도구가 여러 요소를 선택할 수 없다").
    */
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * 학생이 **고른** 트리 노드 (D151). 선택(selectedIds)과 다른 개념이다.
+   *
+   * 선택은 옮기고 지우기 위한 것이고, 이건 "지금 이 가지에서 이어 묻는다"는
+   * 뜻이다. 그래서 **끌면 고른 것이 아니다**(사용자 지시 2026-08-02:
+   * "노드를 드래그하는건 그 노드를 선택한 것이 아니다") — 움직이지 않고 누른
+   * 경우에만 잡힌다. 배경을 누르면 풀린다.
+   */
+  const [pickedId, setPickedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
-  const [quote, setQuote] = useState<{ id: string; text: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -234,8 +243,14 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [store.items],
   );
 
+  // 스트림이 새 카드의 부모를 정할 때 지금 캔버스에 뭐가 있는지 봐야 한다
+  // (D151). 값이 아니라 함수로 준다 — 배열을 주면 스트리밍 중 글자 하나마다
+  // `send`의 신원이 바뀐다.
+  const getItems = useEventCallback(() => store.items);
+
   const stream = useCanvasStream({
     sessionId,
+    getItems,
     upsertLocal,
     onPersisted,
     nextSeq,
@@ -254,6 +269,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
         x: i.x,
         y: i.y,
         parentItemId: i.parentItemId,
+        // 트리 판정 (D151) — AI 개념 카드만 트리에 들어간다.
+        kind: i.kind,
+        source: i.source,
       })),
     [store.items],
   );
@@ -308,6 +326,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   const onDelete = useEventCallback((id: string) => {
     if (editingId === id) setEditingId(null);
+    if (pickedId === id) setPickedId(null);
     setSelectedIds((prev) => {
       if (!prev.has(id)) return prev;
       const next = new Set(prev);
@@ -413,15 +432,27 @@ export function CanvasWorkspace({ spaceId }: Props) {
   });
 
   /**
-   * "다시 질문하기" — 그 답이 인용된 채 입력창이 열린다 (D149).
+   * "다시 질문하기" — 이 노드를 골라 둔다 (D149 → D151).
    *
-   * 제목이 있으면 제목을 인용한다. AI 개념 글은 대개 제목이 본문 전체를
-   * 한 줄로 요약하고 있어, 본문 앞 200자보다 **무엇에 대한 질문인지**가
-   * 또렷하다.
+   * 고르는 것 자체가 기능이다. 버튼은 그 지름길일 뿐이고, 노드를 그냥 눌러도
+   * 같은 일이 일어난다(사용자 지시 2026-08-02: "그 노드를 클릭하고 질문하면
+   * 자연스럽게 작동").
    */
-  const onAsk = useEventCallback((id: string) => {
+  const onAsk = useEventCallback((id: string) => setPickedId(id));
+
+  /**
+   * 노드를 **끌지 않고 눌렀다** — 그 가지에서 이어 묻겠다는 뜻이다 (D151).
+   *
+   * AI 개념 카드만 고를 수 있다. 학생 메모나 도판을 고르면 이어 붙일 트리가
+   * 없어서 아무 일도 일어나지 않는데, 골라진 것처럼 보이면 거짓말이 된다.
+   */
+  const onPick = useEventCallback((id: string | null) => {
+    if (!id) {
+      setPickedId(null);
+      return;
+    }
     const it = items.find((i) => i.id === id);
-    if (it) setQuote({ id, text: (it.title?.trim() || it.body).slice(0, 200) });
+    setPickedId(it && it.kind === "concept" && it.source === "ai" ? id : null);
   });
 
   /**
@@ -450,8 +481,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onReflow,
       onDismissReflow,
       onAsk,
+      onPick,
     }),
-    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk],
+    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onPick],
   );
 
   /**
@@ -468,6 +500,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
       ?.blur();
     setSelectedIds((prev) => (prev.size ? new Set<string>() : prev));
     setEditingId(null);
+    // 빈 곳을 눌렀으면 어느 가지에서도 이어 묻지 않는다는 뜻이다 (D151).
+    setPickedId(null);
   }, []);
 
   /**
@@ -582,6 +616,45 @@ export function CanvasWorkspace({ spaceId }: Props) {
   }, [items, layout, getObstacles, flyTo]);
 
   const vp = useViewport();
+
+  /**
+   * 입력창에 붙는 인용 칩 — **고른 노드에서 파생한다** (D151).
+   *
+   * 예전에는 `quote` state가 따로 있었다. 고른 노드와 인용이 두 곳에 살면
+   * 반드시 어긋난다(노드를 지웠는데 칩이 남는 식). 하나만 두고 파생시킨다.
+   */
+  const pickedItem = useMemo(
+    () => items.find((i) => i.id === pickedId) ?? null,
+    [items, pickedId],
+  );
+  const quote = useMemo(
+    () =>
+      pickedItem
+        ? {
+            id: pickedItem.id,
+            tag: pickedItem.tag,
+            text: (pickedItem.title?.trim() || pickedItem.body).slice(0, 200),
+          }
+        : null,
+    [pickedItem],
+  );
+
+  /**
+   * 질문을 보내고, 답이 붙은 자리로 초점을 옮긴다 (D151).
+   *
+   * 초점을 그대로 두면 이어 물을수록 같은 노드에서 형제가 옆으로 쌓인다.
+   * 학생이 기대하는 것은 방금 받은 답 **뒤에** 이어지는 것이다.
+   */
+  const handleSend = useCallback(
+    (question: string) => {
+      const from = pickedId;
+      const tag = pickedItem?.tag ?? null;
+      void stream.send(question, { pickedId: from }).then((created) => {
+        setPickedId(nextFocus(from, tag, created));
+      });
+    },
+    [pickedId, pickedItem, stream],
+  );
 
   const handleMinimapJump = useCallback(
     (world: { x: number; y: number }) => {
@@ -734,8 +807,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
             reply={stream.reply}
             quote={quote}
             disabled={!sessionId}
-            onClearQuote={() => setQuote(null)}
-            onSend={(q, parentItemId) => void stream.send(q, { parentItemId })}
+            onClearQuote={() => setPickedId(null)}
+            onSend={handleSend}
           />
         </>
       }
@@ -750,6 +823,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
         zoom={bridge.camera.zoom}
         selectedIds={selectedIds}
         editingId={editingId}
+        pickedId={pickedId}
         measure={layout.measure}
         handlers={handlers}
       />
