@@ -24,7 +24,10 @@ import { getFigure } from "@/lib/api/retrieve";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { useItemDrag } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem } from "@/lib/canvas2/types";
-import type { ResizeCommit } from "./ResizeHandles";
+import { ResizeHandles, type ResizeCommit } from "./ResizeHandles";
+
+/** 리사이즈 커밋 뒤 남은 transform을 걷어내는 안전망(ms). */
+const DROP_FALLBACK_MS = 300;
 
 interface Props {
   item: CanvasItem;
@@ -52,6 +55,8 @@ export function FigureItem({
   onSelect,
   onDragEnd,
   onDelete,
+  onResize,
+  onResetSize,
 }: Props) {
   const fig = item.data.figure;
   // 재발급으로 얻은 url만 상태로 들고, 평소에는 prop을 그대로 쓴다.
@@ -61,6 +66,8 @@ export function FigureItem({
   const [refreshed, setRefreshed] = useState<string | null>(null);
   const [retried, setRetried] = useState(false);
   const [open, setOpen] = useState(false);
+  /** 이미지 자연 비율(= w/h). 로드 전엔 null — 그동안은 렌더 상자 비율을 쓴다. */
+  const [aspect, setAspect] = useState<number | null>(null);
 
   const url = refreshed ?? fig?.url ?? "";
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -179,6 +186,22 @@ export function FigureItem({
           }}
         />
 
+        {/* 크기 손잡이 — 도판만 갖는다. 비율 고정이라 이미지가 찌그러지지 않는다.
+            size가 있으면 그 비율을, 없으면 이미지 자연 비율을 쓴다(D147). */}
+        {selected && !dragging && (
+          <ResizeHandles
+            zoom={zoom}
+            color="var(--c-live)"
+            aspect={size ? size.w / size.h : (aspect ?? undefined)}
+            getEl={() => rootRef.current}
+            onCommit={(next) => {
+              onResize(item.id, next);
+              window.setTimeout(settle, DROP_FALLBACK_MS);
+            }}
+            onReset={() => onResetSize(item.id)}
+          />
+        )}
+
         {/* 좌측 괘선 — 색이 곧 출처다(오커=AI). */}
         <div
           aria-hidden
@@ -212,6 +235,12 @@ export function FigureItem({
               src={url}
               alt={fig.caption || "교과서 도판"}
               onError={refresh}
+              onLoad={(e) => {
+                const el = e.currentTarget;
+                if (el.naturalWidth && el.naturalHeight) {
+                  setAspect(el.naturalWidth / el.naturalHeight);
+                }
+              }}
               draggable={false}
               className="pointer-events-none block w-full object-contain"
               style={{ background: "var(--c-sunk)", maxHeight: size ? undefined : "16rem" }}
