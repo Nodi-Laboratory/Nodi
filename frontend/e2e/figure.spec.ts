@@ -1,0 +1,37 @@
+import { expect, test } from "@playwright/test";
+import { loginAndOpenCanvas } from "./helpers";
+
+/**
+ * 교과서 도판 이미지 로딩 E2E (D147 후속 버그).
+ *
+ * 재수화 시 figure.url은 빈 문자열이다(D87: 영속 금지). FigureItem이 그때
+ * getFigure로 새 signed URL을 받아야 하는데 그 트리거가 없어 스켈레톤에 갇혔다
+ * (canvas_items 영속이 켜지며 드러났다). 여기서는 **url이 빈** 도판 행을 미리
+ * 심어 두고, 캔버스를 열었을 때 이미지가 실제로 로드되는지(naturalWidth>0)를
+ * 확인한다.
+ *
+ * 전제: seed로 e2e-student를 교과서 학급에 넣고, 그의 개인 세션에 url="" 도판
+ * 행(caption='E2E도판')을 심어 두었다.
+ */
+test("재수화된 교과서 도판이 signed URL을 받아 이미지를 불러온다", async ({ page }) => {
+  await loginAndOpenCanvas(page);
+
+  // 시드 도판이 없는 환경에서는 건너뛴다(계정처럼 이 테스트도 seed가 전제다).
+  // 스켈레톤("도판 불러오는 중…")이든 <img>든, 도판 카드가 있어야 검증한다.
+  const card = page.locator('[data-canvas-item]').filter({ hasText: "E2E도판" });
+  if ((await card.count()) === 0) {
+    test.skip(true, "시드 도판 없음 — db seed(class_members + canvas_items figure) 필요");
+  }
+
+  const img = page.locator('img[alt="E2E도판"]');
+  // url을 비워 저장했으므로 처음엔 스켈레톤 → 효과가 getFigure로 URL을 받으면
+  // <img>가 뜬다.
+  await expect(img).toBeVisible({ timeout: 20_000 });
+
+  // 실제 로드 여부: 디코드된 자연 폭이 0보다 커야 한다(깨진 이미지는 0).
+  await expect
+    .poll(async () => img.evaluate((el) => (el as HTMLImageElement).naturalWidth), {
+      timeout: 20_000,
+    })
+    .toBeGreaterThan(0);
+});

@@ -64,15 +64,43 @@ export function FigureItem({
   // prop을 state로 복사하면 이펙트에서 setState를 부르게 되고(연쇄 렌더),
   // 두 곳에 같은 값이 생겨 어느 쪽이 진실인지 흐려진다.
   const [refreshed, setRefreshed] = useState<string | null>(null);
-  const [retried, setRetried] = useState(false);
   const [open, setOpen] = useState(false);
   /** 이미지 자연 비율(= w/h). 로드 전엔 null — 그동안은 렌더 상자 비율을 쓴다. */
   const [aspect, setAspect] = useState<number | null>(null);
   const [hover, setHover] = useState(false);
 
   const url = refreshed ?? fig?.url ?? "";
+  const figureId = fig?.figureId;
   const closeRef = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // 딱 한 번만 서버를 두드리는 가드. 상태가 아니라 ref다 — 이펙트에서 부를 때
+  // 동기 setState를 만들지 않으려는 것이다(React Compiler 규칙).
+  const didFetch = useRef(false);
+
+  /**
+   * signed URL을 (재)발급한다 (D87). 만료 URL 로드 실패(onError) + **재수화로
+   * url이 비었을 때** 부른다. 서버로 나가는 setState는 async .then에만 있다.
+   */
+  const refresh = useCallback(() => {
+    if (didFetch.current || !figureId) return;
+    didFetch.current = true;
+    void getFigure(figureId)
+      .then((f) => setRefreshed(f.url ?? ""))
+      .catch(() => {
+        /* 재발급 실패 — 스켈레톤으로 남는다 */
+      });
+  }, [figureId]);
+
+  /**
+   * 재수화 때는 url이 빈 문자열이다(D87: 영속 금지). 그때 새 signed URL을
+   * 받아 온다 — **이 트리거가 없어 재수화된 도판이 스켈레톤에 갇혔다**(canvas_items
+   * 영속이 켜지며 드러난 결함). img onError는 <img>가 렌더될 때만 나므로,
+   * url이 비어 <img>가 아예 없을 땐 여기서 받아야 한다.
+   */
+  useEffect(() => {
+    if (!url && figureId) refresh();
+  }, [url, figureId, refresh]);
 
   const setNode = useCallback(
     (el: HTMLDivElement | null) => {
@@ -114,16 +142,6 @@ export function FigureItem({
   }, [open]);
 
   if (!fig) return null;
-
-  const refresh = () => {
-    if (retried || !fig.figureId) return;
-    setRetried(true);
-    void getFigure(fig.figureId)
-      .then((f) => setRefreshed(f.url ?? ""))
-      .catch(() => {
-        /* 만료 재발급 실패 — 스켈레톤으로 남는다 */
-      });
-  };
 
   const size = item.data.size;
 
