@@ -221,12 +221,8 @@ function asTreeItem(i: LayoutInput): TreeItem {
 }
 
 /** 태그 없는 아이템이 모이는 열의 이름. 사용자에게는 안 보인다. */
-export const UNTAGGED = " untagged";
+export const UNTAGGED = " untagged";
 
-function columnXFor(order: string[], tag: string): number {
-  const i = order.indexOf(tag);
-  return (i < 0 ? order.length : i) * (ITEM_W + COL_GAP);
-}
 
 /**
  * y부터 아래로 훑어 장애물과 겹치지 않는 첫 자리를 찾는다.
@@ -274,7 +270,6 @@ export function layoutItems(
     const tag = it.tag || UNTAGGED;
     if (!order.includes(tag)) order.push(tag);
   }
-  for (const tag of order) columnX.set(tag, columnXFor(order, tag));
 
   // 장애물은 누적된다 — 먼저 놓인 것이 나중 것의 장애물이 된다.
   const blocks: Rect[] = [...obstacles];
