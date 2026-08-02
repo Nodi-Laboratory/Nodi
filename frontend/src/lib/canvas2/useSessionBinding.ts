@@ -35,6 +35,15 @@ export function useSessionBinding(spaceId: string): {
   sessionId: string | null;
   seed: string | null;
   clearSeed: () => void;
+  /**
+   * 잡고 있던 세션이 **서버에서 사라졌다**고 알린다 (D153).
+   *
+   * 관리자가 데이터를 초기화했거나 다른 탭에서 지운 경우다. 그대로 두면
+   * 화면은 그 id를 계속 붙들고 `/canvas`도 `/chat`도 404를 받는다 — 학생
+   * 눈에는 **"질문해도 아무 일도 안 일어난다"**로 보인다(실측으로 잡았다).
+   * 표시를 지워 이 공간의 세션을 처음부터 다시 고르게 한다.
+   */
+  dropSession: () => void;
 } {
   const activeSessionId = useWorkspaceStore((s) => s.activeSessionId);
   const sessionSpaceId = useWorkspaceStore((s) => s.activeSessionSpaceId);
@@ -116,9 +125,17 @@ export function useSessionBinding(spaceId: string): {
 
   const clearSeed = useCallback(() => setPending(null), [setPending]);
 
+  const dropSession = useCallback(() => {
+    // 표시를 지워야 아래 이펙트가 다시 돈다 — 스토어만 비우면 "이 공간은
+    // 이미 정했다"는 가드에 막혀 아무도 새 세션을 고르지 않는다.
+    resolvedFor.current = null;
+    setActiveSession(null);
+  }, [setActiveSession]);
+
   return {
     sessionId: bound,
     seed,
     clearSeed,
+    dropSession,
   };
 }

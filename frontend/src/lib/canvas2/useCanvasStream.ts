@@ -94,6 +94,8 @@ interface Deps {
   nextSeq: () => number;
   /** 이 도판이 이미 캔버스에 있나 (D95 세션 내 중복 제거). */
   hasFigure: (figureId: string) => boolean;
+  /** 세션이 서버에서 사라졌다(404). 호출부가 다시 고르게 한다 (D153). */
+  onSessionGone: () => void;
 }
 
 let tempCounter = 0;
@@ -141,6 +143,7 @@ export function useCanvasStream({
   onPersisted,
   nextSeq,
   hasFigure,
+  onSessionGone,
 }: Deps): CanvasStreamApi {
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
@@ -311,7 +314,16 @@ export function useCanvasStream({
                 });
               }
             },
-            onError: (msg) => setError(msg),
+            onError: (msg, status) => {
+              // 404는 "세션이 없다"는 뜻이다. 오류 문구만 띄우면 학생은 계속
+              // 같은 죽은 세션에 질문한다 (D153).
+              if (status === 404) {
+                setError("대화가 사라져 새 대화를 엽니다.");
+                onSessionGone();
+                return;
+              }
+              setError(msg);
+            },
           },
           ctrl.signal,
         );
@@ -396,7 +408,7 @@ export function useCanvasStream({
       }
       return created();
     },
-    [sessionId, busy, getItems, upsertLocal, onPersisted, nextSeq, hasFigure],
+    [sessionId, busy, getItems, upsertLocal, onPersisted, nextSeq, hasFigure, onSessionGone],
   );
 
   const clearFocus = useCallback(() => setFocusId(null), []);

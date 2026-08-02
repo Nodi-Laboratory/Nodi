@@ -43,7 +43,12 @@ export interface ChatStreamHandlers {
   onStart?: (data: ChatStartEvent) => void;
   onToken?: (delta: string) => void;
   onDone?: (data: ChatDoneEvent) => void;
-  onError?: (detail: string) => void;
+  /**
+   * `status`는 HTTP 상태다(SSE 안에서 난 오류면 없다). 404는 **세션이
+   * 사라졌다**는 뜻이라 호출부가 다르게 다뤄야 한다 — 관리자가 데이터를
+   * 초기화했거나 다른 탭에서 세션을 지운 경우다.
+   */
+  onError?: (detail: string, status?: number) => void;
   /**
    * D109: ReAct가 도구를 부르기 시작했다. 첫 토큰까지 시간이 걸리는 구간이라
    * 빈 화면 대신 "수업 자료를 찾고 있어요" 같은 진행 표시를 띄우는 신호다.
@@ -82,7 +87,7 @@ async function consumeSSE(
   path: string,
   body: unknown,
   onEvent: (ev: SSEEvent) => void,
-  onError: (detail: string) => void,
+  onError: (detail: string, status?: number) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   let res: Response;
@@ -111,7 +116,7 @@ async function consumeSSE(
     } catch {
       /* ignore */
     }
-    onError(detail);
+    onError(detail, res.status);
     return;
   }
 
@@ -180,7 +185,7 @@ export async function streamChat(
           break;
       }
     },
-    (d) => handlers.onError?.(d),
+    (d, status) => handlers.onError?.(d, status),
     signal,
   );
 }

@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Undo2, X } from "lucide-react";
 import { getCanvas, putDrawing } from "@/lib/api/canvas";
+import { ApiError } from "@/lib/api/_core";
 import type { DrawingScene } from "@/lib/api/canvas";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { useSessionBinding } from "@/lib/canvas2/useSessionBinding";
@@ -108,7 +109,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const spring = useCameraSpring(bridge);
   const store = useCanvasItems();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
-  const { sessionId } = useSessionBinding(spaceId);
+  const { sessionId, dropSession } = useSessionBinding(spaceId);
 
   /**
    * 선택된 아이템들. **집합이다** — 예전에는 하나뿐이라 올가미로 여럿을 잡아도
@@ -132,7 +133,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   useEffect(() => setActiveSpace(spaceId), [spaceId, setActiveSpace]);
 
-  const { data: snapshot } = useQuery({
+  const { data: snapshot, error: snapshotError } = useQuery({
     queryKey: ["canvas", sessionId],
     queryFn: () => getCanvas(sessionId!),
     enabled: !!sessionId,
@@ -141,6 +142,20 @@ export function CanvasWorkspace({ spaceId }: Props) {
     // 스냅샷으로 덮으면 편집 중이던 위치가 되돌아간다.
     refetchOnWindowFocus: false,
   });
+
+  /**
+   * 잡고 있던 세션이 서버에서 사라졌으면 다시 고른다 (D153).
+   *
+   * 관리자가 데이터를 초기화하면 열려 있던 탭은 지워진 세션 id를 계속
+   * 들고 있다. 그 상태에서는 `/canvas`도 `/chat`도 404라 **질문해도 아무
+   * 일도 안 일어난다** — 학생 눈에는 "AI가 응답하지 않는다"로 보인다.
+   * 새로고침하면 낫지만, 새로고침해야 낫는 화면은 고장난 화면이다.
+   */
+  useEffect(() => {
+    if (snapshotError instanceof ApiError && snapshotError.status === 404) {
+      dropSession();
+    }
+  }, [snapshotError, dropSession]);
 
   /**
    * 세션을 떠나면 그 스냅샷을 **캐시에서 버린다** (D147).
@@ -251,6 +266,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const stream = useCanvasStream({
     sessionId,
     getItems,
+    onSessionGone: dropSession,
     upsertLocal,
     onPersisted,
     nextSeq,
