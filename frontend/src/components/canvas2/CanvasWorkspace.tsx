@@ -13,7 +13,7 @@
  * 저장은 useCanvasItems가 한다.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Undo2, X } from "lucide-react";
 import { getCanvas, putDrawing } from "@/lib/api/canvas";
@@ -27,6 +27,7 @@ import { useCanvasItems } from "@/lib/canvas2/useCanvasItems";
 import { reflowOne, type LayoutInput } from "@/lib/canvas2/layout";
 import { sanitizeScene } from "@/lib/canvas2/sanitizeScene";
 import { itemsFromNodes } from "@/lib/canvas2/legacyItems";
+import { planHydration } from "@/lib/canvas2/hydration";
 import { useCanvasStream } from "@/lib/canvas2/useCanvasStream";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import { spaceTargetFromId } from "@/lib/api";
@@ -132,22 +133,57 @@ export function CanvasWorkspace({ spaceId }: Props) {
     refetchOnWindowFocus: false,
   });
 
+  /**
+   * 세션을 떠나면 그 스냅샷을 **캐시에서 버린다** (D147).
+   *
+   * 이 쿼리는 캐시가 아니라 **수화용 사진 한 장**이다. 찍은 뒤로 학생의
+   * 편집(이동·수정·삭제)은 전부 서버로 나가지만 이 사진은 갱신되지 않는다.
+   * 들고 있다가 재진입 때 다시 쓰면 옮겨 둔 좌표가 통째로 되돌아간다 —
+   * 사용자가 겪은 "세션을 바꿨다 오면 원래 위치로 초기화"가 이것이다.
+   * 버려 두면 돌아올 때 반드시 서버에서 새로 받는다.
+   */
+  useEffect(() => {
+    if (!sessionId) return;
+    return () => {
+      queryClient.removeQueries({ queryKey: ["canvas", sessionId] });
+    };
+  }, [sessionId, queryClient]);
+
   // 구 세션 폴백 — v2 이전 세션에는 canvas_items가 한 행도 없다. 폴백이
   // 없으면 학생이 지난 대화를 열었을 때 빈 캔버스를 본다(데이터가 날아간
   // 것처럼 보인다). nodes.answer를 파싱해 읽기용으로 그리고, 첫 편집 때
   // 서버로 승격한다(legacyItems.ts 참조).
-  const { data: detail } = useSessionDetail(sessionId);
+  const { data: detail, isPending: detailPending } = useSessionDetail(sessionId);
+
+  /**
+   * 이미 채워 넣은 세션 — **수화는 세션당 한 번이다** (D147).
+   *
+   * 그 뒤로는 화면의 글이 정본이다. 늦게 도착한 쿼리가 덮으면 학생이 옮긴
+   * 자리가 사라지고, 더 나쁘게는 이미 저장된 글이 `_legacy` 복사본으로
+   * 바뀌어 **다음 이동이 서버에 복제 행을 만든다**(hydration.ts 머리말).
+   */
+  const hydratedFor = useRef<string | null>(null);
 
   const { replaceAll } = store;
   useEffect(() => {
-    if (!snapshot || !sessionId) return;
-    if (snapshot.items.length) {
-      replaceAll(snapshot.items);
-      return;
+    const plan = planHydration({
+      sessionId,
+      hydratedFor: hydratedFor.current,
+      snapshotCount: snapshot ? snapshot.items.length : null,
+      detailPending,
+    });
+    if (plan.clear) {
+      hydratedFor.current = null;
+      replaceAll([]);
     }
-    const nodes = detail?.nodes ?? [];
-    replaceAll(nodes.length ? itemsFromNodes(sessionId, nodes) : []);
-  }, [snapshot, detail, sessionId, replaceAll]);
+    if (!plan.fill || !sessionId || !snapshot) return;
+    hydratedFor.current = sessionId;
+    replaceAll(
+      plan.fill === "items"
+        ? snapshot.items
+        : itemsFromNodes(sessionId, detail?.nodes ?? []),
+    );
+  }, [sessionId, snapshot, detail, detailPending, replaceAll]);
 
   // 그림은 마운트 시 1회만 밀어 넣는다(`initialData`가 그때만 읽힌다).
   // sceneKey는 씬이 도착한 뒤에야 생긴다 — sessionId로 키를 잡으면 세션 전환

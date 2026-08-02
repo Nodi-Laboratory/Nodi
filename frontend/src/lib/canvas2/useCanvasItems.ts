@@ -114,6 +114,18 @@ export function useCanvasItems(): CanvasItemsApi {
   const [error, setError] = useState<string | null>(null);
   const [undo, setUndo] = useState<UndoEntry | null>(null);
   const undoTimer = useRef<number | null>(null);
+  /**
+   * 승격(로컬 전용 → 서버 행) 요청이 나가 있는 아이템 (D147).
+   *
+   * 승격은 **행을 만드는** 일이라 두 번 하면 글이 복제된다. 그런데 응답이
+   * 오기 전에 또 만질 수 있다 — 여러 글을 함께 끌면 `moveMany`가 하나씩
+   * patch를 부르고, 학생이 곧바로 다시 끌 수도 있다. 그때 `_legacy`는 아직
+   * true이므로 옛 코드는 조건 없이 또 만들었다.
+   *
+   * 두 번째 호출은 로컬만 고치고 지나간다. 첫 요청이 끝날 때 서버 값을
+   * 넣으면서 **로컬의 최신 본문·좌표를 지키므로**(아래 .then) 잃는 것이 없다.
+   */
+  const promoting = useRef<Set<string>>(new Set());
 
   /**
    * 되돌리기 항목을 띄운다. 타이머를 한 곳에서 관리해, 연달아 조작해도
@@ -188,6 +200,9 @@ export function useCanvasItems(): CanvasItemsApi {
       // **첫 편집이 곧 마이그레이션이다** — 이때 만든다. 전 세션을 한 번에
       // 옮기면 안 쓰는 세션까지 행이 생긴다.
       if (before._legacy) {
+        // 이미 만드는 중이면 **다시 만들지 않는다** — 두 번 만들면 글이 복제된다.
+        if (promoting.current.has(id)) return;
+        promoting.current.add(id);
         const merged = { ...before, ...toLocal(serverPatch), ...localExtra };
         void apiCreate(before.sessionId, [
           {
@@ -221,7 +236,8 @@ export function useCanvasItems(): CanvasItemsApi {
               return remapParents(next, [id], [saved]);
             });
           })
-          .catch((e: Error) => setError(`저장하지 못했습니다 — ${e.message}`));
+          .catch((e: Error) => setError(`저장하지 못했습니다 — ${e.message}`))
+          .finally(() => promoting.current.delete(id));
         return;
       }
 
