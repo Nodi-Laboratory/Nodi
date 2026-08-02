@@ -228,6 +228,29 @@ export function Minimap({
     });
 
     /**
+     * 트리에 안 들어가는 글 — 학생 메모·도판·분류 없는 글.
+     *
+     * 안 그리면 **지도가 통째로 빈다.** 메모만 있는 세션을 확대하면 흰 판이
+     * 뜬다(실측). 캔버스에 분명히 있는 것이 지도에서 사라지면 지도가 거짓말을
+     * 하는 셈이다. 선은 없고 점만, 속을 비워서 트리 노드와 구별한다.
+     */
+    const treeIds = new Set(nodes.map((n) => n.id));
+    const loose = items.flatMap((it) => {
+      if (treeIds.has(it.id)) return [];
+      const c = center(it.id);
+      if (!c) return [];
+      return [
+        {
+          id: it.id,
+          ...c,
+          color: it.source === "ai" ? "var(--c-live)" : "var(--c-hand)",
+          wx: (positions.get(it.id)?.x ?? 0) + (sizes.get(it.id)?.w ?? FALLBACK.w) / 2,
+          wy: (positions.get(it.id)?.y ?? 0) + (sizes.get(it.id)?.h ?? FALLBACK.h) / 2,
+        },
+      ];
+    });
+
+    /**
      * 점이 겹치면 살짝 밀어 떼어 놓는다.
      *
      * 클러스터가 실제로 공간에서 겹칠 수 있다 — 특히 "분류 없음"은 학생이
@@ -290,11 +313,26 @@ export function Minimap({
       }
     }
 
+    const viewRect = { x: px(view.x), y: py(view.y), w: view.w * s, h: view.h * s };
     return {
       dots: placed,
       nodes,
       edges,
-      view: { x: px(view.x), y: py(view.y), w: view.w * s, h: view.h * s },
+      loose,
+      view: viewRect,
+      /**
+       * 보기 영역 사각형이 지도 안에 들어오나.
+       *
+       * 지도를 확대하면 **이 사각형도 같이 커진다** — 기하적으로는 맞지만
+       * 지도를 넘어서는 순간 정보가 아니라 회색 판이 된다. 실측: 1.8배(노드
+       * 연결로 바뀌는 지점)에서 이미 288px로 지도 높이 250을 넘고, 3.3배면
+       * 461×525로 지도를 통째로 덮어 트리가 안 보인다(사용자 지적
+       * 2026-08-02: "지도를 확대할 때 화면까지 같이 확대된다").
+       *
+       * 넘어섰다는 것은 "지도에 보이는 게 전부 화면 안에 있다"는 뜻이라
+       * 애초에 가리킬 것이 없다. 그럴 때는 그리지 않는다.
+       */
+      viewFits: viewRect.w <= W && viewRect.h <= H,
     };
   }, [items, positions, sizes, tagOrder, camera, viewport, zoom]);
 
@@ -401,19 +439,22 @@ export function Minimap({
         </defs>
 
         <g clipPath="url(#c2-map-clip)">
-          {/* 지금 보고 있는 영역. 점보다 뒤에 옅게 — 정보는 점이 준다. */}
-          <rect
-            x={model.view.x}
-            y={model.view.y}
-            width={Math.max(4, model.view.w)}
-            height={Math.max(4, model.view.h)}
-            rx={3}
-            fill="var(--c-ink)"
-            fillOpacity={0.04}
-            stroke="var(--c-ink)"
-            strokeOpacity={0.35}
-            strokeWidth={1}
-          />
+          {/* 지금 보고 있는 영역. 점보다 뒤에 옅게 — 정보는 점이 준다.
+              지도를 확대해 이 사각형이 지도를 넘어서면 그리지 않는다(위 주석). */}
+          {model.viewFits && (
+            <rect
+              x={model.view.x}
+              y={model.view.y}
+              width={Math.max(4, model.view.w)}
+              height={Math.max(4, model.view.h)}
+              rx={3}
+              fill="var(--c-ink)"
+              fillOpacity={0.04}
+              stroke="var(--c-ink)"
+              strokeOpacity={0.35}
+              strokeWidth={1}
+            />
+          )}
 
           {nodeView ? (
             <>
@@ -430,6 +471,27 @@ export function Minimap({
                   strokeWidth={1.2}
                   markerEnd={`url(#c2-arrow-${TREE_COLORS.indexOf(e.color)})`}
                 />
+              ))}
+              {/* 트리 밖 글(메모·도판) — 선 없이 점만. 속을 비우고 점선으로
+                  둘러 트리 노드와 구별한다. 안 그리면 메모뿐인 세션에서
+                  지도가 통째로 빈다. */}
+              {model.loose.map((n) => (
+                <g
+                  key={n.id}
+                  transform={`translate(${n.x},${n.y})`}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => onJump({ x: n.wx, y: n.wy })}
+                >
+                  <circle r={NODE_R + 6} fill="transparent" style={{ pointerEvents: "all" }} />
+                  <circle
+                    r={NODE_R - 1}
+                    fill="var(--c-raised)"
+                    stroke={n.color}
+                    strokeWidth={1.2}
+                    strokeOpacity={0.6}
+                    strokeDasharray="2 2"
+                  />
+                </g>
               ))}
               {model.nodes.map((n) => (
                 <g
