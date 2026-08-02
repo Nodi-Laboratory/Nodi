@@ -24,6 +24,12 @@
  *
  * 아이템 드래그와 같은 이유다(TextItem 헤더 참조) — 매 프레임 setState하면
  * 긴 문단에서 즉시 버벅인다. DOM style을 직접 고치고 손을 뗄 때 한 번 커밋한다.
+ *
+ * ## 도판은 비율 고정 (D147)
+ *
+ * `aspect`를 주면 이미지가 찌그러지지 않게 가로세로 비율을 유지한다 — 가로가
+ * 걸린 손잡이는 폭으로 높이를 몰고, 세로만 걸린 손잡이는 그 반대다. 현재
+ * 소비자는 도판뿐이고 늘 `aspect`를 준다(글 상자는 크기를 조절하지 않는다).
  */
 
 import { useCallback, useRef } from "react";
@@ -31,6 +37,39 @@ import { ITEM_MIN_W } from "@/lib/canvas2/layout";
 
 /** 여덟 방향. 문자에 방위가 들어 있어 `includes`로 판정한다. */
 export type ResizeDir = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+export interface SizeReq {
+  w: number;
+  h: number;
+}
+
+/**
+ * 손잡이 방향과 마우스 이동량(world)으로 요청 크기를 낸다 (순수, 클램프 전).
+ *
+ * `aspect`(= w/h)가 있으면 비율을 지킨다 (D147, 도판). 가로가 걸린 손잡이는
+ * 폭을 몰이축으로 삼아 높이를 유도하고, 세로만 걸린 손잡이는 그 반대다 —
+ * 대각 손잡이도 폭이 몬다.
+ */
+export function requestedSize(
+  dir: ResizeDir,
+  mx: number,
+  my: number,
+  start: SizeReq,
+  aspect?: number,
+): SizeReq {
+  let w = start.w;
+  let h = start.h;
+  if (dir.includes("e")) w = start.w + mx;
+  if (dir.includes("w")) w = start.w - mx;
+  if (dir.includes("s")) h = start.h + my;
+  if (dir.includes("n")) h = start.h - my;
+  if (aspect) {
+    const horizontal = dir.includes("e") || dir.includes("w");
+    if (horizontal) h = w / aspect; // 폭이 몬다(가로·대각 손잡이)
+    else w = h * aspect; // 세로 손잡이만
+  }
+  return { w, h };
+}
 
 const DIRS: readonly ResizeDir[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
@@ -56,6 +95,8 @@ interface Props {
   zoom: number;
   /** 테두리·손잡이 색. 아이템의 출처 색을 그대로 쓴다. */
   color: string;
+  /** 있으면 비율 고정(= w/h). 도판이 이미지 자연 비율을 준다 (D147). */
+  aspect?: number;
   /** 아이템 루트. 끄는 동안 이 요소의 style을 직접 고친다. */
   getEl: () => HTMLElement | null;
   onCommit: (next: ResizeCommit) => void;
@@ -63,7 +104,7 @@ interface Props {
   onReset: () => void;
 }
 
-export function ResizeHandles({ zoom, color, getEl, onCommit, onReset }: Props) {
+export function ResizeHandles({ zoom, color, aspect, getEl, onCommit, onReset }: Props) {
   const dragRef = useRef<{
     dir: ResizeDir;
     sx: number;
@@ -110,15 +151,23 @@ export function ResizeHandles({ zoom, color, getEl, onCommit, onReset }: Props) 
       const mx = (e.clientX - d.sx) / zoom;
       const my = (e.clientY - d.sy) / zoom;
 
-      let w = d.w;
-      let h = d.h;
-      if (d.dir.includes("e")) w = d.w + mx;
-      if (d.dir.includes("w")) w = d.w - mx;
-      if (d.dir.includes("s")) h = d.h + my;
-      if (d.dir.includes("n")) h = d.h - my;
-
-      el.style.width = `${Math.max(ITEM_MIN_W, w)}px`;
-      el.style.minHeight = `${Math.max(MIN_H, h)}px`;
+      const req = requestedSize(d.dir, mx, my, { w: d.w, h: d.h }, aspect);
+      let w = Math.max(ITEM_MIN_W, req.w);
+      let h = Math.max(MIN_H, req.h);
+      if (aspect) {
+        // 클램프가 비율을 깨지 않게 폭을 몰이축으로 다시 맞춘다. 도판은
+        // 고정 높이(minHeight가 아니라 height)로 세팅해 상자가 정확히 그 크기가 된다.
+        h = w / aspect;
+        if (h < MIN_H) {
+          h = MIN_H;
+          w = h * aspect;
+        }
+        el.style.width = `${w}px`;
+        el.style.height = `${h}px`;
+      } else {
+        el.style.width = `${w}px`;
+        el.style.minHeight = `${h}px`;
+      }
 
       /**
        * **실제 상자 크기를 되읽어 원점을 맞춘다.**
@@ -133,7 +182,7 @@ export function ResizeHandles({ zoom, color, getEl, onCommit, onReset }: Props) 
       d.dy = d.dir.includes("n") ? d.h - realH : 0;
       el.style.transform = d.dx || d.dy ? `translate(${d.dx}px, ${d.dy}px)` : "";
     },
-    [getEl, zoom],
+    [getEl, zoom, aspect],
   );
 
   const onUp = useCallback(() => {
