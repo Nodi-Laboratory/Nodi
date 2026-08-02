@@ -38,7 +38,7 @@ import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
-import { nextFocus } from "@/lib/canvas2/tree";
+import { descendants, nextFocus } from "@/lib/canvas2/tree";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
@@ -290,7 +290,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   // --- 조작 ------------------------------------------------------------------
 
-  const { patch, moveMany, remove, items } = store;
+  const { patch, moveMany, tagMany, remove, items } = store;
   const { getObstacles: getObs, setTool, clearElementSelection } = bridge;
 
   const onSelect = useEventCallback((id: string | null, additive?: boolean) => {
@@ -336,8 +336,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
     remove(id);
   });
 
+  /**
+   * 분류를 바꾸면 **딸린 가지가 통째로 따라간다** — 트리 분리 (D151).
+   *
+   * 그 카드만 옮기면 자식들은 옛 태그를 그대로 갖고 있어 부모와 태그가
+   * 달라지고, 간선 규칙에 따라 각자 뿌리로 **흩어진다.** 학생이 한 일은
+   * "이 이야기를 따로 떼어 놓기"인데 결과가 "가지를 산산조각내기"가 되는
+   * 셈이다. 가지째 옮기면 그 부분 트리가 통째로 새 트리가 된다.
+   */
   const onTagChange = useEventCallback((id: string, tag: string | null) => {
-    patch(id, { tag }, { _needsReflow: true });
+    const kids = descendants(items, id);
+    if (!kids.length) {
+      patch(id, { tag }, { _needsReflow: true });
+      return;
+    }
+    tagMany([id, ...kids], tag, `가지 ${kids.length + 1}개의 분류를 바꿨습니다`);
   });
 
   /**

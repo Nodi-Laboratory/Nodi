@@ -233,3 +233,33 @@ export function nextFocus(
   for (const c of created) if ((c.tag || "").trim() === focusTag) last = c.id;
   return last ?? focusId;
 }
+
+/**
+ * 이 노드에 딸린 가지 전부 (자기 자신 제외) — 트리 분리에 쓴다 (D151).
+ *
+ * 학생이 카드의 분류를 바꾸면 그 카드만 옮기면 안 된다. 자식들은 옛 태그를
+ * 그대로 갖고 있어 부모와 태그가 달라지고, 간선 규칙에 따라 **각자 뿌리로
+ * 흩어진다.** 학생이 한 일은 "이 이야기를 따로 떼어 놓기"인데 결과가
+ * "가지를 산산조각내기"가 되는 셈이다.
+ *
+ * 가지째 옮기면 그 부분 트리가 통째로 새 트리가 된다 — 그게 트리 분리다.
+ */
+export function descendants(items: readonly TreeItem[], id: string): string[] {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const kids = new Map<string, string[]>();
+  for (const i of items) {
+    const p = linkedParent(i, byId);
+    if (p) (kids.get(p) ?? kids.set(p, []).get(p)!).push(i.id);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>([id]);
+  const stack = [...(kids.get(id) ?? [])];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (seen.has(cur)) continue; // 순환 방어
+    seen.add(cur);
+    out.push(cur);
+    stack.push(...(kids.get(cur) ?? []));
+  }
+  return out;
+}

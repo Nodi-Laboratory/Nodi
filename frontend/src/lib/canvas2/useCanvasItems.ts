@@ -50,6 +50,13 @@ export interface CanvasItemsApi {
    * 항목으로 되돌린다.
    */
   moveMany: (moves: readonly { id: string; x: number; y: number }[], label: string) => void;
+  /**
+   * 여러 글의 분류를 한꺼번에 바꾼다 — 트리 분리 (D151).
+   *
+   * `moveMany`와 같은 이유로 따로 있다: 하나씩 patch하면 되돌리기가 마지막
+   * 하나만 남아, 가지째 옮겨 놓고 되돌리면 한 장만 제자리로 온다.
+   */
+  tagMany: (ids: readonly string[], tag: string | null, label: string) => void;
   remove: (id: string) => void;
   /**
    * 마지막 조작 되돌리기(삭제·본문 수정·분류 변경·이동). 없으면 null.
@@ -324,6 +331,55 @@ export function useCanvasItems(): CanvasItemsApi {
     [items, patch, showUndo],
   );
 
+  const tagMany = useCallback(
+    (ids: readonly string[], tag: string | null, label: string) => {
+      const before = new Map<string, CanvasItem>();
+      for (const id of ids) {
+        const it = items.find((i) => i.id === id);
+        if (it) before.set(id, it);
+      }
+      if (!before.size) return;
+
+      // 서버에 아직 행이 없는 것은 승격 경로를 타야 한다(patch가 처리한다).
+      const special = [...before.values()].filter((b) => b._legacy || b._pending);
+      const plain = [...before.values()].filter((b) => !b._legacy && !b._pending);
+
+      const touched = new Set(before.keys());
+      setItems((prev) =>
+        prev.map((i) =>
+          touched.has(i.id) && !i._legacy && !i._pending
+            ? { ...i, tag, _needsReflow: true }
+            : i,
+        ),
+      );
+      for (const b of special) patch(b.id, { tag }, { _needsReflow: true });
+
+      const rollback = () =>
+        setItems((prev) => prev.map((i) => before.get(i.id) ?? i));
+
+      void Promise.all(plain.map((b) => apiPatch(b.id, { tag }))).catch((e: Error) => {
+        setError(`저장하지 못했습니다 — ${e.message}`);
+        rollback();
+      });
+
+      // patch()가 special마다 되돌리기를 쌓았을 수 있다 — 마지막에 덮어써서
+      // **가지 전체를 한 번에** 되돌리게 한다.
+      showUndo({
+        label,
+        run: () => {
+          rollback();
+          setUndo(null);
+          void Promise.all(
+            [...before.values()]
+              .filter((b) => isRealId(b.id))
+              .map((b) => apiPatch(b.id, { tag: b.tag })),
+          ).catch((e: Error) => setError(`되돌리지 못했습니다 — ${e.message}`));
+        },
+      });
+    },
+    [items, patch, showUndo],
+  );
+
   const remove = useCallback(
     (id: string) => {
       const index = items.findIndex((i) => i.id === id);
@@ -415,6 +471,7 @@ export function useCanvasItems(): CanvasItemsApi {
     createNote,
     patch,
     moveMany,
+    tagMany,
     remove,
     undo,
     clearUndo: useCallback(() => setUndo(null), []),

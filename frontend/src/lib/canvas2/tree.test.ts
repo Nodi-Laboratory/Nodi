@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  descendants,
   assignParents,
   buildTrees,
   headOf,
@@ -235,5 +236,33 @@ describe("nextFocus", () => {
 
   it("초점이 없었으면 만들지 않는다", () => {
     expect(nextFocus(null, null, [{ id: "n1", tag: "물리" }])).toBeNull();
+  });
+});
+
+describe("descendants — 트리 분리", () => {
+  it("딸린 가지를 전부 모은다", () => {
+    seq = 0;
+    const items = [
+      node("r", "물리"),
+      node("c1", "물리", "r"),
+      node("c2", "물리", "r"),
+      node("g1", "물리", "c1"),
+      node("x", "생명"),
+    ];
+    expect(descendants(items, "r").sort()).toEqual(["c1", "c2", "g1"]);
+    expect(descendants(items, "c1")).toEqual(["g1"]);
+    expect(descendants(items, "g1")).toEqual([]);
+  });
+
+  it("태그가 다른 쪽으로는 넘어가지 않는다", () => {
+    seq = 0;
+    const items = [node("r", "물리"), node("c", "화학", "r")];
+    expect(descendants(items, "r")).toEqual([]);
+  });
+
+  it("순환이 있어도 멈춘다", () => {
+    seq = 0;
+    const items = [node("a", "물리", "b"), node("b", "물리", "a")];
+    expect(descendants(items, "a").length).toBeLessThanOrEqual(2);
   });
 });
