@@ -39,7 +39,7 @@ import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
-import { descendants, nextFocus } from "@/lib/canvas2/tree";
+import { descendants, nextFocus, treeEdges } from "@/lib/canvas2/tree";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
@@ -51,6 +51,7 @@ import { CanvasTopBar } from "./CanvasTopBar";
 import { Minimap } from "./Minimap";
 import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
+import { SplitPrompt } from "./SplitPrompt";
 
 interface Props {
   spaceId: string;
@@ -129,6 +130,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [drawError, setDrawError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  /** 가지 한가운데를 떼어내려는 중 — 아래를 어떻게 할지 묻는다 (D156). */
+  const [split, setSplit] = useState<{ id: string; tag: string | null } | null>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => setActiveSpace(spaceId), [spaceId, setActiveSpace]);
@@ -306,7 +309,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   // --- 조작 ------------------------------------------------------------------
 
-  const { patch, moveMany, tagMany, remove, items } = store;
+  const { patch, moveMany, tagMany, patchMany, remove, items } = store;
   const { getObstacles: getObs, setTool, clearElementSelection } = bridge;
 
   const onSelect = useEventCallback((id: string | null, additive?: boolean) => {
@@ -366,8 +369,48 @@ export function CanvasWorkspace({ spaceId }: Props) {
       patch(id, { tag }, { _needsReflow: true });
       return;
     }
+    /**
+     * 가지가 딸려 있고 **부모도 있으면** 학생에게 묻는다 (D156).
+     *
+     * 뿌리에는 이어 붙일 할아버지가 없어 고를 것이 하나뿐이다 — 그때는
+     * 묻지 않고 가지째 옮긴다. 물을 것이 하나뿐이면 묻지 않는다.
+     */
+    const hasParent = treeEdges(items).some((e) => e.to === id);
+    if (hasParent) {
+      setSplit({ id, tag });
+      return;
+    }
     tagMany([id, ...kids], tag, `가지 ${kids.length + 1}개의 분류를 바꿨습니다`);
   });
+
+  /** "자식 노드들도 같이 끊기" — 가지 전체가 새 트리가 된다. */
+  const splitAll = useCallback(() => {
+    if (!split) return;
+    const kids = descendants(items, split.id);
+    tagMany([split.id, ...kids], split.tag, `가지 ${kids.length + 1}개의 분류를 바꿨습니다`);
+    setSplit(null);
+  }, [split, items, tagMany]);
+
+  /**
+   * "자식 노드를 부모 노드에 연결하고 끊기" — 이 글만 빠진다.
+   *
+   * 바로 아래 자식만 할아버지에게 잇는다. 손자는 자기 부모를 그대로 따라가므로
+   * 건드릴 필요가 없다.
+   */
+  const splitReattach = useCallback(() => {
+    if (!split) return;
+    const edges = treeEdges(items);
+    const grandparent = edges.find((e) => e.to === split.id)?.from ?? null;
+    const kids = edges.filter((e) => e.from === split.id).map((e) => e.to);
+    patchMany(
+      [
+        { id: split.id, patch: { tag: split.tag } },
+        ...kids.map((k) => ({ id: k, patch: { parent_item_id: grandparent } })),
+      ],
+      "이 글만 떼어 냈습니다",
+    );
+    setSplit(null);
+  }, [split, items, patchMany]);
 
   /**
    * 드래그가 끝나면 학생이 정한 자리다 — 배치 엔진은 이제 이걸 읽기만 한다.
@@ -843,6 +886,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
               세션이 잡히고 스냅샷이 도착한 뒤에만 판단한다. */}
           {!!sessionId && !!snapshot && items.length === 0 && <EmptyHint />}
           {banner && <SaveBanner message={banner} onClose={store.clearError} />}
+          {split &&
+            (() => {
+              const it = items.find((i) => i.id === split.id);
+              if (!it) return null;
+              return (
+                <SplitPrompt
+                  title={(it.title?.trim() || it.body).slice(0, 30)}
+                  kidCount={descendants(items, split.id).length}
+                  tag={split.tag}
+                  onDetachAll={splitAll}
+                  onReattach={splitReattach}
+                  onCancel={() => setSplit(null)}
+                />
+              );
+            })()}
           {store.undo && <UndoToast label={store.undo.label} onUndo={store.undo.run} />}
           <Minimap
             items={items}

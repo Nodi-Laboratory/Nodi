@@ -57,6 +57,17 @@ export interface CanvasItemsApi {
    * 하나만 남아, 가지째 옮겨 놓고 되돌리면 한 장만 제자리로 온다.
    */
   tagMany: (ids: readonly string[], tag: string | null, label: string) => void;
+  /**
+   * 글마다 **다른** 수정을 한꺼번에 (D156 트리 분리 선택지).
+   *
+   * `tagMany`가 "같은 값을 여럿에"라면 이쪽은 "제각각을 여럿에"다 — 가지를
+   * 할아버지에게 이어 붙이면서 자기만 분류를 바꾸는 경우가 그렇다.
+   * 되돌리기는 역시 한 항목이다.
+   */
+  patchMany: (
+    entries: readonly { id: string; patch: ItemPatch }[],
+    label: string,
+  ) => void;
   remove: (id: string) => void;
   /**
    * 마지막 조작 되돌리기(삭제·본문 수정·분류 변경·이동). 없으면 null.
@@ -380,6 +391,67 @@ export function useCanvasItems(): CanvasItemsApi {
     [items, patch, showUndo],
   );
 
+  const patchMany = useCallback(
+    (entries: readonly { id: string; patch: ItemPatch }[], label: string) => {
+      const before = new Map<string, CanvasItem>();
+      for (const e of entries) {
+        const it = items.find((i) => i.id === e.id);
+        if (it) before.set(e.id, it);
+      }
+      const targets = entries.filter((e) => before.has(e.id));
+      if (!targets.length) return;
+
+      // 서버에 아직 행이 없는 것은 승격 경로(patch)가 처리한다.
+      const special = targets.filter((e) => {
+        const b = before.get(e.id)!;
+        return b._legacy || b._pending;
+      });
+      const plain = targets.filter((e) => {
+        const b = before.get(e.id)!;
+        return !b._legacy && !b._pending;
+      });
+
+      const byId = new Map(plain.map((e) => [e.id, e.patch]));
+      setItems((prev) =>
+        prev.map((i) => {
+          const p = byId.get(i.id);
+          return p ? { ...i, ...toLocal(p), _needsReflow: true } : i;
+        }),
+      );
+      for (const e of special) patch(e.id, e.patch, { _needsReflow: true });
+
+      const rollback = () =>
+        setItems((prev) => prev.map((i) => before.get(i.id) ?? i));
+
+      void Promise.all(plain.map((e) => apiPatch(e.id, e.patch))).catch((err: Error) => {
+        setError(`저장하지 못했습니다 — ${err.message}`);
+        rollback();
+      });
+
+      showUndo({
+        label,
+        run: () => {
+          rollback();
+          setUndo(null);
+          void Promise.all(
+            targets
+              .filter((e) => isRealId(e.id))
+              .map((e) => {
+                const b = before.get(e.id)!;
+                // 되돌릴 값은 **바꾼 항목만** 되짚는다.
+                const revert: ItemPatch = {};
+                if (e.patch.tag !== undefined) revert.tag = b.tag;
+                if (e.patch.parent_item_id !== undefined)
+                  revert.parent_item_id = b.parentItemId;
+                return apiPatch(e.id, revert);
+              }),
+          ).catch((err: Error) => setError(`되돌리지 못했습니다 — ${err.message}`));
+        },
+      });
+    },
+    [items, patch, showUndo],
+  );
+
   const remove = useCallback(
     (id: string) => {
       const index = items.findIndex((i) => i.id === id);
@@ -472,6 +544,7 @@ export function useCanvasItems(): CanvasItemsApi {
     patch,
     moveMany,
     tagMany,
+    patchMany,
     remove,
     undo,
     clearUndo: useCallback(() => setUndo(null), []),
