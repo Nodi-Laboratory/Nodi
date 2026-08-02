@@ -285,6 +285,14 @@ export function CanvasWorkspace({ spaceId }: Props) {
     patch(id, { tag }, { _needsReflow: true });
   });
 
+  // 태그 자체를 다룬다(세션 전역). useEventCallback으로 감싸 신원을 고정한다 —
+  // store.renameTag/removeTag는 items에 의존해 매번 새 함수라, 그대로 handlers에
+  // 넣으면 memo(TextItem)가 깨진다(D145).
+  const onRenameTag = useEventCallback((from: string, to: string) =>
+    store.renameTag(from, to),
+  );
+  const onRemoveTag = useEventCallback((tag: string) => store.removeTag(tag));
+
   /**
    * 드래그가 끝나면 학생이 정한 자리다 — 배치 엔진은 이제 이걸 읽기만 한다.
    *
@@ -422,6 +430,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onCommitEdit,
       onDelete,
       onTagChange,
+      onRenameTag,
+      onRemoveTag,
       onDragEnd,
       onResize,
       onResetSize,
@@ -431,7 +441,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onDismissAsk,
       onRecall,
     }),
-    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onDismissAsk, onRecall],
+    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onDismissAsk, onRecall],
   );
 
   /**

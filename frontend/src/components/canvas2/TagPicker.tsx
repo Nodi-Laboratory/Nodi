@@ -8,7 +8,7 @@
  * 글이 갑자기 사라지면 흐름이 끊긴다.
  */
 
-import { Check, Plus, X } from "lucide-react";
+import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 interface Props {
@@ -16,18 +16,40 @@ interface Props {
   /** 이 세션에 이미 있는 태그들(첫 등장 순서). */
   options: readonly string[];
   onPick: (tag: string | null) => void;
+  /** 태그 이름 변경(세션 전역, D147). */
+  onRenameTag: (from: string, to: string) => void;
+  /** 태그 삭제(세션 전역, D147). */
+  onRemoveTag: (tag: string) => void;
   onClose: () => void;
 }
 
 /** 태그 길이 상한. 열 라벨이 아이템 폭을 넘으면 화면이 무너진다. */
 const MAX_TAG = 16;
 
-export function TagPicker({ current, options, onPick, onClose }: Props) {
+export function TagPicker({
+  current,
+  options,
+  onPick,
+  onRenameTag,
+  onRemoveTag,
+  onClose,
+}: Props) {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
+  /** 지금 이름을 고치는 중인 태그(없으면 null). */
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const composing = useRef(false);
+  const composingRename = useRef(false);
+
+  const submitRename = () => {
+    const to = renameDraft.trim().slice(0, MAX_TAG);
+    if (to && renaming && to !== renaming) onRenameTag(renaming, to);
+    setRenaming(null);
+    onClose();
+  };
 
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
@@ -87,20 +109,89 @@ export function TagPicker({ current, options, onPick, onClose }: Props) {
       </button>
 
       <div className="max-h-52 overflow-auto">
-        {options.map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="menuitemradio"
-            aria-checked={t === current}
-            onClick={() => onPick(t)}
-            className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm transition-colors hover:bg-[var(--c-sunk)]"
-            style={{ color: "var(--c-ink)" }}
-          >
-            <span className="truncate">{t}</span>
-            {t === current && <Check size={14} style={{ color: "var(--c-live)" }} />}
-          </button>
-        ))}
+        {options.map((t) =>
+          renaming === t ? (
+            // 이름 변경 — 인라인 입력. 확정하면 그 태그를 단 모든 카드에 반영된다.
+            <div key={t} className="flex items-center gap-1 px-2 py-1">
+              <input
+                autoFocus
+                value={renameDraft}
+                maxLength={MAX_TAG}
+                aria-label="새 분류 이름"
+                onChange={(e) => setRenameDraft(e.target.value)}
+                onCompositionStart={() => (composingRename.current = true)}
+                onCompositionEnd={() => (composingRename.current = false)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (composingRename.current) return;
+                  if (e.key === "Enter") submitRename();
+                  if (e.key === "Escape") setRenaming(null);
+                }}
+                className="min-w-0 flex-1 rounded border px-2 py-1 text-sm outline-none"
+                style={{ borderColor: "var(--c-rule)", background: "var(--c-paper)" }}
+              />
+              <button
+                type="button"
+                onClick={submitRename}
+                aria-label="이름 변경 확정"
+                className="rounded p-1 transition-colors hover:bg-[var(--c-sunk)]"
+                style={{ color: "var(--c-live)" }}
+              >
+                <Check size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setRenaming(null)}
+                aria-label="취소"
+                className="rounded p-1 transition-colors hover:bg-[var(--c-sunk)]"
+                style={{ color: "var(--c-ink-faint)" }}
+              >
+                <X size={15} />
+              </button>
+            </div>
+          ) : (
+            <div
+              key={t}
+              className="flex items-center pr-1 transition-colors hover:bg-[var(--c-sunk)]"
+            >
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={t === current}
+                onClick={() => onPick(t)}
+                className="flex min-w-0 flex-1 items-center justify-between px-3 py-1.5 text-left text-sm"
+                style={{ color: "var(--c-ink)" }}
+              >
+                <span className="truncate">{t}</span>
+                {t === current && <Check size={14} style={{ color: "var(--c-live)" }} />}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRenaming(t);
+                  setRenameDraft(t);
+                }}
+                aria-label={`${t} 이름 변경`}
+                className="rounded p-1 transition-colors hover:bg-[var(--c-raised)]"
+                style={{ color: "var(--c-ink-faint)" }}
+              >
+                <Pencil size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onRemoveTag(t);
+                  onClose();
+                }}
+                aria-label={`${t} 삭제`}
+                className="rounded p-1 transition-colors hover:bg-[var(--c-raised)]"
+                style={{ color: "var(--c-danger)" }}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ),
+        )}
       </div>
 
       <div className="mx-2 my-1 h-px" style={{ background: "var(--c-rule)" }} />

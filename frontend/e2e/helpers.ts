@@ -46,10 +46,14 @@ export async function openCanvas(page: Page): Promise<void> {
  * 저장을 기다리는 이유: 저장 전(local-note-*) 아이템을 끌면 승격 경로가
  * 얽힌다. UUID로 바뀐 뒤 끌어야 드래그가 곧장 PATCH로 영속된다.
  */
-export async function createNote(page: Page, text: string): Promise<Locator> {
+export async function createNote(
+  page: Page,
+  text: string,
+  pos: { x: number; y: number } = { x: 380, y: 280 },
+): Promise<Locator> {
   // 글쓰기 도구 선택 후 빈 캔버스를 클릭 → 그 자리에 편집 중인 빈 노트가 생긴다.
   await page.getByRole("button", { name: "글 쓰기" }).click();
-  await page.locator(".canvas2").click({ position: { x: 380, y: 280 } });
+  await page.locator(".canvas2").click({ position: pos });
 
   const editor = page.getByLabel("본문 수정");
   await editor.waitFor({ state: "visible" });

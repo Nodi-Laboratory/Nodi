@@ -63,6 +63,16 @@ export interface CanvasItemsApi {
    * 항목으로 되돌린다.
    */
   moveMany: (moves: readonly { id: string; x: number; y: number }[], label: string) => void;
+  /**
+   * 태그 이름을 바꾼다 — 그 태그를 단 **모든 카드**에 반영한다 (D147).
+   * 열 라벨도 canvas_items.tag가 소스라 함께 바뀐다.
+   */
+  renameTag: (from: string, to: string) => void;
+  /**
+   * 태그를 삭제한다 — 그 태그를 단 모든 카드가 분류 없음이 된다 (D147).
+   * (이 카드 하나만 떼는 detach는 patch(id,{tag:null})다.)
+   */
+  removeTag: (tag: string) => void;
   remove: (id: string) => void;
   /**
    * 마지막 조작 되돌리기(삭제·본문 수정·분류 변경·이동). 없으면 null.
@@ -355,6 +365,78 @@ export function useCanvasItems(): CanvasItemsApi {
     [items, patch, showUndo],
   );
 
+  /**
+   * 태그를 단 모든 카드를 한꺼번에 다시 태깅한다 (D147, 이름 변경·삭제 공용).
+   *
+   * moveMany와 같은 정신 — 낙관적 로컬 갱신 + 저장 + **전체를 한 항목으로**
+   * 되돌리기. 진짜 id는 일괄 apiPatch, 임시 id(tmp-N)는 버퍼(replaceTemp가 흘림),
+   * legacy 로컬 메모는 로컬만(첫 편집 때 저장된다).
+   */
+  const retag = useCallback(
+    (match: string, next: string | null, label: string) => {
+      const affected = items.filter((i) => i.tag === match);
+      if (!affected.length) return;
+      const before = new Map(affected.map((i) => [i.id, i.tag ?? null]));
+
+      setItems((prev) =>
+        prev.map((i) =>
+          before.has(i.id) ? { ...i, tag: next, _needsReflow: true } : i,
+        ),
+      );
+      const rollback = () =>
+        setItems((prev) =>
+          prev.map((i) =>
+            before.has(i.id) ? { ...i, tag: before.get(i.id) ?? null } : i,
+          ),
+        );
+
+      const bufferTag = (value: string | null) => {
+        for (const i of affected) {
+          if (!isRealId(i.id) && !i._legacy) {
+            const prev = pendingPatches.current.get(i.id) ?? {};
+            pendingPatches.current.set(i.id, { ...prev, tag: value });
+          }
+        }
+      };
+      bufferTag(next);
+
+      const reals = affected.filter((i) => isRealId(i.id));
+      void Promise.all(reals.map((i) => apiPatch(i.id, { tag: next }))).catch(
+        (e: Error) => {
+          setError(`저장하지 못했습니다 — ${e.message}`);
+          rollback();
+        },
+      );
+
+      showUndo({
+        label,
+        run: () => {
+          rollback();
+          setUndo(null);
+          bufferTag(match); // 임시 id는 원래 태그로 되돌려 버퍼
+          void Promise.all(
+            reals.map((i) => apiPatch(i.id, { tag: before.get(i.id) ?? null })),
+          ).catch((e: Error) => setError(`되돌리지 못했습니다 — ${e.message}`));
+        },
+      });
+    },
+    [items, showUndo],
+  );
+
+  const renameTag = useCallback(
+    (from: string, to: string) => {
+      const next = to.trim().slice(0, 24);
+      if (!next || next === from) return;
+      retag(from, next, "분류 이름을 바꿨습니다");
+    },
+    [retag],
+  );
+
+  const removeTag = useCallback(
+    (tag: string) => retag(tag, null, "분류를 삭제했습니다"),
+    [retag],
+  );
+
   const remove = useCallback(
     (id: string) => {
       const index = items.findIndex((i) => i.id === id);
@@ -496,6 +578,8 @@ export function useCanvasItems(): CanvasItemsApi {
     addChildNote,
     patch,
     moveMany,
+    renameTag,
+    removeTag,
     remove,
     undo,
     clearUndo: useCallback(() => setUndo(null), []),

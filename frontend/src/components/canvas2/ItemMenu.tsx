@@ -22,6 +22,10 @@ interface Props {
   onEdit: () => void;
   onDelete: () => void;
   onTagChange: (tag: string | null) => void;
+  /** 태그 이름 변경(세션 전역, D147). */
+  onRenameTag: (from: string, to: string) => void;
+  /** 태그 삭제(세션 전역, D147). */
+  onRemoveTag: (tag: string) => void;
   /** 메뉴(또는 분류 목록)가 펼쳐져 있나. */
   onOpenChange?: (open: boolean) => void;
 }
@@ -32,6 +36,8 @@ export function ItemMenu({
   onEdit,
   onDelete,
   onTagChange,
+  onRenameTag,
+  onRemoveTag,
   onOpenChange,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -163,6 +169,8 @@ export function ItemMenu({
             setOpen(false);
             onTagChange(t);
           }}
+          onRenameTag={onRenameTag}
+          onRemoveTag={onRemoveTag}
           onClose={() => {
             setTagOpen(false);
             setOpen(false);
