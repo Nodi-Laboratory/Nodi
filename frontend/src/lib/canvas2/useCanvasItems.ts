@@ -23,6 +23,7 @@ import {
   patchItem as apiPatch,
 } from "@/lib/api/canvas";
 import { isRealId } from "@/lib/ids";
+import { drainPending } from "./pendingPatches";
 import type { CanvasItem, ItemData } from "./types";
 
 export interface UndoEntry {
@@ -114,6 +115,14 @@ export function useCanvasItems(): CanvasItemsApi {
   const [error, setError] = useState<string | null>(null);
   const [undo, setUndo] = useState<UndoEntry | null>(null);
   const undoTimer = useRef<number | null>(null);
+  /**
+   * 아직 서버에 행이 없는 임시 id(tmp-N)에 대한 patch를 모아 둔다.
+   *
+   * 스트림 저장이 진짜 id로 바뀌기 전(replaceTemp 이전)에 학생이 카드를 끌면
+   * 여기 쌓이고, replaceTemp가 진짜 id를 알게 될 때 흘려보낸다 — 오류를
+   * 없애고 드래그 위치도 보존한다.
+   */
+  const pendingPatches = useRef<Map<string, ItemPatch>>(new Map());
 
   /**
    * 되돌리기 항목을 띄운다. 타이머를 한 곳에서 관리해, 연달아 조작해도
@@ -142,6 +151,14 @@ export function useCanvasItems(): CanvasItemsApi {
    * 스트리밍이 끝나는 순간 아이템들이 자리를 바꾼다.
    */
   const replaceTemp = useCallback((tempIds: string[], saved: CanvasItem[]) => {
+    // 임시 id 창에서 학생이 끌어 둔 패치를 진짜 id로 흘린다(버퍼를 비운다).
+    const sends = drainPending(
+      tempIds,
+      saved.map((s) => s?.id),
+      pendingPatches.current,
+    );
+    const sendMap = new Map(sends.map((s) => [s.id, s.patch]));
+
     setItems((prev) => {
       const map = new Map(tempIds.map((t, i) => [t, saved[i]]));
       const out: CanvasItem[] = [];
@@ -157,8 +174,22 @@ export function useCanvasItems(): CanvasItemsApi {
       }
       // 화면에 없던 저장분(경합으로 사라진 경우)은 뒤에 붙인다.
       for (const left of map.values()) if (left) out.push(left);
-      return remapParents(out, tempIds, saved);
+      const remapped = remapParents(out, tempIds, saved);
+      // 버퍼된 위치(드래그)를 진짜 행에 입힌다 — 안 하면 저장 직후 카드가
+      // 배치 자리로 튀어 학생이 옮긴 자리가 사라진다.
+      return sendMap.size
+        ? remapped.map((it) =>
+            sendMap.has(it.id) ? { ...it, ...toLocal(sendMap.get(it.id)!) } : it,
+          )
+        : remapped;
     });
+
+    // 서버에도 반영한다(best-effort — 실패해도 화면은 남고 배너로 알린다).
+    for (const s of sends) {
+      void apiPatch(s.id, s.patch).catch((e: Error) =>
+        setError(`저장하지 못했습니다 — ${e.message}`),
+      );
+    }
   }, []);
 
   // ⚠️ `before`를 setState **업데이터 안에서** 읽으면 안 된다.
@@ -181,8 +212,16 @@ export function useCanvasItems(): CanvasItemsApi {
       );
 
       if (!before) return;
-      // 스트리밍 중인 아이템은 done에서 일괄 저장된다 — 여기서 건드리지 않는다.
-      if (before._pending) return;
+
+      // 서버에 아직 행이 없는 임시 id(tmp-N — 스트림 저장 대기 중, 스트리밍
+      // 중 _pending 포함). 지금 보내면 DB 경계 가드가 던진다("저장되지 않은
+      // 항목은 수정할 수 없습니다"). 패치를 버퍼에 모아 두었다가 replaceTemp가
+      // 진짜 id로 바꿀 때 흘린다 — 로컬은 이미 위에서 낙관적으로 반영됐다.
+      if (!isRealId(id) && !before._legacy) {
+        const prev = pendingPatches.current.get(id) ?? {};
+        pendingPatches.current.set(id, { ...prev, ...serverPatch });
+        return;
+      }
 
       // 구 세션에서 파싱만 해 온 아이템(_legacy)은 서버에 아직 행이 없다.
       // **첫 편집이 곧 마이그레이션이다** — 이때 만든다. 전 세션을 한 번에
@@ -270,15 +309,11 @@ export function useCanvasItems(): CanvasItemsApi {
       const targets = moves.filter((m) => before.has(m.id));
       if (!targets.length) return;
 
-      // 서버에 아직 행이 없는 것(로컬 메모·스트리밍 중)은 승격 경로를 타야 한다.
-      const special = targets.filter((m) => {
-        const b = before.get(m.id)!;
-        return b._legacy || b._pending;
-      });
-      const plain = targets.filter((m) => {
-        const b = before.get(m.id)!;
-        return !b._legacy && !b._pending;
-      });
+      // 서버에 아직 행이 없는 것(로컬 메모·스트림 임시 id)은 patch() 경로로
+      // 보내야 한다 — apiPatch로 바로 보내면 DB 경계 가드가 던진다. 진짜
+      // id만 일괄 apiPatch로 처리한다.
+      const special = targets.filter((m) => !isRealId(m.id));
+      const plain = targets.filter((m) => isRealId(m.id));
 
       const byId = new Map(plain.map((m) => [m.id, m]));
       setItems((prev) =>
