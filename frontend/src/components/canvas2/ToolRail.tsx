@@ -16,6 +16,7 @@ import {
   Circle,
   Eraser,
   Hand,
+  Highlighter,
   Minus,
   MousePointer2,
   Pencil,
@@ -24,8 +25,9 @@ import {
   X,
 } from "lucide-react";
 import { useEffect } from "react";
-import type { ToolName } from "@/lib/canvas2/types";
-import { useCollapsible } from "@/lib/canvas2/useCollapsible";
+import type { DrawStyle, ToolName } from "@/lib/canvas2/types";
+import { isColorableTool } from "@/lib/canvas2/types";
+import { useCollapsible, useStickyChoice } from "@/lib/canvas2/useCollapsible";
 
 interface ToolDef {
   tool: ToolName;
@@ -45,6 +47,9 @@ const GROUPS: ToolDef[][] = [
   ],
   [
     { tool: "freedraw", icon: Pencil, label: "자유선", key: "p" },
+    // `d`는 Excalidraw에서 마름모라 쓰지 않는다(우리가 가로채지만 손에 익은
+    // 키를 다른 뜻으로 쓰면 혼란스럽다). `m`은 marker.
+    { tool: "highlighter", icon: Highlighter, label: "형광펜", key: "m" },
     { tool: "rectangle", icon: Square, label: "사각형", key: "r" },
     { tool: "ellipse", icon: Circle, label: "원", key: "o" },
     { tool: "arrow", icon: ArrowUpRight, label: "화살표", key: "a" },
@@ -55,12 +60,81 @@ const GROUPS: ToolDef[][] = [
 
 const ALL = GROUPS.flat();
 
+/**
+ * 색 (D150).
+ *
+ * 값은 Excalidraw가 쓰는 open-color 계열 그대로다 — 우리가 임의로 고르면
+ * 같은 캔버스 위에서 저쪽 기본 색과 톤이 어긋난다.
+ *
+ * 펜은 **먹**이 기본이다. 형광펜은 노랑 — 종이에서와 같다.
+ */
+const PEN_COLORS = [
+  { name: "먹", value: "#1e1e1e" },
+  { name: "빨강", value: "#e03131" },
+  { name: "주황", value: "#f08c00" },
+  { name: "초록", value: "#2f9e44" },
+  { name: "파랑", value: "#1971c2" },
+  { name: "보라", value: "#7048e8" },
+] as const;
+
+const HIGHLIGHT_COLORS = [
+  { name: "노랑", value: "#ffec99" },
+  { name: "연두", value: "#b2f2bb" },
+  { name: "하늘", value: "#a5d8ff" },
+  { name: "분홍", value: "#fcc2d7" },
+  { name: "주황", value: "#ffd8a8" },
+] as const;
+
+/**
+ * 형광펜 획 (D150).
+ *
+ * Excalidraw의 자유선은 `strokeWidth * 4.25`px로 그려진다(dist 실측). 6이면
+ * 약 25px — 15px 글자를 넉넉히 덮는다. 투명도 40은 밑의 글자가 읽히면서도
+ * 칠했다는 것이 보이는 지점이고, roughness 0은 손그림 떨림을 없앤다
+ * (형광펜은 매끈한 띠여야지 스케치가 아니다).
+ *
+ * 획 끝이 살짝 가늘어지는 것은 감수한다 — Excalidraw의 자유선은 필압
+ * (`thinning: .6`)이 코드에 박혀 있어 appState로 끌 수 없다.
+ */
+const HIGHLIGHT_STYLE = { opacity: 40, strokeWidth: 6, roughness: 0 } as const;
+/** 펜·도형은 Excalidraw 기본값으로 되돌린다(형광펜을 쓴 뒤 그대로 남지 않게). */
+const PEN_STYLE = { opacity: 100, strokeWidth: 2, roughness: 1 } as const;
+
 interface Props {
   active: ToolName;
   onSelect: (tool: ToolName) => void;
+  /** 다음에 그릴 것의 색·굵기·투명도를 정한다 (D150). */
+  setDrawStyle: (style: DrawStyle) => void;
 }
 
-export function ToolRail({ active, onSelect }: Props) {
+export function ToolRail({ active, onSelect, setDrawStyle }: Props) {
+  const pen = useStickyChoice(
+    "pen.color",
+    PEN_COLORS.map((c) => c.value),
+    PEN_COLORS[0].value,
+  );
+  const highlight = useStickyChoice(
+    "highlight.color",
+    HIGHLIGHT_COLORS.map((c) => c.value),
+    HIGHLIGHT_COLORS[0].value,
+  );
+  const highlighting = active === "highlighter";
+  const colors = highlighting ? HIGHLIGHT_COLORS : PEN_COLORS;
+  const picked = highlighting ? highlight : pen;
+
+  /**
+   * 도구나 색이 바뀔 때마다 스타일을 다시 밀어 넣는다.
+   *
+   * 도구 전환 시점에 **반드시** 다시 써야 한다 — 형광펜에서 펜으로 돌아왔는데
+   * 굵기·투명도가 그대로면 펜이 형광펜처럼 그려진다. "고른 도구가 곧 스타일"로
+   * 두면 어느 순서로 눌러도 어긋나지 않는다.
+   */
+  useEffect(() => {
+    if (!isColorableTool(active)) return;
+    const s = highlighting ? HIGHLIGHT_STYLE : PEN_STYLE;
+    setDrawStyle({ strokeColor: highlighting ? highlight.value : pen.value, ...s });
+  }, [active, highlighting, highlight.value, pen.value, setDrawStyle]);
+
   /**
    * 접었다 펼 수 있다 (D140, 사용자 지시). 접으면 **지금 켜진 도구 하나만**
    * 남는다 — 무엇이 선택돼 있는지는 접어 둬도 알아야 한다.
@@ -125,16 +199,27 @@ export function ToolRail({ active, onSelect }: Props) {
   }
 
   return (
-    <div
-      data-no-pan
-      // 오른쪽 **아래** — 사용자 지시. 하단 입력창은 가운데라 부딪히지 않는다.
-      className="ui absolute bottom-6 right-4 z-30 flex flex-col gap-1 rounded-xl border p-1.5"
-      style={{
-        background: "var(--c-raised)",
-        borderColor: "var(--c-rule)",
-        boxShadow: "var(--c-shadow-md)",
-      }}
-    >
+    // 오른쪽 **아래** — 사용자 지시. 하단 입력창은 가운데라 부딪히지 않는다.
+    // 색 팔레트는 레일 **왼쪽**에 붙인다. 레일 안에 넣으면 세로로 더 길어져
+    // 좁은 화면(교실 태블릿)에서 상단바까지 닿는다.
+    <div className="absolute bottom-6 right-4 z-30 flex items-end gap-2">
+      {isColorableTool(active) && (
+        <Palette
+          colors={colors}
+          value={picked.value}
+          onPick={picked.set}
+          title={highlighting ? "형광펜 색" : "펜 색"}
+        />
+      )}
+      <div
+        data-no-pan
+        className="ui flex flex-col gap-1 rounded-xl border p-1.5"
+        style={{
+          background: "var(--c-raised)",
+          borderColor: "var(--c-rule)",
+          boxShadow: "var(--c-shadow-md)",
+        }}
+      >
       <button
         type="button"
         onClick={() => setOpen(false)}
@@ -172,6 +257,68 @@ export function ToolRail({ active, onSelect }: Props) {
           이벤트는 무동작). 한동안 `⌘Z` 글자를 안내로 띄워 뒀는데 레일에
           기호만 덩그러니 떠 있어 지웠다(사용자 지시). 되돌리기는 그대로
           Ctrl/⌘+Z로 된다. */}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 색 고르개 (D150).
+ *
+ * 지금 켜진 도구에 맞는 목록만 보인다 — 펜을 들었을 때 형광펜 색을 보여
+ * 주면 무엇에 적용되는지 알 수 없다. 지우개일 때는 아예 뜨지 않는다.
+ */
+function Palette({
+  colors,
+  value,
+  onPick,
+  title,
+}: {
+  colors: readonly { name: string; value: string }[];
+  value: string;
+  onPick: (v: string) => void;
+  title: string;
+}) {
+  return (
+    <div
+      data-no-pan
+      role="radiogroup"
+      aria-label={title}
+      className="ui flex flex-col gap-1 rounded-xl border p-1.5"
+      style={{
+        background: "var(--c-raised)",
+        borderColor: "var(--c-rule)",
+        boxShadow: "var(--c-shadow-md)",
+      }}
+    >
+      {colors.map((c) => {
+        const on = c.value === value;
+        return (
+          <button
+            key={c.value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            aria-label={c.name}
+            title={`${title} — ${c.name}`}
+            onClick={() => onPick(c.value)}
+            className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+            style={{ background: on ? "var(--c-sunk)" : "transparent" }}
+          >
+            <span
+              className="block rounded-full transition-all"
+              style={{
+                width: on ? 20 : 16,
+                height: on ? 20 : 16,
+                background: c.value,
+                // 옅은 형광색은 흰 바탕에서 경계가 사라진다 — 얇은 테를 둘러
+                // 어떤 색이든 원으로 보이게 한다.
+                boxShadow: "inset 0 0 0 1px rgba(0,0,0,.18)",
+              }}
+            />
+          </button>
+        );
+      })}
     </div>
   );
 }

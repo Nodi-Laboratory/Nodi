@@ -308,7 +308,11 @@ export function CanvasStage({
       {chrome}
 
       {!viewOnly && (
-        <ToolRail active={activeTool} onSelect={bridge.setTool} />
+        <ToolRail
+          active={activeTool}
+          onSelect={bridge.setTool}
+          setDrawStyle={bridge.setDrawStyle}
+        />
       )}
     </div>
   );
