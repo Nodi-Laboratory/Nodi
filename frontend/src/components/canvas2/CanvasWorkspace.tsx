@@ -40,6 +40,7 @@ import { ITEM_W } from "@/lib/canvas2/layout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
 import { descendants, nextFocus, treeEdges } from "@/lib/canvas2/tree";
+import { branchesOf, navigate, type NavDir } from "@/lib/canvas2/navigate";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
@@ -52,6 +53,7 @@ import { Minimap } from "./Minimap";
 import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
 import { SplitPrompt } from "./SplitPrompt";
+import { TreeNav } from "./TreeNav";
 
 interface Props {
   spaceId: string;
@@ -132,6 +134,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   /** 가지 한가운데를 떼어내려는 중 — 아래를 어떻게 할지 묻는다 (D156). */
   const [split, setSplit] = useState<{ id: string; tag: string | null } | null>(null);
+  /** 입력창에 커서를 옮겨 달라는 신호 (D157). "묻겠다"일 때만 올린다. */
+  const [askFocus, setAskFocus] = useState(0);
   const queryClient = useQueryClient();
 
   useEffect(() => setActiveSpace(spaceId), [spaceId, setActiveSpace]);
@@ -520,7 +524,11 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 같은 일이 일어난다(사용자 지시 2026-08-02: "그 노드를 클릭하고 질문하면
    * 자연스럽게 작동").
    */
-  const onAsk = useEventCallback((id: string) => setPickedId(id));
+  const onAsk = useEventCallback((id: string) => {
+    setPickedId(id);
+    // 버튼을 눌렀다는 것은 "지금 묻겠다"는 뜻이다 — 커서를 입력창으로.
+    setAskFocus((n) => n + 1);
+  });
 
   /**
    * 노드를 **끌지 않고 눌렀다** — 그 가지에서 이어 묻겠다는 뜻이다 (D151).
@@ -698,6 +706,79 @@ export function CanvasWorkspace({ spaceId }: Props) {
   }, [items, layout, getObstacles, flyTo]);
 
   const vp = useViewport();
+
+  /**
+   * 트리 걷기 (D157) — 고른 노드로 가고, 카메라를 그 자리로 옮긴다.
+   *
+   * **배율은 그대로 둔다.** 한 걸음마다 확대·축소가 바뀌면 어디를 보고 있는지
+   * 감각이 끊긴다. 지도에서 고른 것과는 다르다 — 그쪽은 "이걸 읽겠다"이고
+   * 이쪽은 "둘러보겠다"이다.
+   */
+  const goToNode = useCallback(
+    (id: string | null) => {
+      if (!id) return;
+      setPickedId(id);
+      const p = layout.positions.get(id);
+      if (!p) return;
+      const size = layout.sizes.get(id) ?? { w: ITEM_W, h: FALLBACK_H };
+      const { w, h } = viewport();
+      const z = cameraRef.current.zoom;
+      flyTo({
+        zoom: z,
+        scrollX: w / 2 / z - (p.x + size.w / 2),
+        scrollY: h / 2 / z - (p.y + size.h / 2),
+      });
+    },
+    [layout, cameraRef, flyTo],
+  );
+
+  const navGo = useEventCallback((dir: NavDir) => {
+    goToNode(navigate(items, layout.tagOrder, pickedId, dir));
+  });
+
+  /** 아래 버튼이 쪼개질 갈래. 이름은 제목(없으면 본문 앞부분)으로. */
+  const navBranches = useMemo(
+    () =>
+      branchesOf(items, pickedId).map((id) => {
+        const it = items.find((i) => i.id === id);
+        return { id, label: (it?.title?.trim() || it?.body || "").slice(0, 14) || "다음" };
+      }),
+    [items, pickedId],
+  );
+
+  /**
+   * 방향키. **입력 중에는 절대 가로채지 않는다** — 질문을 쓰다 커서를 옮기려고
+   * ←를 눌렀는데 화면이 다른 트리로 날아가면 안 된다(도구 단축키와 같은 규칙).
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+      ) {
+        return;
+      }
+      const dir =
+        e.key === "ArrowUp"
+          ? "up"
+          : e.key === "ArrowDown"
+            ? "down"
+            : e.key === "ArrowLeft"
+              ? "left"
+              : e.key === "ArrowRight"
+                ? "right"
+                : null;
+      if (!dir) return;
+      e.preventDefault();
+      // Excalidraw도 방향키로 도형을 옮긴다 — 전파를 끊어야 둘이 겹치지 않는다.
+      e.stopPropagation();
+      navGo(dir);
+    };
+    document.addEventListener("keydown", onKey, { capture: true });
+    return () => document.removeEventListener("keydown", onKey, { capture: true });
+  }, [navGo]);
 
   /**
    * 입력창에 붙는 인용 칩 — **고른 노드에서 파생한다** (D151).
@@ -912,15 +993,24 @@ export function CanvasWorkspace({ spaceId }: Props) {
             pickedId={pickedId}
             onFocus={handleMinimapFocus}
           />
-          <div className="ui absolute bottom-28 left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2">
+          <div className="ui absolute bottom-[152px] left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2">
             <SessionFilesBar sessionId={sessionId} uploadError={uploadError} />
           </div>
+          <TreeNav
+            canUp={!!navigate(items, layout.tagOrder, pickedId, "up")}
+            canLeft={!!navigate(items, layout.tagOrder, pickedId, "left")}
+            canRight={!!navigate(items, layout.tagOrder, pickedId, "right")}
+            branches={navBranches}
+            onGo={navGo}
+            onGoBranch={goToNode}
+          />
           <AskBar
             onAttach={handleAttach}
             busy={stream.busy}
             reply={stream.reply}
             quote={quote}
             disabled={!sessionId}
+            focusSignal={askFocus}
             onClearQuote={() => setPickedId(null)}
             onSend={handleSend}
           />

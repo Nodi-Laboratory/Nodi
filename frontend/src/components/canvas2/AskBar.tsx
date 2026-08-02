@@ -18,13 +18,31 @@ interface Props {
   /** 지금 고른 트리 노드 — 다음 답이 여기에 붙는다 (D151). */
   quote: { id: string; text: string; tag?: string | null } | null;
   onClearQuote: () => void;
+  /**
+   * 입력창에 포커스를 달라는 신호 — 올라갈 때마다 커서를 여기로 옮긴다 (D157).
+   *
+   * 예전에는 인용 칩이 생기면 무조건 포커스했다. 그런데 방향키로 트리를
+   * 걸으면 걸음마다 칩이 바뀌고, 첫 걸음에 커서가 입력창으로 끌려가면서
+   * **그 다음 방향키가 전부 입력으로 먹혔다**(실측: 첫 키만 듣고 이후 무반응).
+   * "묻겠다"는 뜻일 때만 포커스한다.
+   */
+  focusSignal: number;
   onSend: (question: string) => void;
   disabled?: boolean;
   /** 세션 컨텍스트 파일 첨부 (D83). 없으면 버튼을 숨긴다. */
   onAttach?: (file: File) => void;
 }
 
-export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onAttach }: Props) {
+export function AskBar({
+  busy,
+  reply,
+  quote,
+  onClearQuote,
+  onSend,
+  disabled,
+  onAttach,
+  focusSignal,
+}: Props) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -33,8 +51,8 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onA
   const composing = useRef(false);
 
   useEffect(() => {
-    if (quote) taRef.current?.focus();
-  }, [quote]);
+    if (focusSignal) taRef.current?.focus();
+  }, [focusSignal]);
 
   useEffect(() => {
     const el = taRef.current;
@@ -55,7 +73,9 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onA
   return (
     <div
       data-no-pan
-      className="ui absolute bottom-6 left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
+      // bottom-6이었다. 아래 방향 버튼(D157)이 입력창 **아래**에 놓이므로
+      // 그만큼 올린다 — 사용자 지시: "아래쪽 버튼은 입력 공간의 아래에".
+      className="ui absolute bottom-[52px] left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
     >
       {showStatus && (
         <div
