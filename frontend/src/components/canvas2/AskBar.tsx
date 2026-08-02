@@ -68,7 +68,16 @@ export function AskBar({
     setValue("");
   };
 
-  const showStatus = busy && reply;
+  /**
+   * **보내는 순간부터 보인다** (D160, 사용자 지적 2026-08-03: "AI가 생각하는
+   * 시간 동안 아무 내용이 없어서 렉 걸리는 것처럼 보인다").
+   *
+   * 예전에는 `busy && reply`였다 — 모델이 첫 토큰을 뱉기 전까지 `reply`가
+   * 비어 있어서 **가장 긴 침묵 구간에 아무것도 안 떴다.** 도구를 쓰는 턴은
+   * 그 구간이 특히 길다(검색·읽기). 문구가 아직 없으면 기본 문구를 쓴다.
+   */
+  const showStatus = busy;
+  const statusText = reply || "생각하고 있어요…";
 
   return (
     <div
@@ -99,7 +108,7 @@ export function AskBar({
               />
             ))}
           </span>
-          {reply}
+          {statusText}
         </div>
       )}
 
