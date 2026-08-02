@@ -40,7 +40,9 @@ import { Badge, Empty, Failed, Loading, Panel, bytes, n, when } from "./ui";
 const PURGE_PHRASE = "초기화합니다";
 
 const SCOPE_LABEL: Record<string, string> = {
-  conversations: "대화 (세션·노드·턴 로그)",
+  // D152: 캔버스가 곧 대화 내용이다(D122). 라벨에서 빠뜨리면 지우려는 사람이
+  // "글은 남겠지"라고 오해한다.
+  conversations: "대화 (세션·노드·캔버스 글/그림·턴 로그)",
   documents: "문서 (파일·청크·도판·벡터)",
   people: "계정·학급",
   settings: "런타임 설정",
@@ -315,7 +317,8 @@ function BackupRow({
                 const parts: string[] = [];
                 if (c)
                   parts.push(
-                    `세션 ${n(c.sessions)} · 노드 ${n(c.nodes)} · 로그 ${n(c.ai_logs)}`,
+                    `세션 ${n(c.sessions)} · 노드 ${n(c.nodes)} · 로그 ${n(c.ai_logs)}` +
+                      ` · 캔버스 글 ${n(c.canvas_items)} · 그림 ${n(c.canvas_drawings)}`,
                   );
                 if (s) parts.push(`설정 ${n(s.app_settings)}`);
                 return `복원 완료 — ${parts.join(" / ")} (이미 있는 행은 건너뜀)`;
