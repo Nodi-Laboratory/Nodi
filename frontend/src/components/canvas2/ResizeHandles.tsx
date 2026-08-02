@@ -46,16 +46,15 @@ export interface SizeReq {
 /**
  * 손잡이 방향과 마우스 이동량(world)으로 요청 크기를 낸다 (순수, 클램프 전).
  *
- * `aspect`(= w/h)가 있으면 비율을 지킨다 (D147, 도판). 가로가 걸린 손잡이는
- * 폭을 몰이축으로 삼아 높이를 유도하고, 세로만 걸린 손잡이는 그 반대다 —
- * 대각 손잡이도 폭이 몬다.
+ * 가로·세로가 **독립**이다 (D147, 사용자 결정 2026-08-02) — 상하 손잡이는
+ * 높이만, 좌우 손잡이는 폭만, 대각은 둘 다 바꾼다. 도판은 이 상자를 이미지가
+ * object-contain으로 채운다(왜곡 없음).
  */
 export function requestedSize(
   dir: ResizeDir,
   mx: number,
   my: number,
   start: SizeReq,
-  aspect?: number,
 ): SizeReq {
   let w = start.w;
   let h = start.h;
@@ -63,11 +62,6 @@ export function requestedSize(
   if (dir.includes("w")) w = start.w - mx;
   if (dir.includes("s")) h = start.h + my;
   if (dir.includes("n")) h = start.h - my;
-  if (aspect) {
-    const horizontal = dir.includes("e") || dir.includes("w");
-    if (horizontal) h = w / aspect; // 폭이 몬다(가로·대각 손잡이)
-    else w = h * aspect; // 세로 손잡이만
-  }
   return { w, h };
 }
 
@@ -95,8 +89,16 @@ interface Props {
   zoom: number;
   /** 테두리·손잡이 색. 아이템의 출처 색을 그대로 쓴다. */
   color: string;
-  /** 있으면 비율 고정(= w/h). 도판이 이미지 자연 비율을 준다 (D147). */
-  aspect?: number;
+  /**
+   * 높이를 **고정**으로 세팅한다(minHeight가 아니라 height). 도판처럼 상자를
+   * 이미지가 채우는 경우 — 내용이 높이를 정하지 않고 상자가 정한다 (D147).
+   */
+  fixedHeight?: boolean;
+  /**
+   * 왼쪽·위 손잡이로 줄여도 **원점을 옮기지 않는다**. 도판은 이미지만
+   * 좌상단 기준으로 리사이즈하고 카드는 움직이지 않는다 — dx/dy를 0으로 둔다.
+   */
+  noOriginShift?: boolean;
   /** 아이템 루트. 끄는 동안 이 요소의 style을 직접 고친다. */
   getEl: () => HTMLElement | null;
   onCommit: (next: ResizeCommit) => void;
@@ -104,7 +106,15 @@ interface Props {
   onReset: () => void;
 }
 
-export function ResizeHandles({ zoom, color, aspect, getEl, onCommit, onReset }: Props) {
+export function ResizeHandles({
+  zoom,
+  color,
+  fixedHeight,
+  noOriginShift,
+  getEl,
+  onCommit,
+  onReset,
+}: Props) {
   const dragRef = useRef<{
     dir: ResizeDir;
     sx: number;
@@ -151,22 +161,18 @@ export function ResizeHandles({ zoom, color, aspect, getEl, onCommit, onReset }:
       const mx = (e.clientX - d.sx) / zoom;
       const my = (e.clientY - d.sy) / zoom;
 
-      const req = requestedSize(d.dir, mx, my, { w: d.w, h: d.h }, aspect);
-      let w = Math.max(ITEM_MIN_W, req.w);
-      let h = Math.max(MIN_H, req.h);
-      if (aspect) {
-        // 클램프가 비율을 깨지 않게 폭을 몰이축으로 다시 맞춘다. 도판은
-        // 고정 높이(minHeight가 아니라 height)로 세팅해 상자가 정확히 그 크기가 된다.
-        h = w / aspect;
-        if (h < MIN_H) {
-          h = MIN_H;
-          w = h * aspect;
-        }
-        el.style.width = `${w}px`;
-        el.style.height = `${h}px`;
-      } else {
-        el.style.width = `${w}px`;
-        el.style.minHeight = `${h}px`;
+      const req = requestedSize(d.dir, mx, my, { w: d.w, h: d.h });
+      const w = Math.max(ITEM_MIN_W, req.w);
+      const h = Math.max(MIN_H, req.h);
+      el.style.width = `${w}px`;
+      if (fixedHeight) el.style.height = `${h}px`;
+      else el.style.minHeight = `${h}px`;
+
+      if (noOriginShift) {
+        // 좌상단 기준 — 원점을 옮기지 않는다(도판은 카드가 움직이지 않는다).
+        d.dx = 0;
+        d.dy = 0;
+        return;
       }
 
       /**
@@ -182,7 +188,7 @@ export function ResizeHandles({ zoom, color, aspect, getEl, onCommit, onReset }:
       d.dy = d.dir.includes("n") ? d.h - realH : 0;
       el.style.transform = d.dx || d.dy ? `translate(${d.dx}px, ${d.dy}px)` : "";
     },
-    [getEl, zoom, aspect],
+    [getEl, zoom, fixedHeight, noOriginShift],
   );
 
   const onUp = useCallback(() => {

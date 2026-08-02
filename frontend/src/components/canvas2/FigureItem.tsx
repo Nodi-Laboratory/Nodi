@@ -26,9 +26,6 @@ import { useItemDrag } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import { ResizeHandles, type ResizeCommit } from "./ResizeHandles";
 
-/** 리사이즈 커밋 뒤 남은 transform을 걷어내는 안전망(ms). */
-const DROP_FALLBACK_MS = 300;
-
 interface Props {
   item: CanvasItem;
   x: number;
@@ -65,14 +62,14 @@ export function FigureItem({
   // 두 곳에 같은 값이 생겨 어느 쪽이 진실인지 흐려진다.
   const [refreshed, setRefreshed] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  /** 이미지 자연 비율(= w/h). 로드 전엔 null — 그동안은 렌더 상자 비율을 쓴다. */
-  const [aspect, setAspect] = useState<number | null>(null);
   const [hover, setHover] = useState(false);
 
   const url = refreshed ?? fig?.url ?? "";
   const figureId = fig?.figureId;
   const closeRef = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  /** 크기 조절의 대상 — **이미지 상자만**이다. 캡션은 이 밖에 있어 안 바뀐다. */
+  const imageRef = useRef<HTMLDivElement>(null);
 
   // 딱 한 번만 서버를 두드리는 가드. 상태가 아니라 ref다 — 이펙트에서 부를 때
   // 동기 setState를 만들지 않으려는 것이다(React Compiler 규칙).
@@ -156,9 +153,7 @@ export function FigureItem({
         style={{
           left: x,
           top: y,
-          // 너비만 정한다 — 높이는 이미지(너비에 맞춰 스케일) + 캡션이 정한다.
-          // 높이를 size.h로 고정하면 이미지 자연 비율에 맞춰져 하단 캡션이
-          // overflow-hidden에 잘린다(쪽 번호가 사라진다).
+          // 너비는 이미지 상자가 정한다(아래 imageRef). 캡션은 그 밑에 붙는다.
           width: size?.w ?? ITEM_W,
           pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
           zIndex: selected ? 12 : dragging ? 11 : 10,
@@ -193,66 +188,6 @@ export function FigureItem({
           }
         }}
       >
-        {/* 선택 강조 — 흐름 밖에 둬서 크기에 영향을 주지 않는다. 색은 오커(AI). */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute transition-opacity duration-150"
-          style={{
-            inset: "-6px",
-            borderRadius: "var(--c-radius)",
-            border: `${selected ? Math.max(1, 1.5 / zoom) : 1}px solid ${
-              selected ? "var(--c-live)" : "transparent"
-            }`,
-            opacity: selected ? 1 : 0,
-            boxShadow: dragging ? "var(--c-shadow-lg)" : "none",
-          }}
-        />
-
-        {/* × 삭제 — hover/선택 시 우상단에 뜬다. `data-no-pan`으로 드래그로
-            새지 않고 제자리에서 지운다. 키보드 Delete와 같은 일을 한다. */}
-        {(hover || selected) && (
-          <button
-            type="button"
-            data-no-pan
-            aria-label="도판 삭제"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(item.id);
-            }}
-            className="absolute -right-2 -top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border transition-colors"
-            style={{
-              background: "var(--c-raised)",
-              borderColor: "var(--c-rule)",
-              color: "var(--c-ink-soft)",
-              boxShadow: "var(--c-shadow-sm)",
-            }}
-          >
-            <X size={15} />
-          </button>
-        )}
-
-        {/* 크기 손잡이 — 도판만 갖는다. 비율 고정이라 이미지가 찌그러지지 않는다.
-            size가 있으면 그 비율을, 없으면 이미지 자연 비율을 쓴다(D147). */}
-        {selected && !dragging && (
-          <ResizeHandles
-            zoom={zoom}
-            color="var(--c-live)"
-            aspect={size ? size.w / size.h : (aspect ?? undefined)}
-            getEl={() => rootRef.current}
-            onCommit={(next) => {
-              // 끄는 동안 ResizeHandles가 넣은 인라인 height를 걷어낸다 —
-              // style prop에 height가 없어 React가 대신 지워 주지 않는다.
-              // 걷어내야 높이가 자동으로 돌아가 캡션이 잘리지 않는다.
-              const el = rootRef.current;
-              if (el) el.style.height = "";
-              onResize(item.id, next);
-              window.setTimeout(settle, DROP_FALLBACK_MS);
-            }}
-            onReset={() => onResetSize(item.id)}
-          />
-        )}
-
         {/* 좌측 괘선 — 색이 곧 출처다(오커=AI). */}
         <div
           aria-hidden
@@ -268,50 +203,105 @@ export function FigureItem({
           }}
         />
 
-        {/* 도판 몸통. 더블클릭하면 크게 본다 — 단일 클릭은 선택이다(글 상자가
-            더블클릭으로 편집을 여는 것과 동형). `data-no-pan`을 두지 않아
-            몸통을 잡고 드래그로 옮길 수 있다. */}
+        {/* 이미지 상자 — **크기 조절의 대상**이다(캡션은 이 밖). 손잡이·선택
+            테두리·삭제 버튼이 이 상자를 기준으로 앉는다. */}
         <div
+          ref={imageRef}
+          className="relative"
+          style={{ width: size?.w ?? ITEM_W, height: size?.h }}
           onDoubleClick={(e) => {
             e.stopPropagation();
             if (url) setOpen(true);
           }}
-          className="block h-full w-full overflow-hidden rounded-lg border text-left"
-          style={{ borderColor: "var(--c-rule)", background: "var(--c-raised)" }}
           title="더블클릭하면 크게 볼 수 있어요"
         >
-          {url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt={fig.caption || "교과서 도판"}
-              onError={refresh}
-              onLoad={(e) => {
-                const el = e.currentTarget;
-                if (el.naturalWidth && el.naturalHeight) {
-                  setAspect(el.naturalWidth / el.naturalHeight);
-                }
+          {/* 선택 강조 — 흐름 밖에 둬서 크기에 영향을 주지 않는다. 색은 오커(AI). */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute transition-opacity duration-150"
+            style={{
+              inset: "-6px",
+              borderRadius: "var(--c-radius)",
+              border: `${selected ? Math.max(1, 1.5 / zoom) : 1}px solid ${
+                selected ? "var(--c-live)" : "transparent"
+              }`,
+              opacity: selected ? 1 : 0,
+              boxShadow: dragging ? "var(--c-shadow-lg)" : "none",
+            }}
+          />
+
+          {/* × 삭제 — hover/선택 시 우상단. data-no-pan으로 드래그로 안 샌다. */}
+          {(hover || selected) && (
+            <button
+              type="button"
+              data-no-pan
+              aria-label="도판 삭제"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(item.id);
               }}
-              draggable={false}
-              className="pointer-events-none block w-full object-contain"
-              style={{ background: "var(--c-sunk)", maxHeight: size ? undefined : "16rem" }}
-            />
-          ) : (
-            <div
-              className="flex h-40 items-center justify-center text-sm"
-              style={{ background: "var(--c-sunk)", color: "var(--c-ink-faint)" }}
+              className="absolute -right-2 -top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border transition-colors"
+              style={{
+                background: "var(--c-raised)",
+                borderColor: "var(--c-rule)",
+                color: "var(--c-ink-soft)",
+                boxShadow: "var(--c-shadow-sm)",
+              }}
             >
-              도판 불러오는 중…
-            </div>
+              <X size={15} />
+            </button>
           )}
-          <div className="px-3 py-2">
-            <p className="line-clamp-2 text-[13px]" style={{ color: "var(--c-ink)" }}>
-              {fig.caption || "설명 없음"}
-            </p>
-            <p className="label mt-1" style={{ color: "var(--c-ink-faint)", letterSpacing: 0 }}>
-              교과서 {fig.page}쪽
-            </p>
+
+          {/* 크기 손잡이 — **이미지 상자만** 리사이즈한다. 가로·세로 독립
+              (상하좌우 손잡이가 각각 높이·폭을 바꾼다), 캡션은 그대로다.
+              좌상단 기준(noOriginShift)이라 카드는 움직이지 않는다 (D147). */}
+          {selected && !dragging && (
+            <ResizeHandles
+              zoom={zoom}
+              color="var(--c-live)"
+              fixedHeight
+              noOriginShift
+              getEl={() => imageRef.current}
+              onCommit={(next) => onResize(item.id, next)}
+              onReset={() => onResetSize(item.id)}
+            />
+          )}
+
+          {/* 이미지. object-contain이라 상자를 어떻게 잡아도 찌그러지지 않는다. */}
+          <div
+            className="block h-full w-full overflow-hidden rounded-lg border"
+            style={{ borderColor: "var(--c-rule)", background: "var(--c-raised)" }}
+          >
+            {url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={url}
+                alt={fig.caption || "교과서 도판"}
+                onError={refresh}
+                draggable={false}
+                className="pointer-events-none block h-full w-full object-contain"
+                style={{ background: "var(--c-sunk)", maxHeight: size ? undefined : "16rem" }}
+              />
+            ) : (
+              <div
+                className="flex h-40 items-center justify-center text-sm"
+                style={{ background: "var(--c-sunk)", color: "var(--c-ink-faint)" }}
+              >
+                도판 불러오는 중…
+              </div>
+            )}
           </div>
+        </div>
+
+        {/* 캡션 — **리사이즈 밖**이다. 크기를 조절해도 그대로 남는다(사용자 지시). */}
+        <div className="px-3 py-2">
+          <p className="line-clamp-2 text-[13px]" style={{ color: "var(--c-ink)" }}>
+            {fig.caption || "설명 없음"}
+          </p>
+          <p className="label mt-1" style={{ color: "var(--c-ink-faint)", letterSpacing: 0 }}>
+            교과서 {fig.page}쪽
+          </p>
         </div>
       </div>
 
