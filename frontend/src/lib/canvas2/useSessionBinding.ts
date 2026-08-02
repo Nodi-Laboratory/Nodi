@@ -5,7 +5,7 @@
  *
  * 우선순위:
  *   1. 홈에서 넘겨 준 pendingSession (그 공간의 것일 때만)
- *   2. 이미 고른 세션
+ *   2. 이미 고른 세션 — **이 공간의 것일 때만** (D148)
  *   3. 이 공간의 가장 최근 세션
  *   4. 없으면 하나 만든다
  *
@@ -13,6 +13,17 @@
  * 캔버스가 "저장할 곳 없는 상태"라 학생이 먼저 글을 쓰거나 그림을 그리면
  * 갈 곳이 없었다. v2는 캔버스 자체가 편집 대상이므로 **들어오는 순간**
  * 저장할 세션이 있어야 한다.
+ *
+ * ## 2번의 "이 공간의 것일 때만"
+ *
+ * 예전에는 세션 id가 잡혀 있기만 하면 그대로 열었다. 그래서 개인 공간에
+ * 있다가 학급으로 옮기면 **학급 화면에 개인 세션의 대화가 떴다**(사용자
+ * 실측 2026-08-02). 보기만 하는 것이 아니라 그 캔버스를 편집하고 질문까지
+ * 보낼 수 있어서, 학생 눈에는 학급에서 한 일이 개인 세션에 쌓인다.
+ *
+ * 세션이 어느 공간 것인지는 스토어가 함께 들고 있다(`activeSessionSpaceId`).
+ * 다른 공간 것이면 **없는 것으로 친다** — 그래야 이 훅이 null을 돌려주고,
+ * 캔버스는 세션이 정해질 때까지 아무것도 읽거나 보내지 않는다.
  */
 
 import { useCallback, useEffect, useRef } from "react";
@@ -26,9 +37,14 @@ export function useSessionBinding(spaceId: string): {
   clearSeed: () => void;
 } {
   const activeSessionId = useWorkspaceStore((s) => s.activeSessionId);
+  const sessionSpaceId = useWorkspaceStore((s) => s.activeSessionSpaceId);
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
   const pending = useWorkspaceStore((s) => s.pendingSession);
   const setPending = useWorkspaceStore((s) => s.setPendingSession);
+
+  /** 이 공간의 세션으로 확정된 것만 밖으로 낸다 (D148). */
+  const bound =
+    sessionSpaceId === spaceId && isRealId(activeSessionId) ? activeSessionId : null;
 
   // 공간마다 한 번만 자동 선택한다. 학생이 세션을 지우고 목록이 비었을 때
   // 계속 새 세션을 만들어 대는 걸 막는다.
@@ -43,13 +59,13 @@ export function useSessionBinding(spaceId: string): {
   useEffect(() => {
     if (!mine) return;
     // zustand 스토어 갱신이다 — React state가 아니라 외부 시스템 동기화.
-    setActiveSession(mine.sessionId);
+    setActiveSession(mine.sessionId, spaceId);
     resolvedFor.current = spaceId;
     if (!mine.seed) setPending(null); // 시드가 없으면 바로 소비 완료
   }, [mine, spaceId, setActiveSession, setPending]);
 
   useEffect(() => {
-    if (isRealId(activeSessionId)) return;
+    if (bound) return;
     if (resolvedFor.current === spaceId) return;
     resolvedFor.current = spaceId;
 
@@ -62,13 +78,14 @@ export function useSessionBinding(spaceId: string): {
         const list = await listSessions(target);
         if (cancelled) return;
         if (list.length) {
-          setActiveSession(list[0].id);
+          // 목록은 updated_at desc다(백엔드 정렬) — 가장 최근 대화를 연다.
+          setActiveSession(list[0].id, spaceId);
           settled = true;
           return;
         }
         const made = await createSession(target);
         if (!cancelled) {
-          setActiveSession(made.id);
+          setActiveSession(made.id, spaceId);
           settled = true;
         }
       } catch {
@@ -91,16 +108,16 @@ export function useSessionBinding(spaceId: string): {
        * 같은 주소를 새로고침하면 정상이라 눈에 잘 안 띄었다.
        *
        * 완료한 시도만 표시를 남기므로, 세션이 없을 때 새로 만드는 일이 반복되지
-       * 않는다는 원래 보호는 그대로다(성공하면 activeSessionId가 차서 위 가드가 막는다).
+       * 않는다는 원래 보호는 그대로다(성공하면 bound가 차서 위 가드가 막는다).
        */
       if (!settled) resolvedFor.current = null;
     };
-  }, [spaceId, activeSessionId, setActiveSession]);
+  }, [spaceId, bound, setActiveSession]);
 
   const clearSeed = useCallback(() => setPending(null), [setPending]);
 
   return {
-    sessionId: isRealId(activeSessionId) ? activeSessionId : null,
+    sessionId: bound,
     seed,
     clearSeed,
   };
