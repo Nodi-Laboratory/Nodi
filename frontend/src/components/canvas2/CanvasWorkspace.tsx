@@ -272,7 +272,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   // --- 조작 ------------------------------------------------------------------
 
-  const { patch, moveMany, remove, items, addChildNote } = store;
+  const { patch, moveMany, remove, items } = store;
   const { getObstacles: getObs, setTool, clearElementSelection } = bridge;
 
   const onSelect = useEventCallback((id: string | null, additive?: boolean) => {
@@ -412,30 +412,16 @@ export function CanvasWorkspace({ spaceId }: Props) {
     );
   });
 
-  // 학생 글 → 그 내용이 인용된 채 입력창이 열린다(D126).
+  /**
+   * "다시 질문하기" — 그 답이 인용된 채 입력창이 열린다 (D149).
+   *
+   * 제목이 있으면 제목을 인용한다. AI 개념 글은 대개 제목이 본문 전체를
+   * 한 줄로 요약하고 있어, 본문 앞 200자보다 **무엇에 대한 질문인지**가
+   * 또렷하다.
+   */
   const onAsk = useEventCallback((id: string) => {
     const it = items.find((i) => i.id === id);
-    if (it) setQuote({ id, text: it.body.slice(0, 200) });
-  });
-
-  const onDismissAsk = useEventCallback((id: string) => {
-    const cur = items.find((i) => i.id === id);
-    patch(id, { data: { ...cur?.data, askHidden: true } });
-  });
-
-  /**
-   * 인출 연습 결과를 캔버스에 남긴다 (D138).
-   *
-   * 학생이 쓴 회상은 **그 카드의 자식 글**이 된다 — 배치가 옆에 놓고
-   * 연결선이 이어 준다. 사라지면 산출물이 아니고, 다음에 이 카드를 볼 때
-   * "내가 그때 이만큼 기억했구나"가 함께 보여야 의미가 있다.
-   *
-   * `askHidden`을 켜 둔다: 이건 이미 학생이 스스로 쓴 글이라 "AI에게 묻기"를
-   * 권할 자리가 아니다.
-   */
-  const onRecall = useEventCallback((id: string, text: string) => {
-    if (!sessionId) return;
-    void addChildNote(sessionId, id, text, nextSeq());
+    if (it) setQuote({ id, text: (it.title?.trim() || it.body).slice(0, 200) });
   });
 
   /**
@@ -464,10 +450,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onReflow,
       onDismissReflow,
       onAsk,
-      onDismissAsk,
-      onRecall,
     }),
-    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onDismissAsk, onRecall],
+    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk],
   );
 
   /**

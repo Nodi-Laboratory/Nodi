@@ -4,8 +4,8 @@
  * 공중 입력창 — `BottomBar`를 대체한다.
  *
  * 캔버스 위에 떠 있는 알약 하나. 평소에는 한 줄이고 포커스하면 늘어난다.
- * 학생 글의 "AI에게 묻기"로 열리면 그 글이 **인용 칩**으로 위에 붙는다 —
- * 무엇에 대해 묻는지 보이지 않으면 답이 어디에 붙을지도 모른다.
+ * AI 답의 "다시 질문하기"로 열리면 그 답이 **인용 칩**으로 위에 붙는다 —
+ * 무엇에 대해 묻는지 보이지 않으면 답이 어디에 붙을지도 모른다(D149).
  */
 
 import { ArrowUp, Paperclip, Quote, X } from "lucide-react";
@@ -15,7 +15,7 @@ interface Props {
   busy: boolean;
   /** 스트리밍 중 말풍선 문구. */
   reply: string;
-  /** "AI에게 묻기"로 열렸을 때 인용할 글. */
+  /** "다시 질문하기"로 열렸을 때 인용할 답. */
   quote: { id: string; text: string } | null;
   onClearQuote: () => void;
   onSend: (question: string, parentItemId: string | null) => void;
@@ -87,13 +87,14 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onA
       {quote && (
         <div
           className="mb-2 flex items-start gap-2 rounded-lg px-3 py-2 text-[13px]"
+          // 인용하는 것은 **AI가 쓴 답**이다 — 괘선과 같은 오커로 출처를 맞춘다.
           style={{
-            background: "var(--c-hand-wash)",
-            border: "1px solid var(--c-hand)",
+            background: "var(--c-live-wash)",
+            border: "1px solid var(--c-live)",
             color: "var(--c-ink)",
           }}
         >
-          <Quote size={13} style={{ color: "var(--c-hand)", marginTop: 3 }} />
+          <Quote size={13} style={{ color: "var(--c-live)", marginTop: 3 }} />
           <span className="min-w-0 flex-1 line-clamp-2">{quote.text}</span>
           <button
             type="button"
@@ -142,7 +143,11 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onA
           value={value}
           disabled={disabled}
           placeholder={
-            disabled ? "세션을 준비하는 중이에요" : quote ? "이 글에 대해 물어보세요" : "무엇이 궁금한가요?"
+            disabled
+              ? "세션을 준비하는 중이에요"
+              : quote
+                ? "이 답에 이어서 물어보세요"
+                : "무엇이 궁금한가요?"
           }
           onChange={(e) => setValue(e.target.value)}
           onFocus={() => setFocused(true)}

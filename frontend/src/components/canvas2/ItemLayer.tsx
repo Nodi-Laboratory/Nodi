@@ -40,8 +40,6 @@ interface Props {
     onReflow: (id: string) => void;
     onDismissReflow: (id: string) => void;
     onAsk: (id: string) => void;
-    onDismissAsk: (id: string) => void;
-    onRecall: (id: string, text: string) => void;
     onResize: (id: string, next: ResizeCommit) => void;
     onResetSize: (id: string) => void;
   };
@@ -61,10 +59,13 @@ export function ItemLayer({
   handlers,
 }: Props) {
   /**
-   * 답 → 그 답을 부른 질문 원문. 출처가 둘이다:
+   * 답 → 그 답을 부른 질문 원문.
    *
-   *   하단 입력창   `data.askedQuestion` (질문은 아이템으로 만들지 않는다)
-   *   "AI에게 묻기"  부모 글의 본문
+   * 하단 입력창이든 "다시 질문하기"든 학생이 친 질문은 `data.askedQuestion`에
+   * 실려 온다 — 질문을 아이템으로 만들지 않는 대신이다(D149).
+   *
+   * 부모 본문 폴백은 옛 행을 위한 것이다: "AI에게 묻기"로 만든 답은 부모가
+   * 곧 질문이라 `askedQuestion`이 비어 있다.
    */
   const questionOf = new Map<string, string>();
   for (const it of items) {

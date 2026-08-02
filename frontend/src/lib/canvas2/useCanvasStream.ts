@@ -105,14 +105,12 @@ function toPayload(it: CanvasItem): NewItemInput {
     pinned: false,
     seq: it.seq,
     // 도판은 data에 메타가 있다. url은 빼고 보낸다(만료되는 값, D87).
-    // 그 외에는 렌더 힌트만 남긴다 — 특히 `askHidden`을 흘리면 이미 물어본
-    // 질문 글에 "AI에게 묻기" 버튼이 새로고침마다 되살아난다.
+    // 그 외에는 렌더 힌트만 남긴다.
     data:
       it.kind === "figure" && it.data.figure
         ? { figure: { ...it.data.figure, url: "" } }
         : {
             ...(it.data.askedQuestion ? { askedQuestion: it.data.askedQuestion } : {}),
-            ...(it.data.askHidden ? { askHidden: true } : {}),
             ...(it.data.reflowDismissed ? { reflowDismissed: true } : {}),
           },
   };
@@ -157,11 +155,16 @@ export function useCanvasStream({
        * 하나 더 만들지 않으면서도 hover 툴팁이 "무엇을 물어본 답인지" 보여 줄 수
        * 있다(QuestionTip).
        */
-      const askedFrom = opts?.parentItemId ?? null;
-      const parentItemId = askedFrom;
-      // 하단 입력창으로 물었을 때만 원문을 싣는다. "AI에게 묻기"는 부모 글이
-      // 곧 질문이라 중복이다.
-      const askedQuestion = askedFrom ? undefined : q;
+      const parentItemId = opts?.parentItemId ?? null;
+      /**
+       * 학생이 친 질문은 **언제나** 답에 실어 둔다 (D149).
+       *
+       * 한때는 "AI에게 묻기"로 물었을 때만 뺐다 — 그때는 부모가 학생이 쓴
+       * 질문 글이라 중복이었기 때문이다. 지금 "다시 질문하기"의 부모는
+       * **AI가 쓴 답**이라 질문이 아니다. 안 실으면 학생이 뭘 물었는지가
+       * 캔버스 어디에도 남지 않는다.
+       */
+      const askedQuestion = q;
 
       const flush = () => {
         if (made.length) upsertLocal([...made]);
@@ -187,9 +190,9 @@ export function useCanvasStream({
               y: 0,
               pinned: false,
               seq: baseSeq + made.length,
-              // 하단 입력창으로 물었으면 원문을 싣는다 — 상자를 하나 더 만들지
-              // 않고도 hover 툴팁이 "무엇을 물어본 답인지" 보여 준다.
-              data: askedQuestion ? { askedQuestion } : {},
+              // 질문 원문을 싣는다 — 상자를 하나 더 만들지 않고도 hover
+              // 툴팁이 "무엇을 물어본 답인지" 보여 준다.
+              data: { askedQuestion },
               _pending: true,
             };
             made.push(current);
@@ -255,7 +258,7 @@ export function useCanvasStream({
                   pinned: false,
                   seq: baseSeq + made.length,
                   data: {
-                    ...(askedQuestion ? { askedQuestion } : {}),
+                    askedQuestion,
                     figure: {
                       figureId: f.figure_id,
                       fileId: f.file_id,
