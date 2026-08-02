@@ -68,6 +68,7 @@ export function FigureItem({
   const [open, setOpen] = useState(false);
   /** 이미지 자연 비율(= w/h). 로드 전엔 null — 그동안은 렌더 상자 비율을 쓴다. */
   const [aspect, setAspect] = useState<number | null>(null);
+  const [hover, setHover] = useState(false);
 
   const url = refreshed ?? fig?.url ?? "";
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -137,9 +138,10 @@ export function FigureItem({
         style={{
           left: x,
           top: y,
+          // 너비만 정한다 — 높이는 이미지(너비에 맞춰 스케일) + 캡션이 정한다.
+          // 높이를 size.h로 고정하면 이미지 자연 비율에 맞춰져 하단 캡션이
+          // overflow-hidden에 잘린다(쪽 번호가 사라진다).
           width: size?.w ?? ITEM_W,
-          // 크기를 정했으면 그 높이로 고정, 아니면 이미지가 정한다.
-          height: size?.h,
           pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
           zIndex: selected ? 12 : dragging ? 11 : 10,
           cursor: dragging ? "grabbing" : "grab",
@@ -153,6 +155,8 @@ export function FigureItem({
         onPointerMove={dragHandlers.onPointerMove}
         onPointerUp={dragHandlers.onPointerUp}
         onPointerCancel={dragHandlers.onPointerCancel}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
         tabIndex={0}
         role="group"
         aria-label={fig.caption || "교과서 도판"}
@@ -186,6 +190,30 @@ export function FigureItem({
           }}
         />
 
+        {/* × 삭제 — hover/선택 시 우상단에 뜬다. `data-no-pan`으로 드래그로
+            새지 않고 제자리에서 지운다. 키보드 Delete와 같은 일을 한다. */}
+        {(hover || selected) && (
+          <button
+            type="button"
+            data-no-pan
+            aria-label="도판 삭제"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(item.id);
+            }}
+            className="absolute -right-2 -top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border transition-colors"
+            style={{
+              background: "var(--c-raised)",
+              borderColor: "var(--c-rule)",
+              color: "var(--c-ink-soft)",
+              boxShadow: "var(--c-shadow-sm)",
+            }}
+          >
+            <X size={15} />
+          </button>
+        )}
+
         {/* 크기 손잡이 — 도판만 갖는다. 비율 고정이라 이미지가 찌그러지지 않는다.
             size가 있으면 그 비율을, 없으면 이미지 자연 비율을 쓴다(D147). */}
         {selected && !dragging && (
@@ -195,6 +223,11 @@ export function FigureItem({
             aspect={size ? size.w / size.h : (aspect ?? undefined)}
             getEl={() => rootRef.current}
             onCommit={(next) => {
+              // 끄는 동안 ResizeHandles가 넣은 인라인 height를 걷어낸다 —
+              // style prop에 height가 없어 React가 대신 지워 주지 않는다.
+              // 걷어내야 높이가 자동으로 돌아가 캡션이 잘리지 않는다.
+              const el = rootRef.current;
+              if (el) el.style.height = "";
               onResize(item.id, next);
               window.setTimeout(settle, DROP_FALLBACK_MS);
             }}
