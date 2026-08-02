@@ -143,6 +143,19 @@ export function Minimap({
   const [pan, setPan] = useState<{ x: number; y: number } | null>(null);
   const dragRef = useRef<{ sx: number; sy: number; cx: number; cy: number } | null>(null);
   /**
+   * 끄는 동안 내용을 담는 그룹 — **React를 거치지 않고 여기만 민다** (D158).
+   *
+   * 예전에는 pointermove마다 `setPan`을 불러 지도 전체를 다시 계산했다.
+   * 트리·간선·점 분리까지 매 프레임 다시 도니 손보다 늦게 따라왔다(사용자
+   * 지적 2026-08-03: "지도에서 드래그를 할 때 노드들이 뒤늦게 따라가는
+   * 딜레이"). 지도를 끄는 것은 **화면 좌표를 그대로 평행이동**하는 것과
+   * 같으므로 transform 하나로 정확히 같은 결과가 나온다 — 캔버스 팬에서
+   * 쓰는 방법과 같다(D124).
+   *
+   * 손을 뗄 때 한 번만 state로 올린다.
+   */
+  const contentRef = useRef<SVGGElement>(null);
+  /**
    * 방금 포인터 동작이 **끌기였나**.
    *
    * `dragRef`로 판정하면 안 된다 — `pointerup`이 `click`보다 먼저 돌아 그때
@@ -440,13 +453,21 @@ export function Minimap({
       (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     }
     if (!movedRef.current) return; // 아직 클릭일 수 있다 — 화면을 흔들지 않는다
+    const g = contentRef.current;
+    if (g) g.style.transform = `translate(${e.clientX - d.sx}px, ${e.clientY - d.sy}px)`;
+  };
+  const onPanEnd = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    if (!d || !movedRef.current) return;
+    // 화면 이동량을 world로 환산해 한 번만 올린다. 다음 렌더가 같은 자리를
+    // 그리므로 여기서 transform을 지워도 튀지 않는다.
     setPan({
       x: d.cx - (e.clientX - d.sx) / model.scale,
       y: d.cy - (e.clientY - d.sy) / model.scale,
     });
-  };
-  const onPanEnd = () => {
-    dragRef.current = null;
+    const g = contentRef.current;
+    if (g) g.style.transform = "";
   };
   /** 끌어 옮긴 동작이었으면 클릭으로 치지 않는다. */
   const dragged = () => movedRef.current;
@@ -531,6 +552,7 @@ export function Minimap({
         </defs>
 
         <g clipPath="url(#c2-map-clip)">
+          <g ref={contentRef}>
           {/* 지금 보고 있는 영역. 점보다 뒤에 옅게 — 정보는 점이 준다.
               지도를 확대해 이 사각형이 지도를 넘어서면 그리지 않는다(위 주석). */}
           {model.viewFits && (
@@ -681,6 +703,7 @@ export function Minimap({
               </g>
             ))
           )}
+          </g>
         </g>
       </svg>
     </div>

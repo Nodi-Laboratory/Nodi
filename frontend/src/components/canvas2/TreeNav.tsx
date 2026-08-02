@@ -42,11 +42,20 @@ interface Props {
   onGoBranch: (id: string) => void;
 }
 
+/**
+ * 막대의 바탕. **진하게** 간다 (사용자 지시 2026-08-03: "좌우상하 이동
+ * 버튼을 더 진하게").
+ *
+ * 캔버스 위에 떠 있는 조작 장치라 종이색에 가까우면 배경에 묻힌다 — 특히
+ * 좌우 막대는 폭이 28px뿐이라 테두리만으로는 눈에 안 들어온다.
+ */
 const BAR = {
-  background: "var(--c-raised)",
-  borderColor: "var(--c-rule)",
-  boxShadow: "var(--c-shadow-md)",
+  background: "var(--c-ink)",
+  borderColor: "var(--c-ink)",
+  boxShadow: "var(--c-shadow-lg)",
 } as const;
+/** 진한 바탕 위의 글자·기호 색. */
+const ON_BAR = "var(--c-paper)";
 
 export function TreeNav({ canUp, canLeft, canRight, branches, onGo, onGoBranch }: Props) {
   return (
@@ -60,7 +69,7 @@ export function TreeNav({ canUp, canLeft, canRight, branches, onGo, onGoBranch }
         aria-label="이전 노드 (위 화살표)"
         title="이전 노드 — ↑"
         className="ui absolute left-1/2 top-4 z-30 flex h-7 w-[168px] -translate-x-1/2 items-center justify-center rounded-lg border transition-opacity disabled:opacity-30"
-        style={{ ...BAR, color: "var(--c-ink-soft)" }}
+        style={{ ...BAR, color: ON_BAR }}
       >
         <ChevronUp size={16} />
       </button>
@@ -74,7 +83,7 @@ export function TreeNav({ canUp, canLeft, canRight, branches, onGo, onGoBranch }
         aria-label="왼쪽 트리 (왼쪽 화살표)"
         title="왼쪽 트리 — ←"
         className="ui absolute left-4 top-1/2 z-30 flex h-[104px] w-7 -translate-y-1/2 items-center justify-center rounded-lg border transition-opacity disabled:opacity-30"
-        style={{ ...BAR, color: "var(--c-ink-soft)" }}
+        style={{ ...BAR, color: ON_BAR }}
       >
         <ChevronLeft size={16} />
       </button>
@@ -86,7 +95,7 @@ export function TreeNav({ canUp, canLeft, canRight, branches, onGo, onGoBranch }
         aria-label="오른쪽 트리 (오른쪽 화살표)"
         title="오른쪽 트리 — →"
         className="ui absolute right-4 top-1/2 z-30 flex h-[104px] w-7 -translate-y-1/2 items-center justify-center rounded-lg border transition-opacity disabled:opacity-30"
-        style={{ ...BAR, color: "var(--c-ink-soft)" }}
+        style={{ ...BAR, color: ON_BAR }}
       >
         <ChevronRight size={16} />
       </button>
@@ -108,7 +117,7 @@ export function TreeNav({ canUp, canLeft, canRight, branches, onGo, onGoBranch }
             disabled
             aria-label="다음 노드 (아래 화살표)"
             className="flex flex-1 items-center justify-center opacity-30"
-            style={{ color: "var(--c-ink-soft)" }}
+            style={{ color: ON_BAR }}
           >
             <ChevronDown size={16} />
           </button>
@@ -122,11 +131,11 @@ export function TreeNav({ canUp, canLeft, canRight, branches, onGo, onGoBranch }
                 branches.length > 1 ? `${b.label} 갈래로 이동` : "다음 노드 (아래 화살표)"
               }
               title={branches.length > 1 ? b.label : "다음 노드 — ↓"}
-              className="flex min-w-0 flex-1 items-center justify-center gap-1 px-2 transition-colors hover:bg-[var(--c-sunk)]"
+              className="flex min-w-0 flex-1 items-center justify-center gap-1 px-2 transition-colors hover:bg-[var(--c-on-dark)]"
               style={{
-                color: "var(--c-ink-soft)",
+                color: ON_BAR,
                 // 갈래 사이에 칸막이. 첫 칸 앞에는 두지 않는다.
-                borderLeft: i > 0 ? "1px solid var(--c-rule)" : undefined,
+                borderLeft: i > 0 ? "1px solid var(--c-on-dark)" : undefined,
               }}
             >
               <ChevronDown size={15} className="shrink-0" />

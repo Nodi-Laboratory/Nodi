@@ -499,7 +499,7 @@ function TextItemImpl(props: TextItemProps) {
       <div className="relative">
         {item.title && (
           <h3
-            className="ui mb-2 text-[17px] font-semibold leading-snug"
+            className="ui mb-2.5 text-[21px] font-semibold leading-snug"
             style={{ color: "var(--c-ink)" }}
           >
             {item.title}
@@ -508,7 +508,10 @@ function TextItemImpl(props: TextItemProps) {
 
         <div
           data-item-text
-          className="text-[15px]"
+          // 15px였다. "정보가 화면을 채울 정도로 커야 학습 효과가 있다"는
+          // 디자이너 의견(사용자 전달 2026-08-03)에 따라 키웠다. 폭도 함께
+          // 키웠으므로(ITEM_W 560) 한 줄 글자 수는 비슷하게 유지된다.
+          className="text-[18px]"
           style={{ color: "var(--c-ink)" }}
         >
           <ItemBody

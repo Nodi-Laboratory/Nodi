@@ -179,6 +179,24 @@ export function useCanvasStream({
        */
       const picked = opts?.pickedId ?? null;
       /**
+       * 고른 트리가 있으면 **이번 턴의 분류를 그 트리로 고정한다** (D158).
+       *
+       * 사용자 지적 2026-08-03: "A트리에서 이어서 질문했는데 응답이 B트리에
+       * 작성되는 경우가 생긴다." 모델이 내용상 더 맞는 새 분류를 지어내면
+       * 그렇게 된다 — 분류만 보면 틀린 판단이 아니지만, **학생은 A에서
+       * 물었으니 A에 붙기를 기대한다.** 고른 곳에 답이 안 붙으면 트리를
+       * 고르는 행위 자체가 뜻을 잃는다.
+       *
+       * 프롬프트로 부탁하는 것(focus_tag)만으로는 보장이 안 된다 — 권유는
+       * 지켜지지 않을 때가 있고, 어긋나면 학생이 그 사실을 알 방법도 없다.
+       * 그래서 화면에 그리기 전에 여기서 못 박는다.
+       *
+       * 고른 것이 없으면 예전대로 모델의 분류를 따른다.
+       */
+      const pickedTag = picked
+        ? (getItems().find((i) => i.id === picked)?.tag ?? null)
+        : null;
+      /**
        * 학생이 친 질문은 **언제나** 답에 실어 둔다 (D149).
        *
        * 한때는 "AI에게 묻기"로 물었을 때만 뺐다 — 그때는 부모가 학생이 쓴
@@ -212,16 +230,17 @@ export function useCanvasStream({
             break;
           case "cstart": {
             const id = tempId();
+            const tag = pickedTag ?? ev.tag ?? null;
             current = {
               id,
               sessionId,
               nodeId: null,
-              parentItemId: parentFor(id, ev.tag || null),
+              parentItemId: parentFor(id, tag),
               kind: "concept",
               source: "ai",
               title: ev.title || null,
               body: "",
-              tag: ev.tag || null,
+              tag,
               x: 0,
               y: 0,
               pinned: false,

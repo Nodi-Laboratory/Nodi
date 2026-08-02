@@ -177,9 +177,11 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
               }
               fill="none"
               stroke="currentColor"
-              strokeWidth={l.tree ? 1.1 : 1.5}
+              // 1.1/0.28이었다 — 카드가 커지니 실오라기처럼 보였다
+              // (사용자 지시 2026-08-03: "연결선을 더 굵게").
+              strokeWidth={l.tree ? 2.6 : 2}
               strokeLinecap="round"
-              opacity={l.tree ? 0.28 : 0.4}
+              opacity={l.tree ? 0.55 : 0.5}
             />
             {/* 양끝 도트 — 어디서 나와 어디로 갔는지가 한눈에 보인다.
                 받는 쪽만 가운데를 종이색으로 비워 방향을 표시한다. */}
@@ -187,19 +189,19 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
               data-end="from"
               cx={g.a.x - minX}
               cy={g.a.y - minY}
-              r={l.tree ? DOT_R - 1 : DOT_R}
+              r={l.tree ? DOT_R + 0.5 : DOT_R}
               fill="currentColor"
-              opacity={l.tree ? 0.5 : 0.85}
+              opacity={l.tree ? 0.8 : 0.85}
             />
             <circle
               data-end="to"
               cx={g.b.x - minX}
               cy={g.b.y - minY}
-              r={l.tree ? DOT_R - 1 : DOT_R}
+              r={l.tree ? DOT_R + 0.5 : DOT_R}
               fill="var(--c-paper)"
               stroke="currentColor"
-              strokeWidth={1.5}
-              opacity={l.tree ? 0.6 : 0.95}
+              strokeWidth={2}
+              opacity={l.tree ? 0.9 : 0.95}
             />
             {/* 트리 간선에는 라벨을 달지 않는다 — 카드마다 하나씩이라
                 "AI 응답"이 캔버스를 뒤덮는다 (D151). */}
