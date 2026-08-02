@@ -31,7 +31,7 @@
  * 같은 저장 키를 보므로 둘은 어긋날 수 없다.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link2, Link2Off, Map as MapIcon, Minus, Plus, X } from "lucide-react";
 import { ITEM_W, UNTAGGED, type Placed } from "@/lib/canvas2/layout";
 import type { Rect } from "@/lib/canvas2/rect";
@@ -108,8 +108,11 @@ interface Props {
   viewport: { w: number; h: number };
   /** 지금 이어 묻고 있는 트리 노드 (D151). 지도에서도 또렷해야 한다. */
   pickedId: string | null;
-  /** world 좌표로 이동. */
-  onJump: (world: { x: number; y: number }) => void;
+  /**
+   * 이 사각형이 **화면에 크게 담기도록** 이동한다 (D155, 사용자 지시:
+   * "그 노드가 화면에 엄청 크게 보이도록 확대해서 이동").
+   */
+  onFocus: (rect: Rect) => void;
 }
 
 export function Minimap({
@@ -120,7 +123,7 @@ export function Minimap({
   camera,
   viewport,
   pickedId,
-  onJump,
+  onFocus,
 }: Props) {
   // 학생이 접어 두면 **접힌 채로 남는다**(D140). 처음 방문은 화면 폭으로 정한다.
   const { open, setOpen } = useCollapsible("map", viewport.w >= COLLAPSE_BELOW);
@@ -130,6 +133,23 @@ export function Minimap({
     true,
   );
   const [zoom, setZoom] = useState(1);
+  /**
+   * 학생이 끌어 옮긴 지도 중심(world). null이면 내용 전체를 담는다 (D155).
+   *
+   * 지도를 캔버스에 묶어 두면 "지금 보는 곳" 밖은 볼 수가 없다(사용자 지시
+   * 2026-08-02: "마우스 클릭 드래그로 지도를 자유롭게 이동"). 축척을 끝까지
+   * 되돌리면 다시 전체 보기로 돌아간다.
+   */
+  const [pan, setPan] = useState<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ sx: number; sy: number; cx: number; cy: number } | null>(null);
+  /**
+   * 방금 포인터 동작이 **끌기였나**.
+   *
+   * `dragRef`로 판정하면 안 된다 — `pointerup`이 `click`보다 먼저 돌아 그때
+   * 이미 비워져 있다. 그러면 지도를 끌어 옮기고 손을 뗀 자리에 노드가 있을 때
+   * 화면이 엉뚱한 데로 튄다.
+   */
+  const movedRef = useRef(false);
   const nodeView = zoom >= NODE_ZOOM;
 
   const model = useMemo(() => {
@@ -164,6 +184,8 @@ export function Minimap({
         aiRatio: g.ai / g.rects.length,
         wx: b.x + b.w / 2,
         wy: b.y + b.h / 2,
+        // 눌렀을 때 이 태그 전체가 화면에 담기게 (D155).
+        rect: b,
       };
     });
 
@@ -175,8 +197,22 @@ export function Minimap({
       h: viewport.h / camera.zoom,
     };
 
-    // 점과 뷰포트를 모두 담는 범위. 점은 크기가 없으므로 1px 사각형으로 친다.
-    const box = union([...dots.map((d) => ({ x: d.wx, y: d.wy, w: 1, h: 1 })), view])!;
+    /**
+     * 담을 범위는 **글 사각형 전부**다 (D155).
+     *
+     * 점(태그 중심)만으로 잡으면 태그가 하나일 때 범위가 **점 하나로
+     * 줄어들어** 축척이 폭발한다(실측: 세 노드가 ±6만px로 흩어졌다).
+     * 사각형은 크기가 있으므로 하나만 있어도 범위가 성립한다.
+     *
+     * 예전에는 뷰포트(view)까지 union에 넣었다. 그러면 캔버스를 움직일 때마다
+     * 범위가 달라져 **축척과 중심이 같이 흔들리고 지도의 점들이 스르르
+     * 움직인다** — 사용자가 지적한 "노드들의 위치가 느리게 변하는 딜레이
+     * 현상"이 이것이다. 게다가 카메라 상태는 멈춘 뒤에야 React로 올라오므로
+     * (D124) 그 흔들림이 한 박자 늦게 온다.
+     *
+     * 내용만 보면 캔버스를 아무리 움직여도 지도의 점은 제자리다.
+     */
+    const box = union([...byTag.values()].flatMap((g) => g.rects))!;
 
     // **양축에 같은 배율**을 쓴다 — 다르게 주면 실제로 나란한 열이 지도에서
     // 비스듬해 보여 공간 정보가 거짓이 된다.
@@ -185,9 +221,10 @@ export function Minimap({
       (H - PAD * 2) / Math.max(1, box.h),
     );
     const s = fit * zoom;
-    // 확대하면 지금 보고 있는 곳이 중심이다(머리말 참조).
-    const cx = zoom > 1 ? view.x + view.w / 2 : box.x + box.w / 2;
-    const cy = zoom > 1 ? view.y + view.h / 2 : box.y + box.h / 2;
+    // **지도는 캔버스를 따라가지 않는다** (D155). 학생이 끌어 옮긴 자리가
+    // 있으면 그것이 중심이고, 없으면 내용 전체의 중심이다.
+    const cx = pan ? pan.x : box.x + box.w / 2;
+    const cy = pan ? pan.y : box.y + box.h / 2;
     const px = (x: number) => W / 2 + (x - cx) * s;
     const py = (y: number) => H / 2 + (y - cy) * s;
 
@@ -214,9 +251,13 @@ export function Minimap({
             root: (depthOf.get(id) ?? 0) === 0,
             color: colorOf(t.tag),
             ...c,
-            // 클릭 이동은 축소된 자리가 아니라 **원래 world 좌표**로 한다.
-            wx: (positions.get(id)?.x ?? 0) + (sizes.get(id)?.w ?? FALLBACK.w) / 2,
-            wy: (positions.get(id)?.y ?? 0) + (sizes.get(id)?.h ?? FALLBACK.h) / 2,
+            // 클릭 이동은 축소된 자리가 아니라 **원래 world 사각형**으로 한다.
+            rect: {
+              x: positions.get(id)?.x ?? 0,
+              y: positions.get(id)?.y ?? 0,
+              w: sizes.get(id)?.w ?? FALLBACK.w,
+              h: sizes.get(id)?.h ?? FALLBACK.h,
+            },
           },
         ];
       }),
@@ -244,8 +285,12 @@ export function Minimap({
           id: it.id,
           ...c,
           color: it.source === "ai" ? "var(--c-live)" : "var(--c-hand)",
-          wx: (positions.get(it.id)?.x ?? 0) + (sizes.get(it.id)?.w ?? FALLBACK.w) / 2,
-          wy: (positions.get(it.id)?.y ?? 0) + (sizes.get(it.id)?.h ?? FALLBACK.h) / 2,
+          rect: {
+            x: positions.get(it.id)?.x ?? 0,
+            y: positions.get(it.id)?.y ?? 0,
+            w: sizes.get(it.id)?.w ?? FALLBACK.w,
+            h: sizes.get(it.id)?.h ?? FALLBACK.h,
+          },
         },
       ];
     });
@@ -319,6 +364,9 @@ export function Minimap({
       nodes,
       edges,
       loose,
+      /** 화면 px ↔ world 환산. 끌어서 옮길 때 쓴다. */
+      scale: s,
+      center: { x: cx, y: cy },
       view: viewRect,
       /**
        * 보기 영역 사각형이 지도 안에 들어오나.
@@ -334,7 +382,7 @@ export function Minimap({
        */
       viewFits: viewRect.w <= W && viewRect.h <= H,
     };
-  }, [items, positions, sizes, tagOrder, camera, viewport, zoom]);
+  }, [items, positions, sizes, tagOrder, camera, viewport, zoom, pan]);
 
   if (!model) return null;
 
@@ -362,7 +410,46 @@ export function Minimap({
   }
 
   const zoomBy = (f: number) =>
-    setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z * f)));
+    setZoom((z) => {
+      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z * f));
+      // 끝까지 되돌리면 전체 보기로 — 끌어 둔 자리를 놓는다.
+      if (next === ZOOM_MIN) setPan(null);
+      return next;
+    });
+
+  /** 지도를 끌어 옮긴다 (D155). 화면 px를 world로 환산해 중심을 반대로 민다. */
+  const onPanStart = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    movedRef.current = false;
+    dragRef.current = {
+      sx: e.clientX,
+      sy: e.clientY,
+      cx: model.center.x,
+      cy: model.center.y,
+    };
+    // **여기서 포인터를 잡지 않는다.** 캡처하면 뒤따르는 click의 대상이
+    // 잡은 요소(svg)로 바뀌어 **노드 클릭이 통째로 죽는다**(실측: 눌러도
+    // 화면이 안 움직였다). 실제로 끌기 시작한 뒤에 잡는다.
+  };
+  const onPanMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    if (!movedRef.current && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) {
+      movedRef.current = true;
+      // 이제부터는 지도 밖으로 나가도 계속 끌 수 있게 잡는다.
+      (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    }
+    if (!movedRef.current) return; // 아직 클릭일 수 있다 — 화면을 흔들지 않는다
+    setPan({
+      x: d.cx - (e.clientX - d.sx) / model.scale,
+      y: d.cy - (e.clientY - d.sy) / model.scale,
+    });
+  };
+  const onPanEnd = () => {
+    dragRef.current = null;
+  };
+  /** 끌어 옮긴 동작이었으면 클릭으로 치지 않는다. */
+  const dragged = () => movedRef.current;
 
   return (
     <div
@@ -412,6 +499,11 @@ export function Minimap({
         height={H}
         className="block"
         aria-label="개념 지도"
+        style={{ cursor: "grab", touchAction: "none" }}
+        onPointerDown={onPanStart}
+        onPointerMove={onPanMove}
+        onPointerUp={onPanEnd}
+        onPointerCancel={onPanEnd}
         onWheel={(e) => {
           // 지도 위 휠은 지도의 축척이다 — 캔버스로 넘기지 않는다.
           e.stopPropagation();
@@ -480,7 +572,7 @@ export function Minimap({
                   key={n.id}
                   transform={`translate(${n.x},${n.y})`}
                   style={{ cursor: "pointer" }}
-                  onClick={() => onJump({ x: n.wx, y: n.wy })}
+                  onClick={() => !dragged() && onFocus(n.rect)}
                 >
                   <circle r={NODE_R + 6} fill="transparent" style={{ pointerEvents: "all" }} />
                   <circle
@@ -498,7 +590,7 @@ export function Minimap({
                   key={n.id}
                   transform={`translate(${n.x},${n.y})`}
                   style={{ cursor: "pointer" }}
-                  onClick={() => onJump({ x: n.wx, y: n.wy })}
+                  onClick={() => !dragged() && onFocus(n.rect)}
                 >
                   <title>{`${n.label} — 눌러서 이동`}</title>
                   <circle r={NODE_R + 8} fill="transparent" style={{ pointerEvents: "all" }} />
@@ -540,7 +632,7 @@ export function Minimap({
                 key={d.tag}
                 transform={`translate(${d.cx},${d.cy})`}
                 style={{ cursor: "pointer" }}
-                onClick={() => onJump({ x: d.wx, y: d.wy })}
+                onClick={() => !dragged() && onFocus(d.rect)}
               >
                 <title>{`${d.label} — 글 ${d.count}개. 눌러서 이동`}</title>
                 {/* **보이지 않는 클릭 영역.**

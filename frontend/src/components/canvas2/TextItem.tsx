@@ -63,6 +63,37 @@ function peerEls(group: boolean, self: HTMLElement | null): HTMLElement[] {
       )
     : [];
   if (self && !out.includes(self)) out.push(self);
+  return withSubtrees(out);
+}
+
+/**
+ * 고른 것들 + **그 아래 가지 전부** (D154, 사용자 지시 2026-08-02:
+ * "부모 노드를 드래그해서 움직이면 모든 자식 노드가 함께 움직여야 해").
+ *
+ * DOM을 훑는 이유는 `peerEls`와 같다 — 자식 목록을 prop으로 내리면 트리가
+ * 바뀔 때마다 모든 아이템의 `memo`가 깨진다. 속성 선택자 조회는 마이크로초
+ * 단위라 드래그 시작에 한 번 부르는 정도는 아무 부담이 없다.
+ *
+ * 순환은 `seen`이 막는다 — 데이터가 꼬여도 드래그가 멈추면 안 된다.
+ */
+function withSubtrees(roots: HTMLElement[]): HTMLElement[] {
+  const out = [...roots];
+  const seen = new Set(roots.map((e) => e.getAttribute("data-canvas-item") ?? ""));
+  const queue = [...seen];
+  while (queue.length) {
+    const id = queue.shift();
+    if (!id) continue;
+    const kids = document.querySelectorAll<HTMLElement>(
+      `[data-tree-parent="${CSS.escape(id)}"]`,
+    );
+    for (const k of kids) {
+      const kid = k.getAttribute("data-canvas-item") ?? "";
+      if (!kid || seen.has(kid)) continue;
+      seen.add(kid);
+      queue.push(kid);
+      out.push(k);
+    }
+  }
   return out;
 }
 
@@ -74,6 +105,8 @@ export interface TextItemProps {
   editing: boolean;
   /** 지금 이 노드에서 이어 묻는 중인가 (D151). */
   picked: boolean;
+  /** 같은 태그 트리에서의 부모 (D154). 없으면 뿌리이거나 트리 밖이다. */
+  treeParentId: string | null;
   tagOptions: readonly string[];
   /**
    * 이 글이 답인 질문의 원문. 하단 입력창으로 물어 만든 글에만 있다.
@@ -116,6 +149,7 @@ function TextItemImpl(props: TextItemProps) {
     selected,
     editing,
     picked,
+    treeParentId,
     tagOptions,
     question,
     zoom,
@@ -328,6 +362,8 @@ function TextItemImpl(props: TextItemProps) {
       // 함께 끌 대상을 DOM에서 찾기 위한 표식. props로 선택 집합을 내려보내면
       // memo(TextItem)이 매번 깨진다.
       data-selected={selected ? "1" : undefined}
+      // 가지째 끌기 위한 표식 (D154) — `peerEls`가 이걸로 자식을 찾는다.
+      data-tree-parent={treeParentId ?? undefined}
       className="absolute"
       style={{
         left: x,

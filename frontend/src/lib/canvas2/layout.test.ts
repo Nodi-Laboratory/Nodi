@@ -427,3 +427,55 @@ describe("트리 배치 (D151)", () => {
     expect(overlaps(items).bad).toEqual([]);
   });
 });
+
+describe("자식은 부모보다 위에 놓이지 않는다 (사용자 지시 2026-08-02)", () => {
+  it("부모가 저 아래에 고정돼 있어도 자식은 그 아래다", () => {
+    const items = [
+      card("r", "물리", null, 0),
+      // 학생이 부모를 한참 아래로 끌어다 놓았다
+      { ...card("p", "물리", "r", 1), pinned: true, x: 0, y: 3000 },
+      card("c", "물리", "p", 2),
+    ];
+    const { positions } = layoutItems(items);
+    expect(positions.get("c")!.y).toBeGreaterThanOrEqual(positions.get("p")!.y);
+  });
+
+  it("고정된 노드 뒤의 형제도 그 위로 올라가지 않는다", () => {
+    const items = [
+      { ...card("a", "물리", null, 0), pinned: true, x: 0, y: 2000 },
+      card("b", "물리", "a", 1),
+      card("c", "물리", "b", 2),
+    ];
+    const { positions } = layoutItems(items);
+    expect(positions.get("b")!.y).toBeGreaterThanOrEqual(2000);
+    expect(positions.get("c")!.y).toBeGreaterThanOrEqual(positions.get("b")!.y);
+  });
+
+  it("모든 트리 간선에서 자식 y ≥ 부모 y (무작위 60케이스)", () => {
+    for (let seed = 0; seed < 60; seed++) {
+      const items: LayoutInput[] = [];
+      let prev: string | null = null;
+      for (let i = 0; i < 12; i++) {
+        const id = `n${i}`;
+        // 3의 배수마다 뿌리로 갈라지고, 5의 배수마다 고정된다
+        const parent = i % 3 === 0 ? null : prev;
+        const c = card(id, "물리", parent, i);
+        items.push(
+          (seed + i) % 5 === 0
+            ? { ...c, pinned: true, x: 0, y: ((seed * 37 + i * 91) % 20) * 120 }
+            : c,
+        );
+        prev = id;
+      }
+      const { positions } = layoutItems(items);
+      for (const it of items) {
+        if (!it.parentItemId || it.pinned) continue;
+        const p = positions.get(it.parentItemId);
+        const c = positions.get(it.id);
+        if (!p || !c) continue;
+        expect(c.y).toBeGreaterThanOrEqual(p.y);
+      }
+      expect(overlaps(items).bad).toEqual([]);
+    }
+  });
+});

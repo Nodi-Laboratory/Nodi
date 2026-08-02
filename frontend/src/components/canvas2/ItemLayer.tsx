@@ -13,6 +13,7 @@ import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Placed } from "@/lib/canvas2/layout";
 import { UNTAGGED } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
+import { treeEdges } from "@/lib/canvas2/tree";
 import { ConnectorLayer } from "./ConnectorLayer";
 import { FigureItem } from "./FigureItem";
 import type { ResizeCommit } from "./ResizeHandles";
@@ -86,6 +87,13 @@ export function ItemLayer({
     }
   }
 
+  /**
+   * 자식 → 트리 부모. 드래그가 **가지째** 따라가려면 DOM에서 자식을 찾을 수
+   * 있어야 한다(사용자 지시 2026-08-02). 선택 집합을 prop으로 내리면
+   * `memo(TextItem)`이 매번 깨지므로 표식만 내려보낸다.
+   */
+  const treeParentOf = new Map(treeEdges(items).map((e) => [e.to, e.from]));
+
   return (
     <>
       <ColumnLabels items={items} positions={positions} columnX={columnX} tagOrder={tagOrder} />
@@ -114,6 +122,7 @@ export function ItemLayer({
             selected={selectedIds.has(item.id)}
             editing={editingId === item.id}
             picked={pickedId === item.id}
+            treeParentId={treeParentOf.get(item.id) ?? null}
             question={questionOf.get(item.id) ?? null}
             tagOptions={tagOptions}
             measure={measure}

@@ -88,9 +88,22 @@ export function AskBar({ busy, reply, quote, onClearQuote, onSend, disabled, onA
           className="mb-2 flex items-start gap-2 rounded-lg px-3 py-2 text-[13px]"
           // 인용하는 것은 **AI가 쓴 답**이다 — 괘선과 같은 오커로 출처를 맞춘다.
           style={{
-            background: "var(--c-live-wash)",
+            /**
+             * **불투명해야 한다** (사용자 지적 2026-08-02: "불투명도가 너무
+             * 낮아서 배경의 글자와 겹치면 잘 안 보인다").
+             *
+             * `--c-live-wash`는 알파 0.09라 캔버스 글자가 그대로 비친다.
+             * 이 칩은 캔버스 **위에 떠 있는 UI**라 아래가 비치면 읽을 수
+             * 없다. 색조는 지키면서 불투명하게 만들려고 wash를 불투명한
+             * `--c-raised` 위에 한 겹 깐다 — 토큰을 그대로 쓰면서 결과는
+             * 완전 불투명이다(테마가 바뀌어도 따라간다).
+             */
+            background:
+              "linear-gradient(var(--c-live-wash), var(--c-live-wash)), var(--c-raised)",
             border: "1px solid var(--c-live)",
             color: "var(--c-ink)",
+            // 아래 입력창과 같은 깊이로 떠 있게 — 한 덩어리로 읽힌다.
+            boxShadow: "var(--c-shadow-md)",
           }}
         >
           <Quote size={13} style={{ color: "var(--c-live)", marginTop: 3 }} />

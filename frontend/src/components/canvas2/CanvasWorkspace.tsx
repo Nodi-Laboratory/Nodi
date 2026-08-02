@@ -377,19 +377,29 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 좌표만 맞춰 주면 된다.
    */
   const onDragEnd = useEventCallback((id: string, x: number, y: number, dx: number, dy: number) => {
-    if (!selectedIds.has(id) || selectedIds.size <= 1) {
+    /**
+     * 끈 것 + 함께 고른 것 + **그 아래 가지 전부** (D154, 사용자 지시
+     * 2026-08-02: "부모 노드를 드래그해서 움직이면 모든 자식 노드가 함께
+     * 움직여야 해").
+     *
+     * 화면에서는 이미 함께 움직였다(TextItem이 DOM을 밀었다) — 여기서는
+     * 좌표만 맞춰 준다. 한 항목으로 되돌릴 수 있게 `moveMany`를 쓴다:
+     * patch를 반복하면 되돌리기가 마지막 하나만 남아 가지 하나만 제자리로 온다.
+     */
+    const roots = selectedIds.has(id) && selectedIds.size > 1 ? [...selectedIds] : [id];
+    const all = new Set(roots);
+    for (const r of roots) for (const d of descendants(items, r)) all.add(d);
+
+    if (all.size === 1) {
       patch(id, { x, y, pinned: true });
       return;
     }
-    for (const sid of selectedIds) {
-      if (sid === id) {
-        patch(sid, { x, y, pinned: true });
-        continue;
-      }
-      const p = layout.positions.get(sid);
-      if (!p) continue;
-      patch(sid, { x: p.x + dx, y: p.y + dy, pinned: true });
-    }
+    const moves = [...all].flatMap((mid) => {
+      if (mid === id) return [{ id: mid, x, y }];
+      const p = layout.positions.get(mid);
+      return p ? [{ id: mid, x: p.x + dx, y: p.y + dy }] : [];
+    });
+    moveMany(moves, roots.length > 1 ? "위치를 옮겼습니다" : "가지를 옮겼습니다");
   });
 
   /**
@@ -685,13 +695,29 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [pickedId, pickedItem, stream],
   );
 
-  const handleMinimapJump = useCallback(
-    (world: { x: number; y: number }) => {
+  /**
+   * 지도에서 무언가를 누르면 **그것이 화면을 채우도록** 옮긴다 (D155).
+   *
+   * 예전에는 중심 좌표만 옮기고 배율은 그대로였다. 축소해 놓고 지도를 보다
+   * 노드를 누르면 여전히 깨알 같은 글자 앞에 서 있게 된다 — 지도에서 고른
+   * 이유는 그걸 **읽으려는** 것이다(사용자 지시 2026-08-02: "그 노드가
+   * 화면에 엄청 크게 보이도록 확대해서 이동").
+   *
+   * 배율은 그 사각형이 여백을 두고 들어가는 값으로 잡되 2.5배를 넘지
+   * 않는다(그 이상은 글자가 뭉개진다). 작은 노드 하나를 눌러도 화면을
+   * 가득 채운다.
+   */
+  const handleMinimapFocus = useCallback(
+    (r: { x: number; y: number; w: number; h: number }) => {
       const { w, h } = viewport();
-      const z = cameraRef.current.zoom;
-      flyTo({ zoom: z, scrollX: w / 2 / z - world.x, scrollY: h / 2 / z - world.y });
+      const pad = 120;
+      const zoom = Math.min(
+        2.5,
+        Math.max(0.2, Math.min((w - pad) / Math.max(1, r.w), (h - pad) / Math.max(1, r.h))),
+      );
+      flyTo(cameraForRect(r, { w, h }, zoom));
     },
-    [cameraRef, flyTo],
+    [flyTo],
   );
 
   /**
@@ -826,7 +852,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
             camera={bridge.camera}
             viewport={vp}
             pickedId={pickedId}
-            onJump={handleMinimapJump}
+            onFocus={handleMinimapFocus}
           />
           <div className="ui absolute bottom-28 left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2">
             <SessionFilesBar sessionId={sessionId} uploadError={uploadError} />
