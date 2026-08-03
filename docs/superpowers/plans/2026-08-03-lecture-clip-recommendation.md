@@ -2,15 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 관리자가 (학년·과목) 강의 추천 패키지에 EBS 링크를 넣으면 챕터(타임라인+제목)를 파싱·임베딩하고, 선생님이 워크스페이스에서 켜면 학생 질의에 ReAct 스킬이 관련 강의 클립을 캔버스에 추천한다.
+**Goal:** 관리자가 (학년·과목) 강의 추천 패키지에 EBS 링크·제목·자막파일을 넣으면 HTML 타임라인 목차로 챕터 경계를 잡고 그 구간 자막을 본문으로 채워 **제목+본문을 임베딩**하고 **solar-pro3로 예상 질문(원자)까지 생성·임베딩**한다. 선생님이 워크스페이스에서 켜면 학생 질의에 ReAct 스킬이 **이중 검색**으로 관련 강의 클립을 캔버스에 추천한다.
 
-**Architecture:** `textbook_figures` 골격을 미러한 admin 전역 카탈로그. 새 테이블 `lecture_packages/videos/clips` + 워크스페이스 선택 `class_lecture_packages`. 워커 잡 `lecture_parse`(EBS HTML GET+파싱→클립 행) → `lecture_embed`(제목 임베딩→Qdrant `lecture_clips`). 검색 `lecture_search`는 켠 패키지의 `package_id`로 스코프. ReAct 스킬 `search_lecture_clip`이 done 이벤트에 `clips`를 실어 프론트 `ClipItem` 카드로 배치.
+**Architecture (개정 R1):** `textbook_figures`+`chunk_atoms`(D129) 골격을 미러한 admin 전역 카탈로그. 테이블 `lecture_packages/videos/clips/clip_atoms` + 워크스페이스 선택 `class_lecture_packages`. 워커 잡 `lecture_parse`(EBS HTML GET + 자막 파싱 → 챕터 구간 본문 → 클립 행) → `lecture_embed`(제목+본문 → Qdrant `lecture_clips`) → `lecture_atom`(solar-pro3 예상 질문 → Qdrant `lecture_clip_atoms`). 검색 `lecture_search`는 켠 패키지의 `package_id`로 스코프한 **이중 검색**(직접 본문 0.55 + 원자 질문 0.45). ReAct 스킬 `search_lecture_clip`이 done 이벤트에 `clips`를 실어 프론트 `ClipItem` 카드로 배치.
 
-**Tech Stack:** FastAPI · asyncpg(RLS) · Qdrant(1024d/Cosine) · Upstage embedding-passage/query · httpx(EBS GET) · stdlib html.parser(챕터 파싱) · Next.js(App Router) · React Query.
+**Tech Stack:** FastAPI · asyncpg(RLS) · Qdrant(1024d/Cosine) · Upstage embedding-passage/query + solar.complete(solar-pro3 원자) · httpx(EBS GET) · stdlib html.parser(챕터·SMI 파싱)·정규식(SRT/VTT) · Next.js(App Router) · React Query.
 
 ## Global Constraints
 
-- **EBS 전용, 폴백 없음** — 자막 청킹·요약·유튜브/메가스터디 파서는 만들지 않는다. 챕터가 없는 영상은 파싱 실패(`lecture_videos.status='failed'`).
+- **EBS 전용** — 유튜브/메가스터디 파서는 만들지 않는다. 챕터가 없는 영상은 파싱 실패(`lecture_videos.status='failed'`).
+- **자막은 본문 컨텍스트용(개정 R1)** — 클립 경계는 EBS 챕터(타임라인 목차)가 정하고, admin이 업로드한 자막(SRT/VTT/SMI)은 그 구간의 **본문(transcript)**을 채운다. 자막을 청킹 경계로 쓰지 않는다.
+- **임베딩 텍스트 = 제목 + 본문**. 그리고 **PIKE-RAG 원자(D129 미러)**: solar-pro3가 본문에서 예상 질문을 생성해 별도 컬렉션에 임베딩, 이중 검색으로 어휘 간극을 메운다. 원자 실패는 격리(클립은 본문으로 동작).
+- **원자 모델 오버라이드**: `solar.complete()`에 per-call `model` 인자가 없으므로 kwarg를 추가해 원자화만 `lecture_atom_model`(기본 `solar-pro3`)로 돌린다 — 전역 `upstage_chat_model`(solar-pro2)은 안 건드린다. solar-pro3 가용성은 구현 시 검증, 실패는 원자 격리로 흡수.
 - **딥링크 seek 안 함** — 추천 카드는 공식 EBS **페이지 링크**(`page_url`)를 새 탭으로 열고, 타임라인 시각은 텍스트로만 보여준다. MP4 핫링크·`#t=`·헤드리스 브라우저 없음.
 - **Qdrant 페이로드는 식별자만** — `{clip_id, video_id, package_id}`. 제목·URL·시각 금지. 히트 후 Postgres 재조회.
 - **거리 규약** `distance = 1 - score`. **임베딩 비대칭** — 질의 `embedding-query`, 문서 `embedding-passage`.
@@ -21,27 +24,28 @@
 - **주석·커밋 한국어**, 설계 결정은 D-번호. 커밋 프리픽스 `[feat]:`/`[fix]:`/`[docs]:`/`[tune]:`. 커밋 트레일러는 저장소 관례를 따른다.
 - **테스트**: 백엔드 `cd backend && uv run pytest tests/ -v`(전부 mock). 프론트 `cd frontend && npx tsc --noEmit && npm run build`, 순수 함수는 `npm test`(vitest).
 - **API 경로는 `/api` 접두사** — 라우터 prefix + main.py의 `/api`.
-- 이 기능의 D-번호는 **D147**로 통일해 코드 주석·커밋에 남긴다.
+- 이 기능의 D-번호는 **D149**로 통일해 코드 주석·커밋에 남긴다.
 
 ---
 
 ## Task 1: DB 스키마 — 테이블·RLS·GRANT·jobs.kind 확장
 
 **Files:**
-- Create: `db/migrations/2026-08-03-d147-lecture-clips.sql`
+- Create: `db/migrations/2026-08-03-d149-lecture-clips.sql`
 - Modify: `db/01_schema.sql` (신규 볼륨 반영 — 테이블 DDL·RLS·GRANT·jobs_kind_check)
 - Test: `backend/tests/test_lecture_schema.py`
 
 **Interfaces:**
 - Produces: 테이블 `lecture_packages(id,grade,subject,title,created_by,created_at)`,
-  `lecture_videos(id,package_id,source,page_url,title,status,error,created_at)`,
-  `lecture_clips(id,video_id,seq,start_sec,title,status,created_at)`,
-  `class_lecture_packages(class_id,package_id,created_at)`. jobs.kind에 `lecture_parse`,`lecture_embed` 추가.
+  `lecture_videos(id,package_id,source,page_url,subtitle_path,title,status,error,created_at)`,
+  `lecture_clips(id,video_id,seq,start_sec,end_sec,title,transcript,status,created_at)`,
+  `lecture_clip_atoms(id,clip_id,package_id,question,status,created_at)`,
+  `class_lecture_packages(class_id,package_id,created_at)`. jobs.kind에 `lecture_parse`,`lecture_embed`,`lecture_atom` 추가.
 
-- [ ] **Step 1: 마이그레이션 파일 작성** — `db/migrations/2026-08-03-d147-lecture-clips.sql`:
+- [ ] **Step 1: 마이그레이션 파일 작성** — `db/migrations/2026-08-03-d149-lecture-clips.sql`:
 
 ```sql
--- D147: 강의 클립(숏폼) 추천 — admin 전역 카탈로그.
+-- D149: 강의 클립(숏폼) 추천 — admin 전역 카탈로그.
 -- 멱등(deploy.sh가 매 배포 재적용). 신규 볼륨 기동은 db/01_schema.sql이 커버.
 begin;
 
@@ -61,6 +65,7 @@ CREATE TABLE IF NOT EXISTS public.lecture_videos (
     package_id uuid NOT NULL REFERENCES public.lecture_packages(id) ON DELETE CASCADE,
     source text DEFAULT 'ebs'::text NOT NULL,
     page_url text NOT NULL,
+    subtitle_path text,                 -- 업로드한 자막 Storage 경로(개정 R1)
     title text DEFAULT ''::text NOT NULL,
     status text DEFAULT 'pending'::text NOT NULL,
     error text,
@@ -70,13 +75,15 @@ CREATE TABLE IF NOT EXISTS public.lecture_videos (
 );
 CREATE INDEX IF NOT EXISTS idx_lecture_videos_package ON public.lecture_videos (package_id);
 
--- 챕터 = 클립. 임베딩 텍스트는 title. 타임라인 라벨은 start_sec에서 파생(비저장).
+-- 챕터 = 클립. 임베딩 텍스트는 제목+본문(transcript). 타임라인 라벨은 start_sec 파생.
 CREATE TABLE IF NOT EXISTS public.lecture_clips (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     video_id uuid NOT NULL REFERENCES public.lecture_videos(id) ON DELETE CASCADE,
     seq integer NOT NULL,
     start_sec integer NOT NULL,
+    end_sec integer,                    -- 다음 챕터 시작 = 구간 끝(마지막은 NULL, 개정 R1)
     title text NOT NULL,
+    transcript text DEFAULT ''::text NOT NULL,   -- 챕터 구간 자막 본문(개정 R1)
     status text DEFAULT 'pending'::text NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     CONSTRAINT lecture_clips_status_check CHECK
@@ -84,6 +91,19 @@ CREATE TABLE IF NOT EXISTS public.lecture_clips (
     CONSTRAINT lecture_clips_video_seq_key UNIQUE (video_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_lecture_clips_video ON public.lecture_clips (video_id, status);
+
+-- 원자 질문(PIKE-RAG D129 미러) — solar-pro3가 클립 본문에서 생성한 예상 질문.
+CREATE TABLE IF NOT EXISTS public.lecture_clip_atoms (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    clip_id uuid NOT NULL REFERENCES public.lecture_clips(id) ON DELETE CASCADE,
+    package_id uuid NOT NULL REFERENCES public.lecture_packages(id) ON DELETE CASCADE,
+    question text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    created_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT lecture_clip_atoms_status_check CHECK
+      ((status = ANY (ARRAY['pending'::text,'embedded'::text,'failed'::text])))
+);
+CREATE INDEX IF NOT EXISTS idx_lecture_clip_atoms_clip ON public.lecture_clip_atoms (clip_id, status);
 
 -- 선생님이 워크스페이스에 켠 패키지
 CREATE TABLE IF NOT EXISTS public.class_lecture_packages (
@@ -97,7 +117,8 @@ CREATE TABLE IF NOT EXISTS public.class_lecture_packages (
 ALTER TABLE public.jobs DROP CONSTRAINT IF EXISTS jobs_kind_check;
 ALTER TABLE public.jobs ADD CONSTRAINT jobs_kind_check CHECK
   ((kind = ANY (ARRAY['embedding_split'::text,'embedding_batch'::text,'figure_batch'::text,
-                      'atom_batch'::text,'lecture_parse'::text,'lecture_embed'::text])));
+                      'atom_batch'::text,'lecture_parse'::text,'lecture_embed'::text,
+                      'lecture_atom'::text])));
 
 -- RLS: 카탈로그는 전역 콘텐츠 — 인증 사용자 읽기, admin 쓰기. 워커(BYPASSRLS) 인제스트.
 ALTER TABLE public.lecture_packages ENABLE ROW LEVEL SECURITY;
@@ -118,6 +139,12 @@ CREATE POLICY lecture_clips_select ON public.lecture_clips FOR SELECT USING ((au
 DROP POLICY IF EXISTS lecture_clips_admin ON public.lecture_clips;
 CREATE POLICY lecture_clips_admin ON public.lecture_clips FOR ALL USING ((SELECT public.is_admin())) WITH CHECK ((SELECT public.is_admin()));
 
+ALTER TABLE public.lecture_clip_atoms ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lecture_clip_atoms_select ON public.lecture_clip_atoms;
+CREATE POLICY lecture_clip_atoms_select ON public.lecture_clip_atoms FOR SELECT USING ((auth.uid() IS NOT NULL));
+DROP POLICY IF EXISTS lecture_clip_atoms_admin ON public.lecture_clip_atoms;
+CREATE POLICY lecture_clip_atoms_admin ON public.lecture_clip_atoms FOR ALL USING ((SELECT public.is_admin())) WITH CHECK ((SELECT public.is_admin()));
+
 ALTER TABLE public.class_lecture_packages ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS clp_select_member ON public.class_lecture_packages;
 CREATE POLICY clp_select_member ON public.class_lecture_packages FOR SELECT
@@ -128,44 +155,49 @@ CREATE POLICY clp_write_teacher ON public.class_lecture_packages FOR ALL
   WITH CHECK (class_id IN (SELECT public.my_taught_class_ids()));
 
 -- GRANT: admin은 nodi_app 역할로 쓰기(RLS가 is_admin 강제). 워커 full.
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.lecture_packages, public.lecture_videos, public.lecture_clips TO nodi_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.lecture_packages, public.lecture_videos, public.lecture_clips, public.lecture_clip_atoms TO nodi_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.class_lecture_packages TO nodi_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.lecture_packages, public.lecture_videos, public.lecture_clips TO nodi_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.lecture_packages, public.lecture_videos, public.lecture_clips, public.lecture_clip_atoms TO nodi_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.class_lecture_packages TO nodi_worker;
 
 commit;
 ```
 
-- [ ] **Step 2: `db/01_schema.sql`에 동일 반영** — 위 4개 `CREATE TABLE`(IF NOT EXISTS 없이 스키마 스타일로), 인덱스, RLS ENABLE+POLICY, GRANT를 스키마 파일의 해당 섹션(테이블은 다른 CREATE TABLE 근처, 정책은 RLS 블록, GRANT는 GRANT 블록)에 추가하고, `jobs_kind_check`의 배열에 `'lecture_parse'`,`'lecture_embed'`를 추가한다. (신규 볼륨 기동 커버용. `db/01_schema.sql:580`의 jobs_kind_check 라인을 확장.)
+- [ ] **Step 2: `db/01_schema.sql`에 동일 반영** — 위 **5개** `CREATE TABLE`(lecture_packages/videos/clips/clip_atoms/class_lecture_packages, IF NOT EXISTS 없이 스키마 스타일로 — `subtitle_path`·`end_sec`·`transcript` 컬럼 포함), 인덱스, RLS ENABLE+POLICY, GRANT를 스키마 파일 해당 섹션에 추가하고, `jobs_kind_check`의 배열에 `'lecture_parse'`,`'lecture_embed'`,`'lecture_atom'`을 추가한다. (신규 볼륨 기동 커버용. `db/01_schema.sql:580`의 jobs_kind_check 라인을 확장.)
 
 - [ ] **Step 3: 실패 테스트 작성** — `backend/tests/test_lecture_schema.py` (SQL 텍스트 정합성 검사, DB 없이):
 
 ```python
 from pathlib import Path
 
-MIG = Path(__file__).resolve().parents[2] / "db/migrations/2026-08-03-d147-lecture-clips.sql"
+MIG = Path(__file__).resolve().parents[2] / "db/migrations/2026-08-03-d149-lecture-clips.sql"
 SCHEMA = Path(__file__).resolve().parents[2] / "db/01_schema.sql"
 
 def test_migration_idempotent_and_tables():
     sql = MIG.read_text(encoding="utf-8")
-    for t in ("lecture_packages", "lecture_videos", "lecture_clips", "class_lecture_packages"):
+    for t in ("lecture_packages", "lecture_videos", "lecture_clips",
+              "lecture_clip_atoms", "class_lecture_packages"):
         assert f"CREATE TABLE IF NOT EXISTS public.{t}" in sql
+    assert "subtitle_path" in sql and "transcript" in sql and "end_sec" in sql
     assert "DROP POLICY IF EXISTS" in sql
-    assert "'lecture_parse'" in sql and "'lecture_embed'" in sql
-    assert sql.strip().startswith("-- D147") and "begin;" in sql and "commit;" in sql
+    for k in ("'lecture_parse'", "'lecture_embed'", "'lecture_atom'"):
+        assert k in sql
+    assert sql.strip().startswith("-- D149") and "begin;" in sql and "commit;" in sql
 
 def test_schema_mirrors_migration():
     sql = SCHEMA.read_text(encoding="utf-8")
-    for t in ("lecture_packages", "lecture_videos", "lecture_clips", "class_lecture_packages"):
+    for t in ("lecture_packages", "lecture_videos", "lecture_clips",
+              "lecture_clip_atoms", "class_lecture_packages"):
         assert f"public.{t}" in sql
-    assert "'lecture_parse'" in sql and "'lecture_embed'" in sql
+    for k in ("'lecture_parse'", "'lecture_embed'", "'lecture_atom'"):
+        assert k in sql
 ```
 
 - [ ] **Step 4: 테스트 실행** — Run: `cd backend && uv run pytest tests/test_lecture_schema.py -v` — Expected: PASS.
 
 - [ ] **Step 5: 로컬 DB 재기동으로 스키마 검증** — Run: `cd /Users/dhkim/Desktop/ai-rookie/Nodi && docker-compose down -v && docker-compose up -d && sleep 6 && docker exec nodi-postgres-1 psql -U nodi_worker -d nodi -c "\dt public.lecture_*"` — Expected: 3개 테이블 표시. **주의: `down -v`는 계정을 지운다** — 검증 후 필요한 계정을 CLI로 재생성.
 
-- [ ] **Step 6: Commit** — `git add db/migrations/2026-08-03-d147-lecture-clips.sql db/01_schema.sql backend/tests/test_lecture_schema.py && git commit -m "[feat]: 강의 클립 테이블·RLS·GRANT + jobs.kind 확장 (D147)"`
+- [ ] **Step 6: Commit** — `git add db/migrations/2026-08-03-d149-lecture-clips.sql db/01_schema.sql backend/tests/test_lecture_schema.py && git commit -m "[feat]: 강의 클립 테이블·RLS·GRANT + jobs.kind 확장 (D149)"`
 
 ---
 
@@ -221,7 +253,7 @@ def test_fmt_timeline():
 - [ ] **Step 4: 구현** — `backend/app/services/lecture_parse.py`:
 
 ```python
-"""EBS 강의 플레이어 페이지 파싱 (D147).
+"""EBS 강의 플레이어 페이지 파싱 (D149).
 
 EBS는 챕터 목차를 초기 HTML에 서버렌더한다 — 각 항목의 onclick에
 `player.Command.seek(<초>)`, 텍스트에 `[MM:SS] 제목`. 무의존성(stdlib html.parser)
@@ -336,7 +368,192 @@ async def fetch_ebs_html(url: str) -> str:
 
 - [ ] **Step 5: 테스트 통과 확인** — Run: `cd backend && uv run pytest tests/test_lecture_parse.py -v` — Expected: PASS (3 tests).
 
-- [ ] **Step 6: Commit** — `git add backend/app/services/lecture_parse.py backend/tests/test_lecture_parse.py backend/tests/fixtures/ebs_player.html && git commit -m "[feat]: EBS 챕터 파서 + 타임라인 포맷 (D147)"`
+- [ ] **Step 6: Commit** — `git add backend/app/services/lecture_parse.py backend/tests/test_lecture_parse.py backend/tests/fixtures/ebs_player.html && git commit -m "[feat]: EBS 챕터 파서 + 타임라인 포맷 (D149)"`
+
+---
+
+## Task 2B: 자막 파서 + 구간 슬라이스 (순수 함수)
+
+**Files:**
+- Create: `backend/app/services/subtitle_parse.py`
+- Create: `backend/tests/fixtures/sample.srt`, `backend/tests/fixtures/sample.smi`
+- Test: `backend/tests/test_subtitle_parse.py`
+
+**Interfaces:**
+- Produces: `@dataclass Cue(start_ms:int, end_ms:int, text:str)`;
+  `parse_subtitle(data:bytes, filename:str) -> list[Cue]` (SRT/VTT/SMI, 확장자·내용으로 형식 판별);
+  `transcript_for(cues:list[Cue], start_sec:int, end_sec:int|None) -> str` (구간에 걸친 큐 텍스트를 이어붙임).
+
+- [ ] **Step 1: 픽스처** — `backend/tests/fixtures/sample.srt`:
+
+```
+1
+00:00:12,000 --> 00:00:15,000
+전시과는 관리에게 토지를 나눠 주는 제도입니다.
+
+2
+00:14:56,000 --> 00:15:30,000
+고려의 토지 제도는 전시과를 중심으로 운영됐습니다.
+```
+`backend/tests/fixtures/sample.smi`:
+
+```
+<SAMI><BODY>
+<SYNC Start=12000><P Class=KRCC>전시과는 관리에게 토지를 나눠 주는 제도입니다.
+<SYNC Start=15000><P Class=KRCC>&nbsp;
+<SYNC Start=896000><P Class=KRCC>고려의 토지 제도는 전시과를 중심으로 운영됐습니다.
+<SYNC Start=930000><P Class=KRCC>&nbsp;
+</BODY></SAMI>
+```
+
+- [ ] **Step 2: 실패 테스트** — `backend/tests/test_subtitle_parse.py`:
+
+```python
+from pathlib import Path
+from app.services.subtitle_parse import parse_subtitle, transcript_for, Cue
+
+FIX = Path(__file__).parent / "fixtures"
+
+def test_parse_srt():
+    cues = parse_subtitle((FIX / "sample.srt").read_bytes(), "sample.srt")
+    assert cues[0].start_ms == 12000 and "전시과" in cues[0].text
+    assert cues[1].start_ms == 896000
+
+def test_parse_smi_end_is_next_sync():
+    cues = parse_subtitle((FIX / "sample.smi").read_bytes(), "sample.smi")
+    # &nbsp; 빈 큐는 버리고, end_ms는 다음 SYNC 시작
+    texts = [c.text for c in cues]
+    assert any("전시과는 관리에게" in t for t in texts)
+    assert cues[0].end_ms == 15000
+
+def test_transcript_for_slices_by_range():
+    cues = [Cue(12000, 15000, "A"), Cue(896000, 930000, "B고려"), Cue(1318000, 1350000, "C")]
+    out = transcript_for(cues, 896, 1318)   # [896s, 1318s)
+    assert "B고려" in out and "C" not in out and "A" not in out
+
+def test_empty_when_no_cues_in_range():
+    assert transcript_for([Cue(0, 1000, "x")], 896, 1318) == ""
+```
+
+- [ ] **Step 3: 실패 확인** — Run: `cd backend && uv run pytest tests/test_subtitle_parse.py -v` — Expected: FAIL (ImportError).
+
+- [ ] **Step 4: 구현** — `backend/app/services/subtitle_parse.py`:
+
+```python
+"""자막 파서 (D149, 개정 R1) — SRT/VTT/SMI → 큐, 구간 슬라이스.
+
+클립 경계는 EBS 챕터가 정하고, 이 파서는 그 구간의 본문 컨텍스트만 만든다.
+무의존성(stdlib re/html.parser). 어떤 형식 실패도 빈 리스트로 강등한다.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+from html.parser import HTMLParser
+
+logger = logging.getLogger("nodi.subtitle_parse")
+
+# SRT/VTT 타임코드: 00:00:12,000 또는 00:00:12.000 (시간 생략 가능)
+_TS = r"(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})"
+_RANGE_RE = re.compile(_TS + r"\s*-->\s*" + _TS)
+_SYNC_RE = re.compile(r"<SYNC\s+Start\s*=\s*(\d+)", re.IGNORECASE)
+
+
+@dataclass
+class Cue:
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+def _to_ms(h: str | None, m: str, s: str, frac: str) -> int:
+    ms = int((frac + "000")[:3])
+    return ((int(h or 0) * 3600) + int(m) * 60 + int(s)) * 1000 + ms
+
+
+def _clean(text: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", text)          # 태그 제거
+    text = text.replace("&nbsp;", " ").replace("&amp;", "&")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _parse_srt_vtt(raw: str) -> list[Cue]:
+    cues: list[Cue] = []
+    blocks = re.split(r"\n\s*\n", raw.replace("\r\n", "\n").replace("﻿", ""))
+    for block in blocks:
+        m = _RANGE_RE.search(block)
+        if not m:
+            continue
+        start = _to_ms(m.group(1), m.group(2), m.group(3), m.group(4))
+        end = _to_ms(m.group(5), m.group(6), m.group(7), m.group(8))
+        text = _clean(block[m.end():])
+        if text:
+            cues.append(Cue(start, end, text))
+    return cues
+
+
+class _SmiParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.syncs: list[tuple[int, list[str]]] = []
+        self._cur: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "sync":
+            start = dict((k.lower(), v) for k, v in attrs).get("start")
+            if start and start.isdigit():
+                self._cur = []
+                self.syncs.append((int(start), self._cur))
+
+    def handle_data(self, data: str) -> None:
+        if self._cur is not None:
+            s = data.strip()
+            if s:
+                self._cur.append(s)
+
+
+def _parse_smi(raw: str) -> list[Cue]:
+    p = _SmiParser()
+    p.feed(raw)
+    cues: list[Cue] = []
+    syncs = p.syncs
+    for i, (start, parts) in enumerate(syncs):
+        text = _clean(" ".join(parts))
+        end = syncs[i + 1][0] if i + 1 < len(syncs) else start + 5000
+        if text:
+            cues.append(Cue(start, end, text))
+    return cues
+
+
+def parse_subtitle(data: bytes, filename: str) -> list[Cue]:
+    """SRT/VTT/SMI 자막 → 큐. 실패는 빈 리스트."""
+    try:
+        raw = data.decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        return []
+    name = (filename or "").lower()
+    try:
+        if name.endswith(".smi") or "<sync" in raw[:2000].lower():
+            return _parse_smi(raw)
+        return _parse_srt_vtt(raw)     # .srt / .vtt 공통(VTT는 WEBVTT 헤더만 다름)
+    except Exception:  # noqa: BLE001
+        logger.warning("자막 파싱 예외 — 빈 큐", exc_info=True)
+        return []
+
+
+def transcript_for(cues: list[Cue], start_sec: int, end_sec: int | None) -> str:
+    """[start_sec, end_sec) 구간에 시작하는 큐 텍스트를 순서대로 이어붙인다.
+    end_sec=None이면 start_sec 이후 전부."""
+    lo = start_sec * 1000
+    hi = end_sec * 1000 if end_sec is not None else None
+    picked = [c.text for c in cues if c.start_ms >= lo and (hi is None or c.start_ms < hi)]
+    return " ".join(picked).strip()
+```
+
+- [ ] **Step 5: 통과 확인** — Run: `cd backend && uv run pytest tests/test_subtitle_parse.py -v` — Expected: PASS.
+
+- [ ] **Step 6: Commit** — `git add backend/app/services/subtitle_parse.py backend/tests/test_subtitle_parse.py backend/tests/fixtures/sample.srt backend/tests/fixtures/sample.smi && git commit -m "[feat]: 자막 파서(SRT/VTT/SMI) + 구간 슬라이스 (D149)"`
 
 ---
 
@@ -348,7 +565,7 @@ async def fetch_ebs_html(url: str) -> str:
 
 **Interfaces:**
 - Consumes: `qdrant_store.search(collection, vector, k, *, file_ids, score_threshold)` 기존 시그니처.
-- Produces: `COL_LECTURE_CLIPS = "lecture_clips"`; `search(..., scope_field: str = "file_id")` — file_ids가 주어질 때 payload 필터 키를 `scope_field`로.
+- Produces: `COL_LECTURE_CLIPS = "lecture_clips"`, `COL_LECTURE_CLIP_ATOMS = "lecture_clip_atoms"`; `search(..., scope_field: str = "file_id")` — file_ids가 주어질 때 payload 필터 키를 `scope_field`로.
 
 - [ ] **Step 1: 실패 테스트 작성** — `backend/tests/test_qdrant_lecture.py`:
 
@@ -357,6 +574,7 @@ from app.services import qdrant_store
 
 def test_collection_constant():
     assert qdrant_store.COL_LECTURE_CLIPS == "lecture_clips"
+    assert qdrant_store.COL_LECTURE_CLIP_ATOMS == "lecture_clip_atoms"
 
 def test_search_has_scope_field_param():
     import inspect
@@ -368,18 +586,21 @@ def test_search_has_scope_field_param():
 - [ ] **Step 2: 실패 확인** — Run: `cd backend && uv run pytest tests/test_qdrant_lecture.py -v` — Expected: FAIL (AttributeError).
 
 - [ ] **Step 3: 구현** — `qdrant_store.py`:
-  - COL 상수 추가(기존 상수 옆, `qdrant_store.py:29` 근처): `COL_LECTURE_CLIPS = "lecture_clips"  # 강의 클립 제목 임베딩 (D147)`
-  - `ensure_collections`의 컬렉션 튜플에 `COL_LECTURE_CLIPS` 추가, 그리고 payload 인덱스 블록을 미러(키는 `package_id`):
+  - COL 상수 추가(기존 상수 옆, `qdrant_store.py:29` 근처):
+    `COL_LECTURE_CLIPS = "lecture_clips"        # 클립 제목+본문 임베딩 (D149)`
+    `COL_LECTURE_CLIP_ATOMS = "lecture_clip_atoms"  # 클립 원자 질문 임베딩 (D149)`
+  - `ensure_collections`의 컬렉션 튜플에 두 상수 추가, 그리고 payload 인덱스 블록을 각각 미러(키는 `package_id`):
 
 ```python
-        try:
-            await client.create_payload_index(
-                collection_name=COL_LECTURE_CLIPS,
-                field_name="package_id",
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
-        except Exception:  # noqa: BLE001
-            logger.debug("lecture_clips package_id 인덱스 생성 생략")
+        for col in (COL_LECTURE_CLIPS, COL_LECTURE_CLIP_ATOMS):
+            try:
+                await client.create_payload_index(
+                    collection_name=col,
+                    field_name="package_id",
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("%s package_id 인덱스 생성 생략", col)
 ```
   - `search`에 `scope_field` 파라미터 추가 — FieldCondition 키를 매개변수화:
 
@@ -390,7 +611,7 @@ async def search(
     k: int,
     *,
     file_ids: list[str] | None = None,
-    scope_field: str = "file_id",   # D147: 강의 클립은 "package_id"로 스코프
+    scope_field: str = "file_id",   # D149: 강의 클립은 "package_id"로 스코프
     score_threshold: float | None = None,
 ) -> list[dict]:
     if file_ids is not None and not file_ids:
@@ -404,7 +625,7 @@ async def search(
 
 - [ ] **Step 4: 통과 확인** — Run: `cd backend && uv run pytest tests/test_qdrant_lecture.py -v` — Expected: PASS. 그리고 기존 figure 검색 회귀 없음: `uv run pytest tests/ -k figure -q`.
 
-- [ ] **Step 5: Commit** — `git add backend/app/services/qdrant_store.py backend/tests/test_qdrant_lecture.py && git commit -m "[feat]: Qdrant lecture_clips 컬렉션 + search scope_field 일반화 (D147)"`
+- [ ] **Step 5: Commit** — `git add backend/app/services/qdrant_store.py backend/tests/test_qdrant_lecture.py && git commit -m "[feat]: Qdrant lecture_clips 컬렉션 + search scope_field 일반화 (D149)"`
 
 ---
 
@@ -417,7 +638,7 @@ async def search(
 - Test: `backend/tests/test_lecture_tunables.py`
 
 **Interfaces:**
-- Produces: `settings.lecture_pipeline_enabled(bool=True)`, `settings.lecture_retrieve_max_distance(float=0.55)`, `settings.lecture_retrieve_top_k(int=3)`, `settings.lecture_batch_size(int=16)`. app_settings 키 `lecture_pipeline_enabled`,`lecture_retrieve_max_distance`.
+- Produces: config `lecture_pipeline_enabled(True)`, `lecture_retrieve_max_distance(0.55)`, `lecture_atom_enabled(True)`, `lecture_atom_max_distance(0.45)`, `lecture_atoms_per_clip(4)`, `lecture_atom_concurrency(4)`, `lecture_atom_model("solar-pro3")`, `lecture_retrieve_top_k(3)`, `lecture_batch_size(16)`. 오버레이 키 6개(model·top_k·batch_size 제외).
 
 - [ ] **Step 1: 실패 테스트** — `backend/tests/test_lecture_tunables.py`:
 
@@ -430,17 +651,27 @@ def test_config_defaults():
     s = get_settings()
     assert s.lecture_pipeline_enabled is True
     assert s.lecture_retrieve_max_distance == 0.55
+    assert s.lecture_atom_enabled is True
+    assert s.lecture_atom_max_distance == 0.45
+    assert s.lecture_atoms_per_clip == 4
+    assert s.lecture_atom_concurrency == 4
+    assert s.lecture_atom_model == "solar-pro3"
     assert s.lecture_retrieve_top_k == 3
     assert s.lecture_batch_size == 16
 
 def test_app_settings_seed_has_lecture_knobs():
     sql = (Path(__file__).resolve().parents[2] / "db/03_app_settings.sql").read_text()
-    assert "'lecture_pipeline_enabled'" in sql and "'lecture_retrieve_max_distance'" in sql
+    for k in ("'lecture_pipeline_enabled'", "'lecture_retrieve_max_distance'",
+              "'lecture_atom_enabled'", "'lecture_atom_max_distance'",
+              "'lecture_atoms_per_clip'", "'lecture_atom_concurrency'"):
+        assert k in sql
 
 def test_admin_console_widgets_present():
     keys = {s["key"] for s in admin_console._SPECS}
-    assert "lecture_pipeline_enabled" in keys
-    assert "lecture_retrieve_max_distance" in keys
+    for k in ("lecture_pipeline_enabled", "lecture_retrieve_max_distance",
+              "lecture_atom_enabled", "lecture_atom_max_distance",
+              "lecture_atoms_per_clip", "lecture_atom_concurrency"):
+        assert k in keys
 ```
 
 - [ ] **Step 2: 실패 확인** — Run: `cd backend && uv run pytest tests/test_lecture_tunables.py -v` — Expected: FAIL.
@@ -448,20 +679,30 @@ def test_admin_console_widgets_present():
 - [ ] **Step 3: config.py** — figure 노브 블록(`config.py:137` 이후)에 추가:
 
 ```python
-    # --- 강의 클립 추천 (D147) ---
+    # --- 강의 클립 추천 (D149) ---
     lecture_pipeline_enabled: bool = True          # 인제스트 킬 스위치
-    lecture_retrieve_max_distance: float = 0.55    # distance=1-score 게이트
+    lecture_retrieve_max_distance: float = 0.55    # 직접(본문) 거리 게이트
+    lecture_atom_enabled: bool = True              # PIKE 원자화+이중 검색
+    lecture_atom_max_distance: float = 0.45        # 원자(질문) 거리 게이트
+    lecture_atoms_per_clip: int = 4                # 클립당 생성 질문 수
+    lecture_atom_concurrency: int = 4              # solar 동시 호출
+    lecture_atom_model: str = "solar-pro3"         # 원자 생성 모델(config/env 전용)
     lecture_retrieve_top_k: int = 3                # 추천 개수(config 전용)
-    lecture_batch_size: int = 16                   # lecture_embed 잡 팬아웃 단위
+    lecture_batch_size: int = 16                   # 임베딩/원자 잡 팬아웃 단위
 ```
 
 - [ ] **Step 4: 03_app_settings.sql** — INSERT VALUES 목록에 두 줄 추가(마지막 값 뒤 콤마 규칙 주의 — 기존 마지막 항목 뒤에 콤마 추가 후 삽입):
 
 ```sql
-    -- 강의 클립 추천 (D147)
+    -- 강의 클립 추천 (D149)
     ('lecture_pipeline_enabled',        'true'),
-    ('lecture_retrieve_max_distance',   '0.55')
+    ('lecture_retrieve_max_distance',   '0.55'),
+    ('lecture_atom_enabled',            'true'),
+    ('lecture_atom_max_distance',       '0.45'),
+    ('lecture_atoms_per_clip',          '4'),
+    ('lecture_atom_concurrency',        '4')
 ```
+(주의: `lecture_retrieve_top_k`·`lecture_batch_size`·`lecture_atom_model`은 오버레이 없음 — config/env 전용.)
 
 - [ ] **Step 5: admin_console.py** — `_SPECS` 리스트에 두 위젯 추가(figure 스펙 형식 그대로):
 
@@ -477,19 +718,108 @@ def test_admin_console_widgets_present():
     },
     {
         "key": "lecture_retrieve_max_distance",
-        "label": "강의 클립 거리 게이트",
+        "label": "강의 클립 거리 게이트(직접)",
         "group": "RAG 검색",
         "widget": "slider",
         "min": 0.1, "max": 0.9, "step": 0.05,
         "scope": "live",
-        "description": "강의 클립 추천에 적용하는 거리 컷오프.",
+        "description": "클립 본문 직접 검색의 거리 컷오프.",
         "effect": "클립 추천 엄격도",
+    },
+    {
+        "key": "lecture_atom_enabled",
+        "label": "강의 원자화 + 이중 검색",
+        "group": "강의 클립",
+        "widget": "toggle",
+        "scope": "new-only",
+        "description": "클립 본문에서 solar-pro3로 예상 질문을 생성해 이중 검색할지.",
+        "effect": "구어체 질의 매칭 향상",
+    },
+    {
+        "key": "lecture_atom_max_distance",
+        "label": "강의 원자 거리 게이트",
+        "group": "RAG 검색",
+        "widget": "slider",
+        "min": 0.1, "max": 0.9, "step": 0.05,
+        "scope": "live",
+        "description": "원자(생성 질문) 검색의 거리 컷오프. 직접보다 엄격하게.",
+        "effect": "원자 경유 추천 엄격도",
+    },
+    {
+        "key": "lecture_atoms_per_clip",
+        "label": "클립당 예상 질문 수",
+        "group": "강의 클립",
+        "widget": "number",
+        "min": 1, "max": 8, "step": 1, "unit": "개",
+        "scope": "new-only",
+        "description": "클립 하나당 solar가 생성할 예상 질문 개수.",
+        "effect": "원자 커버리지 ↔ 생성 비용",
+    },
+    {
+        "key": "lecture_atom_concurrency",
+        "label": "강의 원자 생성 동시성",
+        "group": "강의 클립",
+        "widget": "number",
+        "min": 1, "max": 16, "step": 1,
+        "scope": "new-only",
+        "description": "원자 생성 solar 호출을 몇 개씩 병렬로 돌릴지.",
+        "effect": "인제스트 속도 ↔ 모델 부하",
     },
 ```
 
 - [ ] **Step 6: 통과 확인** — Run: `cd backend && uv run pytest tests/test_lecture_tunables.py -v` — Expected: PASS.
 
-- [ ] **Step 7: Commit** — `git add backend/app/config.py db/03_app_settings.sql backend/app/services/admin_console.py backend/tests/test_lecture_tunables.py && git commit -m "[tune]: 강의 클립 튜너블 3곳 동기 (D147)"`
+- [ ] **Step 7: Commit** — `git add backend/app/config.py db/03_app_settings.sql backend/app/services/admin_console.py backend/tests/test_lecture_tunables.py && git commit -m "[tune]: 강의 클립 튜너블 3곳 동기 (D149)"`
+
+---
+
+## Task 4B: `solar.complete()` per-call 모델 오버라이드
+
+**Files:**
+- Modify: `backend/app/services/solar.py` (`complete`에 `model` kwarg)
+- Test: `backend/tests/test_solar_model_override.py`
+
+**Interfaces:**
+- Produces: `solar.complete(messages, *, tools=None, max_tokens=None, model: str | None = None)` — `payload["model"] = model or settings.upstage_chat_model`. 기본 동작(전역 채팅) 불변.
+
+- [ ] **Step 1: 실패 테스트** — `backend/tests/test_solar_model_override.py`:
+
+```python
+import inspect
+from app.services import solar
+
+def test_complete_accepts_model_kwarg():
+    sig = inspect.signature(solar.complete)
+    assert "model" in sig.parameters
+    assert sig.parameters["model"].default is None
+```
+
+- [ ] **Step 2: 실패 확인** — Run: `cd backend && uv run pytest tests/test_solar_model_override.py -v` — Expected: FAIL.
+
+- [ ] **Step 3: 구현** — `solar.py`의 `complete` 시그니처·payload(`solar.py:253-274`):
+
+```python
+async def complete(
+    messages: list[dict[str, Any]],
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,          # D149: 원자화만 solar-pro3로. None=전역 채팅 모델.
+) -> Completion:
+    url, default_model, key = _require_config()
+    payload: dict[str, Any] = {
+        "model": model or default_model,
+        "messages": messages,
+        "temperature": settings.chat_temperature,
+        "max_tokens": max_tokens or settings.chat_max_tokens,
+    }
+    # ... (이하 tools 병합·요청 로직 그대로)
+```
+(주의: 기존 `_require_config()`가 `(url, model, key)`를 반환하므로 지역변수명을 `default_model`로 받아 `model or default_model`로 쓴다. 나머지 호출부는 model 인자를 안 넘기므로 전역 동작 불변.)
+
+- [ ] **Step 4: 통과 확인** — Run: `cd backend && uv run pytest tests/test_solar_model_override.py -v` 및 회귀 `uv run pytest tests/ -k solar -q` — Expected: PASS.
+
+- [ ] **Step 5: Commit** — `git add backend/app/services/solar.py backend/tests/test_solar_model_override.py && git commit -m "[feat]: solar.complete per-call model 오버라이드 (D149)"`
 
 ---
 
@@ -500,8 +830,8 @@ def test_admin_console_widgets_present():
 - Test: `backend/tests/test_worker_lecture_parse.py`
 
 **Interfaces:**
-- Consumes: `lecture_parse.fetch_ebs_html`, `lecture_parse.parse_ebs_player`, `jobs._fail_job`, `common._now_iso`, `app_settings.get_overlay/as_bool`.
-- Produces: `async def _handle_lecture_parse(svc, job) -> None`. 잡 payload: `target_id=video_id`, `owner_id=admin`, kind=`lecture_parse`. 성공 시 `lecture_clips`(status='pending') 생성 + `lecture_embed` 잡 팬아웃.
+- Consumes: `lecture_parse.fetch_ebs_html/parse_ebs_player`, `subtitle_parse.parse_subtitle/transcript_for`, `svc.storage_download`, `jobs._fail_job`, `common._now_iso`, `app_settings.get_overlay/as_bool`, `settings.storage_bucket`.
+- Produces: `async def _handle_lecture_parse(svc, job) -> None`. 잡 payload: `target_id=video_id`, `owner_id=admin`, kind=`lecture_parse`. 성공 시 `lecture_clips`(start_sec·end_sec·title·transcript, status='pending') 생성 + `lecture_embed` 잡 팬아웃.
 
 - [ ] **Step 1: 실패 테스트** — `backend/tests/test_worker_lecture_parse.py` (svc를 mock으로):
 
@@ -512,29 +842,48 @@ from app.services.worker import lectures
 from app.services.lecture_parse import LectureChapter
 
 @pytest.mark.asyncio
-async def test_parse_creates_clips_and_fanout():
+async def test_parse_builds_transcript_and_end_sec_and_fanout():
     svc = AsyncMock()
-    svc.select.return_value = [{"id": "v1", "page_url": "http://ebs/x", "title": "04강", "status": "pending"}]
+    svc.select.return_value = [{"id": "v1", "page_url": "http://ebs/x",
+                               "subtitle_path": "lectures/v1.smi", "title": "04강", "status": "pending"}]
+    svc.storage_download = AsyncMock(return_value=b"<smi/>")
     job = {"id": "j1", "target_id": "v1", "owner_id": "admin1"}
+    from app.services.subtitle_parse import Cue
     with patch.object(lectures.lecture_parse, "fetch_ebs_html", AsyncMock(return_value="<html/>")), \
          patch.object(lectures.lecture_parse, "parse_ebs_player",
                       return_value=[LectureChapter(365, "A"), LectureChapter(553, "B")]), \
+         patch.object(lectures.subtitle_parse, "parse_subtitle",
+                      return_value=[Cue(400000, 420000, "본문A"), Cue(560000, 580000, "본문B")]), \
          patch.object(lectures.app_settings, "get_overlay", AsyncMock(return_value={})):
         await lectures._handle_lecture_parse(svc, job)
-    # clips insert 되었나
-    insert_tables = [c.args[0] for c in svc.insert.call_args_list]
-    assert "lecture_clips" in insert_tables
-    # lecture_embed 잡 en큐
+    clip_inserts = [c for c in svc.insert.call_args_list if c.args[0] == "lecture_clips"]
+    rows = clip_inserts[0].args[1]
+    assert rows[0]["start_sec"] == 365 and rows[0]["end_sec"] == 553   # 다음 챕터 시작
+    assert rows[1]["end_sec"] is None                                   # 마지막
+    assert rows[0]["transcript"] == "본문A"                             # [365,553) 구간
     assert any(c.args[0] == "jobs" and c.args[1].get("kind") == "lecture_embed"
                for c in svc.insert.call_args_list)
-    # 영상 parsed 로 마킹
     assert any(c.args[0] == "lecture_videos" and c.args[1].get("status") == "parsed"
                for c in svc.update.call_args_list)
 
 @pytest.mark.asyncio
+async def test_no_subtitle_still_parses_with_empty_transcript():
+    svc = AsyncMock()
+    svc.select.return_value = [{"id": "v1", "page_url": "http://ebs/x",
+                               "subtitle_path": None, "title": "t", "status": "pending"}]
+    with patch.object(lectures.lecture_parse, "fetch_ebs_html", AsyncMock(return_value="<html/>")), \
+         patch.object(lectures.lecture_parse, "parse_ebs_player",
+                      return_value=[LectureChapter(365, "A")]), \
+         patch.object(lectures.app_settings, "get_overlay", AsyncMock(return_value={})):
+        await lectures._handle_lecture_parse(svc, {"id": "j1", "target_id": "v1", "owner_id": "a"})
+    rows = [c for c in svc.insert.call_args_list if c.args[0] == "lecture_clips"][0].args[1]
+    assert rows[0]["transcript"] == ""   # 자막 없으면 빈 본문(제목만 임베딩으로 강등)
+
+@pytest.mark.asyncio
 async def test_no_chapters_marks_failed():
     svc = AsyncMock()
-    svc.select.return_value = [{"id": "v1", "page_url": "http://ebs/x", "title": "t", "status": "pending"}]
+    svc.select.return_value = [{"id": "v1", "page_url": "http://ebs/x",
+                               "subtitle_path": None, "title": "t", "status": "pending"}]
     with patch.object(lectures.lecture_parse, "fetch_ebs_html", AsyncMock(return_value="<html/>")), \
          patch.object(lectures.lecture_parse, "parse_ebs_player", return_value=[]), \
          patch.object(lectures.app_settings, "get_overlay", AsyncMock(return_value={})):
@@ -548,7 +897,7 @@ async def test_no_chapters_marks_failed():
 - [ ] **Step 3: 구현** — `backend/app/services/worker/lectures.py` (파싱 핸들러 부분):
 
 ```python
-"""강의 클립 인제스트 워커 (D147) — figures.py 골격 미러.
+"""강의 클립 인제스트 워커 (D149) — figures.py 골격 미러.
 
 lecture_parse: EBS 페이지 GET+파싱 → lecture_clips(pending) 생성 → lecture_embed 팬아웃.
 lecture_embed: 클립 제목 embedding-passage → Qdrant lecture_clips → 행 embedded.
@@ -561,7 +910,7 @@ import logging
 from typing import Any
 
 from ...config import get_settings
-from .. import app_settings, lecture_parse, qdrant_store, upstage
+from .. import app_settings, lecture_parse, qdrant_store, subtitle_parse, upstage
 from . import common, jobs
 
 logger = logging.getLogger("nodi.worker.lectures")
@@ -571,10 +920,11 @@ settings = get_settings()
 async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
     video_id = job["target_id"]
     rows = await svc.select("lecture_videos",
-        {"id": f"eq.{video_id}", "select": "id,page_url,title,status", "limit": "1"})
+        {"id": f"eq.{video_id}", "select": "id,page_url,subtitle_path,title,status", "limit": "1"})
     if not rows:
         await jobs._fail_job(svc, job["id"], "lecture video row missing")
         return
+    video = rows[0]
 
     overlay = await app_settings.get_overlay()
     if not app_settings.as_bool(overlay, "lecture_pipeline_enabled",
@@ -587,7 +937,7 @@ async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
     await svc.update("lecture_videos", {"id": f"eq.{video_id}"},
                      {"status": "parsing", "error": None})
     try:
-        html = await lecture_parse.fetch_ebs_html(rows[0]["page_url"])
+        html = await lecture_parse.fetch_ebs_html(video["page_url"])
         chapters = lecture_parse.parse_ebs_player(html)
     except Exception as exc:  # noqa: BLE001
         await svc.update("lecture_videos", {"id": f"eq.{video_id}"},
@@ -601,12 +951,25 @@ async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
         await jobs._fail_job(svc, job["id"], "no chapters")
         return
 
-    # 재파싱 멱등: 기존 클립 제거 후 재삽입.
+    # 자막 본문(개정 R1) — 있으면 구간별로 슬라이스, 없으면 빈 본문(제목만 임베딩).
+    cues = []
+    if video.get("subtitle_path"):
+        try:
+            data = await svc.storage_download(settings.storage_bucket, video["subtitle_path"])
+            cues = subtitle_parse.parse_subtitle(data, video["subtitle_path"])
+        except Exception:  # noqa: BLE001 - 자막 실패는 본문만 비운다(파이프라인 계속)
+            logger.warning("자막 로드/파싱 실패 video=%s", video_id, exc_info=True)
+
+    # 재파싱 멱등: 기존 클립 제거 후 재삽입. end_sec = 다음 챕터 시작(마지막은 None).
     await svc.delete("lecture_clips", {"video_id": f"eq.{video_id}"})
-    await svc.insert("lecture_clips",
-        [{"video_id": video_id, "seq": i, "start_sec": ch.start_sec,
-          "title": ch.title, "status": "pending"} for i, ch in enumerate(chapters)],
-        returning=False)
+    clip_rows = []
+    for i, ch in enumerate(chapters):
+        end_sec = chapters[i + 1].start_sec if i + 1 < len(chapters) else None
+        transcript = subtitle_parse.transcript_for(cues, ch.start_sec, end_sec) if cues else ""
+        clip_rows.append({
+            "video_id": video_id, "seq": i, "start_sec": ch.start_sec, "end_sec": end_sec,
+            "title": ch.title, "transcript": transcript, "status": "pending"})
+    await svc.insert("lecture_clips", clip_rows, returning=False)
     await svc.update("lecture_videos", {"id": f"eq.{video_id}"}, {"status": "parsed"})
 
     # lecture_embed 팬아웃(seq 범위).
@@ -628,7 +991,7 @@ async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
 
 - [ ] **Step 4: 통과 확인** — Run: `cd backend && uv run pytest tests/test_worker_lecture_parse.py -v` — Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git add backend/app/services/worker/lectures.py backend/tests/test_worker_lecture_parse.py && git commit -m "[feat]: 워커 lecture_parse 핸들러 (D147)"`
+- [ ] **Step 5: Commit** — `git add backend/app/services/worker/lectures.py backend/tests/test_worker_lecture_parse.py && git commit -m "[feat]: 워커 lecture_parse 핸들러 (D149)"`
 
 ---
 
@@ -640,7 +1003,7 @@ async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
 
 **Interfaces:**
 - Consumes: `upstage.embed_passages`, `common._qdrant_upsert`, `qdrant_store.COL_LECTURE_CLIPS`.
-- Produces: `async def _handle_lecture_embed(svc, job) -> None`. payload=`{clip_id,video_id,package_id}`, point id=clip 행 uuid.
+- Produces: `async def _handle_lecture_embed(svc, job) -> None`. **제목+본문** 임베딩, payload=`{clip_id,video_id,package_id}`, point id=clip 행 uuid. `lecture_atom_enabled` on이면 `lecture_atom` 잡 팬아웃.
 
 - [ ] **Step 1: 실패 테스트** — `backend/tests/test_worker_lecture_embed.py`:
 
@@ -680,12 +1043,13 @@ async def _handle_lecture_embed(svc: Any, job: dict[str, Any]) -> None:
     video_id = job["target_id"]
     rng = job.get("batch_range") or {}
     from_seq, to_seq = int(rng.get("from_seq", 0)), int(rng.get("to_seq", 0))
+    overlay = await app_settings.get_overlay()   # 원자 팬아웃 판단용
 
     clips = await svc.select("lecture_clips", {
         "video_id": f"eq.{video_id}",
         "and": f"(seq.gte.{from_seq},seq.lt.{to_seq})",
         "status": "eq.pending",
-        "select": "id,seq,title", "order": "seq.asc"})
+        "select": "id,seq,title,transcript", "order": "seq.asc"})
     if not clips:   # 재시도 시 이미 embedded면 스킵(행 단위 멱등)
         await svc.update("jobs", {"id": f"eq.{job['id']}"},
                          {"status": "done", "updated_at": common._now_iso()})
@@ -698,8 +1062,13 @@ async def _handle_lecture_embed(svc: Any, job: dict[str, Any]) -> None:
         return
     package_id = vids[0]["package_id"]
 
+    # 임베딩 텍스트 = 제목 + 본문(개정 R1). 본문이 비면 제목만.
+    def _embed_text(c: dict[str, Any]) -> str:
+        t = (c.get("transcript") or "").strip()
+        return f"{c['title']}\n\n{t}" if t else c["title"]
+
     try:
-        vectors = await upstage.embed_passages([c["title"] for c in clips])
+        vectors = await upstage.embed_passages([_embed_text(c) for c in clips])
     except Exception as exc:  # noqa: BLE001
         for c in clips:
             await svc.update("lecture_clips", {"id": f"eq.{c['id']}"}, {"status": "failed"})
@@ -728,13 +1097,196 @@ async def _handle_lecture_embed(svc: Any, job: dict[str, Any]) -> None:
             await svc.update("lecture_clips", {"id": f"eq.{cid}"}, {"status": "embedded"})
     await asyncio.gather(*(_mark(c["id"]) for c in clips))
 
+    # 원자화 팬아웃(개정 R1) — on일 때만. 같은 seq 범위로 lecture_atom 잡.
+    if app_settings.as_bool(overlay, "lecture_atom_enabled", settings.lecture_atom_enabled):
+        await svc.insert("jobs", {
+            "owner_id": job.get("owner_id"), "kind": "lecture_atom",
+            "target_id": video_id, "parent_job_id": job["id"],
+            "batch_range": {"from_seq": from_seq, "to_seq": to_seq},
+            "status": "queued"}, returning=False)
+
+    await svc.update("jobs", {"id": f"eq.{job['id']}"},
+                     {"status": "done", "updated_at": common._now_iso()})
+```
+(참고: `overlay = await app_settings.get_overlay()`를 이 핸들러 앞부분에서 읽어 둔다 — figures 핸들러와 동형.)
+
+- [ ] **Step 4: 통과 확인** — Run: `cd backend && uv run pytest tests/test_worker_lecture_embed.py -v` — Expected: PASS.
+
+- [ ] **Step 5: Commit** — `git add backend/app/services/worker/lectures.py backend/tests/test_worker_lecture_embed.py && git commit -m "[feat]: 워커 lecture_embed — 제목+본문 임베딩·원자 팬아웃 (D149)"`
+
+---
+
+## Task 6B: 워커 `lecture_atom` 핸들러 (PIKE 원자 생성)
+
+**Files:**
+- Modify: `backend/app/services/worker/lectures.py` (`_handle_lecture_atom` + import atomize/solar)
+- Test: `backend/tests/test_worker_lecture_atom.py`
+
+**Interfaces:**
+- Consumes: `atomize.build_atom_messages/parse_atom_questions`, `solar.complete(..., model=settings.lecture_atom_model)`, `upstage.embed_passages`, `common._qdrant_upsert/_qdrant_delete_points`, `qdrant_store.COL_LECTURE_CLIP_ATOMS`.
+- Produces: `async def _handle_lecture_atom(svc, job) -> None`. embedded 클립의 본문에서 solar-pro3로 질문 생성 → `lecture_clip_atoms` → Qdrant. payload=`{atom_id, clip_id, package_id}`. 실패 격리(회로차단 5).
+
+- [ ] **Step 1: 실패 테스트** — `backend/tests/test_worker_lecture_atom.py`:
+
+```python
+import pytest
+from unittest.mock import AsyncMock, patch
+from app.services.worker import lectures
+
+@pytest.mark.asyncio
+async def test_atom_generates_and_upserts_with_model_override():
+    svc = AsyncMock()
+    svc.select.side_effect = [
+        [{"id": "c1", "seq": 0, "title": "고려 토지제도", "transcript": "전시과 본문"}],  # embedded clips
+        [],                                                                              # 기존 원자 없음
+        [{"id": "v1", "package_id": "p1"}],                                              # video package
+    ]
+    svc.insert.return_value = [{"id": "a1", "clip_id": "c1", "question": "전시과는?"}]
+    captured = {}
+    async def fake_complete(messages, *, max_tokens=None, model=None):
+        captured["model"] = model
+        from app.services.solar import Completion
+        return Completion(message={"content": "전시과는?"})
+    async def fake_upsert(points, collection):
+        captured["collection"] = collection; captured["payload"] = points[0]["payload"]
+    with patch.object(lectures.app_settings, "get_overlay", AsyncMock(return_value={})), \
+         patch.object(lectures.solar, "complete", fake_complete), \
+         patch.object(lectures.upstage, "embed_passages", AsyncMock(return_value=[[0.1] * 1024])), \
+         patch.object(lectures.common, "_qdrant_upsert", fake_upsert):
+        await lectures._handle_lecture_atom(svc, {"id": "j3", "target_id": "v1",
+                                                  "batch_range": {"from_seq": 0, "to_seq": 16}})
+    assert captured["model"] == "solar-pro3"                       # 모델 오버라이드
+    assert captured["collection"] == lectures.qdrant_store.COL_LECTURE_CLIP_ATOMS
+    assert set(captured["payload"].keys()) == {"atom_id", "clip_id", "package_id"}
+```
+
+- [ ] **Step 2: 실패 확인** — Run: `cd backend && uv run pytest tests/test_worker_lecture_atom.py -v` — Expected: FAIL.
+
+- [ ] **Step 3: import 추가** — `lectures.py` 헤더 import를 확장:
+
+```python
+from .. import app_settings, atomize, lecture_parse, qdrant_store, solar, subtitle_parse, upstage
+```
+
+- [ ] **Step 4: 구현** — `lectures.py`에 추가:
+
+```python
+_ATOM_CIRCUIT_BREAK = 5   # 연속 생성 실패 임계(atoms.py 동형)
+
+
+async def _handle_lecture_atom(svc: Any, job: dict[str, Any]) -> None:
+    video_id = job["target_id"]
+    rng = job.get("batch_range") or {}
+    from_seq, to_seq = int(rng.get("from_seq", 0)), int(rng.get("to_seq", 0))
+    overlay = await app_settings.get_overlay()
+    if not app_settings.as_bool(overlay, "lecture_atom_enabled", settings.lecture_atom_enabled):
+        await svc.update("jobs", {"id": f"eq.{job['id']}"},
+                         {"status": "done", "updated_at": common._now_iso()})
+        return
+
+    clips = await svc.select("lecture_clips", {
+        "video_id": f"eq.{video_id}",
+        "and": f"(seq.gte.{from_seq},seq.lt.{to_seq})",
+        "status": "eq.embedded",
+        "select": "id,seq,title,transcript", "order": "seq.asc"})
+    clips = [c for c in clips if (c.get("transcript") or "").strip()]   # 본문 있는 것만
+    if not clips:
+        await svc.update("jobs", {"id": f"eq.{job['id']}"},
+                         {"status": "done", "updated_at": common._now_iso()})
+        return
+
+    # 멱등: 이 클립들의 기존 원자(행+Qdrant 포인트) 제거 후 재생성.
+    clip_ids = [str(c["id"]) for c in clips]
+    old = await svc.select("lecture_clip_atoms",
+        {"clip_id": f"in.({','.join(clip_ids)})", "select": "id"})
+    if old:
+        await common._qdrant_delete_points([str(o["id"]) for o in old],
+                                           collection=qdrant_store.COL_LECTURE_CLIP_ATOMS)
+        await svc.delete("lecture_clip_atoms", {"clip_id": f"in.({','.join(clip_ids)})"})
+
+    vids = await svc.select("lecture_videos",
+        {"id": f"eq.{video_id}", "select": "id,package_id", "limit": "1"})
+    if not vids:
+        await jobs._fail_job(svc, job["id"], "lecture video row missing")
+        return
+    package_id = vids[0]["package_id"]
+
+    n = app_settings.as_int(overlay, "lecture_atoms_per_clip", settings.lecture_atoms_per_clip, 1, 8)
+    concurrency = app_settings.as_int(overlay, "lecture_atom_concurrency", settings.lecture_atom_concurrency, 1, 16)
+    sem = asyncio.Semaphore(max(1, concurrency))
+    state = {"consecutive": 0, "broken": False}
+
+    async def _gen(clip: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        async with sem:
+            if state["broken"]:
+                return clip, []
+            try:
+                text = f"{clip['title']}\n\n{clip['transcript']}"
+                comp = await solar.complete(
+                    atomize.build_atom_messages(text, n),
+                    max_tokens=256, model=settings.lecture_atom_model)  # solar-pro3
+                qs = atomize.parse_atom_questions((comp.message or {}).get("content") or "", n)
+                state["consecutive"] = 0
+                await common.touch_job(svc, job["id"])
+                return clip, qs
+            except Exception:  # noqa: BLE001 - 개별 실패는 그 클립만 건너뜀
+                state["consecutive"] += 1
+                if state["consecutive"] >= _ATOM_CIRCUIT_BREAK:
+                    state["broken"] = True
+                return clip, []
+
+    results = await asyncio.gather(*(_gen(c) for c in clips))
+    if state["broken"]:
+        await jobs._fail_job(svc, job["id"], "lecture atom circuit break")
+        return
+
+    rows = [{"clip_id": clip["id"], "package_id": str(package_id),
+             "question": q, "status": "pending"}
+            for clip, qs in results for q in qs]
+    if not rows:
+        await svc.update("jobs", {"id": f"eq.{job['id']}"},
+                         {"status": "done", "updated_at": common._now_iso()})
+        return
+
+    inserted = await svc.insert("lecture_clip_atoms", rows, returning=True)
+    try:
+        vectors = await upstage.embed_passages([r["question"] for r in inserted])
+    except Exception as exc:  # noqa: BLE001
+        for r in inserted:
+            await svc.update("lecture_clip_atoms", {"id": f"eq.{r['id']}"}, {"status": "failed"})
+        await jobs._fail_job(svc, job["id"], f"lecture atom embed error: {exc}")
+        return
+    if len(vectors) != len(inserted):
+        for r in inserted:
+            await svc.update("lecture_clip_atoms", {"id": f"eq.{r['id']}"}, {"status": "failed"})
+        await jobs._fail_job(svc, job["id"], "lecture atom embedding count mismatch")
+        return
+
+    points = [{"id": r["id"], "vector": v, "payload": {
+        "atom_id": r["id"], "clip_id": str(r["clip_id"]), "package_id": str(package_id)}}
+        for r, v in zip(inserted, vectors, strict=True)]
+    try:
+        await common._qdrant_upsert(points, collection=qdrant_store.COL_LECTURE_CLIP_ATOMS)
+    except Exception as exc:  # noqa: BLE001
+        for r in inserted:
+            await svc.update("lecture_clip_atoms", {"id": f"eq.{r['id']}"}, {"status": "failed"})
+        await jobs._fail_job(svc, job["id"], f"lecture atom qdrant error: {exc}")
+        return
+
+    sem2 = asyncio.Semaphore(8)
+    async def _mark(aid: str) -> None:
+        async with sem2:
+            await svc.update("lecture_clip_atoms", {"id": f"eq.{aid}"}, {"status": "embedded"})
+    await asyncio.gather(*(_mark(r["id"]) for r in inserted))
+
+    # D88 격리: files.status·lecture_videos.status 절대 안 건드림(원자 실패는 클립과 독립).
     await svc.update("jobs", {"id": f"eq.{job['id']}"},
                      {"status": "done", "updated_at": common._now_iso()})
 ```
 
-- [ ] **Step 4: 통과 확인** — Run: `cd backend && uv run pytest tests/test_worker_lecture_embed.py -v` — Expected: PASS.
+- [ ] **Step 5: 통과 확인** — Run: `cd backend && uv run pytest tests/test_worker_lecture_atom.py -v` — Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git add backend/app/services/worker/lectures.py backend/tests/test_worker_lecture_embed.py && git commit -m "[feat]: 워커 lecture_embed 핸들러 — 제목 임베딩·식별자 페이로드 (D147)"`
+- [ ] **Step 6: Commit** — `git add backend/app/services/worker/lectures.py backend/tests/test_worker_lecture_atom.py && git commit -m "[feat]: 워커 lecture_atom — solar-pro3 예상질문 생성·임베딩 (D149)"`
 
 ---
 
@@ -746,8 +1298,8 @@ async def _handle_lecture_embed(svc: Any, job: dict[str, Any]) -> None:
 - Test: `backend/tests/test_worker_lecture_dispatch.py`
 
 **Interfaces:**
-- Consumes: `lectures._handle_lecture_parse`, `lectures._handle_lecture_embed`.
-- Produces: runner가 `lecture_parse`/`lecture_embed` kind를 디스패치. 잡 영구 실패 시 `lecture_videos`/`lecture_clips`만 failed(파일 불가침).
+- Consumes: `lectures._handle_lecture_parse`, `lectures._handle_lecture_embed`, `lectures._handle_lecture_atom`.
+- Produces: runner가 `lecture_parse`/`lecture_embed`/`lecture_atom` kind를 디스패치. 잡 영구 실패 시 `lecture_videos`/`lecture_clips`만 failed, `lecture_atom` 실패는 부모 불가침(파일·영상·클립 무변경).
 
 - [ ] **Step 1: 실패 테스트** — `backend/tests/test_worker_lecture_dispatch.py`:
 
@@ -760,10 +1312,12 @@ from app.services.worker import runner, jobs
 async def test_runner_dispatches_lecture_kinds():
     svc = AsyncMock()
     with patch.object(runner.lectures, "_handle_lecture_parse", AsyncMock()) as ph, \
-         patch.object(runner.lectures, "_handle_lecture_embed", AsyncMock()) as eh:
+         patch.object(runner.lectures, "_handle_lecture_embed", AsyncMock()) as eh, \
+         patch.object(runner.lectures, "_handle_lecture_atom", AsyncMock()) as ah:
         await runner._process(svc, {"id": "j", "kind": "lecture_parse", "attempts": 0})
         await runner._process(svc, {"id": "j", "kind": "lecture_embed", "attempts": 0})
-    ph.assert_awaited_once(); eh.assert_awaited_once()
+        await runner._process(svc, {"id": "j", "kind": "lecture_atom", "attempts": 0})
+    ph.assert_awaited_once(); eh.assert_awaited_once(); ah.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_fail_isolation_marks_video_not_file():
@@ -782,13 +1336,15 @@ async def test_fail_isolation_marks_video_not_file():
             await lectures._handle_lecture_parse(svc, job)
         elif job["kind"] == "lecture_embed":
             await lectures._handle_lecture_embed(svc, job)
+        elif job["kind"] == "lecture_atom":
+            await lectures._handle_lecture_atom(svc, job)
 ```
 
 - [ ] **Step 4: jobs.py `_fail_file_for_job`** — 격리 분기 추가(figure/atom 분기 옆). files.status 불가침:
 
 ```python
     elif kind == "lecture_parse":
-        # D147: 파싱 영구 실패 — 영상만 failed(파일·다른 인제스트 불가침).
+        # D149: 파싱 영구 실패 — 영상만 failed(파일·다른 인제스트 불가침).
         await svc.update("lecture_videos", {"id": f"eq.{file_id}"},
                          {"status": "failed", "error": (error or "")[:500]})
     elif kind == "lecture_embed":
@@ -799,12 +1355,15 @@ async def test_fail_isolation_marks_video_not_file():
                 "and": f"(seq.gte.{int(rng['from_seq'])},seq.lt.{int(rng['to_seq'])})",
                 "status": "eq.pending",
             }, {"status": "failed"})
+    elif kind == "lecture_atom":
+        # D88 격리: 원자 잡 영구 실패는 클립·영상·파일 전부 불가침(핸들러가 행 status 처리).
+        pass
 ```
 (주의: 이 elif들은 기존 `else`(embedding_batch) 분기보다 **앞**에 둔다.)
 
 - [ ] **Step 5: 통과 확인** — Run: `cd backend && uv run pytest tests/test_worker_lecture_dispatch.py -v` 그리고 회귀: `uv run pytest tests/ -q`.
 
-- [ ] **Step 6: Commit** — `git add backend/app/services/worker/runner.py backend/app/services/worker/jobs.py backend/tests/test_worker_lecture_dispatch.py && git commit -m "[feat]: 워커 강의 잡 디스패치 + 실패 격리 (D147)"`
+- [ ] **Step 6: Commit** — `git add backend/app/services/worker/runner.py backend/app/services/worker/jobs.py backend/tests/test_worker_lecture_dispatch.py && git commit -m "[feat]: 워커 강의 잡 디스패치 + 실패 격리 (D149)"`
 
 ---
 
@@ -815,8 +1374,8 @@ async def test_fail_isolation_marks_video_not_file():
 - Test: `backend/tests/test_lecture_search.py`
 
 **Interfaces:**
-- Consumes: `qdrant_store.search(..., scope_field="package_id")`, `upstage.embed_query`, `app_settings`, `lecture_parse.fmt_timeline`.
-- Produces: `async def search_class_clips(client, class_id: str | None, query: str) -> list[dict]`. 항목: `{clip_id,title,start_sec,timeline_label,page_url,video_title,score}`. **어떤 실패든 `[]`**.
+- Consumes: `qdrant_store.search(..., scope_field="package_id")` (COL_LECTURE_CLIPS + COL_LECTURE_CLIP_ATOMS), `upstage.embed_query`, `app_settings`, `lecture_parse.fmt_timeline`.
+- Produces: `async def search_class_clips(client, class_id: str | None, query: str) -> list[dict]`. **이중 검색**(직접 본문 + 원자 질문, clip_id 병합·dedupe). 항목: `{clip_id,title,start_sec,timeline_label,page_url,video_title,via,score}`. **어떤 실패든 `[]`**.
 
 - [ ] **Step 1: 실패 테스트** — `backend/tests/test_lecture_search.py`:
 
@@ -833,22 +1392,39 @@ async def test_no_enabled_packages_returns_empty():
     assert out == []
 
 @pytest.mark.asyncio
-async def test_returns_clip_items_with_timeline():
+async def test_direct_hit_returns_clip_with_timeline():
     client = AsyncMock()
     client.select.side_effect = [
         [{"package_id": "p1"}],                                             # 켠 패키지
         [{"id": "c1", "video_id": "v1", "start_sec": 896, "title": "고려 토지제도"}],  # clips 재조회
         [{"id": "v1", "page_url": "http://ebs/x", "title": "한국사 04강"}],  # videos
     ]
+    # search 두 번: [0]=직접(클립) 히트, [1]=원자 히트(없음)
     with patch.object(lecture_search.upstage, "embed_query", AsyncMock(return_value=[0.1] * 1024)), \
          patch.object(lecture_search.qdrant_store, "search",
-                      AsyncMock(return_value=[{"id": "c1", "score": 0.7, "payload": {}}])), \
+                      AsyncMock(side_effect=[[{"id": "c1", "score": 0.7, "payload": {}}], []])), \
          patch.object(lecture_search.app_settings, "get_overlay", AsyncMock(return_value={})):
         out = await lecture_search.search_class_clips(client, "class1", "고려 토지")
-    assert out[0]["clip_id"] == "c1"
+    assert out[0]["clip_id"] == "c1" and out[0]["via"] == "clip"
     assert out[0]["timeline_label"] == "14:56"
-    assert out[0]["page_url"] == "http://ebs/x"
-    assert out[0]["video_title"] == "한국사 04강"
+    assert out[0]["page_url"] == "http://ebs/x" and out[0]["video_title"] == "한국사 04강"
+
+@pytest.mark.asyncio
+async def test_atom_hit_resolves_to_clip_via_payload():
+    client = AsyncMock()
+    client.select.side_effect = [
+        [{"package_id": "p1"}],                                             # 켠 패키지
+        [{"id": "c9", "video_id": "v9", "start_sec": 553, "title": "삼국 경제정책"}],  # clips 재조회
+        [{"id": "v9", "page_url": "http://ebs/y", "title": "한국사 04강"}],  # videos
+    ]
+    # 직접은 0건, 원자만 히트 → payload.clip_id로 c9 해석
+    with patch.object(lecture_search.upstage, "embed_query", AsyncMock(return_value=[0.1] * 1024)), \
+         patch.object(lecture_search.qdrant_store, "search",
+                      AsyncMock(side_effect=[[], [{"id": "a1", "score": 0.8,
+                                                   "payload": {"clip_id": "c9"}}]])), \
+         patch.object(lecture_search.app_settings, "get_overlay", AsyncMock(return_value={})):
+        out = await lecture_search.search_class_clips(client, "class1", "땅 어떻게 나눠줬어")
+    assert out[0]["clip_id"] == "c9" and out[0]["via"] == "atom"
 
 @pytest.mark.asyncio
 async def test_failure_degrades_to_empty():
@@ -862,7 +1438,7 @@ async def test_failure_degrades_to_empty():
 - [ ] **Step 3: 구현** — `backend/app/services/lecture_search.py`:
 
 ```python
-"""강의 클립 검색 (D147) — figure_search 미러.
+"""강의 클립 검색 (D149) — figure_search 미러.
 
 전역 카탈로그는 유저 데이터가 아니라 admin 콘텐츠다. 스코핑은 file_id가 아니라
 선생님이 그 워크스페이스에 켠 **package_id**로 한다. 페이로드는 식별자만이므로
@@ -870,6 +1446,7 @@ async def test_failure_degrades_to_empty():
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -884,6 +1461,7 @@ settings = get_settings()
 async def search_class_clips(
     client: UserClient, class_id: str | None, query: str
 ) -> list[dict[str, Any]]:
+    """이중 검색(rag.dual_search D129 미러): 직접(본문) + 원자(질문) → clip_id 병합."""
     if not class_id or not query.strip():
         return []
     try:
@@ -894,19 +1472,58 @@ async def search_class_clips(
             return []
 
         overlay = await app_settings.get_overlay()
-        max_dist = app_settings.as_float(overlay, "lecture_retrieve_max_distance",
-                                         settings.lecture_retrieve_max_distance, 0.1, 0.9)
+        top_k = settings.lecture_retrieve_top_k
+        direct_gate = app_settings.as_float(overlay, "lecture_retrieve_max_distance",
+                                            settings.lecture_retrieve_max_distance, 0.1, 0.9)
+        atom_on = app_settings.as_bool(overlay, "lecture_atom_enabled", settings.lecture_atom_enabled)
+        atom_gate = app_settings.as_float(overlay, "lecture_atom_max_distance",
+                                          settings.lecture_atom_max_distance, 0.1, 0.9)
         vec = await upstage.embed_query(query)
-        hits = await qdrant_store.search(
-            qdrant_store.COL_LECTURE_CLIPS, vec, settings.lecture_retrieve_top_k,
-            file_ids=package_ids, scope_field="package_id",
-            score_threshold=1.0 - max_dist)
-        if not hits:
+
+        # 동시 검색. 원자 off면 원자 검색은 생략([]).
+        async def _atoms() -> list[dict]:
+            if not atom_on:
+                return []
+            return await qdrant_store.search(
+                qdrant_store.COL_LECTURE_CLIP_ATOMS, vec, top_k + 3,
+                file_ids=package_ids, scope_field="package_id")   # 게이트는 아래서 수동 적용
+        direct_hits, atom_hits = await asyncio.gather(
+            qdrant_store.search(qdrant_store.COL_LECTURE_CLIPS, vec, top_k,
+                                file_ids=package_ids, scope_field="package_id",
+                                score_threshold=1.0 - direct_gate),
+            _atoms())
+
+        # 직접 히트: point id = clip id. 랭킹 순.
+        order: list[tuple[str, str, float]] = []   # (clip_id, via, dist_key)
+        direct_ids: set[str] = set()
+        for h in direct_hits:
+            cid = str(h["id"])
+            if cid in direct_ids:
+                continue
+            direct_ids.add(cid)
+            order.append((cid, "clip", 1.0 - float(h["score"])))
+        # 원자 히트: payload.clip_id로 역참조, 게이트 적용, 직접에 있으면 제외, clip별 최소 거리.
+        atom_best: dict[str, float] = {}
+        for h in atom_hits:
+            src = (h.get("payload") or {}).get("clip_id")
+            if not src:
+                continue
+            src = str(src)
+            adist = 1.0 - float(h["score"])
+            if adist > atom_gate or src in direct_ids:
+                continue
+            if src not in atom_best or adist < atom_best[src]:
+                atom_best[src] = adist
+        for cid, adist in sorted(atom_best.items(), key=lambda kv: kv[1]):
+            order.append((cid, "atom", adist))
+
+        order = order[: top_k + 3]
+        if not order:
             return []
 
-        scores = {h["id"]: h["score"] for h in hits}
+        clip_ids = [cid for cid, _, _ in order]
         clip_rows = await client.select("lecture_clips",
-            {"id": f"in.({','.join(scores)})", "select": "id,video_id,start_sec,title"})
+            {"id": f"in.({','.join(clip_ids)})", "select": "id,video_id,start_sec,title"})
         by_id = {str(r["id"]): r for r in clip_rows}
         video_ids = {str(r["video_id"]) for r in clip_rows}
         v_rows = (await client.select("lecture_videos",
@@ -915,22 +1532,23 @@ async def search_class_clips(
         vmap = {str(v["id"]): v for v in v_rows}
 
         out: list[dict[str, Any]] = []
-        for h in hits:                       # Qdrant 랭킹 순 보존
-            r = by_id.get(h["id"])
+        for cid, via, dist in order:
+            r = by_id.get(cid)
             if not r:
-                continue                     # 재조회 못한 히트 탈락
+                continue                     # RLS 재조회 못한 히트 탈락
             v = vmap.get(str(r["video_id"])) or {}
             sec = int(r.get("start_sec") or 0)
             out.append({
-                "clip_id": str(r["id"]),
+                "clip_id": cid,
                 "title": r.get("title") or "",
                 "start_sec": sec,
                 "timeline_label": lecture_parse.fmt_timeline(sec),
                 "page_url": v.get("page_url") or "",
                 "video_title": v.get("title") or "",
-                "score": scores.get(h["id"]),
+                "via": via,
+                "score": 1.0 - dist,
             })
-        logger.info("강의 클립 검색: %d건", len(out))
+        logger.info("강의 클립 검색: %d건(직접 %d)", len(out), len(direct_ids))
         return out
     except Exception:  # noqa: BLE001 - 검색 실패는 빈 목록으로 강등
         logger.exception("강의 클립 검색 실패 — 빈 목록으로 진행")
@@ -939,7 +1557,7 @@ async def search_class_clips(
 
 - [ ] **Step 4: 통과 확인** — Run: `cd backend && uv run pytest tests/test_lecture_search.py -v` — Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git add backend/app/services/lecture_search.py backend/tests/test_lecture_search.py && git commit -m "[feat]: 강의 클립 검색 서비스 — package_id 스코프·RLS 재조회 (D147)"`
+- [ ] **Step 5: Commit** — `git add backend/app/services/lecture_search.py backend/tests/test_lecture_search.py && git commit -m "[feat]: 강의 클립 검색 서비스 — package_id 스코프·RLS 재조회 (D149)"`
 
 ---
 
@@ -999,7 +1617,7 @@ async def test_registered_and_in_catalog():
 - [ ] **Step 3: 스킬 구현** — `backend/app/ai/skills/search_lecture_clip.py`:
 
 ```python
-"""강의 클립 추천 스킬 (D147) — search_textbook_figure 미러.
+"""강의 클립 추천 스킬 (D149) — search_textbook_figure 미러.
 
 학급 워크스페이스에서 학생 질의와 맞는 EBS 강의 클립(챕터)을 찾는다. 시스템이
 캔버스에 카드로 띄우므로 모델은 본문에 링크를 쓰지 않는다.
@@ -1059,7 +1677,7 @@ _CLASS_ONLY = ["search_class_material", "search_textbook_figure", "search_lectur
 
 - [ ] **Step 6: 통과 확인** — Run: `cd backend && uv run pytest tests/test_search_lecture_clip_skill.py -v` 및 부팅 가드 회귀 `uv run pytest tests/ -k "catalog or skill" -q` — Expected: PASS.
 
-- [ ] **Step 7: Commit** — `git add backend/app/ai/skills/search_lecture_clip.py backend/app/ai/__init__.py backend/app/ai/catalog.py backend/tests/test_search_lecture_clip_skill.py && git commit -m "[feat]: search_lecture_clip 스킬 + 등록·카탈로그 (D147)"`
+- [ ] **Step 7: Commit** — `git add backend/app/ai/skills/search_lecture_clip.py backend/app/ai/__init__.py backend/app/ai/catalog.py backend/tests/test_search_lecture_clip_skill.py && git commit -m "[feat]: search_lecture_clip 스킬 + 등록·카탈로그 (D149)"`
 
 ---
 
@@ -1117,7 +1735,7 @@ def test_collect_gathers_clips_dedup_by_clip_id():
 
 - [ ] **Step 4: 통과 확인** — Run: `cd backend && uv run pytest tests/test_orchestrator_clips.py -v` — Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git add backend/app/ai/orchestrator.py backend/tests/test_orchestrator_clips.py && git commit -m "[feat]: 오케스트레이터 clips 수집 채널 (D147)"`
+- [ ] **Step 5: Commit** — `git add backend/app/ai/orchestrator.py backend/tests/test_orchestrator_clips.py && git commit -m "[feat]: 오케스트레이터 clips 수집 채널 (D149)"`
 
 ---
 
@@ -1161,13 +1779,13 @@ def test_done_event_includes_clips_field():
         "current_head_id": node["id"],
         "root_node_id": existing_root or node["id"],
         "figures": skill_figures,
-        "clips": skill_clips,          # D147: 강의 클립 — 캔버스가 카드로 띄운다
+        "clips": skill_clips,          # D149: 강의 클립 — 캔버스가 카드로 띄운다
     })
 ```
 
 - [ ] **Step 4: 통과 확인** — Run: `cd backend && uv run pytest tests/test_chat_clips_done.py -v` 및 전체 회귀 `uv run pytest tests/ -q` — Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git add backend/app/routers/chat.py backend/tests/test_chat_clips_done.py && git commit -m "[feat]: chat done 이벤트에 clips 싣기 (D147)"`
+- [ ] **Step 5: Commit** — `git add backend/app/routers/chat.py backend/tests/test_chat_clips_done.py && git commit -m "[feat]: chat done 이벤트에 clips 싣기 (D149)"`
 
 ---
 
@@ -1211,11 +1829,6 @@ class CreateLecturePackageBody(BaseModel):
     subject: str = Field(min_length=1, max_length=60)
     title: str = Field(min_length=1, max_length=120)
 
-class AddLectureVideoBody(BaseModel):
-    page_url: str = Field(min_length=8, max_length=1000)
-    title: str = Field(min_length=1, max_length=200)
-
-
 @router.post("/lecture-packages", status_code=status.HTTP_201_CREATED)
 async def create_lecture_package(body: CreateLecturePackageBody,
     user: CurrentUser = Depends(get_current_user),
@@ -1249,20 +1862,37 @@ async def list_lecture_videos(package_id: str,
         {"package_id": f"eq.{package_id}",
          "select": "id,page_url,title,status,error,created_at", "order": "created_at.desc"})
 
+# multipart: page_url·title + 자막파일(선택). imports 추가 필요:
+#   from fastapi import Form, File, UploadFile
+#   from ..config import get_settings; settings = get_settings()  (admin.py에 이미 있으면 재사용)
 @router.post("/lecture-packages/{package_id}/videos", status_code=status.HTTP_201_CREATED)
-async def add_lecture_video(package_id: str, body: AddLectureVideoBody,
+async def add_lecture_video(package_id: str,
+    page_url: str = Form(..., min_length=8, max_length=1000),
+    title: str = Form(..., min_length=1, max_length=200),
+    subtitle: UploadFile | None = File(None),
     user: CurrentUser = Depends(get_current_user),
     _: Profile = Depends(require_admin)) -> dict[str, Any]:
     client = UserClient.from_user(user)
     video = await client.insert("lecture_videos", {
         "package_id": package_id, "source": "ebs",
-        "page_url": body.page_url, "title": body.title, "status": "pending"})
-    # 파싱 잡 en큐는 워커 도메인 테이블 — ServiceClient로(files.py 업로드 패턴).
+        "page_url": page_url, "title": title, "status": "pending"})
     svc = get_service_client()
-    if svc is not None:
-        await svc.insert("jobs", {
-            "owner_id": user.id, "kind": "lecture_parse",
-            "target_id": video["id"], "status": "queued"}, returning=False)
+    if svc is None:
+        return video
+    # 자막 업로드(있으면) → subtitle_path. Storage 업로드는 files.py 업로드 패턴 미러.
+    if subtitle is not None:
+        data = await subtitle.read()
+        ext = ((subtitle.filename or "sub").rsplit(".", 1)[-1] or "sub").lower()
+        path = f"lectures/{video['id']}/subtitle.{ext}"
+        await svc.storage_upload(settings.storage_bucket, path, data,
+                                 subtitle.content_type or "text/plain")
+        await client.update("lecture_videos", {"id": f"eq.{video['id']}"},
+                            {"subtitle_path": path})
+        video["subtitle_path"] = path
+    # 파싱 잡 en큐(ServiceClient).
+    await svc.insert("jobs", {
+        "owner_id": user.id, "kind": "lecture_parse",
+        "target_id": video["id"], "status": "queued"}, returning=False)
     return video
 
 @router.post("/lecture-videos/{video_id}/reparse")
@@ -1299,7 +1929,7 @@ async def list_lecture_clips(video_id: str,
 
 - [ ] **Step 4: 통과 확인** — Run: `cd backend && uv run pytest tests/test_admin_lectures.py -v` — Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git add backend/app/routers/admin.py backend/tests/test_admin_lectures.py && git commit -m "[feat]: admin 강의 패키지·영상 CRUD + 파싱 잡 en큐 (D147)"`
+- [ ] **Step 5: Commit** — `git add backend/app/routers/admin.py backend/tests/test_admin_lectures.py && git commit -m "[feat]: admin 강의 패키지·영상 CRUD + 파싱 잡 en큐 (D149)"`
 
 ---
 
@@ -1369,7 +1999,7 @@ async def toggle_class_lecture_package(class_id: str, package_id: str,
 
 - [ ] **Step 4: 통과 확인** — Run: `cd backend && uv run pytest tests/test_teacher_lecture_packages.py -v` 및 `uv run pytest tests/ -q` 회귀 — Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git add backend/app/routers/teacher.py backend/tests/test_teacher_lecture_packages.py && git commit -m "[feat]: teacher 워크스페이스 강의 패키지 선택 (D147)"`
+- [ ] **Step 5: Commit** — `git add backend/app/routers/teacher.py backend/tests/test_teacher_lecture_packages.py && git commit -m "[feat]: teacher 워크스페이스 강의 패키지 선택 (D149)"`
 
 ---
 
@@ -1409,7 +2039,7 @@ export type ItemKind = "concept" | "note" | "figure" | "clip";
 - [ ] **Step 2: `lib/types.ts`** — `ChatDoneEvent`에 `figures?` 옆:
 
 ```tsx
-  /** D147: 강의 클립 추천. 스킬이 찾아 done에 실어 보낸다(snake_case). */
+  /** D149: 강의 클립 추천. 스킬이 찾아 done에 실어 보낸다(snake_case). */
   clips?: Array<{
     clip_id: string;
     title: string;
@@ -1447,9 +2077,16 @@ export async function deleteLecturePackage(id: string): Promise<void> {
 export async function listLectureVideos(packageId: string): Promise<LectureVideo[]> {
   return j(await fetch(`${API_BASE}/admin/lecture-packages/${packageId}/videos`, { headers: await authHeaders() }));
 }
-export async function addLectureVideo(packageId: string, b: { page_url: string; title: string }): Promise<LectureVideo> {
+export async function addLectureVideo(
+  packageId: string, page_url: string, title: string, subtitle: File | null,
+): Promise<LectureVideo> {
+  const fd = new FormData();
+  fd.append("page_url", page_url);
+  fd.append("title", title);
+  if (subtitle) fd.append("subtitle", subtitle);
+  // multipart — authHeaders(false): Content-Type 미지정으로 FormData가 boundary를 잡는다.
   return j(await fetch(`${API_BASE}/admin/lecture-packages/${packageId}/videos`, {
-    method: "POST", headers: await authHeaders(true), body: JSON.stringify(b) }));
+    method: "POST", headers: await authHeaders(), body: fd }));
 }
 export async function reparseLectureVideo(videoId: string): Promise<void> {
   await ensureOk(await fetch(`${API_BASE}/admin/lecture-videos/${videoId}/reparse`, {
@@ -1482,7 +2119,7 @@ export * from "./lectures";
 
 - [ ] **Step 5: 타입/빌드 검증** — Run: `cd frontend && npx tsc --noEmit` — Expected: 에러 없음.
 
-- [ ] **Step 6: Commit** — `git add frontend/src/lib/canvas2/types.ts frontend/src/lib/types.ts frontend/src/lib/api/lectures.ts frontend/src/lib/api/index.ts && git commit -m "[feat]: 프론트 클립 타입 + 강의 API 클라이언트 (D147)"`
+- [ ] **Step 6: Commit** — `git add frontend/src/lib/canvas2/types.ts frontend/src/lib/types.ts frontend/src/lib/api/lectures.ts frontend/src/lib/api/index.ts && git commit -m "[feat]: 프론트 클립 타입 + 강의 API 클라이언트 (D149)"`
 
 ---
 
@@ -1583,7 +2220,7 @@ describe("clipToItemData", () => {
 
 - [ ] **Step 4: 통과 확인** — Run: `cd frontend && npm test -- clipMap && npx tsc --noEmit` — Expected: PASS + 타입 에러 없음.
 
-- [ ] **Step 5: Commit** — `git add frontend/src/lib/canvas2/clipMap.ts frontend/src/lib/canvas2/clipMap.test.ts frontend/src/lib/canvas2/useCanvasStream.ts frontend/src/components/canvas2/CanvasWorkspace.tsx && git commit -m "[feat]: 스트림 clips → 캔버스 클립 아이템 (D147)"`
+- [ ] **Step 5: Commit** — `git add frontend/src/lib/canvas2/clipMap.ts frontend/src/lib/canvas2/clipMap.test.ts frontend/src/lib/canvas2/useCanvasStream.ts frontend/src/components/canvas2/CanvasWorkspace.tsx && git commit -m "[feat]: 스트림 clips → 캔버스 클립 아이템 (D149)"`
 
 ---
 
@@ -1603,7 +2240,7 @@ describe("clipToItemData", () => {
 ```tsx
 "use client";
 
-/** 강의 클립 추천 카드 (D147). FigureItem의 이동/선택/삭제 배선을 본떠 만들되
+/** 강의 클립 추천 카드 (D149). FigureItem의 이동/선택/삭제 배선을 본떠 만들되
  *  이미지·리사이즈·signed URL 재발급이 없다 — page_url은 안정적인 EBS 공식 링크다.
  *  클릭 시 새 탭으로 열고, 타임라인 시각은 텍스트로 안내(딥링크 seek 안 함). */
 import { useRef } from "react";
@@ -1692,7 +2329,7 @@ export function ClipItem({ item, x, y, zoom, selected, measure, onSelect, onDrag
 
 - [ ] **Step 3: 빌드/타입 검증** — Run: `cd frontend && npx tsc --noEmit && npm run build` — Expected: 성공.
 
-- [ ] **Step 4: Commit** — `git add frontend/src/components/canvas2/ClipItem.tsx frontend/src/components/canvas2/ItemLayer.tsx && git commit -m "[feat]: 캔버스 ClipItem 카드 + ItemLayer 분기 (D147)"`
+- [ ] **Step 4: Commit** — `git add frontend/src/components/canvas2/ClipItem.tsx frontend/src/components/canvas2/ItemLayer.tsx && git commit -m "[feat]: 캔버스 ClipItem 카드 + ItemLayer 분기 (D149)"`
 
 ---
 
@@ -1727,13 +2364,13 @@ export function useLectureVideos(pkgId: string | null) {
 }
 ```
 
-- [ ] **Step 2: `LecturePackagesTab.tsx`** — 패키지 생성 폼(grade/subject/title) + 목록, 선택된 패키지의 영상 목록(상태 배지) + "EBS 링크 추가" 폼(page_url/title) + 재파싱/삭제 버튼. `useLecturePackages`/`useLectureVideos` + `createLecturePackage`/`addLectureVideo`/`reparseLectureVideo`/`deleteLectureVideo` + `queryClient.invalidateQueries`. (기존 `components/admin/UsersTab.tsx`·`SettingsTab.tsx`의 폼·목록 스타일을 그대로 따른다. `ui.tsx` 공용 컴포넌트 사용.)
+- [ ] **Step 2: `LecturePackagesTab.tsx`** — 패키지 생성 폼(grade/subject/title) + 목록, 선택된 패키지의 영상 목록(상태 배지 pending/parsing/parsed/failed + error) + **"영상 추가" 폼(page_url · title · `<input type="file" accept=".srt,.vtt,.smi">` 자막)** + 재파싱/삭제 버튼. 제출은 `addLectureVideo(pkgId, pageUrl, title, subtitleFile)`. `useLecturePackages`/`useLectureVideos` + `createLecturePackage`/`reparseLectureVideo`/`deleteLectureVideo` + `queryClient.invalidateQueries`. 영상 클릭 시 `listLectureClips(videoId)`로 클립(제목·타임라인·본문 유무) 확인. (기존 `components/admin/UsersTab.tsx`·`SettingsTab.tsx`의 폼·목록 스타일과 `ui.tsx` 공용 컴포넌트를 따른다.)
 
 - [ ] **Step 3: `admin/page.tsx` 배선(4곳)** — (1) `import { LecturePackagesTab } from "@/components/admin/LecturePackagesTab";`, (2) `type Tab` 유니온에 `"lectures"`, (3) `TABS` 배열에 `{ id: "lectures", label: "강의 패키지" }`(기존 항목 형식대로 icon 포함), (4) 렌더 스위치에 `{tab === "lectures" && <LecturePackagesTab />}`.
 
 - [ ] **Step 4: 빌드 검증** — Run: `cd frontend && npx tsc --noEmit && npm run build` — Expected: 성공.
 
-- [ ] **Step 5: Commit** — `git add frontend/src/components/admin/LecturePackagesTab.tsx frontend/src/app/\(admin\)/admin/page.tsx frontend/src/lib/queries.ts && git commit -m "[feat]: admin 강의 패키지 관리 탭 (D147)"`
+- [ ] **Step 5: Commit** — `git add frontend/src/components/admin/LecturePackagesTab.tsx frontend/src/app/\(admin\)/admin/page.tsx frontend/src/lib/queries.ts && git commit -m "[feat]: admin 강의 패키지 관리 탭 (D149)"`
 
 ---
 
@@ -1771,7 +2408,7 @@ export function useClassLecturePackages(classId: string) {
 
 - [ ] **Step 4: 빌드 검증** — Run: `cd frontend && npx tsc --noEmit && npm run build` — Expected: 성공.
 
-- [ ] **Step 5: Commit** — `git add frontend/src/components/teacher/LecturePackagesSection.tsx frontend/src/components/teacher/MaterialsTab.tsx frontend/src/lib/queries.ts && git commit -m "[feat]: teacher 워크스페이스 강의 패키지 선택 UI (D147)"`
+- [ ] **Step 5: Commit** — `git add frontend/src/components/teacher/LecturePackagesSection.tsx frontend/src/components/teacher/MaterialsTab.tsx frontend/src/lib/queries.ts && git commit -m "[feat]: teacher 워크스페이스 강의 패키지 선택 UI (D149)"`
 
 ---
 
@@ -1783,22 +2420,23 @@ export function useClassLecturePackages(classId: string) {
 
 **Interfaces:** 없음(통합 검증).
 
-- [ ] **Step 1: TASKS.md 등록** — `docs/TASKS.md`에 "TASK 7: 강의 클립(숏폼) 추천 (D147)" 항목 추가(스펙·플랜 경로 링크, 상태). 커밋: `git add docs/TASKS.md && git commit -m "[docs]: TASK 7 강의 클립 추천 등록 (D147)"`.
+- [ ] **Step 1: TASKS.md 등록** — `docs/TASKS.md`에 "TASK 7: 강의 클립(숏폼) 추천 (D149)" 항목 추가(스펙·플랜 경로 링크, 상태). 커밋: `git add docs/TASKS.md && git commit -m "[docs]: TASK 7 강의 클립 추천 등록 (D149)"`.
 
 - [ ] **Step 2: 백엔드 전체 테스트** — Run: `cd backend && uv run pytest tests/ -q` — Expected: 전부 PASS.
 
-- [ ] **Step 3: 서버 기동 + 마이그레이션 적용(로컬)** — `docker-compose up -d`; 로컬 DB에 마이그레이션 적용(`docker exec -i nodi-postgres-1 psql -U postgres -d nodi < db/migrations/2026-08-03-d147-lecture-clips.sql` 또는 `down -v && up -d`로 01_schema 재적용). 백엔드·프론트 기동.
+- [ ] **Step 3: 서버 기동 + 마이그레이션 적용(로컬)** — `docker-compose up -d`; 로컬 DB에 마이그레이션 적용(`docker exec -i nodi-postgres-1 psql -U postgres -d nodi < db/migrations/2026-08-03-d149-lecture-clips.sql` 또는 `down -v && up -d`로 01_schema 재적용). 백엔드·프론트 기동.
 
-- [ ] **Step 4: 수동 E2E(Playwright 또는 브라우저)** — (a) admin 로그인 → 강의 패키지 생성(고1·통합과학) → 실제 EBS 링크 추가 → 파싱 상태 `parsed`·클립 목록 확인. (b) teacher 로그인 → 그 학급에서 패키지 켜기. (c) student 로그인 → 그 워크스페이스에서 관련 개념 질의 → 캔버스에 ClipItem 카드 표시·"EBS에서 보기" 새 탭 확인. **프로덕션 IP WAF 리스크(스펙 미해결)**: 로컬에서 EBS GET 성공하는지 이 단계에서 반드시 확인하고, 실패 시 스펙 리스크 항목대로 대응 결정.
+- [ ] **Step 4: 수동 E2E(Playwright 또는 브라우저)** — (a) admin 로그인 → 강의 패키지 생성(고1·한국사) → 실제 EBS 링크 + 제목 + **자막파일** 추가 → 파싱 상태 `parsed`·클립 목록(제목·타임라인·본문 유무)·**원자(lecture_clip_atoms) 생성** 확인. (b) teacher 로그인 → 그 학급에서 패키지 켜기. (c) student 로그인 → 그 워크스페이스에서 **구어체 질의**(예: "고려 때 관리들한테 땅 어떻게 나눠줬어") → 원자 경유로 캔버스에 ClipItem 카드 표시·"EBS에서 보기" 새 탭 확인. **검증 포인트**: ① 프로덕션/로컬 IP의 EBS GET 성공 여부(스펙 미해결 WAF), ② `solar-pro3` 실제 응답 여부(안 되면 원자만 격리·클립은 본문으로 동작하는지), ③ 직접/원자 경로 각각 매칭되는지.
 
 - [ ] **Step 5: 검증 결과 기록** — 결과를 커밋 메시지/PR에 남긴다(스펙 미해결 리스크의 실측 결론 포함).
 
 ---
 
-## Self-Review (작성자 체크)
+## Self-Review (작성자 체크, 개정 R1 반영)
 
-- **스펙 커버리지**: 데이터모델(T1) · 인제스트 파서/GET(T2)/Qdrant(T3)/워커 파싱(T5)·임베딩(T6)·배선(T7) · 튜너블(T4) · 검색(T8) · 스킬(T9)/오케스트레이터(T10)/chat(T11) · admin API(T12)·UI(T17) · teacher API(T13)·UI(T18) · 프론트 타입/API(T14)·스트림(T15)·ClipItem(T16) · E2E/등록(T19). 스펙의 모든 섹션에 대응 태스크 존재.
-- **신뢰경계**: T3(scope_field=package_id) + T8(RLS 재조회) + T1(RLS 정책)으로 "전역 카탈로그, 페이로드 식별자만, package_id 스코프" 구현.
-- **불변식**: RAG 실패→[](T8), 격리(T7 _fail_file_for_job), 페이로드 식별자만(T6 테스트로 강제), 거리 1-score(T8), 튜너블 3곳(T4).
-- **타입 일관성**: 백엔드 클립 항목 `{clip_id,title,start_sec,timeline_label,page_url,video_title,score}`(T8) → done(T11) → 프론트 snake_case(T14) → camelCase 매퍼(T15) → ItemData.clip(T14). 일관.
-- **미해결/리스크**: 프로덕션 WAF는 T19 Step4에서 실측·대응. EBS HTML 구조 변화는 파서 격리(T2)+픽스처 테스트로 방어.
+- **스펙 커버리지**: 데이터모델+원자테이블(T1) · EBS 챕터 파서(T2) · **자막 파서(T2B)** · Qdrant 두 컬렉션(T3) · 튜너블+원자노브(T4) · **solar 모델 오버라이드(T4B)** · 워커 파싱+자막본문(T5)·임베딩 제목+본문+원자팬아웃(T6)·**원자 생성(T6B)**·배선(T7) · **이중 검색(T8)** · 스킬(T9)/오케스트레이터(T10)/chat(T11) · admin API+자막업로드(T12)·UI(T17) · teacher(T13)·UI(T18) · 프론트 타입/API(T14)·스트림(T15)·ClipItem(T16) · E2E/등록(T19). 스펙 모든 섹션에 대응 태스크 존재.
+- **신뢰경계**: T3(scope_field=package_id, 두 컬렉션) + T8(RLS 재조회) + T1(RLS 정책)으로 "전역 카탈로그, 페이로드 식별자만, package_id 스코프". 원자 페이로드도 `{atom_id,clip_id,package_id}`만(T6B 테스트로 강제).
+- **불변식**: RAG 실패→[](T8), 격리(T7 _fail_file_for_job — lecture_atom은 부모 불가침), 페이로드 식별자만(T6·T6B 테스트), 거리 1-score·이중 게이트 내부 종료(T8), 튜너블 3곳(T4), 원자 격리·회로차단 5(T6B).
+- **타입 일관성**: 백엔드 클립 항목 `{clip_id,title,start_sec,timeline_label,page_url,video_title,via,score}`(T8) → done(T11) → 프론트 snake_case(T14) → camelCase 매퍼(T15) → ItemData.clip(T14). 일관.
+- **원자 모델**: `solar.complete(model=...)`(T4B) → `lecture_atom`이 `lecture_atom_model=solar-pro3` 전달(T6B). 전역 채팅 모델(solar-pro2) 불변.
+- **미해결/리스크**: ① 프로덕션 WAF(EBS GET) — T19; ② `solar-pro3` 가용성 — T19에서 실측, 실패 시 원자 격리로 흡수(클립은 본문 임베딩으로 동작); ③ EBS/자막 구조 변화 — 파서 격리(T2/T2B)+픽스처 테스트; ④ `svc.storage_upload` 정확 시그니처는 T12에서 files.py 확인.

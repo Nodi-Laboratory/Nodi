@@ -1,6 +1,7 @@
 # 강의 클립(숏폼) 추천 설계 — EBS 타임라인 기반
 
-- 날짜: 2026-08-02
+- 날짜: 2026-08-02 (개정 R1: 2026-08-03)
+- 결정 번호: **D149** (D147=도판 조작·D148=태그 트리와 충돌 회피)
 - 상태: 승인 대기(스펙 리뷰)
 
 ## 문제
@@ -39,8 +40,9 @@ EBS 강의의 **챕터(타임라인) 단위 숏폼**으로 좁힌다.
 ## 목표
 
 1. **관리자**가 `/admin`에서 **(학년·과목) 강의 추천 패키지**를 만들고, 거기에
-   **EBSi 플레이어 링크**를 추가하면, 시스템이 그 페이지를 파싱해 챕터마다
-   **(시작초, 타임라인 라벨, 제목)** 클립을 저장하고 **제목을 임베딩**한다.
+   **EBSi 링크 + 제목 + 자막파일**을 추가하면, 시스템이 HTML 타임라인 목차로
+   챕터 경계를 잡고 그 구간 자막을 **본문 컨텍스트**로 채워 클립을 저장하고,
+   **제목+본문을 임베딩** + **solar-pro3로 예상 질문(원자)을 생성·임베딩**한다.
 2. **선생님**이 워크스페이스(학급)에서 관리자가 만든 패키지를 **켜고 끈다**.
 3. **학생**이 그 워크스페이스에서 채팅하다가 개념을 물으면, **ReAct 스킬**이
    켜진 패키지의 클립 중 질의와 맞는 것을 검색해 **캔버스에 클립 카드**로
@@ -50,40 +52,68 @@ EBS 강의의 **챕터(타임라인) 단위 숏폼**으로 좁힌다.
 
 - **직접 MP4 `#t=` 딥링크 / 인라인 임베드 플레이어** — 아니다(약관·안정성).
   공식 페이지 링크를 새 탭으로 여는 것만 한다.
-- **자막 업로드·자동 청킹·LLM 요약 폴백** — 아니다(사용자 결정 2026-08-02:
-  "폴백하지 말고 EBS부터"). 클립 경계·제목은 **EBS 챕터에서만** 온다. 챕터가
-  없는 영상은 파싱 실패로 처리하고 추측하지 않는다.
+- **자막을 청킹 경계로 쓰지 않는다** — **클립 경계는 EBS 챕터(타임라인 목차)**가
+  정한다. 자막은 그 경계 **구간의 본문 컨텍스트**를 채우는 데만 쓴다(개정 R1,
+  사용자 결정 2026-08-03). 챕터가 없는 영상은 파싱 실패로 처리하고 추측하지 않는다.
 - **EBS 외 소스(유튜브·메가스터디)** — v1 대상 아님. `source='ebs'`만. 데이터
   모델에 `source` 컬럼은 두되 파서는 EBS 하나만 구현한다.
 - **헤드리스 브라우저 인제스트** — 불필요(챕터가 raw HTML에 있음). MP4를 안 쓰므로
-  `<video src>` 캡처가 필요 없다.
+  `<video src>` 캡처가 필요 없다. 자막은 admin이 파일로 업로드한다(EBS에서 크롤 안 함).
 - **영상 파일 저장·트랜스코딩·썸네일 추출** — 아니다. 우리는 링크만 다룬다.
+
+## 플로우 예시 (개정 R1)
+
+한국사 04강, 챕터 `[14:56] 고려 토지제도`:
+
+1. **인제스트**: admin이 `고1·한국사` 패키지에 영상 추가 — 제목 `이충모 한국사 04강`
+   + EBS 링크 + 자막 `04강.smi`. `lecture_parse`가 HTML 목차로 챕터 경계
+   `[896초~1318초)`를 잡고, 자막에서 그 구간 큐를 이어붙여 본문
+   *"고려의 토지 제도는 전시과를 중심으로… 전지와 시지를 나눠 주되 세습은 원칙적으로
+   안 됐고, 무신정변 이후 붕괴…"* 를 만든다 → `lecture_clips`(start=896, end=1318,
+   title, transcript). `lecture_embed`가 **제목+본문**을 임베딩. `lecture_atom`이
+   solar-pro3로 예상 질문 생성: *"전시과는 어떻게 운영됐나요?", "전지와 시지의 차이는?",
+   "무신정변 이후 토지 제도 변화는?"* → `lecture_clip_atoms` 임베딩.
+2. **선택**: 선생님이 워크스페이스에서 `고1·한국사` 패키지를 켠다.
+3. **추천**: 학생이 구어체로 *"고려 때 관리들한테 땅 어떻게 나눠줬어?"* 질의 →
+   이중 검색에서 **원자 질문 "전시과는 어떻게 운영됐나요?"** 가 구어체와 의미가 붙어
+   히트(원자 게이트 0.45) → `clip_id`로 클립 `고려 토지제도 · 14:56` 해석 → 캔버스
+   카드 → 클릭 시 EBS 강의(공식 페이지, 학생이 14:56로 이동). 원자가 **격식체 본문 ↔
+   구어체 질의**의 어휘 간극을 메운다.
 
 ## 데이터 모델
 
-전역 카탈로그 3층 + 워크스페이스 선택 1층. 명명·상태·격리는 `textbook_figures`
-골격을 그대로 본뜬다(부모 조인 파생, status 3단, 실패 격리).
+전역 카탈로그 4층 + 워크스페이스 선택 1층. 명명·상태·격리는 `textbook_figures`·
+`chunk_atoms`(D129) 골격을 그대로 본뜬다(부모 조인 파생, status 3단, 실패 격리).
 
 - **`lecture_packages`** (admin 전역) — `id, grade text, subject text, title text,
   created_by uuid, created_at`. "클립셋"의 실체. 예: `고1 · 통합과학 · 2028 수능개념`.
 - **`lecture_videos`** (패키지 자식) — `id, package_id FK(ON DELETE CASCADE),
-  source text DEFAULT 'ebs', page_url text, title text, status text
+  source text DEFAULT 'ebs', page_url text, **subtitle_path text**(업로드 자막
+  Storage 경로), title text, status text
   DEFAULT 'pending' CHECK(pending|parsing|parsed|failed), error text, created_at`.
-  admin이 링크 하나 추가 = 1행.
+  admin이 링크·제목·**자막파일**을 올리면 = 1행.
 - **`lecture_clips`** (영상 자식) — `id, video_id FK(ON DELETE CASCADE), seq int,
-  start_sec int, title text, status text DEFAULT 'pending'
-  CHECK(pending|embedded|failed), created_at`. `UNIQUE(video_id, seq)`.
+  start_sec int, **end_sec int**(다음 챕터 시작=구간 끝, 마지막은 NULL),
+  title text, **transcript text DEFAULT ''**(챕터 구간 자막 본문), status text
+  DEFAULT 'pending' CHECK(pending|embedded|failed), created_at`. `UNIQUE(video_id, seq)`.
   **타임라인 라벨(`MM:SS`)은 저장하지 않고 `start_sec`에서 파생**한다.
-  **임베딩 텍스트 = `title`**(자막 요약 없음). 임베딩은 Qdrant에만.
+  **임베딩 텍스트 = `제목 + 본문(transcript)`**(개정 R1 — 제목만으로는 구어체
+  질의와 의미가 안 붙는다).
+- **`lecture_clip_atoms`** (클립 자식, PIKE-RAG D129 미러) — `id, clip_id FK(ON
+  DELETE CASCADE), package_id uuid, question text, status text DEFAULT 'pending'
+  CHECK(pending|embedded|failed), created_at`. solar-pro3가 클립 본문에서 생성한
+  예상 질문. 임베딩은 Qdrant에만.
 - **`class_lecture_packages`** (선생님 선택) — `class_id FK, package_id FK,
   PK(class_id, package_id)`. 워크스페이스별로 켠 패키지.
 
-### Qdrant 컬렉션 `lecture_clips`
+### Qdrant 컬렉션 (둘, 이중 검색용)
 
-`file_chunks`와 동형(1024d/Cosine). **페이로드는 식별자·스코프키만**:
-`{clip_id, video_id, package_id}`. **제목·URL·시각은 페이로드에 넣지 않는다** —
-히트 후 Postgres에서 행을 재조회해 표시값을 얻는다(불변식 유지). 스코프 필터는
-`package_id` KEYWORD 인덱스로 `MatchAny(켠 패키지들)`.
+둘 다 `file_chunks`와 동형(1024d/Cosine), **페이로드는 식별자·스코프키만**(제목·
+URL·본문·질문 금지 — 히트 후 Postgres 재조회). 스코프는 `package_id` KEYWORD
+인덱스로 `MatchAny(켠 패키지들)`:
+
+- **`lecture_clips`** — 클립 **제목+본문** 벡터. 페이로드 `{clip_id, video_id, package_id}`.
+- **`lecture_clip_atoms`** — 원자 **질문** 벡터. 페이로드 `{atom_id, clip_id, package_id}`.
 
 ## 신뢰 경계 (D94 전역 카탈로그 처리 재적용)
 
@@ -104,35 +134,52 @@ EBS 강의의 **챕터(타임라인) 단위 숏폼**으로 좁힌다.
   학급 **구성원이 읽기**(`my_class_ids()`). 검색은 학생 요청 컨텍스트에서 이
   테이블을 읽어 켠 패키지를 안다.
 
-## 인제스트 파이프라인 (EBS 전용)
+## 인제스트 파이프라인 (EBS 전용, 개정 R1)
 
-admin이 패키지에 EBS 링크를 추가 → `lecture_parse` 잡:
+admin이 패키지에 EBS 링크·제목·**자막파일**을 추가 → 자막은 Storage 업로드
+(`subtitle_path`) → `lecture_parse` 잡:
 
-1. `page_url`을 **HTTP GET(브라우저 UA)**. 응답 HTML에서 챕터를 파싱한다 —
-   챕터 항목마다 **시작초**(`data-index-time` 속성 또는 `onclick`의
-   `player.Command.seek(N)`)와 **제목** 텍스트. 강의 제목도 파싱(없으면 admin
-   입력값). → `lecture_videos.status='parsing'→'parsed'`, 챕터 수만큼
-   `lecture_clips`(status='pending') insert.
-2. `lecture_embed` 잡 팬아웃(배치) → 각 클립 `title`을 `embedding-passage`로
-   임베딩 → Qdrant `lecture_clips` upsert(payload=식별자만) → 행 `status='embedded'`.
-3. 실패 격리: 파싱 실패(챕터 0개 등)는 `lecture_videos.status='failed'`+`error`,
-   임베딩 실패는 클립 `status='failed'` — figure 패턴 동형. 한 영상·한 클립의
-   실패가 다른 것을 막지 않는다.
+1. **파싱**: `page_url`을 HTTP GET(브라우저 UA)해 HTML에서 챕터 `(시작초, 제목)`을
+   뽑고(`player.Command.seek(N)`/`data-index-time`), `subtitle_path`의 자막을
+   Storage에서 내려받아 파싱(SRT/VTT/SMI). 챕터 구간 `[start_sec, end_sec=다음
+   챕터 시작)`에 걸친 자막 큐를 이어붙여 **본문(transcript)**을 만든다. 챕터 수만큼
+   `lecture_clips`(start_sec·end_sec·title·transcript, status='pending') insert →
+   `lecture_videos.status='parsed'`. 자막이 없으면 transcript는 빈 문자열(제목만
+   임베딩으로 강등, 파이프라인은 계속).
+2. **임베딩**: `lecture_embed` 잡 팬아웃 → 클립 **제목+본문**을 `embedding-passage`
+   → Qdrant `lecture_clips` upsert(payload=식별자만) → 행 `status='embedded'` →
+   `lecture_atom` 잡 팬아웃(`lecture_atom_enabled` on일 때).
+3. **원자화(PIKE-RAG D129 미러)**: `lecture_atom` 잡이 클립 **제목+본문**을
+   **solar-pro3**(`lecture_atom_model`)에 주어 예상 질문 `lecture_atoms_per_clip`개
+   생성 → `lecture_clip_atoms` insert → `embedding-passage` → Qdrant
+   `lecture_clip_atoms` upsert(payload `{atom_id, clip_id, package_id}`).
+4. **실패 격리(D88 동형)**: 파싱 실패는 `lecture_videos.status='failed'`+`error`,
+   임베딩 실패는 클립 `status='failed'`, **원자 실패는 격리**(클립은 본문 임베딩으로
+   정상 검색). solar-pro3 미가용/오류는 원자만 죽고 클립은 산다. 회로차단 임계 5.
 
-파서는 `services/lecture_parse.py` 한 곳에 격리한다(EBS HTML 구조 변화에 대비 —
-이런 취약점은 한 파일에 가두고 테스트로 지킨다). 파싱은 `player.Command.seek(N)`
-정규식(raw HTML에서 16개 확인)과 `data-index-time`을 함께 시도한다.
+`services/lecture_parse.py`(HTML 챕터) + `services/subtitle_parse.py`(SRT/VTT/SMI
+→ 큐 + 구간 슬라이스)로 파싱을 격리한다(EBS·자막 구조 변화 대비, 픽스처 테스트로
+방어). 원자 생성 프롬프트·파서는 `atomize.py` 패턴을 재사용한다.
+
+**모델**: `solar.complete()`에 per-call `model` 인자가 없으므로, `model` kwarg를
+추가해 원자화만 `lecture_atom_model`(기본 `solar-pro3`)로 돌린다 — 전역 채팅
+모델(`upstage_chat_model=solar-pro2`)은 건드리지 않는다. `solar-pro3` 실제
+가용성은 구현 시 검증하고, 실패해도 원자 격리로 클립은 동작한다.
 
 ## 검색 + ReAct 스킬
 
 - **`services/lecture_search.py`** `search_class_clips(client, space_ref, query)`
-  (figure_search 미러):
+  (figure_search + `rag.dual_search` D129 미러):
   1. `class_lecture_packages`에서 그 학급의 켠 `package_id`들을 읽는다. 없으면 `[]`.
-  2. `embed_query(query)` → Qdrant `lecture_clips` 검색, 필터 `package_id
-     MatchAny(켠 것들)`, `score_threshold = 1 - lecture_retrieve_max_distance`.
-  3. 히트 id로 `lecture_clips` 행 재조회(+ 부모 `lecture_videos.page_url`).
-  4. `top_k`개 반환: `{clip_id, title, start_sec, timeline_label(파생), page_url,
-     video_title, score}`. **어떤 실패든 `[]`**(검색은 채팅을 막지 않는다).
+  2. `embed_query(query)` 1회 → **이중 검색**(동시): `lecture_clips`(직접, 게이트
+     `lecture_retrieve_max_distance` 0.55) + `lecture_clip_atoms`(원자, 게이트
+     `lecture_atom_max_distance` 0.45). 둘 다 `package_id MatchAny(켠 것들)` 필터.
+  3. **병합**: 직접 히트의 clip_id 먼저, 원자 히트는 **페이로드 `clip_id`로
+     역참조**해 append(직접에 이미 있으면 제외, clip_id별 최소 원자 거리). 게이트는
+     이중 검색 내부에서 끝난다 — 호출부 재게이트 금지(D129 규약).
+  4. clip_id로 `lecture_clips` 행 재조회(+ 부모 `lecture_videos.page_url/title`).
+  5. `top_k`(+여유)개 반환: `{clip_id, title, start_sec, timeline_label(파생),
+     page_url, video_title, via('clip'|'atom'), score}`. **어떤 실패든 `[]`**.
 - **`ai/skills/search_lecture_clip.py`** (`search_textbook_figure` 미러): class
   스코프 가드(개인 세션 거부) → `lecture_search` 위임 → 모델엔 제목만, 캔버스
   배치용 전체는 `data.clips`로 오케스트레이터가 소비. 카탈로그 노출은 `(space_kind,
@@ -148,16 +195,23 @@ admin이 패키지에 EBS 링크를 추가 → `lecture_parse` 잡:
 - **선생님 UI**: `MaterialsTab`에 "강의 추천 패키지" 섹션 — admin이 만든 (학년·
   과목·제목) 패키지 목록에서 이 워크스페이스에 켜기/끄기.
 - **admin 콘솔**: `/admin`에 "강의 패키지" 화면 — 패키지 CRUD(학년·과목·제목),
-  패키지에 EBS 링크 추가·파싱 상태·클립 목록 보기·재파싱·삭제.
+  패키지에 **EBS 링크·제목·자막파일 업로드**(multipart)·파싱 상태·클립 목록(본문·
+  원자 수) 보기·재파싱·삭제.
 
 ## 튜너블 (3곳 동기, D62)
 
 `config.py` 기본값 + `db/03_app_settings.sql` INSERT + `services/admin_console.py`
 위젯 스펙을 함께 추가한다:
 
-- `lecture_pipeline_enabled` (bool, 기본 true) — 인제스트 킬 스위치.
-- `lecture_retrieve_max_distance` (float, 기본 0.55, clamp 0.1~0.9) — 추천 거리 게이트.
-- `lecture_retrieve_top_k` (int, 기본 3) — 추천 개수.
+- `lecture_pipeline_enabled` (bool, 기본 true) — 인제스트 킬 스위치. (오버레이 대상)
+- `lecture_retrieve_max_distance` (float, 기본 0.55) — 직접(본문) 거리 게이트. (오버레이)
+- `lecture_atom_enabled` (bool, 기본 true) — 원자화+이중 검색 스위치. (오버레이)
+- `lecture_atom_max_distance` (float, 기본 0.45) — 원자(질문) 거리 게이트. (오버레이)
+- `lecture_atoms_per_clip` (int, 기본 4) — 클립당 생성 질문 수. (오버레이)
+- `lecture_atom_concurrency` (int, 기본 4) — solar 동시 호출. (오버레이)
+- `lecture_retrieve_top_k` (int, 기본 3) — 추천 개수. (config 전용)
+- `lecture_batch_size` (int, 기본 16) — 임베딩/원자 잡 팬아웃 단위. (config 전용)
+- `lecture_atom_model` (str, 기본 `"solar-pro3"`) — 원자 생성 모델. (config/env 전용)
 
 ## 유지할 불변식
 
