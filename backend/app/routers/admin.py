@@ -14,7 +14,16 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -754,6 +763,188 @@ async def purge_data(
     )
     logger.warning("ADMIN_PURGE actor=%s scopes=%s", actor, body.scopes)
     return {**result, "backup": backup}
+
+
+# ---------------------------------------------------------------------------
+# 강의 클립 — 패키지·영상 CRUD + 파싱 잡 (D149)
+#
+# admin 본인 JWT(UserClient)로 lecture_* 테이블을 다룬다 — admin RLS가 is_admin
+# 쓰기를 강제하므로 앱에서 다시 검사하지 않는다("권한은 DB가 강제한다", D104).
+# 파싱 잡 en큐만 ServiceClient(files.py와 동형): jobs 삽입은 워커 DSN이 필요하다.
+# ---------------------------------------------------------------------------
+class CreateLecturePackageBody(BaseModel):
+    grade: str = Field(min_length=1, max_length=40)
+    subject: str = Field(min_length=1, max_length=60)
+    title: str = Field(min_length=1, max_length=120)
+
+
+@router.post("/lecture-packages", status_code=status.HTTP_201_CREATED)
+async def create_lecture_package(
+    body: CreateLecturePackageBody,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    client = UserClient.from_user(user)
+    return await client.insert(
+        "lecture_packages",
+        {
+            "grade": body.grade,
+            "subject": body.subject,
+            "title": body.title,
+            "created_by": user.id,
+        },
+    )
+
+
+@router.get("/lecture-packages")
+async def list_lecture_packages(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    client = UserClient.from_user(user)
+    return await client.select(
+        "lecture_packages",
+        {"select": "id,grade,subject,title,created_at", "order": "created_at.desc"},
+    )
+
+
+@router.delete("/lecture-packages/{package_id}")
+async def delete_lecture_package(
+    package_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    client = UserClient.from_user(user)
+    await client.delete("lecture_packages", {"id": f"eq.{package_id}"})
+    return {"ok": True}
+
+
+@router.get("/lecture-packages/{package_id}/videos")
+async def list_lecture_videos(
+    package_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    client = UserClient.from_user(user)
+    return await client.select(
+        "lecture_videos",
+        {
+            "package_id": f"eq.{package_id}",
+            "select": "id,page_url,title,status,error,created_at",
+            "order": "created_at.desc",
+        },
+    )
+
+
+@router.post(
+    "/lecture-packages/{package_id}/videos", status_code=status.HTTP_201_CREATED
+)
+async def add_lecture_video(
+    package_id: str,
+    page_url: str = Form(..., min_length=8, max_length=1000),
+    title: str = Form(..., min_length=1, max_length=200),
+    subtitle: UploadFile | None = File(None),
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """EBS 영상 등록(멀티파트) — page_url·title + 자막파일(선택).
+
+    자막이 있으면 Storage에 올려 subtitle_path를 채우고, 파싱 잡을 en큐한다.
+    워커 DSN이 없으면(get_service_client None) 행만 만들고 잡·자막은 건너뛴다 —
+    files.py 업로드 경로와 같은 계약(en큐 불가 시 조용히 비활성).
+    """
+    client = UserClient.from_user(user)
+    video = await client.insert(
+        "lecture_videos",
+        {
+            "package_id": package_id,
+            "source": "ebs",
+            "page_url": page_url,
+            "title": title,
+            "status": "pending",
+        },
+    )
+    svc = get_service_client()
+    if svc is None:
+        return video
+    if subtitle is not None:
+        data = await subtitle.read()
+        ext = ((subtitle.filename or "sub").rsplit(".", 1)[-1] or "sub").lower()
+        path = f"lectures/{video['id']}/subtitle.{ext}"
+        await svc.storage_upload(
+            settings.storage_bucket,
+            path,
+            data,
+            subtitle.content_type or "text/plain",
+        )
+        await client.update(
+            "lecture_videos", {"id": f"eq.{video['id']}"}, {"subtitle_path": path}
+        )
+        video["subtitle_path"] = path
+    await svc.insert(
+        "jobs",
+        {
+            "owner_id": user.id,
+            "kind": "lecture_parse",
+            "target_id": video["id"],
+            "status": "queued",
+        },
+        returning=False,
+    )
+    return video
+
+
+@router.post("/lecture-videos/{video_id}/reparse")
+async def reparse_lecture_video(
+    video_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    client = UserClient.from_user(user)
+    await client.update(
+        "lecture_videos", {"id": f"eq.{video_id}"}, {"status": "pending", "error": None}
+    )
+    svc = get_service_client()
+    if svc is not None:
+        await svc.insert(
+            "jobs",
+            {
+                "owner_id": user.id,
+                "kind": "lecture_parse",
+                "target_id": video_id,
+                "status": "queued",
+            },
+            returning=False,
+        )
+    return {"ok": True}
+
+
+@router.delete("/lecture-videos/{video_id}")
+async def delete_lecture_video(
+    video_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    client = UserClient.from_user(user)
+    await client.delete("lecture_videos", {"id": f"eq.{video_id}"})
+    return {"ok": True}
+
+
+@router.get("/lecture-videos/{video_id}/clips")
+async def list_lecture_clips(
+    video_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    client = UserClient.from_user(user)
+    return await client.select(
+        "lecture_clips",
+        {
+            "video_id": f"eq.{video_id}",
+            "select": "id,seq,start_sec,title,status",
+            "order": "seq.asc",
+        },
+    )
 
 
 def _as_list(rows: Any) -> list[dict[str, Any]]:
