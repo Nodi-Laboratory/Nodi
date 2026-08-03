@@ -257,6 +257,14 @@ export function useCanvasStream({
        */
       let target = "";
       let shown = 0;
+      /**
+       * 클립·도판이 딸린 카드 (D163). 턴이 끝난 뒤 카메라를 다시 부르는 데 쓴다.
+       *
+       * 카메라는 `cstart`에서 카드 하나만 보고 이미 235%로 날아갔다(D162).
+       * 딸린 것은 `done`에 오므로, 다시 걸지 않으면 배치는 옆에 잘 붙여 놓고도
+       * 화면은 카드만 꽉 채운 채 끝난다 — 학생 눈에는 추천이 없는 것과 같다.
+       */
+      let attachHost: string | null = null;
       let streamDone = false;
       let timer = 0;
       /** 본문을 받는 노드. `current`는 `cend`에서 비므로 여기에 매지 않는다. */
@@ -369,6 +377,19 @@ export function useCanvasStream({
             onToolCall: (name) => setReply(TOOL_LABELS[name] ?? "찾아보고 있어요…"),
             onDone: (d: ChatDoneEvent) => {
               nodeId = d.node?.id ?? null;
+              /**
+               * 이번 턴의 개념 카드 — 클립·도판이 **딸릴 카드**다 (D163).
+               *
+               * 예전에는 둘 다 `parentItemId=null`이라 태그 없는 열(UNTAGGED)로
+               * 갔다. 그 열은 태그 열들 **뒤**에 붙으므로 카드에서 최소
+               * COL_GAP(760)만큼 떨어지는데, 새 노드를 235%로 당겨 보는
+               * 흐름(D162)에서는 화면 밖이다 — 검색은 됐는데 학생 눈에는
+               * 아무것도 안 뜬 것과 같았다.
+               *
+               * 부모를 주면 배치가 카드 오른쪽에 붙인다(layout 3)). 태그도
+               * 물려받는다 — 카드가 지워졌을 때 같은 열로 떨어지라고.
+               */
+              const host = made.find((m) => m.kind === "concept");
               // 교과서 도판(D86~D95) — 서버가 done에 실어 보낸다. url은 signed라
               // 만료되므로 **저장하지 않는다**(D87). figureId만 남기고 화면에서
               // 필요할 때 재발급한다.
@@ -383,13 +404,14 @@ export function useCanvasStream({
                   id: tempId(),
                   sessionId,
                   nodeId: null,
-                  // 도판은 트리 노드가 아니다 — 부모를 주면 배치가 옆에 붙인다.
-                  parentItemId: null,
+                  // 도판은 트리 노드가 아니다(tree.ts) — 부모를 줘도 간선이
+                  // 생기지 않고, 배치만 카드 옆으로 붙는다 (D163).
+                  parentItemId: host?.id ?? null,
                   kind: "figure",
                   source: "ai",
                   title: null,
                   body: "",
-                  tag: null,
+                  tag: host?.tag ?? null,
                   x: 0,
                   y: 0,
                   pinned: false,
@@ -418,13 +440,13 @@ export function useCanvasStream({
                   id: tempId(),
                   sessionId,
                   nodeId: null,
-                  // 클립은 트리 노드가 아니다 — 도판과 같이 부모 없이 옆에 붙인다.
-                  parentItemId: null,
+                  // 클립도 트리 노드가 아니다 — 도판과 같이 카드에 딸린다 (D163).
+                  parentItemId: host?.id ?? null,
                   kind: "clip",
                   source: "ai",
                   title: null,
                   body: "",
-                  tag: null,
+                  tag: host?.tag ?? null,
                   x: 0,
                   y: 0,
                   pinned: false,
@@ -442,6 +464,12 @@ export function useCanvasStream({
                     },
                   },
                 });
+              }
+              // 딸린 것이 생겼다 — 턴이 끝나고 화면에 올라간 **뒤에** 초점을
+              // 다시 준다(아래). 여기서 바로 걸면 store에 아직 없어서 카메라가
+              // 카드 하나만 보고 날아간다.
+              if (host && made.some((m) => m.kind === "clip" || m.kind === "figure")) {
+                attachHost = host.id;
               }
             },
             onError: (msg, status) => {
@@ -494,6 +522,9 @@ export function useCanvasStream({
       }
       flush();
       setBusy(false);
+      // 이제서야 클립·도판이 화면에 있다. 초점을 다시 주면 호출부가 묶음이
+      // 다 들어오는 배율로 맞춘다(focusCamera, D163).
+      if (attachHost) setFocusId(attachHost);
 
       // 만들어진 카드를 돌려준다 — 호출부가 초점을 어디로 옮길지 정한다(D151).
       const created = () => made.map((m) => ({ id: m.id, tag: m.tag }));

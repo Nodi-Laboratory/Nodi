@@ -107,8 +107,9 @@ base_url/model/api_key 셋이 다 채워져야 동작하고, 로컬은 비워 �
   추론 누출 차단). 스킬 실패는 `SkillResult(ok=False)`로 모델에 전달되고
   턴을 죽이지 않는다.
 
-  스킬 7종: think · search_class_material · search_textbook_figure ·
-  list_session_concepts · get_concept · list_session_files · read_session_file.
+  스킬 8종: think · search_class_material · search_textbook_figure ·
+  search_lecture_clip · list_session_concepts · get_concept ·
+  list_session_files · read_session_file.
   카탈로그는 스코프뿐 아니라 **세션 상태**로도 갈린다(파일이 없으면 파일 스킬을
   노출하지 않는다 — 노출하면 모델이 부르고 빈 결과로 군더더기를 붙인다).
   판단 프롬프트에 복합 질문 서브질문 분해 지침이 있다(D130). search_class_material은
@@ -116,6 +117,14 @@ base_url/model/api_key 셋이 다 채워져야 동작하고, 로컬은 비워 �
   검색어 정제(실패 시 원문), `atom_rag_enabled` — `rag.dual_search`로 청크·원자
   이중 검색(거리 게이트 분리: 직접 0.60 / 원자 `atom_rag_max_distance` 0.45,
   원자 경유 청크 재게이트 금지 — 게이트는 dual_search 내부에서 끝난다, D129).
+
+  **곁들이 둘은 모델 선택에 맡기지 않는다 (D163).** 교과서 도판·강의 클립은
+  답을 바꾸지 않고 화면에 **곁들여 뜨는 것**인데, 모델은 이 도구를 자주 건너뛴다
+  (실측 2026-08-03: "정확도랑 정밀도 차이가 뭐야?"에 도구 0건 — 거리 0.49로
+  걸리는 클립이 있는데도). 그래서 **개념 카드가 나온 턴이면** 안 부른 쪽을
+  오케스트레이터가 대신 부른다. 판정 신호가 "생성 결과"인 이유는 인사 턴에
+  임베딩이 나가면 안 되기 때문이다 — 인사에는 개념 카드가 없다. 모델이 자기가
+  다듬은 검색어로 **빈손이면 원문으로 한 번 더** 찾는다(D135 동형 문제).
 
   **기존 단발 경로** (`react_enabled` off, 롤백용):
   컨텍스트 빌더 병렬(gather): 기억 연결·파일 RAG·비교 참조·세션 파일 전문
@@ -179,6 +188,16 @@ base_url/model/api_key 셋이 다 채워져야 동작하고, 로컬은 비워 �
   · 질문 원문은 **언제나** `data.askedQuestion`으로 답에 실어 hover 툴팁이
     쓴다 — 안 실으면 이어 물은 내용이 어디에도 남지 않는다(부모가 질문이
     아니라 앞 답이므로).
+  · **곁들이는 카드에 딸린다**(D163). 강의 클립·교과서 도판은 그 턴 개념
+    카드의 `parentItemId`를 받아 **오른쪽 옆**에 붙는다(`ATTACH_KINDS`).
+    예전엔 부모가 없어 태그 없는 열(UNTAGGED)로 갔는데, 그 열은 태그 열들
+    뒤라 카드에서 COL_GAP(760) 넘게 떨어진다 — 235% 줌(D162)에서는 화면
+    밖이라 **검색은 됐는데 아무것도 안 뜬 것과 같았다.** 트리 노드는 아니므로
+    간선은 안 생기고(tree.ts), 연결선은 점선으로만 그린다. 종류마다 열이
+    하나다 — 한 줄로 쌓으면 도판 3 + 클립 2가 1500px 기둥이 된다.
+    카메라도 함께 바뀐다(`lib/canvas2/focusCamera.ts`): 딸린 것이 없으면
+    D162 그대로 235%, 있으면 **묶음이 다 들어오는 배율**(하한 1.15). 235%
+    에서 폭 560 카드는 화면을 꽉 채워 옆에 뭘 놓아도 안 보인다.
   · **연결선 앵커는 상대 위치가 정한다**(D126, `lib/canvas2/connector.ts`).
     고정 앵커였을 때 같은 부모의 답 둘이 한 점에서 나가 선이 겹쳤다. 끝점은
     글자 사각형이 아니라 **패딩 상자**(hover 박스와 같은 크기)의 변에 앉는다.
@@ -188,6 +207,14 @@ base_url/model/api_key 셋이 다 채워져야 동작하고, 로컬은 비워 �
     되돌리면 드래그 성능이 무너진다.
   · 카메라는 CSS transition이 아니라 **임계 감쇠 스프링**(D124). v1은 매 프레임
     setCamera + transition 0.7s로 "따라오다 마지막에 훅 가는" 지연이 있었다.
+- **EBS 강의 클립 추천 (D149)**: admin이 EBS 영상 링크를 패키지(학년·과목)로
+  묶고, 선생님이 워크스페이스에 켠다(`class_lecture_packages`). 인제스트는
+  `worker/lectures.py` — `lecture_parse`(EBS 챕터 파싱 + 자막/Whisper 전사)
+  → `lecture_embed`(제목+본문 → Qdrant `lecture_clips`) → `lecture_atom`
+  (PIKE 원자 질문 → `lecture_clip_atoms`). 검색은 `services/lecture_search.py`
+  가 figure_search를 미러하되 스코프가 file_id가 아니라 **package_id**다
+  (거리 게이트: 직접 0.60 / 원자 0.45). 캔버스에는 `kind='clip'` 아이템으로
+  뜨고 `page_url`은 안정적이라 **영속한다**(도판과 달리 재발급 없음).
 - 교과서 도판은 `services/figure_search.py`가 검색한다(D111 — 프론트 선행
   `/retrieve` 제거, ReAct 스킬과 레거시 경로가 같은 구현을 쓴다). (D94, 사용자
   결정 2026-07-18: EBS 영상·SVG 아트 추천 기능 전면 제거 — `/art/search`·인제스트

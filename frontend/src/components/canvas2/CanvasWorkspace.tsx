@@ -35,7 +35,9 @@ import { useSessionDetail } from "@/lib/queries";
 import { intersects, union } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
-import { ITEM_W } from "@/lib/canvas2/layout";
+import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
+import { focusCamera } from "@/lib/canvas2/focusCamera";
+import type { Size } from "@/lib/canvas2/useItemLayout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
 import { descendants, nextFocus, treeEdges } from "@/lib/canvas2/tree";
@@ -66,6 +68,28 @@ const FALLBACK_H = 180;
  * 읽으라고 만든 글이니 만들어지는 순간 읽을 수 있는 크기여야 한다.
  */
 const NEW_NODE_ZOOM = 2.35;
+
+/**
+ * 카드에 딸린 것(강의 클립·도판)까지 담느라 내려갈 수 있는 배율 하한 (D163).
+ *
+ * 235%를 고집하면 클립이 화면 밖이고, 무제한으로 축소하면 글을 못 읽는다.
+ * 1.15배는 카드 하나 + 클립 셋이 들어오면서 본문이 기본 크기보다 큰 지점이다.
+ */
+const ATTACH_MIN_ZOOM = 1.15;
+/** 묶음 둘레 여백(px). 화면 가장자리에 딱 붙으면 잘린 것처럼 보인다. */
+const FOCUS_PAD = 72;
+/**
+ * 초점 계산에서 빼는 UI 자리 (D163).
+ *
+ * 뷰포트는 `<main>` 전체지만 그 위에 항상 떠 있는 것이 둘 있다 — 오른쪽
+ * 아래의 도구 레일과 아래쪽의 질문창. 그걸 세지 않고 배율을 맞추면 딱
+ * 맞췄다고 계산한 아이템이 실제로는 그 밑에 깔린다.
+ *
+ * 개념 지도(오른쪽 위)는 빼지 않는다 — 접을 수 있고, 폭이 340이라 빼기
+ * 시작하면 쓸 수 있는 자리가 확 줄어 오히려 더 축소된다.
+ */
+const UI_RIGHT = 80;
+const UI_BOTTOM = 150;
 
 /**
  * 초기 카메라. 좌·상단 여유를 둬서 열 라벨(아이템 위 34px)과 좌측 괘선(-16px)이
@@ -928,19 +952,42 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 놓고 질문하면 답이 깨알같이 생겨서 정작 읽지를 못했다.
    */
   const { focusId, clearFocus } = stream;
+  const storeItems = store.items;
   useEffect(() => {
     if (!focusId) return;
     const p = layout.positions.get(focusId);
     if (!p) return; // 아직 배치 전 — 다음 렌더에 다시 시도한다
-    const { w, h: vh } = vp;
-    const z = NEW_NODE_ZOOM;
-    flyTo({
-      zoom: z,
-      scrollX: w / 2 / z - (p.x + ITEM_W / 2),
-      scrollY: vh / 3 / z - p.y,
-    });
+
+    /**
+     * 이 카드에 딸린 것(강의 클립·교과서 도판)까지 화면에 넣는다 (D163).
+     *
+     * 235%에서 폭 560 카드는 화면을 꽉 채운다 — 옆에 아무리 잘 놓아도 안
+     * 보인다. 딸린 것이 있을 때만 배율을 낮춰 묶음을 담는다(focusCamera).
+     */
+    const attached = storeItems.filter(
+      (i) => i.parentItemId === focusId && (i.kind === "clip" || i.kind === "figure"),
+    );
+    // 아직 실측 전인 첨부가 있으면 기다린다. 폴백 크기로 날아가면 카메라가
+    // 한 번 어긋난 자리에 서고, focus는 이미 지워져 다시 맞출 기회가 없다.
+    if (attached.some((a) => !layout.positions.has(a.id) || !layout.sizes.has(a.id))) return;
+
+    const size = layout.sizes.get(focusId) ?? { w: ITEM_W, h: FALLBACK_H };
+    flyTo(
+      focusCamera(
+        { x: p.x, y: p.y, w: size.w, h: size.h },
+        attached.map((a) => {
+          const ap = layout.positions.get(a.id) as Placed;
+          const as = layout.sizes.get(a.id) as Size;
+          return { x: ap.x, y: ap.y, w: as.w, h: as.h };
+        }),
+        attached.length
+          ? { w: vp.w - UI_RIGHT, h: vp.h - UI_BOTTOM }
+          : { w: vp.w, h: vp.h },   // 딸린 것이 없으면 D162 그대로 둔다
+        { maxZoom: NEW_NODE_ZOOM, minZoom: ATTACH_MIN_ZOOM, pad: FOCUS_PAD },
+      ),
+    );
     clearFocus();
-  }, [focusId, layout.positions, vp, flyTo, clearFocus]);
+  }, [focusId, layout.positions, layout.sizes, storeItems, vp, flyTo, clearFocus]);
 
   const banner =
     drawError ??

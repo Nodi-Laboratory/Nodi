@@ -63,7 +63,18 @@ interface Link {
    * 방향만 보이게 그린다.
    */
   tree: boolean;
+  /**
+   * 카드에 딸린 것(강의 클립·교과서 도판)인가 (D163).
+   *
+   * 이것도 부모가 있지만 "AI 응답"이 아니다 — 라벨을 그대로 달면 클립 셋에
+   * "AI 응답"이 셋 붙어 캔버스가 같은 글자로 뒤덮인다. 점선 가는 선으로
+   * **딸려 있다**는 것만 보인다.
+   */
+  attach: boolean;
 }
+
+/** 카드 옆에 붙는 종류. layout.ts의 ATTACH_KINDS와 같은 목록이다. */
+const ATTACH_KINDS = new Set(["clip", "figure"]);
 
 function shift(r: Rect, o: DragOffset | undefined): Rect {
   return o ? { ...r, x: r.x + o.dx, y: r.y + o.dy } : r;
@@ -94,6 +105,7 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
         parent: { x: pp.x, y: pp.y, w: ps.w, h: ps.h },
         child: { x: cp.x, y: cp.y, w: cs.w, h: cs.h },
         tree: treeChildIds.has(child.id),
+        attach: ATTACH_KINDS.has(child.kind),
       };
     });
 
@@ -179,9 +191,11 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
               stroke="currentColor"
               // 1.1/0.28이었다 — 카드가 커지니 실오라기처럼 보였다
               // (사용자 지시 2026-08-03: "연결선을 더 굵게").
-              strokeWidth={l.tree ? 2.6 : 2}
+              strokeWidth={l.attach ? 1.6 : l.tree ? 2.6 : 2}
               strokeLinecap="round"
-              opacity={l.tree ? 0.55 : 0.5}
+              // 첨부는 점선이다 (D163) — 트리 간선과 한눈에 갈린다.
+              strokeDasharray={l.attach ? "5 6" : undefined}
+              opacity={l.attach ? 0.4 : l.tree ? 0.55 : 0.5}
             />
             {/* 양끝 도트 — 어디서 나와 어디로 갔는지가 한눈에 보인다.
                 받는 쪽만 가운데를 종이색으로 비워 방향을 표시한다. */}
@@ -189,23 +203,23 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
               data-end="from"
               cx={g.a.x - minX}
               cy={g.a.y - minY}
-              r={l.tree ? DOT_R + 0.5 : DOT_R}
+              r={l.attach ? DOT_R - 1 : l.tree ? DOT_R + 0.5 : DOT_R}
               fill="currentColor"
-              opacity={l.tree ? 0.8 : 0.85}
+              opacity={l.attach ? 0.5 : l.tree ? 0.8 : 0.85}
             />
             <circle
               data-end="to"
               cx={g.b.x - minX}
               cy={g.b.y - minY}
-              r={l.tree ? DOT_R + 0.5 : DOT_R}
+              r={l.attach ? DOT_R - 1 : l.tree ? DOT_R + 0.5 : DOT_R}
               fill="var(--c-paper)"
               stroke="currentColor"
-              strokeWidth={2}
-              opacity={l.tree ? 0.9 : 0.95}
+              strokeWidth={l.attach ? 1.4 : 2}
+              opacity={l.attach ? 0.6 : l.tree ? 0.9 : 0.95}
             />
             {/* 트리 간선에는 라벨을 달지 않는다 — 카드마다 하나씩이라
-                "AI 응답"이 캔버스를 뒤덮는다 (D151). */}
-            {!l.tree && (
+                "AI 응답"이 캔버스를 뒤덮는다 (D151). 첨부도 마찬가지다(D163). */}
+            {!l.tree && !l.attach && (
             <text
               x={m.x - minX}
               y={m.y - minY - 6}

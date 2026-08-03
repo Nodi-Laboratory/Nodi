@@ -150,7 +150,10 @@ class Settings(BaseSettings):
 
     # --- 강의 클립 추천 (D149) ---
     lecture_pipeline_enabled: bool = True          # 인제스트 킬 스위치
-    lecture_retrieve_max_distance: float = 0.55    # 직접(본문) 거리 게이트
+    # 직접(본문) 거리 게이트. 0.55였는데 실측에서 정직하게 관련 있는 클립이
+    # 떨어졌다 — "측정 표준이 왜 필요해?" ↔ 「국제단위계(SI)와 측정 표준」이
+    # 0.588. 청크·도판이 쓰는 0.60에 맞춘다(D163).
+    lecture_retrieve_max_distance: float = 0.60
     lecture_atom_enabled: bool = True              # PIKE 원자화+이중 검색
     lecture_atom_max_distance: float = 0.45        # 원자(질문) 거리 게이트
     lecture_atoms_per_clip: int = 4                # 클립당 생성 질문 수

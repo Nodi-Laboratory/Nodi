@@ -68,6 +68,8 @@ export function FigureItem({ item, x, y, measure }: Props) {
       <div
         ref={(el) => measure(item.id, el)}
         data-canvas-item={item.id}
+        // E2E가 도판을 집는 손잡이 (D163, ClipItem의 data-canvas-clip과 대칭).
+        data-canvas-figure={item.data.figure?.figureId}
         className="absolute"
         style={{
           left: x,

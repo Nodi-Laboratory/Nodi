@@ -12,9 +12,17 @@
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { PlayCircle, X } from "lucide-react";
-import { ITEM_W } from "@/lib/canvas2/layout";
 import { useItemDrag } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem } from "@/lib/canvas2/types";
+
+/**
+ * 클립 카드 폭 (D163).
+ *
+ * ITEM_W(560)였다. 개념 카드 **옆에** 붙게 되면서(layout ATTACH_KINDS) 같은
+ * 폭이면 어느 쪽이 답이고 어느 쪽이 곁다리인지 안 갈린다. 좁혀 두면 카드에
+ * 딸린 것으로 읽히고, 트리 옆 여백에도 들어간다.
+ */
+const CLIP_W = 340;
 
 interface Props {
   item: CanvasItem;
@@ -76,12 +84,13 @@ export function ClipItem({
     <div
       ref={setNode}
       data-canvas-item={item.id}
+      data-canvas-clip={clip.clipId}
       data-selected={selected ? "1" : undefined}
       className="absolute rounded-lg border p-3"
       style={{
         left: x,
         top: y,
-        width: ITEM_W,
+        width: CLIP_W,
         pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
         background: "var(--c-raised)",
         borderColor: selected ? "var(--c-live)" : "var(--c-rule)",
@@ -155,15 +164,30 @@ export function ClipItem({
         </button>
       )}
 
-      <div className="label mb-1" style={{ color: "var(--c-ink-soft)", letterSpacing: 0 }}>
-        강의 클립 · {clip.timelineLabel}
+      {/* 머리 — 무엇인지(EBS 강의)와 어디인지(타임라인)를 한 줄로. */}
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <PlayCircle size={15} style={{ color: "var(--c-live-deep)", flexShrink: 0 }} />
+        <span className="label" style={{ color: "var(--c-ink-soft)", letterSpacing: 0 }}>
+          EBS 강의
+        </span>
+        <span
+          className="label ml-auto rounded px-1.5 py-0.5"
+          style={{
+            color: "var(--c-live-deep)",
+            background: "var(--c-live-wash, transparent)",
+            border: "1px solid var(--c-rule)",
+            letterSpacing: 0,
+          }}
+        >
+          {clip.timelineLabel}
+        </span>
       </div>
-      <div className="text-sm font-medium" style={{ color: "var(--c-ink)" }}>
+      <div className="text-sm font-medium leading-snug" style={{ color: "var(--c-ink)" }}>
         {clip.title}
       </div>
       {clip.videoTitle ? (
         <div
-          className="label mt-0.5 truncate"
+          className="label mt-1 truncate"
           style={{ color: "var(--c-ink-faint)", letterSpacing: 0 }}
         >
           {clip.videoTitle}
@@ -179,7 +203,7 @@ export function ClipItem({
         className="mt-2 inline-flex items-center gap-1 text-sm"
         style={{ color: "var(--c-hand)" }}
       >
-        <PlayCircle size={15} /> EBS에서 보기 ({clip.timelineLabel})
+        EBS에서 이어 보기 →
       </a>
     </div>
   );

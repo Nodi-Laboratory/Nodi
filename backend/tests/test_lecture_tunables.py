@@ -6,7 +6,9 @@ from app.services import admin_console
 def test_config_defaults():
     s = get_settings()
     assert s.lecture_pipeline_enabled is True
-    assert s.lecture_retrieve_max_distance == 0.55
+    # 0.55 → 0.60 (D163). 청크·도판과 같은 게이트다 — 실측에서 관련 있는
+    # 클립("측정 표준" 0.588)이 0.55에 걸려 떨어졌다.
+    assert s.lecture_retrieve_max_distance == 0.60
     assert s.lecture_atom_enabled is True
     assert s.lecture_atom_max_distance == 0.45
     assert s.lecture_atoms_per_clip == 4

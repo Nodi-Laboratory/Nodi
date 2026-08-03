@@ -9,6 +9,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  ATTACH_GAP,
+  CHILD_GAP,
   COL_GAP,
   ITEM_MIN_W,
   ITEM_W,
@@ -273,6 +275,124 @@ describe("AI 응답을 메모 옆에", () => {
     const spot = placeBesideParent(parent, ITEM_W, 200, [blocker]);
     expect(intersects({ ...spot, w: ITEM_W, h: 200 }, blocker)).toBe(false);
     expect(spot.y).toBeGreaterThan(0);
+  });
+});
+
+// --- 첨부(강의 클립·도판) ----------------------------------------------------
+
+/**
+ * D163. 클립·도판은 예전엔 `parentItemId=null`이라 UNTAGGED 열로 갔다 —
+ * 카드에서 COL_GAP(760) 넘게 떨어져 235% 줌(D162)에서는 화면 밖이었다.
+ * "검색은 됐는데 아무것도 안 뜬다"의 정체라, 여기서 못 박는다.
+ */
+describe("카드에 딸린 클립·도판 (D163)", () => {
+  const card = (over: Partial<LayoutInput> & { id: string }) =>
+    item({ kind: "concept", source: "ai", tag: "지구과학", ...over });
+
+  it("클립이 개념 카드 오른쪽 옆에 놓인다", () => {
+    const items = [
+      card({ id: "c1", seq: 0, height: 300 }),
+      item({ id: "clip1", seq: 1, kind: "clip", source: "ai", tag: "지구과학",
+             parentItemId: "c1", width: 340, height: 140 }),
+    ];
+    const { positions } = layoutItems(items);
+    const c1 = positions.get("c1")!;
+    const clip = positions.get("clip1")!;
+    // 오른쪽이다 — 열 하나 건너(COL_GAP)가 아니라 바로 옆(CHILD_GAP).
+    expect(clip.x).toBe(c1.x + ITEM_W + CHILD_GAP);
+    expect(clip.x - (c1.x + ITEM_W)).toBeLessThan(COL_GAP);
+    // 카드 윗변에 맞는다 — 눈이 카드에서 바로 넘어간다.
+    expect(clip.y).toBe(c1.y);
+    expect(overlaps(items).bad).toEqual([]);
+  });
+
+  it("클립 여럿은 ATTACH_GAP으로 바짝 쌓인다(한 묶음으로 읽힌다)", () => {
+    const items = [
+      card({ id: "c1", seq: 0, height: 300 }),
+      item({ id: "k1", seq: 1, kind: "clip", source: "ai", parentItemId: "c1",
+             width: 340, height: 140 }),
+      item({ id: "k2", seq: 2, kind: "clip", source: "ai", parentItemId: "c1",
+             width: 340, height: 140 }),
+      item({ id: "k3", seq: 3, kind: "clip", source: "ai", parentItemId: "c1",
+             width: 340, height: 140 }),
+    ];
+    const { positions } = layoutItems(items);
+    expect(positions.get("k2")!.y - (positions.get("k1")!.y + 140)).toBe(ATTACH_GAP);
+    expect(positions.get("k3")!.y - (positions.get("k2")!.y + 140)).toBe(ATTACH_GAP);
+    // 같은 세로줄에 쌓인다.
+    expect(positions.get("k2")!.x).toBe(positions.get("k1")!.x);
+    expect(overlaps(items).bad).toEqual([]);
+  });
+
+  it("형제 가지가 오른쪽에 있어도 트리 노드를 덮지 않는다", () => {
+    // 부모 하나에 자식 둘 — tidy tree가 좌우로 벌린다(SIB_GAP=200).
+    // 왼쪽 자식에 붙은 클립(340)이 그 틈보다 넓어, 트리 노드를 장애물로
+    // 등록하지 않으면 오른쪽 형제 위에 그대로 얹힌다.
+    const items = [
+      card({ id: "root", seq: 0, height: 200 }),
+      card({ id: "L", seq: 1, parentItemId: "root", height: 200 }),
+      card({ id: "R", seq: 2, parentItemId: "root", height: 200 }),
+      item({ id: "clip", seq: 3, kind: "clip", source: "ai", parentItemId: "L",
+             width: 340, height: 160 }),
+    ];
+    const { bad } = overlaps(items);
+    expect(bad).toEqual([]);
+  });
+
+  it("도판도 같은 규칙으로 카드 옆에 붙는다", () => {
+    const items = [
+      card({ id: "c1", seq: 0, height: 300 }),
+      item({ id: "fig", seq: 1, kind: "figure", source: "ai", parentItemId: "c1",
+             width: 320, height: 260 }),
+    ];
+    const { positions } = layoutItems(items);
+    expect(positions.get("fig")!.x).toBe(positions.get("c1")!.x + ITEM_W + CHILD_GAP);
+    expect(overlaps(items).bad).toEqual([]);
+  });
+
+  /**
+   * 실측으로 잡은 결함(E2E, 2026-08-03): 도판 3 + 클립 2를 한 줄로 쌓으니
+   * 클립이 카드 아래 1061px에 떨어졌다. "옆"이 아니라 "저 아래"였다.
+   */
+  it("종류가 섞이면 열을 나눠 높이가 합이 아니라 최댓값이 된다", () => {
+    const items = [
+      card({ id: "c1", seq: 0, height: 208 }),
+      ...[0, 1, 2].map((i) =>
+        item({ id: `f${i}`, seq: 1 + i, kind: "figure", source: "ai",
+               parentItemId: "c1", width: 320, height: 260 }),
+      ),
+      ...[0, 1].map((i) =>
+        item({ id: `k${i}`, seq: 4 + i, kind: "clip", source: "ai",
+               parentItemId: "c1", width: 340, height: 150 }),
+      ),
+    ];
+    const { positions } = layoutItems(items);
+    const c1 = positions.get("c1")!;
+    // 클립이 카드에 제일 가깝다 — 지금 물은 것에 대한 추천이다.
+    expect(positions.get("k0")!.x).toBe(c1.x + ITEM_W + CHILD_GAP);
+    // 도판은 클립 열 너머다(클립 폭 340 + ATTACH_GAP).
+    expect(positions.get("f0")!.x).toBe(c1.x + ITEM_W + CHILD_GAP + 340 + ATTACH_GAP);
+    // 두 종류 모두 카드 윗변에서 시작한다 — 한쪽이 다른 쪽 아래로 밀리지 않는다.
+    expect(positions.get("k0")!.y).toBe(c1.y);
+    expect(positions.get("f0")!.y).toBe(c1.y);
+    // 묶음 높이는 합(3×260 + 2×150 = 1080)이 아니라 최댓값(3×260 = 820) 쪽이다.
+    const bottoms = ["k0", "k1", "f0", "f1", "f2"].map((id) => {
+      const p = positions.get(id)!;
+      return p.y + (id.startsWith("k") ? 150 : 260);
+    });
+    expect(Math.max(...bottoms) - c1.y).toBeLessThan(900);
+    expect(overlaps(items).bad).toEqual([]);
+  });
+
+  it("클립은 트리 간선이 아니다(부모가 있어도 노드로 세지 않는다)", () => {
+    // 트리 노드였다면 tidy tree가 카드 **아래**에 놓았을 것이다.
+    const items = [
+      card({ id: "c1", seq: 0, height: 300 }),
+      item({ id: "clip", seq: 1, kind: "clip", source: "ai", tag: "지구과학",
+             parentItemId: "c1", width: 340, height: 140 }),
+    ];
+    const { positions } = layoutItems(items);
+    expect(positions.get("clip")!.y).toBeLessThan(positions.get("c1")!.y + 300);
   });
 });
 

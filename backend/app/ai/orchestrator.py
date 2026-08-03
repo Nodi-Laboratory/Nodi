@@ -40,10 +40,14 @@ logger = logging.getLogger("nodi.ai.orchestrator")
 _DECIDE_SYSTEM = """너는 중·고등학생을 가르치는 교사 보조 시스템의 도구 선택기다.
 학생의 질문을 읽고, 더 나은 답을 위해 **자료를 찾아봐야 하는지** 판단한다.
 
-- 수업 자료·교과서에 근거해야 하는 질문이면 해당 도구를 부른다.
-- 인사·잡담·감사 인사, 또는 일반 상식으로 충분한 질문이면 **아무 도구도 부르지 마라.**
+- 학생이 **무언가를 묻고 있으면** 네가 답을 안다고 생각하더라도 최소한
+  자료 검색 도구는 부른다. 이 제품은 선생님이 올린 수업 자료·교과서에 근거해
+  답하는 것이 전제다 — 네 일반 지식으로 답하면 그 근거가 사라진다.
+- 인사·잡담·감사 인사처럼 **묻는 것이 없으면** 아무 도구도 부르지 마라.
 - 도구를 부를 때는 학생의 표현을 그대로 검색어로 써도 된다.
 - 여러 개념을 묻는 복합 질문(비교·차이·원인과 결과 등)은 **서브질문으로 나눠 각각 검색**하라.
+- 개념을 설명해 달라는 질문이면 자료 검색과 **함께** 강의 영상·교과서 도판 도구도 부른다
+  (목록에 보일 때만 있다). 학생 화면에 곁들여 뜨는 것이라 답을 방해하지 않는다.
 - 검색 결과가 질문의 일부만 덮으면, 부족한 부분을 다른 검색어로 다시 찾아라.
 - 도구를 부르지 않기로 했다면 아주 짧게 한 마디만 하고 끝낸다(이 텍스트는 학생에게 보이지 않는다).
 """
@@ -90,6 +94,13 @@ _HANDLED_KEYS = frozenset({"sources", "figures", "captions", "chunks", "clips"})
 # 모델이 자기 계획을 검증된 사실로 취급하게 만드는 셈이다. 계획은 판단 단계의
 # 대화 이력(tool_result)에만 남기면 충분하다.
 _NOT_EVIDENCE = frozenset({"think"})
+
+# 화면에 **곁들여 띄우는** 것들 (D163). 답을 바꾸지 않고 옆에 붙기만 한다.
+# `(스킬 이름, 이미 건졌는가)` — 건진 게 없으면 모델이 불렀더라도 다시 부른다.
+_RECOMMEND_SKILLS: tuple[tuple[str, str], ...] = (
+    ("search_textbook_figure", "figures"),
+    ("search_lecture_clip", "clips"),
+)
 # 일반 렌더 1건의 길이 상한. 스킬이 큰 목록을 돌려줘도 프롬프트가 폭주하지 않게.
 _GENERIC_MAX_CHARS = 4000
 
@@ -291,14 +302,80 @@ class Orchestrator:
         outcome.final_system = system
 
         answer_usage: dict[str, int] = {}
+        answer_parts: list[str] = []
         async for delta in solar.stream_answer(
             history, question, system, usage_sink=answer_usage
         ):
+            answer_parts.append(delta)
             yield ("token", delta)
         # 스트림이 끊기면 usage 청크가 안 올 수 있다 — 빈 채로 두고 어림하지
         # 않는다(실측 자리에 추정을 앉히면 둘을 구분할 수 없다).
         if answer_usage:
             outcome.llm_calls.append({"stage": "answer", **answer_usage})
+
+        # ── 곁들이 보장 ──────────────────────────────────────────────
+        #
+        # D163. 학생 화면에 **곁들여 뜨는 것**(EBS 강의 클립·교과서 도판)은
+        # 모델의 도구 선택에 맡기면 안 뜬다. 실측(2026-08-03):
+        #
+        #   "실험실에서 안전하게 실험하려면?"  → search_class_material만 호출
+        #   "정확도랑 정밀도 차이가 뭐야?"     → 도구 0건 (안다고 생각해서)
+        #
+        # 둘 다 학급에 켜 둔 강의 클립이 거리 0.49로 걸리는 질문이었다. 선생님이
+        # 올려 둔 것이 학생 화면에 영영 안 뜨는 셈이다. D135가 같은 결론에 이미
+        # 도달했다 — "선택 스킬에 맡기면 모델이 안 불러서 보장이 깨진다."
+        #
+        # ## 언제 도는가 — 개념 카드가 나온 턴에만
+        #
+        # 인사·잡담 턴에는 임베딩·검색이 **아예 나가지 않아야 한다**(CLAUDE.md).
+        # 판단 단계의 도구 호출 여부로는 그 둘을 못 가른다(위 두 번째 실측이
+        # 도구 0건이었다). 그래서 **생성 결과**를 신호로 쓴다: 개념 카드가
+        # 만들어졌다면 학생이 뭔가를 배운 턴이고, 인사면 카드가 없다.
+        #
+        # 판정은 이미 있는 파서를 그대로 쓴다 — 개념 카드 형식을 읽는 네 번째
+        # 구현을 만들면 반드시 어긋난다(CLAUDE.md).
+        answer = "".join(answer_parts)
+        catalog_names = {c.get("function", {}).get("name") for c in catalog}
+        if solar.extract_used_tags([{"answer": answer}]):
+            for name, bucket in _RECOMMEND_SKILLS:
+                if name not in catalog_names or getattr(outcome, bucket):
+                    continue
+                # 모델이 **같은 검색어로** 이미 해 봤으면 다시 하지 않는다.
+                # 다른 검색어였다면 한 번 더 해 본다 — 실측(2026-08-03)에서
+                # 모델이 "측정 표준이 왜 필요해?"를 "측정 표준의 필요성"으로
+                # 다듬어 부르는 바람에 0건이었는데, 원문으로는 걸렸다.
+                tried = {
+                    (t.get("args") or {}).get("query")
+                    for t in outcome.skill_traces
+                    if t.get("skill") == name
+                }
+                if question in tried:
+                    continue
+                yield ("sse", _sse("tool_call", {"name": name, "args": {"query": question}}))
+                started = time.perf_counter()
+                result = await self.registry.dispatch(name, {"query": question}, ctx)
+                outcome.used_skills.append(name)
+                outcome.skill_traces.append(
+                    {
+                        "skill": name,
+                        "step": -1,          # 모델이 아니라 시스템이 부른 호출
+                        "args": {"query": question},
+                        "ok": result.ok,
+                        "message": result.message,
+                        "error_code": result.error_code,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                        "auto": True,
+                        "data": _trace_data(result.data),
+                    }
+                )
+                self._collect(outcome, name, result)
+                yield (
+                    "sse",
+                    _sse(
+                        "tool_result",
+                        {"name": name, "ok": result.ok, "message": result.message},
+                    ),
+                )
 
         yield ("outcome", outcome)
 

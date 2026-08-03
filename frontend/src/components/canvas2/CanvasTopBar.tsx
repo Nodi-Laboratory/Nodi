@@ -59,6 +59,8 @@ export function CanvasTopBar({
       <button
         type="button"
         onClick={onOpenSessions}
+        // 접근 이름이 세션 제목뿐이라 무엇을 하는 버튼인지 안 읽혔다.
+        aria-label="대화 목록 열기"
         className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-sm transition-colors"
         style={{
           background: "var(--c-raised)",

@@ -40,7 +40,7 @@ insert into public.app_settings (key, value) values
     ('semantic_chunking_max_chars',     '120000'),
     -- 강의 클립 추천 (D149)
     ('lecture_pipeline_enabled',        'true'),
-    ('lecture_retrieve_max_distance',   '0.55'),
+    ('lecture_retrieve_max_distance',   '0.60'),
     ('lecture_atom_enabled',            'true'),
     ('lecture_atom_max_distance',       '0.45'),
     ('lecture_atoms_per_clip',          '4'),

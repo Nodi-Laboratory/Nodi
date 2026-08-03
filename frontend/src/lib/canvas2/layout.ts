@@ -85,6 +85,15 @@ export const COL_TOP = 0;
 /** 자식(AI 응답)을 부모(메모) 옆에 둘 때의 가로 간격. */
 export const CHILD_GAP = 88;
 /**
+ * 첨부(강의 클립·교과서 도판)를 카드 옆에 쌓을 때의 세로 간격 (D163).
+ *
+ * ROW_GAP(240)을 쓰면 클립 셋이 카드 하나 높이의 세 배로 흩어져 "이 카드에
+ * 딸린 것"으로 안 읽힌다. 첨부끼리는 붙여 놓아야 한 묶음으로 보인다.
+ */
+export const ATTACH_GAP = 20;
+/** 카드에 딸려 옆에 붙는 종류 (D163). 트리 노드가 아니다. */
+const ATTACH_KINDS = new Set(["clip", "figure"]);
+/**
  * 형제 서브트리 사이 간격 (D159).
  *
  * 96이었다. 노드를 만들면 235%로 당겨 보는 흐름(D162)에서는 화면에 한 장만
@@ -236,13 +245,14 @@ function pushDown(
   w: number,
   h: number,
   obstacles: readonly Rect[],
+  gap: number = ROW_GAP,
 ): number {
   let cur = y;
   for (let i = 0; i < MAX_PUSH; i++) {
     const rect: Rect = { x, y: cur, w, h };
     const hit = obstacles.find((o) => intersects(rect, o));
     if (!hit) return cur;
-    cur = bottom(hit) + ROW_GAP;
+    cur = bottom(hit) + gap;
   }
   return cur;
 }
@@ -372,7 +382,58 @@ export function layoutItems(
     colCursor += Math.max(treeW, looseW, ITEM_W) + COL_GAP;
   }
 
-  // 3) 트리 밖 자식(학생 메모에 대한 옛 AI 응답) — 부모 옆에.
+  /**
+   * 트리 노드도 장애물이다 (D163).
+   *
+   * 트리 배치는 자기들끼리 무겹침을 **보장**하므로 서로를 장애물로 볼 필요가
+   * 없었다. 하지만 아래 3)에서 카드 **옆에** 붙는 것들(강의 클립·도판)은 그
+   * 보장 밖이다 — 형제 서브트리 사이가 SIB_GAP(200)인데 첨부는 그보다 넓어서,
+   * 장애물로 등록하지 않으면 옆 가지 위에 그대로 얹힌다.
+   */
+  for (const id of inTree) {
+    const it = byId.get(id);
+    const p = positions.get(id);
+    if (it && p) blocks.push({ x: p.x, y: p.y, w: it.width, h: it.height });
+  }
+
+  /**
+   * 첨부는 **종류마다 열 하나**다 (D163).
+   *
+   * 한 줄로만 쌓으면 도판 3장 + 클립 2장이 카드 오른쪽에 1500px짜리 기둥을
+   * 세운다(실측: 클립이 카드 아래 1061px에 떨어졌다). 그러면 "옆에 딸렸다"가
+   * 아니라 "저 아래 어딘가"가 되고, 초점 카메라도 그 기둥을 담느라 한없이
+   * 축소된다.
+   *
+   * 종류로 가르면 높이가 **합이 아니라 최댓값**이 된다. 클립이 카드에 제일
+   * 가깝고(학생이 지금 물은 것에 대한 추천이다) 도판은 그 너머다.
+   */
+  const attachOrder = ["clip", "figure"];
+  const attachCols = new Map<string, Map<string, number>>();   // parent → kind → x
+  const attachY = new Map<string, number>();                   // parent+kind → 다음 y
+  const kidsOfParent = new Map<string, LayoutInput[]>();
+  for (const it of bySeq) {
+    if (it.pinned || !it.parentItemId || inTree.has(it.id)) continue;
+    if (!ATTACH_KINDS.has(it.kind ?? "")) continue;
+    const arr = kidsOfParent.get(it.parentItemId) ?? [];
+    arr.push(it);
+    kidsOfParent.set(it.parentItemId, arr);
+  }
+  for (const [pid, kids] of kidsOfParent) {
+    const parent = positions.get(pid);
+    const parentItem = items.find((p) => p.id === pid);
+    if (!parent || !parentItem) continue;
+    let x = parent.x + parentItem.width + CHILD_GAP;
+    const cols = new Map<string, number>();
+    for (const kind of attachOrder) {
+      const mine = kids.filter((k) => k.kind === kind);
+      if (!mine.length) continue;
+      cols.set(kind, x);
+      x += Math.max(...mine.map((k) => k.width)) + ATTACH_GAP;
+    }
+    attachCols.set(pid, cols);
+  }
+
+  // 3) 트리 밖 자식(학생 메모에 대한 옛 AI 응답, 카드에 딸린 클립·도판) — 부모 옆에.
   //    부모가 아직 안 놓였으면(순서가 꼬였거나 부모가 지워졌으면) 열 흐름으로
   //    떨어뜨린다. 화면에서 사라지는 것보다 낫다.
   for (const it of bySeq) {
@@ -387,6 +448,16 @@ export function layoutItems(
       const y = pushDown(x, COL_TOP, it.width, it.height, blocks);
       positions.set(it.id, { x, y });
       blocks.push({ x, y, w: it.width, h: it.height });
+      continue;
+    }
+    const col = attachCols.get(it.parentItemId)?.get(it.kind ?? "");
+    if (col !== undefined) {
+      const key = `${it.parentItemId}/${it.kind}`;
+      const from = attachY.get(key) ?? parent.y;
+      const y = pushDown(col, from, it.width, it.height, blocks, ATTACH_GAP);
+      positions.set(it.id, { x: col, y });
+      blocks.push({ x: col, y, w: it.width, h: it.height });
+      attachY.set(key, y + it.height + ATTACH_GAP);
       continue;
     }
     const spot = placeBesideParent(
@@ -414,10 +485,11 @@ export function placeBesideParent(
   width: number,
   height: number,
   obstacles: readonly Rect[],
+  gap: number = ROW_GAP,
 ): Placed {
   const x = parent.x + parent.w + CHILD_GAP;
   // 부모의 윗변에 맞춘다 — 연결선이 수평에 가까워 읽기 쉽다.
-  const y = pushDown(x, parent.y, width, height, obstacles);
+  const y = pushDown(x, parent.y, width, height, obstacles, gap);
   return { x, y };
 }
 

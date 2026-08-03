@@ -22,6 +22,16 @@ export function right(r: Rect): number {
   return r.x + r.w;
 }
 
+/** `inner`가 `outer` 안에 온전히 들어가는가. 변이 닿는 것은 들어간 것으로 본다. */
+export function contains(outer: Rect, inner: Rect): boolean {
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.w <= outer.x + outer.w &&
+    inner.y + inner.h <= outer.y + outer.h
+  );
+}
+
 /** 여러 사각형을 감싸는 최소 사각형. 비었으면 null. */
 export function union(rects: readonly Rect[]): Rect | null {
   if (!rects.length) return null;
