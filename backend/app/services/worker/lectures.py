@@ -6,6 +6,7 @@ lecture_embed: 클립 제목 embedding-passage → Qdrant lecture_clips → 행 
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -84,6 +85,76 @@ async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
             "batch_range": {"from_seq": start, "to_seq": min(start + bsize, n)},
             "status": "queued",
         }, returning=False)
+
+    await svc.update("jobs", {"id": f"eq.{job['id']}"},
+                     {"status": "done", "updated_at": common._now_iso()})
+
+
+async def _handle_lecture_embed(svc: Any, job: dict[str, Any]) -> None:
+    video_id = job["target_id"]
+    rng = job.get("batch_range") or {}
+    from_seq, to_seq = int(rng.get("from_seq", 0)), int(rng.get("to_seq", 0))
+    overlay = await app_settings.get_overlay()   # 원자 팬아웃 판단용
+
+    clips = await svc.select("lecture_clips", {
+        "video_id": f"eq.{video_id}",
+        "and": f"(seq.gte.{from_seq},seq.lt.{to_seq})",
+        "status": "eq.pending",
+        "select": "id,seq,title,transcript", "order": "seq.asc"})
+    if not clips:   # 재시도 시 이미 embedded면 스킵(행 단위 멱등)
+        await svc.update("jobs", {"id": f"eq.{job['id']}"},
+                         {"status": "done", "updated_at": common._now_iso()})
+        return
+
+    vids = await svc.select("lecture_videos",
+        {"id": f"eq.{video_id}", "select": "id,package_id", "limit": "1"})
+    if not vids:
+        await jobs._fail_job(svc, job["id"], "lecture video row missing")
+        return
+    package_id = vids[0]["package_id"]
+
+    # 임베딩 텍스트 = 제목 + 본문(개정 R1). 본문이 비면 제목만.
+    def _embed_text(c: dict[str, Any]) -> str:
+        t = (c.get("transcript") or "").strip()
+        return f"{c['title']}\n\n{t}" if t else c["title"]
+
+    try:
+        vectors = await upstage.embed_passages([_embed_text(c) for c in clips])
+    except Exception as exc:  # noqa: BLE001
+        for c in clips:
+            await svc.update("lecture_clips", {"id": f"eq.{c['id']}"}, {"status": "failed"})
+        await jobs._fail_job(svc, job["id"], f"lecture embed error: {exc}")
+        return
+    if len(vectors) != len(clips):
+        for c in clips:
+            await svc.update("lecture_clips", {"id": f"eq.{c['id']}"}, {"status": "failed"})
+        await jobs._fail_job(svc, job["id"], "lecture embedding count mismatch")
+        return
+
+    points = [{"id": c["id"], "vector": v, "payload": {
+        "clip_id": c["id"], "video_id": str(video_id), "package_id": str(package_id)}}
+        for c, v in zip(clips, vectors, strict=True)]
+    try:
+        await common._qdrant_upsert(points, collection=qdrant_store.COL_LECTURE_CLIPS)
+    except Exception as exc:  # noqa: BLE001
+        for c in clips:
+            await svc.update("lecture_clips", {"id": f"eq.{c['id']}"}, {"status": "failed"})
+        await jobs._fail_job(svc, job["id"], f"lecture qdrant error: {exc}")
+        return
+
+    sem = asyncio.Semaphore(8)
+    async def _mark(cid: str) -> None:
+        async with sem:
+            await svc.update("lecture_clips", {"id": f"eq.{cid}"}, {"status": "embedded"})
+    await asyncio.gather(*(_mark(c["id"]) for c in clips))
+
+    # 원자화 팬아웃(개정 R1) — on일 때만. 같은 seq 범위로 lecture_atom 잡.
+    if app_settings.as_bool(overlay, "lecture_atom_enabled", settings.lecture_atom_enabled):
+        await svc.insert("jobs", {
+            "owner_id": job.get("owner_id"), "kind": "lecture_atom",
+            "target_id": video_id, "parent_job_id": job["id"],
+            "batch_range": {"from_seq": from_seq, "to_seq": to_seq},
+            "status": "queued"}, returning=False)
 
     await svc.update("jobs", {"id": f"eq.{job['id']}"},
                      {"status": "done", "updated_at": common._now_iso()})
