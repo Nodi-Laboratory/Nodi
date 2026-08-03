@@ -98,6 +98,25 @@ interface Deps {
   onSessionGone: () => void;
 }
 
+/**
+ * 한 프레임에 내보낼 글자 수 (D162).
+ *
+ * 사용자 지적 2026-08-03: "텍스트가 생성되는 속도가 너무 빠르다." 모델은
+ * 사람이 읽는 것보다 훨씬 빨리 뱉는다 — 받는 대로 그리면 글이 순식간에
+ * 나타났다가 멈춰 있어서, 읽을 준비를 하기도 전에 끝난다.
+ *
+ * 60fps 기준 2자/프레임 ≈ 120자/초. 한국어 한 문단(약 120자)이 1초에 걸쳐
+ * 흐른다.
+ */
+const CHARS_PER_FRAME = 2;
+/**
+ * 스트림이 끝난 뒤 남은 글을 마저 내보낼 때의 상한 프레임 수.
+ *
+ * 없으면 모델이 길게 답한 턴에서 **다 받아 놓고도 몇십 초를 더 타이핑한다.**
+ * 남은 길이를 이 프레임 수로 나눠 속도를 올린다(≈2초 안에 끝난다).
+ */
+const TAIL_FRAMES = 120;
+
 let tempCounter = 0;
 const tempId = () => `tmp-${++tempCounter}`;
 
@@ -223,12 +242,62 @@ export function useCanvasStream({
         if (made.length) upsertLocal([...made]);
       };
 
+      /**
+       * 받은 전체 본문과 **화면에 내보낸 길이** (D162).
+       *
+       * 한 턴에 노드는 하나뿐이므로(아래 `cstart` 참조) 하나면 충분하다.
+       * 받는 것과 보여 주는 것을 갈라 두면 속도를 우리가 정할 수 있다.
+       */
+      let target = "";
+      let shown = 0;
+      let streamDone = false;
+      let timer = 0;
+      /** 본문을 받는 노드. `current`는 `cend`에서 비므로 여기에 매지 않는다. */
+      const headItem = () => made.find((m) => m.kind === "concept");
+      const tick = () => {
+        const head = headItem();
+        if (head && shown < target.length) {
+          const left = target.length - shown;
+          const per = streamDone
+            ? Math.max(CHARS_PER_FRAME, Math.ceil(left / TAIL_FRAMES))
+            : CHARS_PER_FRAME;
+          shown = Math.min(target.length, shown + per);
+          head.body = target.slice(0, shown);
+          flush();
+        }
+      };
+      /**
+       * **`requestAnimationFrame`을 쓰지 않는다** (D162).
+       *
+       * rAF는 탭이 뒤에 있으면 아예 돌지 않는다. 학생이 답을 기다리는 동안
+       * 다른 탭을 보면 글이 멈추는 정도가 아니라 **턴이 끝나지 않아 저장이
+       * 통째로 안 된다**(실측으로 잡았다: 화면에 글이 있는데 DB는 0행).
+       * 타이머는 배경에서 느려질 뿐 멈추지는 않는다.
+       */
+      timer = window.setInterval(tick, 16);
+
       const parser = createStreamParser((ev) => {
         switch (ev.t) {
           case "reply":
             setReply(ev.text);
             break;
           case "cstart": {
+            /**
+             * **한 턴에 노드 하나** (D162, 사용자 지시 2026-08-03).
+             *
+             * 모델은 한 답에 개념 카드를 여러 장 쓸 때가 많다. 그대로 두면
+             * 질문 한 번에 노드가 셋씩 생겨 트리가 순식간에 불어난다.
+             *
+             * 두 번째부터는 **버리지 않고 이어 쓴다** — 제목을 굵은 줄로
+             * 남기고 본문을 뒤에 붙인다. 내용을 잘라 내면 학생이 받은 답의
+             * 일부가 사라지는데, 그건 "노드 하나"보다 나쁜 결과다.
+             */
+            const already = made.find((m) => m.kind === "concept");
+            if (already) {
+              current = already;
+              if (ev.title) target = appendLine(target, `**${ev.title}**`);
+              break;
+            }
             const id = tempId();
             const tag = pickedTag ?? ev.tag ?? null;
             current = {
@@ -261,10 +330,8 @@ export function useCanvasStream({
             break;
           }
           case "body":
-            if (current) {
-              current.body = appendLine(current.body, ev.text);
-              flush();
-            }
+            // 화면에는 `tick`이 조금씩 내보낸다 — 여기서는 받아 두기만 한다.
+            if (current) target = appendLine(target, ev.text);
             break;
           case "cend":
             current = null;
@@ -351,6 +418,29 @@ export function useCanvasStream({
       }
 
       parser.end();
+      streamDone = true;
+      /**
+       * **다 내보낸 뒤에 마무리한다.**
+       *
+       * 여기서 바로 저장하면 화면에는 아직 절반만 쓰인 글이 남아 있는데
+       * 서버에는 전문이 들어간다 — 새로고침하면 글이 갑자기 길어진다.
+       */
+      // 안전망: 어떤 이유로든 드레인이 멈춰도 턴은 끝나야 한다. 여기서 걸리면
+      // 저장이 통째로 안 되고 입력창이 영영 잠긴다.
+      await new Promise<void>((resolve) => {
+        const t0 = Date.now();
+        const check = window.setInterval(() => {
+          if (shown >= target.length || Date.now() - t0 > 8000) {
+            window.clearInterval(check);
+            resolve();
+          }
+        }, 30);
+      });
+      window.clearInterval(timer);
+      // 마지막 한 글자까지 맞춘다(반올림으로 뒤가 잘리는 일이 없게).
+      const head = headItem();
+      if (head) head.body = target;
+
       // pending 해제 — 캐럿을 끄고 정상 아이템으로 만든다.
       for (const it of made) {
         it._pending = false;

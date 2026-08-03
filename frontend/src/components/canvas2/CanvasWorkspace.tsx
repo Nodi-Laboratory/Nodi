@@ -61,6 +61,13 @@ interface Props {
 const FALLBACK_H = 180;
 
 /**
+ * 새 답이 생겼을 때의 배율 (D162, 사용자 지시: 235%).
+ *
+ * 읽으라고 만든 글이니 만들어지는 순간 읽을 수 있는 크기여야 한다.
+ */
+const NEW_NODE_ZOOM = 2.35;
+
+/**
  * 초기 카메라. 좌·상단 여유를 둬서 열 라벨(아이템 위 34px)과 좌측 괘선(-16px)이
  * 사이드바에 가려지지 않게 한다. 세션이 바뀌면 sceneKey로 그리기 레이어가
  * 리마운트되며 다시 적용된다 — 이전 세션의 화면 위치를 물고 오면 학생이 빈
@@ -904,11 +911,15 @@ export function CanvasWorkspace({ spaceId }: Props) {
   );
 
   /**
-   * 답이 생긴 자리로 카메라를 옮긴다 (사용자 지적).
+   * 답이 생긴 자리로 카메라를 옮긴다 — **크게 당겨서** (D162).
    *
    * 스트림은 좌표를 모르므로 id만 알려 주고, **배치가 좌표를 낸 뒤** 여기서
    * 옮긴다. 아이템 위쪽을 화면 상단 1/3에 두는데, 정중앙에 두면 글이 아래로
    * 자라면서 곧 화면을 벗어난다.
+   *
+   * 배율은 그때의 값을 쓰지 않고 `NEW_NODE_ZOOM`으로 고정한다(사용자 지시
+   * 2026-08-03: "노드를 생성하면 그 노드가 아주 크게 보이게 확대"). 축소해
+   * 놓고 질문하면 답이 깨알같이 생겨서 정작 읽지를 못했다.
    */
   const { focusId, clearFocus } = stream;
   useEffect(() => {
@@ -916,14 +927,14 @@ export function CanvasWorkspace({ spaceId }: Props) {
     const p = layout.positions.get(focusId);
     if (!p) return; // 아직 배치 전 — 다음 렌더에 다시 시도한다
     const { w, h: vh } = vp;
-    const z = cameraRef.current.zoom;
+    const z = NEW_NODE_ZOOM;
     flyTo({
       zoom: z,
       scrollX: w / 2 / z - (p.x + ITEM_W / 2),
       scrollY: vh / 3 / z - p.y,
     });
     clearFocus();
-  }, [focusId, layout.positions, vp, cameraRef, flyTo, clearFocus]);
+  }, [focusId, layout.positions, vp, flyTo, clearFocus]);
 
   const banner =
     drawError ??
