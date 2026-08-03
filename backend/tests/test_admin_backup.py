@@ -30,10 +30,16 @@ def _schema_columns() -> dict[str, set[str]]:
     DB에 붙지 않고도 "이 컬럼이 있나"를 확인할 수 있는 유일한 진실 소스다
     (백엔드 테스트는 전부 mock이라 커넥션이 없다).
     """
+    # `IF NOT EXISTS`와 꼬리 `WITH (fillfactor …)`(D146)도 받는다. 캔버스 표가
+    # 둘 다 해당해서 **가드가 그 표들을 아예 검사하지 않고 있었다** — 백업에
+    # 캔버스가 빠진 것을 이 가드가 못 잡은 이유다(D152에서 실측으로 드러났다).
     sql = REPO_DB.read_text(encoding="utf-8")
     out: dict[str, set[str]] = {}
     for m in re.finditer(
-        r"CREATE TABLE public\.(\w+)\s*\((.*?)\n\);", sql, re.DOTALL
+        r"CREATE TABLE (?:IF NOT EXISTS )?public\.(\w+)\s*\((.*?)\n\)"
+        r"(?:\s*WITH\s*\([^)]*\))?;",
+        sql,
+        re.DOTALL
     ):
         table, body = m.group(1), m.group(2)
         cols: set[str] = set()
@@ -147,3 +153,15 @@ def test_보존_개수가_0이면_거부한다(tmp_path, monkeypatch):
 
 
 pytestmark = pytest.mark.asyncio
+
+
+def test_대화_백업에_캔버스가_들어_있다():
+    """D152: 캔버스가 곧 대화 내용이다(D122).
+
+    이게 빠지면 백업을 뜨고 초기화한 뒤 복원해도 세션 껍데기만 돌아온다.
+    백업 파일에도 복원 결과에도 오류가 없어서 **캔버스를 열어 보기 전까지
+    아무도 모른다** — 그래서 이름을 못 박아 둔다.
+    """
+    tables = {t for t, _, _ in admin_backup._SCOPE_TABLES["conversations"]}
+    assert "canvas_items" in tables
+    assert "canvas_drawings" in tables

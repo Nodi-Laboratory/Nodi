@@ -24,12 +24,6 @@
  *
  * 아이템 드래그와 같은 이유다(TextItem 헤더 참조) — 매 프레임 setState하면
  * 긴 문단에서 즉시 버벅인다. DOM style을 직접 고치고 손을 뗄 때 한 번 커밋한다.
- *
- * ## 도판은 비율 고정 (D147)
- *
- * `aspect`를 주면 이미지가 찌그러지지 않게 가로세로 비율을 유지한다 — 가로가
- * 걸린 손잡이는 폭으로 높이를 몰고, 세로만 걸린 손잡이는 그 반대다. 현재
- * 소비자는 도판뿐이고 늘 `aspect`를 준다(글 상자는 크기를 조절하지 않는다).
  */
 
 import { useCallback, useRef } from "react";
@@ -37,33 +31,6 @@ import { ITEM_MIN_W } from "@/lib/canvas2/layout";
 
 /** 여덟 방향. 문자에 방위가 들어 있어 `includes`로 판정한다. */
 export type ResizeDir = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
-
-export interface SizeReq {
-  w: number;
-  h: number;
-}
-
-/**
- * 손잡이 방향과 마우스 이동량(world)으로 요청 크기를 낸다 (순수, 클램프 전).
- *
- * 가로·세로가 **독립**이다 (D147, 사용자 결정 2026-08-02) — 상하 손잡이는
- * 높이만, 좌우 손잡이는 폭만, 대각은 둘 다 바꾼다. 도판은 이 상자를 이미지가
- * object-contain으로 채운다(왜곡 없음).
- */
-export function requestedSize(
-  dir: ResizeDir,
-  mx: number,
-  my: number,
-  start: SizeReq,
-): SizeReq {
-  let w = start.w;
-  let h = start.h;
-  if (dir.includes("e")) w = start.w + mx;
-  if (dir.includes("w")) w = start.w - mx;
-  if (dir.includes("s")) h = start.h + my;
-  if (dir.includes("n")) h = start.h - my;
-  return { w, h };
-}
 
 const DIRS: readonly ResizeDir[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
@@ -89,16 +56,6 @@ interface Props {
   zoom: number;
   /** 테두리·손잡이 색. 아이템의 출처 색을 그대로 쓴다. */
   color: string;
-  /**
-   * 높이를 **고정**으로 세팅한다(minHeight가 아니라 height). 도판처럼 상자를
-   * 이미지가 채우는 경우 — 내용이 높이를 정하지 않고 상자가 정한다 (D147).
-   */
-  fixedHeight?: boolean;
-  /**
-   * 왼쪽·위 손잡이로 줄여도 **원점을 옮기지 않는다**. 도판은 이미지만
-   * 좌상단 기준으로 리사이즈하고 카드는 움직이지 않는다 — dx/dy를 0으로 둔다.
-   */
-  noOriginShift?: boolean;
   /** 아이템 루트. 끄는 동안 이 요소의 style을 직접 고친다. */
   getEl: () => HTMLElement | null;
   onCommit: (next: ResizeCommit) => void;
@@ -106,15 +63,7 @@ interface Props {
   onReset: () => void;
 }
 
-export function ResizeHandles({
-  zoom,
-  color,
-  fixedHeight,
-  noOriginShift,
-  getEl,
-  onCommit,
-  onReset,
-}: Props) {
+export function ResizeHandles({ zoom, color, getEl, onCommit, onReset }: Props) {
   const dragRef = useRef<{
     dir: ResizeDir;
     sx: number;
@@ -161,19 +110,15 @@ export function ResizeHandles({
       const mx = (e.clientX - d.sx) / zoom;
       const my = (e.clientY - d.sy) / zoom;
 
-      const req = requestedSize(d.dir, mx, my, { w: d.w, h: d.h });
-      const w = Math.max(ITEM_MIN_W, req.w);
-      const h = Math.max(MIN_H, req.h);
-      el.style.width = `${w}px`;
-      if (fixedHeight) el.style.height = `${h}px`;
-      else el.style.minHeight = `${h}px`;
+      let w = d.w;
+      let h = d.h;
+      if (d.dir.includes("e")) w = d.w + mx;
+      if (d.dir.includes("w")) w = d.w - mx;
+      if (d.dir.includes("s")) h = d.h + my;
+      if (d.dir.includes("n")) h = d.h - my;
 
-      if (noOriginShift) {
-        // 좌상단 기준 — 원점을 옮기지 않는다(도판은 카드가 움직이지 않는다).
-        d.dx = 0;
-        d.dy = 0;
-        return;
-      }
+      el.style.width = `${Math.max(ITEM_MIN_W, w)}px`;
+      el.style.minHeight = `${Math.max(MIN_H, h)}px`;
 
       /**
        * **실제 상자 크기를 되읽어 원점을 맞춘다.**
@@ -188,7 +133,7 @@ export function ResizeHandles({
       d.dy = d.dir.includes("n") ? d.h - realH : 0;
       el.style.transform = d.dx || d.dy ? `translate(${d.dx}px, ${d.dy}px)` : "";
     },
-    [getEl, zoom, fixedHeight, noOriginShift],
+    [getEl, zoom],
   );
 
   const onUp = useCallback(() => {

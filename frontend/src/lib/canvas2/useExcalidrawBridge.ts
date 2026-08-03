@@ -24,7 +24,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Camera, Rect, ToolName } from "./types";
+import type { Camera, DrawStyle, Rect, ToolName } from "./types";
 import { isPassThroughTool } from "./types";
 import { inflate } from "./rect";
 import { boundsOf, elementHitsRect } from "./elementHit";
@@ -108,6 +108,14 @@ export interface Bridge {
   panByScreen: (dx: number, dy: number) => void;
   activeTool: ToolName;
   setTool: (tool: ToolName) => void;
+  /**
+   * 다음에 그릴 것의 색·굵기·투명도를 정한다 (D150).
+   *
+   * 이미 그려 둔 요소는 건드리지 않는다 — Excalidraw의 `currentItem*`은
+   * "앞으로 만들 요소의 기본값"이다. 학생이 색을 바꿔도 앞서 그은 선은
+   * 그대로라는 뜻이고, 그게 필기구의 동작이다.
+   */
+  setDrawStyle: (style: DrawStyle) => void;
   /** 오버레이가 포인터 이벤트를 먹어야 하는가(선택·글쓰기 도구일 때만). */
   overlayInteractive: boolean;
   /** 그림 요소들의 바운딩 박스(패딩 포함) — 배치 엔진의 장애물. */
@@ -148,6 +156,12 @@ export function useExcalidrawBridge(): Bridge {
    */
   const [rawTool, setRawTool] = useState<string>("selection");
   const [noteMode, setNoteMode] = useState(false);
+  /**
+   * 형광펜을 켰나 (D150). note와 같은 처지다 — Excalidraw에는 형광펜이
+   * 없어서 자유선을 물려 두고 스타일만 바꾸므로, appState만 봐서는 펜과
+   * 형광펜을 구별할 수 없다.
+   */
+  const [highlighting, setHighlighting] = useState(false);
 
   /**
    * 프레임 구독자 — 카메라가 움직일 때마다 DOM을 직접 고치는 쪽(오버레이 변환·
@@ -226,6 +240,9 @@ export function useExcalidrawBridge(): Bridge {
         setRawTool((prevTool) => (prevTool === t ? prevTool : t));
         // selection으로 돌아갔으면 note 모드도 끝난 것이다.
         if (t !== "selection") setNoteMode(false);
+        // 자유선을 벗어났으면 형광펜도 끝났다(도형 하나 그린 뒤 Excalidraw가
+        // 스스로 선택 도구로 돌아가는 경우까지 여기서 잡힌다).
+        if (t !== "freedraw") setHighlighting(false);
       }
       raf = requestAnimationFrame(tick);
     };
@@ -236,11 +253,29 @@ export function useExcalidrawBridge(): Bridge {
   const setTool = useCallback(
     (tool: ToolName) => {
       setNoteMode(tool === "note");
-      // 'note'는 우리 도구다 — Excalidraw에는 선택 도구를 물려 두고
-      // 캔버스 클릭을 오버레이가 가로챈다.
-      const type = tool === "note" ? "selection" : tool;
+      setHighlighting(tool === "highlighter");
+      // 우리 도구 둘은 Excalidraw의 다른 도구를 물려 쓴다.
+      //   note        선택 도구 — 캔버스 클릭을 오버레이가 가로챈다
+      //   highlighter 자유선   — 스타일만 반투명·굵게 바꾼다
+      const type =
+        tool === "note" ? "selection" : tool === "highlighter" ? "freedraw" : tool;
       setRawTool(type);
       api?.setActiveTool({ type });
+    },
+    [api],
+  );
+
+  const setDrawStyle = useCallback(
+    (s: DrawStyle) => {
+      api?.updateScene({
+        appState: {
+          currentItemStrokeColor: s.strokeColor,
+          currentItemOpacity: s.opacity,
+          currentItemStrokeWidth: s.strokeWidth,
+          currentItemRoughness: s.roughness,
+          currentItemStrokeStyle: "solid",
+        },
+      });
     },
     [api],
   );
@@ -254,7 +289,11 @@ export function useExcalidrawBridge(): Bridge {
    */
   const activeTool: ToolName = noteMode
     ? "note"
-    : (KNOWN_TOOLS.has(rawTool) ? (rawTool as ToolName) : "selection");
+    : highlighting && rawTool === "freedraw"
+      ? "highlighter"
+      : KNOWN_TOOLS.has(rawTool)
+        ? (rawTool as ToolName)
+        : "selection";
 
   const getObstacles = useCallback((): Rect[] => {
     if (!api) return [];
@@ -399,6 +438,7 @@ export function useExcalidrawBridge(): Bridge {
       panByScreen,
       activeTool,
       setTool,
+      setDrawStyle,
       overlayInteractive,
       getObstacles,
       selectElementsIn,
@@ -415,6 +455,7 @@ export function useExcalidrawBridge(): Bridge {
       panByScreen,
       activeTool,
       setTool,
+      setDrawStyle,
       overlayInteractive,
       getObstacles,
       selectElementsIn,

@@ -47,12 +47,24 @@ _WRAP_TAGS = (
 )
 
 
+_WRAP_TREE = (
+    "[지금까지의 대화 지도]\n"
+    "아래는 이 학습 지도의 개념 카드 전부를 **분류 태그별 트리 순서**로 편 "
+    "것입니다(D151). 태그 하나가 트리 하나이고, 들여쓰기는 그 답이 바로 위 "
+    "답에서 이어져 나왔다는 뜻입니다. 학생이 특정 트리를 보고 있으면 그 트리에 "
+    "표시가 있습니다 — 그 맥락을 우선 고려하되, 다른 트리의 내용도 필요하면 "
+    "활용하세요. 이어지는 답은 앞 답과 겹치지 않게 하고, 같은 주제면 그 트리의 "
+    "태그를 글자 그대로 재사용하세요.\n\n"
+)
+
+
 def compose_system_structured(
     rag_context: str | None = None,
     *,
     session_file_context: str | None = None,
     session_file_sources: list[dict] | None = None,
     tag_context: str | None = None,
+    tree_context: str | None = None,
     rag_sources: list[dict] | None = None,
     base_instruction: str | None = None,
 ) -> tuple[str, list[dict]]:
@@ -63,6 +75,7 @@ def compose_system_structured(
     - `rag_context`: chunks from files linked to the branch (Stage 3b-2 RAG).
     - session_file_context: 세션에 올린 학생 파일 전문(D83, TASK 3).
     - tag_context: 이 세션에서 이미 쓰인 분류 태그 목록 문자열(D89, TASK 5).
+    - tree_context: 카드 전부를 태그별 트리 순서로 편 것(D151).
 
     Returns ``(system_prompt, blocks)`` where each block's ``prompt_span`` is the
     ``[start, end)`` char range of that part inside ``system_prompt``.
@@ -95,6 +108,20 @@ def compose_system_structured(
                 _WRAP_TAGS + tag_context,
                 "분류 태그 연속성",
                 tag_context,
+                None,
+                None,
+            )
+        )
+    # D151: 대화 트리. 태그 목록(tag_guide) **바로 뒤**에 둔다 — 태그가 무엇인지
+    # 말한 직후에 그 태그들이 어떻게 이어졌는지를 보여 주는 순서다. rag보다
+    # 앞이라 프리픽스 캐시의 가변 구간이 한 곳에 모인다.
+    if tree_context:
+        parts.append(
+            (
+                "tree_guide",
+                _WRAP_TREE + tree_context,
+                "대화 트리",
+                tree_context,
                 None,
                 None,
             )

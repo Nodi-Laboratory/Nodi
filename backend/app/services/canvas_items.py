@@ -257,3 +257,131 @@ async def put_drawing(
         {"session_id": session_id, "elements": live, "files": files},
         on_conflict="session_id",
     )
+
+
+# --- 태그별 대화 트리 컨텍스트 (D151) ---------------------------------------
+
+ITEM_TREE_SELECT = "id,parent_item_id,tag,title,body,kind,source,seq"
+"""트리를 세우는 데 필요한 최소 열."""
+
+TREE_BODY_CHARS = 300
+"""카드 하나에서 가져올 본문 길이."""
+
+TREE_MAX_CHARS = 24000
+"""트리 블록 전체 상한.
+
+컨텍스트를 **자르지 않는 것**이 사용자 결정이지만(2026-08-02) 무한은 아니다.
+카드가 수백 개인 세션에서 프롬프트가 모델 한계를 넘으면 턴 자체가 죽는다.
+넘치면 **오래된 것부터** 버린다 — 최근 대화가 지금 질문과 가깝다.
+"""
+
+
+def _tree_lines(rows: list[dict[str, Any]]) -> dict[str, list[tuple[int, dict]]]:
+    """행 목록 → 태그별 (깊이, 행) 목록. 태그 순서는 첫 등장 순서.
+
+    ## 프론트와 같은 규칙이어야 한다
+
+    간선 판정은 `frontend/src/lib/canvas2/tree.ts`와 **글자 그대로 같은 규칙**
+    이다: AI가 쓴 개념 카드만 노드이고, 부모가 존재하며 **태그가 같을 때만**
+    이어진다. 한쪽만 고치면 학생이 화면에서 본 트리와 AI가 받는 순서가 갈린다.
+    """
+    nodes = [
+        r
+        for r in rows
+        if r.get("kind") == "concept"
+        and r.get("source") == "ai"
+        and (r.get("tag") or "").strip()
+    ]
+    nodes.sort(key=lambda r: r.get("seq") or 0)
+    by_id = {r["id"]: r for r in nodes}
+
+    def linked_parent(r: dict) -> str | None:
+        p = r.get("parent_item_id")
+        if not p:
+            return None
+        parent = by_id.get(p)
+        if not parent:
+            return None
+        return p if (parent.get("tag") or "") == (r.get("tag") or "") else None
+
+    kids: dict[str, list[dict]] = {}
+    roots: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for r in nodes:
+        tag = (r.get("tag") or "").strip()
+        if tag not in roots:
+            roots[tag] = []
+            order.append(tag)
+        p = linked_parent(r)
+        if p:
+            kids.setdefault(p, []).append(r)
+        else:
+            roots[tag].append(r)
+
+    out: dict[str, list[tuple[int, dict]]] = {}
+    for tag in order:
+        flat: list[tuple[int, dict]] = []
+        seen: set[str] = set()
+        # 재귀 대신 스택으로 편다. 루프 안에서 클로저를 만들면 `flat`·`seen`을
+        # 늦게 묶어(ruff B023) 태그가 여럿일 때 엉뚱한 목록에 쌓인다.
+        stack: list[tuple[dict, int]] = [(r, 0) for r in reversed(roots[tag])]
+        while stack:
+            row, depth = stack.pop()
+            if row["id"] in seen:  # 순환 방어
+                continue
+            seen.add(row["id"])
+            flat.append((depth, row))
+            for child in reversed(kids.get(row["id"], [])):
+                stack.append((child, depth + 1))
+        out[tag] = flat
+    return out
+
+
+async def session_tree_context(
+    client: UserClient, session_id: str, focus_tag: str | None = None
+) -> str | None:
+    """세션의 카드를 **태그별 트리 순서**로 편 텍스트 (D151).
+
+    사용자 결정(2026-08-02): 옛 Nodi는 컨텍스트를 줄이려고 분기를 갈랐지만,
+    지금은 **전부 넣고 AI가 판단하게 한다.** 대신 순서를 준다 — 태그마다
+    한 덩어리, 그 안에서는 부모→자식 순서다. 어떤 답이 어떤 답에서 나왔는지가
+    줄바꿈과 들여쓰기로 드러난다.
+
+    `focus_tag`가 있으면 그 트리에 표시를 단다. 자르는 것이 아니라
+    **가리키는 것**이다.
+
+    실패하면 None — 컨텍스트 빌더는 best-effort다("RAG는 채팅을 절대 막지
+    않는다"와 같은 정신).
+    """
+    rows = await client.select(
+        "canvas_items",
+        {
+            "select": ITEM_TREE_SELECT,
+            "session_id": f"eq.{session_id}",
+            "order": "seq.asc",
+        },
+    )
+    trees = _tree_lines(rows)
+    if not trees:
+        return None
+
+    blocks: list[str] = []
+    for tag, flat in trees.items():
+        head = f"## [{tag}]"
+        if focus_tag and tag == focus_tag:
+            head += "  ← 학생이 지금 보고 있는 트리"
+        lines = [head]
+        for depth, r in flat:
+            title = (r.get("title") or "").strip()
+            body = " ".join((r.get("body") or "").split())[:TREE_BODY_CHARS]
+            pad = "  " * depth
+            label = title or body[:40] or "(제목 없음)"
+            lines.append(f"{pad}- {label}" + (f": {body}" if body else ""))
+        blocks.append("\n".join(lines))
+
+    # 넘치면 오래된 트리부터 버린다(태그 순서 = 첫 등장 순서).
+    text = "\n\n".join(blocks)
+    while len(text) > TREE_MAX_CHARS and len(blocks) > 1:
+        blocks.pop(0)
+        text = "\n\n".join(blocks)
+    return text[:TREE_MAX_CHARS] if text else None

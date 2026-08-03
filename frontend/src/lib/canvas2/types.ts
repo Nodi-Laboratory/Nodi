@@ -38,11 +38,10 @@ export interface ItemData {
    * 평범한 질문마다 상자가 둘 생기면 캔버스가 어수선해진다). hover 툴팁이
    * 이걸 읽어 "무엇을 물어본 답인지"를 보여 준다.
    *
-   * "AI에게 묻기"로 물었을 때는 비어 있다 — 그때는 부모 글이 곧 질문이다.
+   * 하단 입력창이든 "다시 질문하기"든 **언제나** 싣는다(D149). 옛 행 중
+   * "AI에게 묻기"로 만든 것만 비어 있다 — 그때는 부모 글이 곧 질문이었다.
    */
   askedQuestion?: string;
-  /** "AI에게 묻기" 버튼을 ×로 지웠나 (kind='note'). */
-  askHidden?: boolean;
   /** "위치 정리" 버튼을 ×로 지웠나. 수정/태그변경 후에만 뜬다. */
   reflowDismissed?: boolean;
   /**
@@ -119,6 +118,12 @@ export type ToolName =
   | "selection"
   | "hand"
   | "freedraw"
+  /**
+   * 형광펜 (D150). **Excalidraw에는 없는 도구다** — 자유선에 반투명·굵은
+   * 획 스타일을 물려 만든다. 그래서 Excalidraw의 appState는 이걸
+   * `freedraw`로 보고하고, 우리가 따로 기억해야 한다(note와 같은 처지).
+   */
+  | "highlighter"
   | "rectangle"
   | "ellipse"
   | "arrow"
@@ -130,6 +135,7 @@ export type ToolName =
 /** 그리기 도구 = 캔버스에 무언가를 그리는 도구. */
 export const DRAW_TOOLS: readonly ToolName[] = [
   "freedraw",
+  "highlighter",
   "rectangle",
   "ellipse",
   "arrow",
@@ -139,6 +145,26 @@ export const DRAW_TOOLS: readonly ToolName[] = [
 
 export function isDrawTool(t: ToolName): boolean {
   return DRAW_TOOLS.includes(t);
+}
+
+/** 색을 고를 수 있는 도구. 지우개만 빠진다 — 지우는 데 색이 없다. */
+export function isColorableTool(t: ToolName): boolean {
+  return isDrawTool(t) && t !== "eraser";
+}
+
+/**
+ * 그리기 스타일 — Excalidraw `currentItem*` appState로 나간다 (D150).
+ *
+ * 값의 의미는 Excalidraw 규약을 그대로 따른다:
+ *   strokeWidth  자유선은 이 값 × 4.25 px로 그려진다(dist 실측)
+ *   opacity      0~100
+ *   roughness    0=매끈, 1=artist(기본값)
+ */
+export interface DrawStyle {
+  strokeColor: string;
+  opacity: number;
+  strokeWidth: number;
+  roughness: number;
 }
 
 /**

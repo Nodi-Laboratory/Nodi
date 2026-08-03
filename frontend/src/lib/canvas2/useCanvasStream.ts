@@ -27,7 +27,8 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { createItems, type NewItemInput } from "@/lib/api/canvas";
+import { createItems, patchItem, type NewItemInput } from "@/lib/api/canvas";
+import { assignParents } from "./tree";
 import { streamChat } from "@/lib/api/chat";
 import { isRealId } from "@/lib/ids";
 import type { ChatDoneEvent } from "@/lib/types";
@@ -49,8 +50,18 @@ export interface CanvasStreamApi {
   /** 말풍선 문구(스트리밍 중 진행 상황 포함). */
   reply: string;
   busy: boolean;
-  /** 질문을 보낸다. parentItemId가 있으면 응답이 그 아이템의 자식이 된다. */
-  send: (question: string, opts?: { parentItemId?: string | null }) => Promise<void>;
+  /**
+   * 질문을 보낸다.
+   *
+   * `pickedId`는 학생이 고른 트리 노드다 (D151). 답이 그 노드에서 갈라져
+   * 나오고, 서버 프롬프트에도 "지금 이 트리를 보고 있다"로 실린다. 답의
+   * 실제 부모는 **태그가 정한다** — 고른 노드와 답의 분류가 다르면 답은
+   * 자기 태그의 트리로 간다(tree.ts `assignParents`).
+   */
+  send: (
+    question: string,
+    opts?: { pickedId?: string | null },
+  ) => Promise<{ id: string; tag: string | null }[]>;
   /** 마지막 오류. */
   error: string | null;
   /**
@@ -68,6 +79,13 @@ export interface CanvasStreamApi {
 
 interface Deps {
   sessionId: string | null;
+  /**
+   * 지금 캔버스에 있는 것들 — 새 카드의 부모를 정하는 데 필요하다 (D151).
+   *
+   * 값이 아니라 **함수**로 받는다. 배열로 받으면 아이템이 하나 늘 때마다
+   * `send`의 신원이 바뀌고, 스트리밍 중에 그 일이 계속 일어난다.
+   */
+  getItems: () => readonly CanvasItem[];
   /** 로컬 아이템 목록에 반영한다. */
   upsertLocal: (items: CanvasItem[]) => void;
   /** 저장된 아이템으로 로컬을 갈아 끼운다(임시 id → 서버 id). */
@@ -78,7 +96,28 @@ interface Deps {
   hasFigure: (figureId: string) => boolean;
   /** 이 클립이 이미 캔버스에 있나 (D149 세션 내 중복 제거). */
   hasClip: (clipId: string) => boolean;
+  /** 세션이 서버에서 사라졌다(404). 호출부가 다시 고르게 한다 (D153). */
+  onSessionGone: () => void;
 }
+
+/**
+ * 한 프레임에 내보낼 글자 수 (D162).
+ *
+ * 사용자 지적 2026-08-03: "텍스트가 생성되는 속도가 너무 빠르다." 모델은
+ * 사람이 읽는 것보다 훨씬 빨리 뱉는다 — 받는 대로 그리면 글이 순식간에
+ * 나타났다가 멈춰 있어서, 읽을 준비를 하기도 전에 끝난다.
+ *
+ * 60fps 기준 2자/프레임 ≈ 120자/초. 한국어 한 문단(약 120자)이 1초에 걸쳐
+ * 흐른다.
+ */
+const CHARS_PER_FRAME = 2;
+/**
+ * 스트림이 끝난 뒤 남은 글을 마저 내보낼 때의 상한 프레임 수.
+ *
+ * 없으면 모델이 길게 답한 턴에서 **다 받아 놓고도 몇십 초를 더 타이핑한다.**
+ * 남은 길이를 이 프레임 수로 나눠 속도를 올린다(≈2초 안에 끝난다).
+ */
+const TAIL_FRAMES = 120;
 
 let tempCounter = 0;
 const tempId = () => `tmp-${++tempCounter}`;
@@ -109,8 +148,7 @@ function toPayload(it: CanvasItem): NewItemInput {
     // 도판은 data에 메타가 있다. url은 빼고 보낸다(만료되는 값, D87).
     // 클립은 page_url이 안정적(EBS 공식 링크)이라 그대로 영속한다(D149) —
     // 도판처럼 지우지 않는다.
-    // 그 외에는 렌더 힌트만 남긴다 — 특히 `askHidden`을 흘리면 이미 물어본
-    // 질문 글에 "AI에게 묻기" 버튼이 새로고침마다 되살아난다.
+    // 그 외에는 렌더 힌트만 남긴다.
     data:
       it.kind === "figure" && it.data.figure
         ? { figure: { ...it.data.figure, url: "" } }
@@ -118,7 +156,6 @@ function toPayload(it: CanvasItem): NewItemInput {
           ? { clip: it.data.clip }
           : {
               ...(it.data.askedQuestion ? { askedQuestion: it.data.askedQuestion } : {}),
-              ...(it.data.askHidden ? { askHidden: true } : {}),
               ...(it.data.reflowDismissed ? { reflowDismissed: true } : {}),
             },
   };
@@ -126,11 +163,13 @@ function toPayload(it: CanvasItem): NewItemInput {
 
 export function useCanvasStream({
   sessionId,
+  getItems,
   upsertLocal,
   onPersisted,
   nextSeq,
   hasFigure,
   hasClip,
+  onSessionGone,
 }: Deps): CanvasStreamApi {
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
@@ -139,9 +178,9 @@ export function useCanvasStream({
   const abortRef = useRef<AbortController | null>(null);
 
   const send = useCallback(
-    async (question: string, opts?: { parentItemId?: string | null }) => {
+    async (question: string, opts?: { pickedId?: string | null }) => {
       const q = question.trim();
-      if (!q || !sessionId || busy) return;
+      if (!q || !sessionId || busy) return [];
 
       setBusy(true);
       setError(null);
@@ -164,15 +203,85 @@ export function useCanvasStream({
        * 하나 더 만들지 않으면서도 hover 툴팁이 "무엇을 물어본 답인지" 보여 줄 수
        * 있다(QuestionTip).
        */
-      const askedFrom = opts?.parentItemId ?? null;
-      const parentItemId = askedFrom;
-      // 하단 입력창으로 물었을 때만 원문을 싣는다. "AI에게 묻기"는 부모 글이
-      // 곧 질문이라 중복이다.
-      const askedQuestion = askedFrom ? undefined : q;
+      const picked = opts?.pickedId ?? null;
+      /**
+       * 고른 트리가 있으면 **이번 턴의 분류를 그 트리로 고정한다** (D158).
+       *
+       * 사용자 지적 2026-08-03: "A트리에서 이어서 질문했는데 응답이 B트리에
+       * 작성되는 경우가 생긴다." 모델이 내용상 더 맞는 새 분류를 지어내면
+       * 그렇게 된다 — 분류만 보면 틀린 판단이 아니지만, **학생은 A에서
+       * 물었으니 A에 붙기를 기대한다.** 고른 곳에 답이 안 붙으면 트리를
+       * 고르는 행위 자체가 뜻을 잃는다.
+       *
+       * 프롬프트로 부탁하는 것(focus_tag)만으로는 보장이 안 된다 — 권유는
+       * 지켜지지 않을 때가 있고, 어긋나면 학생이 그 사실을 알 방법도 없다.
+       * 그래서 화면에 그리기 전에 여기서 못 박는다.
+       *
+       * 고른 것이 없으면 예전대로 모델의 분류를 따른다.
+       */
+      const pickedTag = picked
+        ? (getItems().find((i) => i.id === picked)?.tag ?? null)
+        : null;
+      /**
+       * 학생이 친 질문은 **언제나** 답에 실어 둔다 (D149).
+       *
+       * 한때는 "AI에게 묻기"로 물었을 때만 뺐다 — 그때는 부모가 학생이 쓴
+       * 질문 글이라 중복이었기 때문이다. 지금 답의 부모는 **같은 태그의 앞
+       * 카드**라 질문이 아니다. 안 실으면 학생이 뭘 물었는지가 캔버스
+       * 어디에도 남지 않는다.
+       */
+      const askedQuestion = q;
+
+      /**
+       * 이번 턴 카드의 부모를 정한다 (D151).
+       *
+       * 태그를 아는 순간(`cstart`)에 바로 정한다 — 나중에 몰아서 정하면
+       * 스트리밍 중에는 부모 없는 상태로 그려지다가 끝나는 순간 선이 우르르
+       * 생긴다. 지금 자리에서 자라나는 것처럼 보여야 한다.
+       */
+      const turnCards: { id: string; tag: string | null }[] = [];
+      const parentFor = (id: string, tag: string | null): string | null => {
+        turnCards.push({ id, tag });
+        return assignParents(getItems(), turnCards, picked).get(id) ?? null;
+      };
 
       const flush = () => {
         if (made.length) upsertLocal([...made]);
       };
+
+      /**
+       * 받은 전체 본문과 **화면에 내보낸 길이** (D162).
+       *
+       * 한 턴에 노드는 하나뿐이므로(아래 `cstart` 참조) 하나면 충분하다.
+       * 받는 것과 보여 주는 것을 갈라 두면 속도를 우리가 정할 수 있다.
+       */
+      let target = "";
+      let shown = 0;
+      let streamDone = false;
+      let timer = 0;
+      /** 본문을 받는 노드. `current`는 `cend`에서 비므로 여기에 매지 않는다. */
+      const headItem = () => made.find((m) => m.kind === "concept");
+      const tick = () => {
+        const head = headItem();
+        if (head && shown < target.length) {
+          const left = target.length - shown;
+          const per = streamDone
+            ? Math.max(CHARS_PER_FRAME, Math.ceil(left / TAIL_FRAMES))
+            : CHARS_PER_FRAME;
+          shown = Math.min(target.length, shown + per);
+          head.body = target.slice(0, shown);
+          flush();
+        }
+      };
+      /**
+       * **`requestAnimationFrame`을 쓰지 않는다** (D162).
+       *
+       * rAF는 탭이 뒤에 있으면 아예 돌지 않는다. 학생이 답을 기다리는 동안
+       * 다른 탭을 보면 글이 멈추는 정도가 아니라 **턴이 끝나지 않아 저장이
+       * 통째로 안 된다**(실측으로 잡았다: 화면에 글이 있는데 DB는 0행).
+       * 타이머는 배경에서 느려질 뿐 멈추지는 않는다.
+       */
+      timer = window.setInterval(tick, 16);
 
       const parser = createStreamParser((ev) => {
         switch (ev.t) {
@@ -180,23 +289,41 @@ export function useCanvasStream({
             setReply(ev.text);
             break;
           case "cstart": {
+            /**
+             * **한 턴에 노드 하나** (D162, 사용자 지시 2026-08-03).
+             *
+             * 모델은 한 답에 개념 카드를 여러 장 쓸 때가 많다. 그대로 두면
+             * 질문 한 번에 노드가 셋씩 생겨 트리가 순식간에 불어난다.
+             *
+             * 두 번째부터는 **버리지 않고 이어 쓴다** — 제목을 굵은 줄로
+             * 남기고 본문을 뒤에 붙인다. 내용을 잘라 내면 학생이 받은 답의
+             * 일부가 사라지는데, 그건 "노드 하나"보다 나쁜 결과다.
+             */
+            const already = made.find((m) => m.kind === "concept");
+            if (already) {
+              current = already;
+              if (ev.title) target = appendLine(target, `**${ev.title}**`);
+              break;
+            }
+            const id = tempId();
+            const tag = pickedTag ?? ev.tag ?? null;
             current = {
-              id: tempId(),
+              id,
               sessionId,
               nodeId: null,
-              parentItemId,
+              parentItemId: parentFor(id, tag),
               kind: "concept",
               source: "ai",
               title: ev.title || null,
               body: "",
-              tag: ev.tag || null,
+              tag,
               x: 0,
               y: 0,
               pinned: false,
               seq: baseSeq + made.length,
-              // 하단 입력창으로 물었으면 원문을 싣는다 — 상자를 하나 더 만들지
-              // 않고도 hover 툴팁이 "무엇을 물어본 답인지" 보여 준다.
-              data: askedQuestion ? { askedQuestion } : {},
+              // 질문 원문을 싣는다 — 상자를 하나 더 만들지 않고도 hover
+              // 툴팁이 "무엇을 물어본 답인지" 보여 준다.
+              data: { askedQuestion },
               _pending: true,
             };
             made.push(current);
@@ -210,10 +337,8 @@ export function useCanvasStream({
             break;
           }
           case "body":
-            if (current) {
-              current.body = appendLine(current.body, ev.text);
-              flush();
-            }
+            // 화면에는 `tick`이 조금씩 내보낸다 — 여기서는 받아 두기만 한다.
+            if (current) target = appendLine(target, ev.text);
             break;
           case "cend":
             current = null;
@@ -231,7 +356,14 @@ export function useCanvasStream({
 
       try {
         await streamChat(
-          { session_id: sessionId, question: q },
+          {
+            session_id: sessionId,
+            question: q,
+            // 고른 노드의 분류가 곧 "지금 보고 있는 트리"다 (D151).
+            focus_tag: picked
+              ? (getItems().find((i) => i.id === picked)?.tag ?? null)
+              : null,
+          },
           {
             onToken: (delta) => parser.push(delta),
             onToolCall: (name) => setReply(TOOL_LABELS[name] ?? "찾아보고 있어요…"),
@@ -251,7 +383,8 @@ export function useCanvasStream({
                   id: tempId(),
                   sessionId,
                   nodeId: null,
-                  parentItemId,
+                  // 도판은 트리 노드가 아니다 — 부모를 주면 배치가 옆에 붙인다.
+                  parentItemId: null,
                   kind: "figure",
                   source: "ai",
                   title: null,
@@ -262,7 +395,7 @@ export function useCanvasStream({
                   pinned: false,
                   seq: baseSeq + made.length,
                   data: {
-                    ...(askedQuestion ? { askedQuestion } : {}),
+                    askedQuestion,
                     figure: {
                       figureId: f.figure_id,
                       fileId: f.file_id,
@@ -285,7 +418,8 @@ export function useCanvasStream({
                   id: tempId(),
                   sessionId,
                   nodeId: null,
-                  parentItemId,
+                  // 클립은 트리 노드가 아니다 — 도판과 같이 부모 없이 옆에 붙인다.
+                  parentItemId: null,
                   kind: "clip",
                   source: "ai",
                   title: null,
@@ -310,7 +444,16 @@ export function useCanvasStream({
                 });
               }
             },
-            onError: (msg) => setError(msg),
+            onError: (msg, status) => {
+              // 404는 "세션이 없다"는 뜻이다. 오류 문구만 띄우면 학생은 계속
+              // 같은 죽은 세션에 질문한다 (D153).
+              if (status === 404) {
+                setError("대화가 사라져 새 대화를 엽니다.");
+                onSessionGone();
+                return;
+              }
+              setError(msg);
+            },
           },
           ctrl.signal,
         );
@@ -319,23 +462,90 @@ export function useCanvasStream({
       }
 
       parser.end();
+      streamDone = true;
+      /**
+       * **다 내보낸 뒤에 마무리한다.**
+       *
+       * 여기서 바로 저장하면 화면에는 아직 절반만 쓰인 글이 남아 있는데
+       * 서버에는 전문이 들어간다 — 새로고침하면 글이 갑자기 길어진다.
+       */
+      // 안전망: 어떤 이유로든 드레인이 멈춰도 턴은 끝나야 한다. 여기서 걸리면
+      // 저장이 통째로 안 되고 입력창이 영영 잠긴다.
+      await new Promise<void>((resolve) => {
+        const t0 = Date.now();
+        const check = window.setInterval(() => {
+          if (shown >= target.length || Date.now() - t0 > 8000) {
+            window.clearInterval(check);
+            resolve();
+          }
+        }, 30);
+      });
+      window.clearInterval(timer);
+      // 마지막 한 글자까지 맞춘다(반올림으로 뒤가 잘리는 일이 없게).
+      const head = headItem();
+      if (head) head.body = target;
+
       // pending 해제 — 캐럿을 끄고 정상 아이템으로 만든다.
       for (const it of made) {
         it._pending = false;
         // 질문 아이템은 우리가 만든 것이라 노드에 속하지 않는다.
-        if (it.kind === "concept" || it.kind === "figure" || it.kind === "clip") it.nodeId = nodeId;
+        if (it.kind === "concept" || it.kind === "figure" || it.kind === "clip")
+          it.nodeId = nodeId;
       }
       flush();
       setBusy(false);
 
-      if (!made.length) return;
+      // 만들어진 카드를 돌려준다 — 호출부가 초점을 어디로 옮길지 정한다(D151).
+      const created = () => made.map((m) => ({ id: m.id, tag: m.tag }));
+      if (!made.length) return [];
 
       // 완료 시 한 번에 저장한다(스트리밍 중 매 토큰 PATCH는 수백 왕복이 된다).
       const payload: NewItemInput[] = made.map(toPayload);
       try {
         const saved = await createItems(sessionId, payload);
         const tempIds = made.map((i) => i.id);
-        onPersisted(tempIds, saved);
+        const realOf = new Map(tempIds.map((t, i) => [t, saved[i]?.id]));
+
+        /**
+         * 서버가 돌려준 행에 **우리가 아는 부모를 채워 넣는다** (D151).
+         *
+         * 같은 턴 안에서 이어 붙인 부모는 임시 id라 저장에 싣지 못했다(FK).
+         * 그래서 서버 행의 `parentItemId`는 비어 있는데, 그 행으로 로컬을
+         * 통째 교체하면 **화면에서 방금 그려진 선이 사라진다** — DB에는
+         * 있는데 새로고침 전까지 안 보이는 상태가 된다(실측으로 잡았다:
+         * 카드 셋이 전부 뿌리로 그려져 지도에 간선이 하나도 없었다).
+         */
+        const linked = saved.map((row, i) => {
+          const p = made[i]?.parentItemId;
+          if (!row || !p || isRealId(p)) return row;
+          const real = realOf.get(p);
+          return real ? { ...row, parentItemId: real } : row;
+        });
+        onPersisted(tempIds, linked);
+
+        /**
+         * 같은 턴 안에서 이어 붙인 부모를 서버에도 잇는다 (D151).
+         *
+         * `toPayload`는 임시 id를 부모로 보내지 않는다 — 아직 행이 없는
+         * 것을 가리키면 FK 위반으로 **배치 전체가 실패**한다. 그래서 저장
+         * 뒤에 진짜 id로 한 번 더 이어 준다. 화면에는 이미 이어져 있으므로
+         * (replaceTemp가 부모 참조까지 옮긴다) 이 왕복이 늦어도 티가 나지
+         * 않고, 실패해도 다음 새로고침에서 선 하나가 빠질 뿐 글은 남는다.
+         */
+        const relink = made
+          .map((m, i) => {
+            const p = m.parentItemId;
+            const child = saved[i];
+            if (!child || !p || isRealId(p)) return null;
+            const real = realOf.get(p);
+            return real ? patchItem(child.id, { parent_item_id: real }) : null;
+          })
+          .filter((v): v is NonNullable<typeof v> => !!v);
+        if (relink.length) {
+          await Promise.all(relink).catch((e: Error) =>
+            setError(`연결을 저장하지 못했습니다 — ${e.message}`),
+          );
+        }
         // 임시 id가 서버 id로 바뀌면 추종 대상도 갱신해야 한다 —
         // 안 하면 사라진 id를 쫓다가 조용히 실패한다.
         setFocusId((cur) => {
@@ -343,12 +553,16 @@ export function useCanvasStream({
           const at = tempIds.indexOf(cur);
           return at >= 0 && saved[at] ? saved[at].id : cur;
         });
+        // 저장된 뒤에는 **서버 id**를 돌려준다. 임시 id를 넘기면 호출부가
+        // 곧 사라질 id를 초점으로 잡는다.
+        return made.map((m, i) => ({ id: saved[i]?.id ?? m.id, tag: m.tag }));
       } catch (e) {
         // 저장 실패가 학습을 막지 않는다. 화면의 아이템은 그대로 두고 알린다.
         setError(`저장하지 못했습니다 — ${(e as Error).message}`);
       }
+      return created();
     },
-    [sessionId, busy, upsertLocal, onPersisted, nextSeq, hasFigure, hasClip],
+    [sessionId, busy, getItems, upsertLocal, onPersisted, nextSeq, hasFigure, hasClip, onSessionGone],
   );
 
   const clearFocus = useCallback(() => setFocusId(null), []);

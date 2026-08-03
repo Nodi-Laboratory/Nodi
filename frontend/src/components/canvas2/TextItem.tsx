@@ -33,17 +33,69 @@
  * DOM transform만 직접 갱신하고 `pointerup`에서 한 번 커밋한다.
  */
 
-import { memo, useCallback, useLayoutEffect, useRef, useState } from "react";
-import { EyeOff } from "lucide-react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";
-import { useItemDrag } from "@/lib/canvas2/useItemDrag";
+import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import type { CanvasItem } from "@/lib/canvas2/types";
-import { AskFromNoteButton } from "./AskFromNoteButton";
+import { AskAgainButton } from "./AskAgainButton";
 import { ItemBody } from "./ItemBody";
 import { ItemMenu } from "./ItemMenu";
-import { RecallPanel } from "./RecallPanel";
 import { QuestionTip } from "./QuestionTip";
+import { ResizeHandles, type ResizeCommit } from "./ResizeHandles";
 import { ReflowButton } from "./ReflowButton";
+
+/** 드래그로 인정하는 최소 이동(화면 px). 이보다 작으면 클릭이다. */
+const DRAG_THRESHOLD = 4;
+/** 위치 커밋이 끝내 안 올 때 transform을 걷어내는 안전망(ms). */
+const DROP_FALLBACK_MS = 300;
+
+/**
+ * 함께 끌 요소들. **캐시하지 않고 그때그때 조회한다.**
+ *
+ * ref 안에 배열로 담아 두면 React Compiler가 "훅에 넘긴 값을 나중에 고칠 수
+ * 없다"고 막는다(react-hooks/immutability). 속성 선택자 조회는 마이크로초
+ * 단위라 매 프레임 불러도 괜찮다.
+ */
+function peerEls(group: boolean, self: HTMLElement | null): HTMLElement[] {
+  const out = group
+    ? Array.from(
+        document.querySelectorAll<HTMLElement>('[data-canvas-item][data-selected="1"]'),
+      )
+    : [];
+  if (self && !out.includes(self)) out.push(self);
+  return withSubtrees(out);
+}
+
+/**
+ * 고른 것들 + **그 아래 가지 전부** (D154, 사용자 지시 2026-08-02:
+ * "부모 노드를 드래그해서 움직이면 모든 자식 노드가 함께 움직여야 해").
+ *
+ * DOM을 훑는 이유는 `peerEls`와 같다 — 자식 목록을 prop으로 내리면 트리가
+ * 바뀔 때마다 모든 아이템의 `memo`가 깨진다. 속성 선택자 조회는 마이크로초
+ * 단위라 드래그 시작에 한 번 부르는 정도는 아무 부담이 없다.
+ *
+ * 순환은 `seen`이 막는다 — 데이터가 꼬여도 드래그가 멈추면 안 된다.
+ */
+function withSubtrees(roots: HTMLElement[]): HTMLElement[] {
+  const out = [...roots];
+  const seen = new Set(roots.map((e) => e.getAttribute("data-canvas-item") ?? ""));
+  const queue = [...seen];
+  while (queue.length) {
+    const id = queue.shift();
+    if (!id) continue;
+    const kids = document.querySelectorAll<HTMLElement>(
+      `[data-tree-parent="${CSS.escape(id)}"]`,
+    );
+    for (const k of kids) {
+      const kid = k.getAttribute("data-canvas-item") ?? "";
+      if (!kid || seen.has(kid)) continue;
+      seen.add(kid);
+      queue.push(kid);
+      out.push(k);
+    }
+  }
+  return out;
+}
 
 export interface TextItemProps {
   item: CanvasItem;
@@ -51,6 +103,10 @@ export interface TextItemProps {
   y: number;
   selected: boolean;
   editing: boolean;
+  /** 지금 이 노드에서 이어 묻는 중인가 (D151). */
+  picked: boolean;
+  /** 같은 태그 트리에서의 부모 (D154). 없으면 뿌리이거나 트리 밖이다. */
+  treeParentId: string | null;
   tagOptions: readonly string[];
   /**
    * 이 글이 답인 질문의 원문. 하단 입력창으로 물어 만든 글에만 있다.
@@ -68,23 +124,21 @@ export interface TextItemProps {
   onCancelEdit: () => void;
   onDelete: (id: string) => void;
   onTagChange: (id: string, tag: string | null) => void;
-  /** 태그 이름 변경(세션 전역, D147). */
-  onRenameTag: (from: string, to: string) => void;
-  /** 태그 삭제(세션 전역 — 그 태그 단 카드가 모두 분류 없음이 된다, D147). */
-  onRemoveTag: (tag: string) => void;
   /** 이동량도 함께 준다 — 여럿이 선택돼 있으면 호출부가 전부에 같은 양을 적용한다. */
   onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
   onReflow: (id: string) => void;
   onDismissReflow: (id: string) => void;
+  /** "다시 질문하기" — 이 답을 골라 둔다 (D149 → D151). */
   onAsk: (id: string) => void;
-  onDismissAsk: (id: string) => void;
-  /** 인출 연습에서 학생이 쓴 회상을 자식 글로 남긴다 (D138). */
-  onRecall: (id: string, text: string) => void;
   /**
-   * 크기 조절은 **도판만** 한다(사용자 지시 2026-08-02, D147). onResize·
-   * onResetSize는 공유 handlers 묶음으로 함께 오지만 글 상자는 쓰지 않는다 —
-   * 그래서 여기서 선언하지도, 구조분해하지도 않는다.
+   * **끌지 않고 눌렀다** (D151). 이 가지에서 이어 묻겠다는 뜻이다.
+   * 드래그는 절대 이걸 부르지 않는다(사용자 지시).
    */
+  onPick: (id: string) => void;
+  /** 손잡이로 상자 크기를 바꿨다 (D142). */
+  onResize: (id: string, next: ResizeCommit) => void;
+  /** 상자를 자동 크기로 되돌린다. */
+  onResetSize: (id: string) => void;
 }
 
 function TextItemImpl(props: TextItemProps) {
@@ -94,6 +148,8 @@ function TextItemImpl(props: TextItemProps) {
     y,
     selected,
     editing,
+    picked,
+    treeParentId,
     tagOptions,
     question,
     zoom,
@@ -104,31 +160,40 @@ function TextItemImpl(props: TextItemProps) {
     onCancelEdit,
     onDelete,
     onTagChange,
-    onRenameTag,
-    onRemoveTag,
     onDragEnd,
     onReflow,
     onDismissReflow,
     onAsk,
-    onDismissAsk,
-    onRecall,
+    onPick,
+    onResize,
+    onResetSize,
   } = props;
 
   const [hover, setHover] = useState(false);
+  const [dragging, setDragging] = useState(false);
   /** ⋯ 메뉴가 펼쳐져 있나. 펼친 동안은 마우스가 나가도 메뉴를 붙잡아 둔다. */
   const [menuOpen, setMenuOpen] = useState(false);
-  /**
-   * 인출 연습 중인가 (D138). `hidden`이면 본문을 가린다 — **보면서 쓰면
-   * 인출이 아니라 베끼기다.** 쓰고 나면 `compare`로 넘어가 원문을 다시 보인다.
-   */
-  const [recall, setRecall] = useState<"off" | "hidden" | "compare">("off");
   const rootRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    sx: number;
+    sy: number;
+    moved: boolean;
+    /** 선택된 것들을 함께 끄는 드래그인가. */
+    group: boolean;
+    /** 누를 때 이미 선택돼 있었나. 손을 뗐을 때 무엇을 할지가 여기서 갈린다. */
+    wasSelected: boolean;
+    additive: boolean;
+  } | null>(null);
+  /** 학생이 손잡이로 정한 크기. 없으면 내용이 정한다 (D142). */
+  const size = item.data.size;
   const isAi = item.source === "ai";
   const accent = isAi ? "var(--c-live)" : "var(--c-hand)";
   const wash = isAi ? "var(--c-live-wash)" : "var(--c-hand-wash)";
   // **편집 중에는 박스를 그리지 않는다**(사용자 지시). 글을 쓰는 중에 테두리와
   // 바탕이 깔리면 캔버스가 아니라 입력 폼처럼 보인다.
-  const active = !editing && (hover || selected);
+  // 고른 노드는 마우스를 치워도 계속 보여야 한다 — "지금 여기서 이어 묻는
+  // 중"이라는 상태를 화면이 계속 말해 줘야 한다 (D151).
+  const active = !editing && (hover || selected || picked);
 
   const setNode = useCallback(
     (el: HTMLDivElement | null) => {
@@ -138,41 +203,157 @@ function TextItemImpl(props: TextItemProps) {
     [measure, item.id],
   );
 
-  // 드래그·선택은 도판과 공유하는 훅이 맡는다 (D147). 편집 중에는 드래그하지
-  // 않고 글자 선택이 되어야 하므로 enabled를 끈다.
-  const { dragging, settle, handlers: dragHandlers } = useItemDrag({
-    id: item.id,
-    x,
-    y,
-    zoom,
-    selected,
-    enabled: !editing,
-    rootRef,
-    onSelect,
-    onDragEnd,
-  });
+  /**
+   * 드롭 뒤 남은 transform을 걷어낸다.
+   *
+   * "인라인 transform이 남아 있고 지금 끄는 중이 아니면 정리한다"로 판정하므로
+   * **함께 끌린 다른 아이템도 각자 알아서 정리된다** — 누가 누구를 끌었는지
+   * 기억할 필요가 없다.
+   */
+  const settle = useCallback(() => {
+    const el = rootRef.current;
+    if (!el || dragRef.current || !el.style.transform) return;
+    // 전이를 켠 채 transform을 지우면 요소가 원래 자리로 갔다가 다시 오는
+    // 것처럼 보인다 — 사용자가 말한 "클릭을 놓으면 잠깐 깜박거리는 현상".
+    const prev = el.style.transition;
+    el.style.transition = "none";
+    el.style.transform = "";
+    void el.offsetHeight; // 강제 리플로우 — transition:none을 이 프레임에 확정
+    el.style.transition = prev;
+    setDragging(false);
+  }, []);
 
   // 새 좌표가 도착한 프레임에 정리한다(페인트 전이라 중간 상태가 안 보인다).
   useLayoutEffect(() => {
     settle();
   }, [x, y, settle]);
 
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (editing) return;
+      // 왼쪽 버튼만 드래그다. 중버튼(휠클릭)은 화면 팬이므로 놓아 준다.
+      if (e.button !== 0) return;
+      const t = e.target as HTMLElement;
+      if (t.closest("[data-no-pan]")) return; // 버튼·메뉴는 자기 일을 한다
+
+      // **본문 위에서도 드래그로 옮긴다**(사용자 지시).
+      //
+      // 한동안은 본문을 잡으면 글자가 선택되게 뒀는데, 정작 원한 건 박스
+      // 이동이었다. 글자 선택은 편집 모드(더블클릭)에서 하면 된다.
+      e.stopPropagation(); // Excalidraw가 선택 상자를 그리지 않게
+
+      /**
+       * 선택은 **여기서 한 번만** 정한다.
+       *
+       * 예전에는 pointerdown과 pointerup에서 각각 `onSelect`를 불렀다. 평범한
+       * 클릭에서는 티가 안 났지만 Shift는 토글이라 **두 번 뒤집혀 제자리로
+       * 돌아왔다** — 실측: 하나 고른 뒤 Shift로 하나 더 누르면 선택이 0이 됐다.
+       *
+       *   Shift            → 토글(여기서 끝)
+       *   선택 안 된 것     → 이것 하나만
+       *   이미 선택된 것    → 여기선 그대로 둔다. 끌면 함께 움직이고,
+       *                       움직이지 않았으면 손 뗄 때 이 하나로 좁힌다.
+       */
+      const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+      if (additive) onSelect(item.id, true);
+      else if (!selected) onSelect(item.id, false);
+
+      dragRef.current = {
+        sx: e.clientX,
+        sy: e.clientY,
+        moved: false,
+        group: selected,
+        wasSelected: selected,
+        additive,
+      };
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {
+        // 활성 포인터가 아니면 던진다(합성 이벤트·펜 태블릿 일부). 캡처는
+        // 편의일 뿐이라 없어도 드래그는 동작한다 — 콘솔만 더럽히지 않는다.
+      }
+    },
+    [editing, item.id, onSelect, selected],
+  );
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const dx = e.clientX - d.sx;
+      const dy = e.clientY - d.sy;
+      if (!d.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      if (!d.moved) {
+        d.moved = true;
+        setDragging(true);
+      }
+      // React를 거치지 않는다 — 60fps로 리렌더하면 긴 문단에서 즉시 버벅인다.
+      // 함께 선택된 것들도 같은 양만큼 민다.
+      const wx = dx / zoom;
+      const wy = dy / zoom;
+      const shift = `translate(${wx}px, ${wy}px)`;
+      const peers = peerEls(d.group, rootRef.current);
+      for (const el of peers) {
+        el.style.transition = "none";
+        el.style.transform = shift;
+      }
+      // 연결선도 같이 움직여야 한다 — 상자만 가고 선이 남으면 관계가 끊겨
+      // 보인다(사용자 지적). 역시 React를 거치지 않는다.
+      setDragOffsets(
+        peers.map((el) => el.getAttribute("data-canvas-item") ?? "").filter(Boolean),
+        wx,
+        wy,
+      );
+    },
+    [zoom],
+  );
+
+  const finishDrag = useCallback(
+    (e: React.PointerEvent) => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      if (!d) return;
+
+      const peers = peerEls(d.group, rootRef.current);
+      // 연결선은 이제 React가 낸 최종 좌표를 쓴다.
+      clearDragOffsets();
+      if (!d.moved) {
+        // 움직이지 않은 클릭. 선택은 pointerdown에서 이미 정해졌고, 남은 경우는
+        // 하나뿐이다 — 여럿이 잡힌 상태에서 그중 하나를 그냥 눌렀을 때
+        // **그 하나로 좁힌다.**
+        if (!d.additive && d.wasSelected) onSelect(item.id, false);
+        // **움직이지 않은 클릭만** 고른 것이다 (D151). 끌었으면 여기 오지 않는다.
+        if (!d.additive) onPick(item.id);
+        setDragging(false);
+        for (const el of peers) el.style.transition = "";
+        return;
+      }
+      const dx = (e.clientX - d.sx) / zoom;
+      const dy = (e.clientY - d.sy) / zoom;
+      // transform은 **지우지 않는다.** 새 left/top이 오기 전에 지우면 한 프레임
+      // 원래 자리로 돌아갔다 오면서 깜박인다. settle()이 정리한다.
+      for (const el of peers) el.style.transition = "";
+      onDragEnd(item.id, x + dx, y + dy, dx, dy);
+      // 좌표가 끝내 안 바뀌는 경우(같은 자리 재배치)의 안전망.
+      window.setTimeout(settle, DROP_FALLBACK_MS);
+    },
+    [item.id, onDragEnd, onPick, onSelect, settle, x, y, zoom],
+  );
+
+  // 언마운트 시 남은 타이머의 커서·스타일 잔재를 정리한다.
+  useEffect(() => () => {
+    dragRef.current = null;
+  }, []);
+
   const showReflow = item._needsReflow && !item.data.reflowDismissed && !editing;
-  const showAsk =
-    item.source === "user" && !item.data.askHidden && !editing && (hover || selected);
   /**
-   * 인출 버튼은 **AI가 쓴 개념 글에만** 붙인다 (D138).
+   * "다시 질문하기"는 **AI가 쓴 답에만** 붙인다 (D149, 사용자 지시).
    *
-   * 학생이 쓴 글은 이미 자기가 산출한 것이라 다시 꺼낼 대상이 아니고,
-   * 스트리밍 중인 글은 아직 읽지도 않았다.
+   * 학생이 쓴 글에는 붙이지 않는다 — 자기가 방금 쓴 메모를 AI에게 넘기는
+   * 것보다, 답을 읽다 막힌 자리에서 바로 잇는 편이 실제로 묻는 자리다.
+   * 스트리밍 중인 글은 아직 다 나오지도 않았다.
    */
-  const showRecall =
-    isAi &&
-    item.kind === "concept" &&
-    !item._pending &&
-    !editing &&
-    recall === "off" &&
-    (hover || selected);
+  const showAsk = isAi && !item._pending && !editing && (hover || selected || picked);
 
   return (
     <div
@@ -181,6 +362,8 @@ function TextItemImpl(props: TextItemProps) {
       // 함께 끌 대상을 DOM에서 찾기 위한 표식. props로 선택 집합을 내려보내면
       // memo(TextItem)이 매번 깨진다.
       data-selected={selected ? "1" : undefined}
+      // 가지째 끌기 위한 표식 (D154) — `peerEls`가 이걸로 자식을 찾는다.
+      data-tree-parent={treeParentId ?? undefined}
       className="absolute"
       style={{
         left: x,
@@ -198,10 +381,13 @@ function TextItemImpl(props: TextItemProps) {
          * 편집 중에는 최대 폭으로 고정한다 — 글자를 지울 때마다 입력 상자가
          * 줄어들면 쓸 수가 없다.
          */
-        // 글은 내용이 폭·높이를 정한다 — 크기 조절은 도판만 한다(D147).
-        width: editing ? ITEM_W : "max-content",
-        maxWidth: ITEM_W,
+        // 학생이 손잡이로 정했으면 그 값이 우선이다 — 읽기 폭 상한(ITEM_W)도
+        // 학생의 결정 앞에서는 물러난다(D142).
+        width: size ? size.w : editing ? ITEM_W : "max-content",
+        maxWidth: size ? undefined : ITEM_W,
         minWidth: editing ? undefined : ITEM_MIN_W,
+        // **최소** 높이다. 내용이 더 길면 상자가 늘어난다(잘린 글은 사고다).
+        minHeight: size?.h,
         pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
         zIndex: selected || editing ? 12 : dragging ? 11 : 10,
         cursor: editing ? "auto" : dragging ? "grabbing" : "grab",
@@ -212,10 +398,10 @@ function TextItemImpl(props: TextItemProps) {
           ? "none"
           : "left .28s cubic-bezier(.22,.9,.24,1), top .28s cubic-bezier(.22,.9,.24,1)",
       }}
-      onPointerDown={dragHandlers.onPointerDown}
-      onPointerMove={dragHandlers.onPointerMove}
-      onPointerUp={dragHandlers.onPointerUp}
-      onPointerCancel={dragHandlers.onPointerCancel}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onDoubleClick={(e) => {
@@ -264,15 +450,29 @@ function TextItemImpl(props: TextItemProps) {
           background: active ? wash : "transparent",
           // 고른 상태는 도형 선택과 같은 굵기로 또렷하게. zoom으로 나눠
           // 어느 배율에서나 같은 두께로 보인다(도형 쪽이 그렇다).
-          border: `${selected ? Math.max(1, 1.5 / zoom) : 1}px solid ${
-            selected ? accent : active ? "var(--c-rule)" : "transparent"
+          border: `${selected || picked ? Math.max(1, 1.5 / zoom) : 1}px solid ${
+            selected || picked ? accent : active ? "var(--c-rule)" : "transparent"
           }`,
           opacity: active ? 1 : 0,
           boxShadow: dragging ? "var(--c-shadow-lg)" : "none",
         }}
       />
 
-      {/* 글 상자는 크기 손잡이가 없다 — 크기 조절은 도판만 한다(D147). */}
+      {/* 고른 상자는 도형과 같은 모습이어야 한다 — 테두리 + 여덟 손잡이 (D142) */}
+      {selected && !editing && !dragging && (
+        <ResizeHandles
+          zoom={zoom}
+          color={accent}
+          getEl={() => rootRef.current}
+          onCommit={(next) => {
+            onResize(item.id, next);
+            // 새 좌표가 끝내 안 오는 경우(폭만 바꿨을 때)의 안전망 — 남은
+            // transform을 걷어낸다.
+            window.setTimeout(settle, DROP_FALLBACK_MS);
+          }}
+          onReset={() => onResetSize(item.id)}
+        />
+      )}
 
       {/* 이 답을 부른 질문 — hover하면 위쪽에 한 줄로 뜬다 */}
       {question && (hover || selected) && !editing && <QuestionTip text={question} />}
@@ -299,7 +499,7 @@ function TextItemImpl(props: TextItemProps) {
       <div className="relative">
         {item.title && (
           <h3
-            className="ui mb-2 text-[17px] font-semibold leading-snug"
+            className="ui mb-2.5 text-[21px] font-semibold leading-snug"
             style={{ color: "var(--c-ink)" }}
           >
             {item.title}
@@ -308,19 +508,11 @@ function TextItemImpl(props: TextItemProps) {
 
         <div
           data-item-text
-          className="text-[15px]"
-          style={{
-            color: "var(--c-ink)",
-            // **인출 중에는 본문을 가린다** — 보면서 쓰면 베끼기가 된다(D138).
-            // 지우지 않고 흐리는 이유: 높이가 바뀌면 배치가 흔들리고, 뒤에 글이
-            // 있다는 사실 자체는 보여야 "가려 뒀다"로 읽힌다.
-            filter: recall === "hidden" ? "blur(6px)" : undefined,
-            opacity: recall === "hidden" ? 0.35 : 1,
-            userSelect: recall === "hidden" ? "none" : undefined,
-            pointerEvents: recall === "hidden" ? "none" : undefined,
-            transition: "filter .18s ease, opacity .18s ease",
-          }}
-          aria-hidden={recall === "hidden"}
+          // 15px였다. "정보가 화면을 채울 정도로 커야 학습 효과가 있다"는
+          // 디자이너 의견(사용자 전달 2026-08-03)에 따라 키웠다. 폭도 함께
+          // 키웠으므로(ITEM_W 560) 한 줄 글자 수는 비슷하게 유지된다.
+          className="text-[18px]"
+          style={{ color: "var(--c-ink)" }}
         >
           <ItemBody
             body={item.body}
@@ -331,48 +523,15 @@ function TextItemImpl(props: TextItemProps) {
           />
         </div>
 
-        {recall !== "off" && (
-          <RecallPanel
-            onCommit={(text) => onRecall(item.id, text)}
-            onCancel={() => setRecall("off")}
-            onReveal={() => setRecall("compare")}
-          />
-        )}
-
-        {(showReflow || showAsk || showRecall) && (
+        {(showReflow || showAsk) && (
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
-            {showRecall && (
-              <button
-                type="button"
-                data-no-pan
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRecall("hidden");
-                }}
-                title="본문을 가리고 기억나는 만큼 써 봅니다"
-                className="label flex items-center gap-1 rounded-full px-2 py-1 transition-colors"
-                style={{
-                  background: "var(--c-hand-wash)",
-                  color: "var(--c-hand)",
-                  letterSpacing: 0,
-                }}
-              >
-                <EyeOff size={12} />
-                안 보고 다시 말해보기
-              </button>
-            )}
             {showReflow && (
               <ReflowButton
                 onReflow={() => onReflow(item.id)}
                 onDismiss={() => onDismissReflow(item.id)}
               />
             )}
-            {showAsk && (
-              <AskFromNoteButton
-                onAsk={() => onAsk(item.id)}
-                onDismiss={() => onDismissAsk(item.id)}
-              />
-            )}
+            {showAsk && <AskAgainButton picked={picked} onAsk={() => onAsk(item.id)} />}
           </div>
         )}
 
@@ -386,8 +545,8 @@ function TextItemImpl(props: TextItemProps) {
             onEdit={() => onStartEdit(item.id)}
             onDelete={() => onDelete(item.id)}
             onTagChange={(t) => onTagChange(item.id, t)}
-            onRenameTag={onRenameTag}
-            onRemoveTag={onRemoveTag}
+            resized={!!size}
+            onResetSize={() => onResetSize(item.id)}
             onOpenChange={setMenuOpen}
           />
         )}

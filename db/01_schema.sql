@@ -1301,6 +1301,9 @@ declare
     v_nodes    bigint := 0;
     v_logs     bigint := 0;
     v_heads    bigint := 0;
+    v_items    bigint := 0;
+    v_links    bigint := 0;
+    v_draw     bigint := 0;
 begin
     if not public.is_admin() then
         raise exception 'admin only' using errcode = 'insufficient_privilege';
@@ -1384,9 +1387,58 @@ begin
         returning 1
     ) select count(*) into v_logs from ins;
 
+    -- 5) 캔버스 글 (D152) — **부모는 비운 채** 넣는다(자기 참조 FK).
+    with src as (
+        select * from jsonb_populate_recordset(null::public.canvas_items,
+                                               coalesce(p_data->'canvas_items', '[]'::jsonb))
+    ), ins as (
+        insert into public.canvas_items
+            (id, session_id, node_id, kind, source, title, body, tag,
+             x, y, pinned, seq, data, created_at, updated_at)
+        select i.id, i.session_id,
+               -- 노드를 못 살렸으면 참조만 비운다. 글은 살린다.
+               (select n.id from public.nodes n where n.id = i.node_id),
+               i.kind, i.source, i.title, i.body, i.tag,
+               i.x, i.y, i.pinned, i.seq, i.data, i.created_at, i.updated_at
+          from src i
+         where exists (select 1 from public.sessions s where s.id = i.session_id)
+        on conflict (id) do nothing
+        returning 1
+    ) select count(*) into v_items from ins;
+
+    -- 6) 트리 간선 잇기 (D151) — 부모가 실제로 복원됐을 때만.
+    with src as (
+        select * from jsonb_populate_recordset(null::public.canvas_items,
+                                               coalesce(p_data->'canvas_items', '[]'::jsonb))
+    ), upd as (
+        update public.canvas_items c
+           set parent_item_id = src.parent_item_id
+          from src
+         where c.id = src.id
+           and c.parent_item_id is null
+           and src.parent_item_id is not null
+           and exists (select 1 from public.canvas_items p where p.id = src.parent_item_id)
+        returning 1
+    ) select count(*) into v_links from upd;
+
+    -- 7) 그림 (세션당 한 행)
+    with src as (
+        select * from jsonb_populate_recordset(null::public.canvas_drawings,
+                                               coalesce(p_data->'canvas_drawings', '[]'::jsonb))
+    ), ins as (
+        insert into public.canvas_drawings (session_id, elements, files, updated_at)
+        select d.session_id, d.elements, d.files, d.updated_at
+          from src d
+         where exists (select 1 from public.sessions s where s.id = d.session_id)
+        on conflict (session_id) do nothing
+        returning 1
+    ) select count(*) into v_draw from ins;
+
     return jsonb_build_object(
         'sessions', v_sessions, 'nodes', v_nodes,
-        'ai_logs', v_logs, 'heads_relinked', v_heads
+        'ai_logs', v_logs, 'heads_relinked', v_heads,
+        'canvas_items', v_items, 'canvas_links', v_links,
+        'canvas_drawings', v_draw
     );
 end;
 $$;

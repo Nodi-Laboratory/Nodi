@@ -55,6 +55,9 @@ export interface LayoutSource {
   x: number;
   y: number;
   parentItemId: string | null;
+  /** 트리 판정용 (D151) — AI 개념 카드만 트리에 들어간다. */
+  kind: string;
+  source: string;
 }
 
 export interface UseItemLayout {
@@ -94,7 +97,8 @@ export function useItemLayout(
     .map(
       (i) =>
         `${i.id}:${i.tag ?? ""}:${i.seq}:${i.pinned ? 1 : 0}:` +
-        `${i.pinned ? `${Math.round(i.x)},${Math.round(i.y)}` : ""}:${i.parentItemId ?? ""}`,
+        `${i.pinned ? `${Math.round(i.x)},${Math.round(i.y)}` : ""}:${i.parentItemId ?? ""}:` +
+        `${i.kind}/${i.source}`,
     )
     .join("|");
   // 반올림한다 — 서브픽셀 흔들림으로 계속 재배치되지 않게.

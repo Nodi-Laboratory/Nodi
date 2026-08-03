@@ -53,13 +53,26 @@ function subscribe(cb: () => void): () => void {
  * **원시값을 돌려줘야 한다.** 객체를 새로 만들어 돌려주면 매 렌더 참조가 달라져
  * `useSyncExternalStore`가 무한 루프로 본다.
  */
-function read(key: string): boolean | null {
+function readRaw(key: string): string | null {
   try {
-    const v = window.localStorage.getItem(PREFIX + key);
-    return v === null ? null : v === "1";
+    return window.localStorage.getItem(PREFIX + key);
   } catch {
     return null;
   }
+}
+
+function write(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(PREFIX + key, value);
+  } catch {
+    // 저장 못 하는 환경이면 기억되지 않을 뿐, 화면은 정상이다.
+  }
+  emit();
+}
+
+function read(key: string): boolean | null {
+  const v = readRaw(key);
+  return v === null ? null : v === "1";
 }
 
 export function useCollapsible(
@@ -75,19 +88,34 @@ export function useCollapsible(
 
   const open = stored ?? defaultOpen;
 
-  const setOpen = useCallback(
-    (v: boolean) => {
-      try {
-        window.localStorage.setItem(PREFIX + key, v ? "1" : "0");
-      } catch {
-        // 저장 못 하는 환경이면 접기가 기억되지 않을 뿐, 화면은 정상이다.
-      }
-      emit();
-    },
-    [key],
-  );
+  const setOpen = useCallback((v: boolean) => write(key, v ? "1" : "0"), [key]);
 
   const toggle = useCallback(() => setOpen(!open), [open, setOpen]);
 
   return { open, setOpen, toggle };
+}
+
+/**
+ * 목록에서 고른 값 하나를 기억한다 (D150 — 펜 색·형광펜 색).
+ *
+ * 접기와 같은 이유로 기억한다: 파란 펜으로 필기하던 학생이 새로고침마다
+ * 검정으로 돌아가면 매번 다시 골라야 한다.
+ *
+ * 저장값이 `allowed`에 없으면 기본값으로 돌아간다 — 색 구성을 바꾼 뒤에도
+ * 존재하지 않는 색이 켜져 있는 상태가 생기지 않는다.
+ */
+export function useStickyChoice(
+  key: string,
+  allowed: readonly string[],
+  fallback: string,
+): { value: string; set: (v: string) => void } {
+  const stored = useSyncExternalStore(
+    subscribe,
+    () => readRaw(key),
+    () => null,
+  );
+  return {
+    value: stored && allowed.includes(stored) ? stored : fallback,
+    set: useCallback((v: string) => write(key, v), [key]),
+  };
 }

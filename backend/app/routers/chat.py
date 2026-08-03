@@ -83,6 +83,10 @@ class ChatStreamBody(BaseModel):
     session_id: str
     question: str = Field(min_length=1, max_length=QUESTION_MAX_CHARS)
     parent_node_id: str | None = None
+    # D151: 학생이 지금 고른 트리(분류 태그). **컨텍스트를 자르는 값이 아니다** —
+    # 서버는 모든 카드를 태그별 트리 순서로 다 넣고, 이 값으로 "지금 여기를
+    # 보고 있다"만 알린다(사용자 결정 2026-08-02).
+    focus_tag: str | None = Field(default=None, max_length=200)
     # 09 단일 writer: 프론트 retrieve 결과(figures)를 서버에 전달해 done 훅이
     # attachments.canvas에 저장. null이면 저장하지 않음(첫 질문 전 degraded
     # 케이스 등). 카드 좌표는 프론트 소유 — 서버는 저장하지 않음.
@@ -258,6 +262,20 @@ async def chat_stream(
         logger.warning("태그 목록 조회 실패 — 이번 턴은 태그 안내 없이 간다", exc_info=True)
         tag_context = None
 
+    # D151: 카드 전부를 **태그별 트리 순서**로 넣는다. 태그 목록(tag_guide)이
+    # "무엇이 있나"라면 이건 "무엇에서 무엇이 나왔나"다. 학생이 고른 트리에는
+    # 표시를 달아 그 맥락을 우선 보게 한다 — 자르는 것이 아니라 가리키는 것이다.
+    tree_context = None
+    try:
+        tree_context = await canvas_items.session_tree_context(
+            client, body.session_id, (body.focus_tag or "").strip() or None
+        )
+    except Exception:
+        # 태그 안내와 같은 이유로 조용히 넘기지 않는다 — 실패가 흔적을 안 남기면
+        # 기능이 꺼진 줄 모른다(D135 주석 참조).
+        logger.warning("대화 트리 조회 실패 — 이번 턴은 트리 안내 없이 간다", exc_info=True)
+        tree_context = None
+
     # Turn log (D25) + structured prompt composition (D35). compose_system_structured
     # is the SINGLE source of truth for both the system prompt string AND each
     # block's char span, so the saved prompt and the admin highlight never drift.
@@ -266,6 +284,7 @@ async def chat_stream(
         session_file_context=session_file_block,
         session_file_sources=session_file_sources,
         tag_context=tag_context,
+        tree_context=tree_context,
         rag_sources=rag_sources,
         base_instruction=solar.CONCEPT_CARD_SYSTEM_PROMPT,
     )

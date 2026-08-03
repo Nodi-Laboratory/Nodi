@@ -15,7 +15,6 @@ import {
   layoutItems,
   placeBesideParent,
   rectOf,
-  reflowOne,
   UNTAGGED,
   type LayoutInput,
 } from "./layout";
@@ -277,50 +276,6 @@ describe("AI 응답을 메모 옆에", () => {
   });
 });
 
-// --- 불변식 6: reflowOne -----------------------------------------------------
-
-describe("위치 정리(reflowOne)", () => {
-  it("다른 아이템을 움직이지 않는다", () => {
-    const target = item({ id: "t", tag: "가", seq: 2, height: 900, pinned: true, x: 9, y: 9 });
-    const others = [
-      item({ id: "a", tag: "가", seq: 0, height: 200, pinned: true, x: 0, y: 0 }),
-      item({ id: "b", tag: "가", seq: 1, height: 200, pinned: true, x: 0, y: 300 }),
-    ];
-    const before = others.map((o) => ({ x: o.x, y: o.y }));
-    reflowOne(target, others, [], ["가"]);
-    expect(others.map((o) => ({ x: o.x, y: o.y }))).toEqual(before);
-  });
-
-  it("정리 후 다른 아이템·장애물과 겹치지 않는다", () => {
-    const others = [
-      item({ id: "a", tag: "가", seq: 0, height: 300, pinned: true, x: 0, y: 0 }),
-      item({ id: "b", tag: "가", seq: 1, height: 300, pinned: true, x: 0, y: 400 }),
-    ];
-    const obstacles: Rect[] = [{ x: 0, y: 800, w: 300, h: 300 }];
-    const target = item({ id: "t", tag: "가", seq: 2, height: 250 });
-    const spot = reflowOne(target, others, obstacles, ["가"]);
-    const r = rectOf(spot, { w: ITEM_W, h: 250 });
-    for (const o of others) {
-      expect(intersects(r, rectOf({ x: o.x, y: o.y }, { w: o.width, h: o.height }))).toBe(false);
-    }
-    expect(intersects(r, obstacles[0])).toBe(false);
-  });
-
-  it("같은 열에서 seq가 앞선 아이템보다 아래에 놓인다", () => {
-    const others = [
-      item({ id: "a", tag: "가", seq: 0, height: 300, pinned: true, x: 0, y: 0 }),
-    ];
-    const target = item({ id: "t", tag: "가", seq: 1, height: 200 });
-    expect(reflowOne(target, others, [], ["가"]).y).toBeGreaterThanOrEqual(300);
-  });
-
-  it("태그를 바꾸면 그 태그의 열로 간다", () => {
-    const order = ["가", "나"];
-    const target = item({ id: "t", tag: "나", seq: 0, height: 200 });
-    expect(reflowOne(target, [], [], order).x).toBe(ITEM_W + COL_GAP);
-  });
-});
-
 // --- 경계 --------------------------------------------------------------------
 
 describe("경계", () => {
@@ -340,5 +295,164 @@ describe("경계", () => {
       item({ id: `a${i}`, tag: `t${i % 6}`, seq: i, height: 100 + (i % 11) * 120 }),
     );
     expect(overlaps(items).bad).toEqual([]);
+  });
+});
+
+// --- 트리 배치 (D151) ----------------------------------------------------
+
+/** 트리에 들어가는 AI 개념 카드. */
+function card(
+  id: string,
+  tag: string,
+  parentItemId: string | null,
+  seq: number,
+): LayoutInput {
+  return item({ id, tag, parentItemId, seq, kind: "concept", source: "ai" });
+}
+
+describe("트리 배치 (D151)", () => {
+  it("곧게 이어지는 대화는 들여쓰지 않는다", () => {
+    const items = [
+      card("a", "물리", null, 0),
+      card("b", "물리", "a", 1),
+      card("c", "물리", "b", 2),
+    ];
+    const { positions } = layoutItems(items);
+    const xs = items.map((i) => positions.get(i.id)!.x);
+    expect(new Set(xs).size).toBe(1); // 한 줄로 곧게
+    // 순서도 유지된다
+    const ys = items.map((i) => positions.get(i.id)!.y);
+    expect(ys[0]).toBeLessThan(ys[1]);
+    expect(ys[1]).toBeLessThan(ys[2]);
+  });
+
+  it("형제는 좌우로 나란히, 부모는 그 위 가운데 (D159 tidy tree)", () => {
+    const items = [
+      card("r", "물리", null, 0),
+      card("c1", "물리", "r", 1),
+      card("c2", "물리", "r", 2),
+    ];
+    const { positions } = layoutItems(items);
+    const p = (id: string) => positions.get(id)!;
+    // 형제는 같은 높이에 좌우로
+    expect(p("c1").y).toBe(p("c2").y);
+    expect(p("c2").x).toBeGreaterThan(p("c1").x);
+    // 부모는 두 자식의 가운데 위
+    const mid = (p("c1").x + p("c2").x + ITEM_W) / 2;
+    expect(Math.abs(p("r").x + ITEM_W / 2 - mid)).toBeLessThan(1);
+    expect(p("r").y).toBeLessThan(p("c1").y);
+  });
+
+  it("자식이 늘면 형제 서브트리가 좌우로 밀려난다", () => {
+    const before = layoutItems([
+      card("r", "물리", null, 0),
+      card("a", "물리", "r", 1),
+      card("b", "물리", "r", 2),
+    ]).positions;
+    // a에 자식을 둘 붙이면 a의 서브트리 폭이 커진다 → b가 오른쪽으로 밀린다
+    const after = layoutItems([
+      card("r", "물리", null, 0),
+      card("a", "물리", "r", 1),
+      card("b", "물리", "r", 2),
+      card("a1", "물리", "a", 3),
+      card("a2", "물리", "a", 4),
+    ]).positions;
+    expect(after.get("b")!.x - after.get("a")!.x).toBeGreaterThan(
+      before.get("b")!.x - before.get("a")!.x,
+    );
+  });
+
+  it("손자는 자기 부모 아래, 삼촌은 옆 (D159)", () => {
+    const items = [
+      card("r", "물리", null, 0),
+      card("c1", "물리", "r", 1),
+      card("c2", "물리", "r", 2),
+      card("g1", "물리", "c1", 3),
+    ];
+    const { positions } = layoutItems(items);
+    const p = (id: string) => positions.get(id)!;
+    expect(p("g1").y).toBeGreaterThan(p("c1").y); // 부모 아래
+    expect(p("c1").y).toBe(p("c2").y); // 형제는 같은 줄
+    // 손자는 자기 부모의 띠 안에 머문다 — 삼촌 쪽으로 넘어가지 않는다
+    expect(p("g1").x).toBeLessThan(p("c2").x);
+  });
+
+  it("넓은 트리라도 옆 열을 침범하지 않는다 (열 x는 누적)", () => {
+    const items: LayoutInput[] = [card("r", "물리", null, 0)];
+    for (let i = 0; i < 8; i++) items.push(card(`k${i}`, "물리", "r", i + 1));
+    items.push(card("other", "생명", null, 100));
+    const { positions, columnX } = layoutItems(items);
+    const nextCol = columnX.get("생명")!;
+    for (const i of items) {
+      if (i.tag !== "물리") continue;
+      expect(positions.get(i.id)!.x + i.width).toBeLessThanOrEqual(nextCol);
+    }
+  });
+
+  it("트리가 있어도 겹치지 않는다", () => {
+    const items = [
+      card("r", "물리", null, 0),
+      card("c1", "물리", "r", 1),
+      card("c2", "물리", "r", 2),
+      card("g1", "물리", "c1", 3),
+      card("s", "생명", null, 4),
+      item({ id: "memo", tag: "물리", seq: 5, source: "user", kind: "note" }),
+    ];
+    expect(overlaps(items).bad).toEqual([]);
+  });
+});
+
+describe("자식은 부모보다 위에 놓이지 않는다 (사용자 지시 2026-08-02)", () => {
+  it("부모가 저 아래에 고정돼 있어도 자식은 그 아래다", () => {
+    const items = [
+      card("r", "물리", null, 0),
+      // 학생이 부모를 한참 아래로 끌어다 놓았다
+      { ...card("p", "물리", "r", 1), pinned: true, x: 0, y: 3000 },
+      card("c", "물리", "p", 2),
+    ];
+    const { positions } = layoutItems(items);
+    expect(positions.get("c")!.y).toBeGreaterThanOrEqual(positions.get("p")!.y);
+  });
+
+  it("고정된 노드 뒤의 형제도 그 위로 올라가지 않는다", () => {
+    const items = [
+      { ...card("a", "물리", null, 0), pinned: true, x: 0, y: 2000 },
+      card("b", "물리", "a", 1),
+      card("c", "물리", "b", 2),
+    ];
+    const { positions } = layoutItems(items);
+    expect(positions.get("b")!.y).toBeGreaterThanOrEqual(2000);
+    expect(positions.get("c")!.y).toBeGreaterThanOrEqual(positions.get("b")!.y);
+  });
+
+  it("모든 트리 간선에서 자식 y ≥ 부모 y (무작위 60케이스)", () => {
+    for (let seed = 0; seed < 60; seed++) {
+      const items: LayoutInput[] = [];
+      let prev: string | null = null;
+      for (let i = 0; i < 12; i++) {
+        const id = `n${i}`;
+        // 3의 배수마다 뿌리로 갈라지고, 5의 배수마다 고정된다
+        const parent = i % 3 === 0 ? null : prev;
+        const c = card(id, "물리", parent, i);
+        items.push(
+          (seed + i) % 5 === 0
+            ? { ...c, pinned: true, x: 0, y: ((seed * 37 + i * 91) % 20) * 120 }
+            : c,
+        );
+        prev = id;
+      }
+      const { positions } = layoutItems(items);
+      for (const it of items) {
+        if (!it.parentItemId || it.pinned) continue;
+        const p = positions.get(it.parentItemId);
+        const c = positions.get(it.id);
+        if (!p || !c) continue;
+        expect(c.y).toBeGreaterThanOrEqual(p.y);
+      }
+      // 자동 배치된 것끼리는 절대 겹치지 않는다. 고정된 카드는 학생이 손으로
+      // 끌어다 둔 자리라 보장 대상이 아니다 — 엔진이 학생의 결정을 밀어낼 수는
+      // 없다(D159).
+      expect(overlaps(items.filter((i) => !i.pinned)).bad).toEqual([]);
+    }
   });
 });

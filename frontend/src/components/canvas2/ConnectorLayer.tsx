@@ -34,6 +34,8 @@ import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Rect } from "@/lib/canvas2/rect";
 import { linkGeometry, midpoint } from "@/lib/canvas2/connector";
+import { treeEdges } from "@/lib/canvas2/tree";
+import { useCollapsible } from "@/lib/canvas2/useCollapsible";
 import { getDragOffsets, subscribeDrag, type DragOffset } from "@/lib/canvas2/dragBus";
 
 interface Props {
@@ -53,6 +55,14 @@ interface Link {
   parentId: string;
   parent: Rect;
   child: Rect;
+  /**
+   * 태그 트리의 간선인가 (D151).
+   *
+   * 트리 간선은 **수가 많다**(카드마다 하나). 옛 "AI에게 묻기" 선처럼 라벨을
+   * 달고 굵게 그리면 캔버스가 글자보다 선으로 뒤덮인다. 가늘게, 라벨 없이,
+   * 방향만 보이게 그린다.
+   */
+  tree: boolean;
 }
 
 function shift(r: Rect, o: DragOffset | undefined): Rect {
@@ -60,8 +70,19 @@ function shift(r: Rect, o: DragOffset | undefined): Rect {
 }
 
 export function ConnectorLayer({ items, positions, sizes }: Props) {
+  /**
+   * 캔버스에도 트리 선을 그릴 것인가 (D151, 사용자 지시 — 기본 켬).
+   *
+   * 지도의 "캔버스에도 선 보이게 하기" 버튼과 **같은 저장소를 본다**. 상태를
+   * prop으로 내리지 않는 이유는 둘이 형제도 부모-자식도 아니어서다 — 같은 키를
+   * 보면 어긋날 수가 없다.
+   */
+  const { open: edgesOnCanvas } = useCollapsible("canvas-edges", true);
+  const treeChildIds = new Set(treeEdges(items).map((e) => e.to));
+
   const links: Link[] = items
     .filter((i) => i.parentItemId && positions.has(i.id) && positions.has(i.parentItemId))
+    .filter((i) => (treeChildIds.has(i.id) ? edgesOnCanvas : true))
     .map((child) => {
       const cp = positions.get(child.id)!;
       const pp = positions.get(child.parentItemId!)!;
@@ -72,6 +93,7 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
         parentId: child.parentItemId!,
         parent: { x: pp.x, y: pp.y, w: ps.w, h: ps.h },
         child: { x: cp.x, y: cp.y, w: cs.w, h: cs.h },
+        tree: treeChildIds.has(child.id),
       };
     });
 
@@ -155,9 +177,11 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
               }
               fill="none"
               stroke="currentColor"
-              strokeWidth={1.5}
+              // 1.1/0.28이었다 — 카드가 커지니 실오라기처럼 보였다
+              // (사용자 지시 2026-08-03: "연결선을 더 굵게").
+              strokeWidth={l.tree ? 2.6 : 2}
               strokeLinecap="round"
-              opacity={0.4}
+              opacity={l.tree ? 0.55 : 0.5}
             />
             {/* 양끝 도트 — 어디서 나와 어디로 갔는지가 한눈에 보인다.
                 받는 쪽만 가운데를 종이색으로 비워 방향을 표시한다. */}
@@ -165,20 +189,23 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
               data-end="from"
               cx={g.a.x - minX}
               cy={g.a.y - minY}
-              r={DOT_R}
+              r={l.tree ? DOT_R + 0.5 : DOT_R}
               fill="currentColor"
-              opacity={0.85}
+              opacity={l.tree ? 0.8 : 0.85}
             />
             <circle
               data-end="to"
               cx={g.b.x - minX}
               cy={g.b.y - minY}
-              r={DOT_R}
+              r={l.tree ? DOT_R + 0.5 : DOT_R}
               fill="var(--c-paper)"
               stroke="currentColor"
-              strokeWidth={1.5}
-              opacity={0.95}
+              strokeWidth={2}
+              opacity={l.tree ? 0.9 : 0.95}
             />
+            {/* 트리 간선에는 라벨을 달지 않는다 — 카드마다 하나씩이라
+                "AI 응답"이 캔버스를 뒤덮는다 (D151). */}
+            {!l.tree && (
             <text
               x={m.x - minX}
               y={m.y - minY - 6}
@@ -197,6 +224,7 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
             >
               AI 응답
             </text>
+            )}
           </g>
         );
       })}

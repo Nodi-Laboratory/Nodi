@@ -13,10 +13,11 @@
  * 저장은 useCanvasItems가 한다.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Undo2, X } from "lucide-react";
 import { getCanvas, putDrawing } from "@/lib/api/canvas";
+import { ApiError } from "@/lib/api/_core";
 import type { DrawingScene } from "@/lib/api/canvas";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { useSessionBinding } from "@/lib/canvas2/useSessionBinding";
@@ -24,9 +25,9 @@ import { useExcalidrawBridge } from "@/lib/canvas2/useExcalidrawBridge";
 import { useCameraSpring } from "@/lib/canvas2/useCameraSpring";
 import { useItemLayout, type LayoutSource } from "@/lib/canvas2/useItemLayout";
 import { useCanvasItems } from "@/lib/canvas2/useCanvasItems";
-import { reflowOne, type LayoutInput } from "@/lib/canvas2/layout";
 import { sanitizeScene } from "@/lib/canvas2/sanitizeScene";
 import { itemsFromNodes } from "@/lib/canvas2/legacyItems";
+import { planHydration } from "@/lib/canvas2/hydration";
 import { useCanvasStream } from "@/lib/canvas2/useCanvasStream";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import { spaceTargetFromId } from "@/lib/api";
@@ -37,6 +38,8 @@ import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
+import { descendants, nextFocus, treeEdges } from "@/lib/canvas2/tree";
+import { branchesOf, navigate, type NavDir } from "@/lib/canvas2/navigate";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
@@ -48,12 +51,21 @@ import { CanvasTopBar } from "./CanvasTopBar";
 import { Minimap } from "./Minimap";
 import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
+import { SplitPrompt } from "./SplitPrompt";
+import { TreeNav } from "./TreeNav";
 
 interface Props {
   spaceId: string;
 }
 
 const FALLBACK_H = 180;
+
+/**
+ * 새 답이 생겼을 때의 배율 (D162, 사용자 지시: 235%).
+ *
+ * 읽으라고 만든 글이니 만들어지는 순간 읽을 수 있는 크기여야 한다.
+ */
+const NEW_NODE_ZOOM = 2.35;
 
 /**
  * 초기 카메라. 좌·상단 여유를 둬서 열 라벨(아이템 위 34px)과 좌측 괘선(-16px)이
@@ -106,23 +118,35 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const spring = useCameraSpring(bridge);
   const store = useCanvasItems();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
-  const { sessionId } = useSessionBinding(spaceId);
+  const { sessionId, dropSession } = useSessionBinding(spaceId);
 
   /**
    * 선택된 아이템들. **집합이다** — 예전에는 하나뿐이라 올가미로 여럿을 잡아도
    * 마지막 하나만 남았다(사용자 지적: "선택 도구가 여러 요소를 선택할 수 없다").
    */
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * 학생이 **고른** 트리 노드 (D151). 선택(selectedIds)과 다른 개념이다.
+   *
+   * 선택은 옮기고 지우기 위한 것이고, 이건 "지금 이 가지에서 이어 묻는다"는
+   * 뜻이다. 그래서 **끌면 고른 것이 아니다**(사용자 지시 2026-08-02:
+   * "노드를 드래그하는건 그 노드를 선택한 것이 아니다") — 움직이지 않고 누른
+   * 경우에만 잡힌다. 배경을 누르면 풀린다.
+   */
+  const [pickedId, setPickedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
-  const [quote, setQuote] = useState<{ id: string; text: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  /** 가지 한가운데를 떼어내려는 중 — 아래를 어떻게 할지 묻는다 (D156). */
+  const [split, setSplit] = useState<{ id: string; tag: string | null } | null>(null);
+  /** 입력창에 커서를 옮겨 달라는 신호 (D157). "묻겠다"일 때만 올린다. */
+  const [askFocus, setAskFocus] = useState(0);
   const queryClient = useQueryClient();
 
   useEffect(() => setActiveSpace(spaceId), [spaceId, setActiveSpace]);
 
-  const { data: snapshot } = useQuery({
+  const { data: snapshot, error: snapshotError } = useQuery({
     queryKey: ["canvas", sessionId],
     queryFn: () => getCanvas(sessionId!),
     enabled: !!sessionId,
@@ -132,22 +156,71 @@ export function CanvasWorkspace({ spaceId }: Props) {
     refetchOnWindowFocus: false,
   });
 
+  /**
+   * 잡고 있던 세션이 서버에서 사라졌으면 다시 고른다 (D153).
+   *
+   * 관리자가 데이터를 초기화하면 열려 있던 탭은 지워진 세션 id를 계속
+   * 들고 있다. 그 상태에서는 `/canvas`도 `/chat`도 404라 **질문해도 아무
+   * 일도 안 일어난다** — 학생 눈에는 "AI가 응답하지 않는다"로 보인다.
+   * 새로고침하면 낫지만, 새로고침해야 낫는 화면은 고장난 화면이다.
+   */
+  useEffect(() => {
+    if (snapshotError instanceof ApiError && snapshotError.status === 404) {
+      dropSession();
+    }
+  }, [snapshotError, dropSession]);
+
+  /**
+   * 세션을 떠나면 그 스냅샷을 **캐시에서 버린다** (D147).
+   *
+   * 이 쿼리는 캐시가 아니라 **수화용 사진 한 장**이다. 찍은 뒤로 학생의
+   * 편집(이동·수정·삭제)은 전부 서버로 나가지만 이 사진은 갱신되지 않는다.
+   * 들고 있다가 재진입 때 다시 쓰면 옮겨 둔 좌표가 통째로 되돌아간다 —
+   * 사용자가 겪은 "세션을 바꿨다 오면 원래 위치로 초기화"가 이것이다.
+   * 버려 두면 돌아올 때 반드시 서버에서 새로 받는다.
+   */
+  useEffect(() => {
+    if (!sessionId) return;
+    return () => {
+      queryClient.removeQueries({ queryKey: ["canvas", sessionId] });
+    };
+  }, [sessionId, queryClient]);
+
   // 구 세션 폴백 — v2 이전 세션에는 canvas_items가 한 행도 없다. 폴백이
   // 없으면 학생이 지난 대화를 열었을 때 빈 캔버스를 본다(데이터가 날아간
   // 것처럼 보인다). nodes.answer를 파싱해 읽기용으로 그리고, 첫 편집 때
   // 서버로 승격한다(legacyItems.ts 참조).
-  const { data: detail } = useSessionDetail(sessionId);
+  const { data: detail, isPending: detailPending } = useSessionDetail(sessionId);
+
+  /**
+   * 이미 채워 넣은 세션 — **수화는 세션당 한 번이다** (D147).
+   *
+   * 그 뒤로는 화면의 글이 정본이다. 늦게 도착한 쿼리가 덮으면 학생이 옮긴
+   * 자리가 사라지고, 더 나쁘게는 이미 저장된 글이 `_legacy` 복사본으로
+   * 바뀌어 **다음 이동이 서버에 복제 행을 만든다**(hydration.ts 머리말).
+   */
+  const hydratedFor = useRef<string | null>(null);
 
   const { replaceAll } = store;
   useEffect(() => {
-    if (!snapshot || !sessionId) return;
-    if (snapshot.items.length) {
-      replaceAll(snapshot.items);
-      return;
+    const plan = planHydration({
+      sessionId,
+      hydratedFor: hydratedFor.current,
+      snapshotCount: snapshot ? snapshot.items.length : null,
+      detailPending,
+    });
+    if (plan.clear) {
+      hydratedFor.current = null;
+      replaceAll([]);
     }
-    const nodes = detail?.nodes ?? [];
-    replaceAll(nodes.length ? itemsFromNodes(sessionId, nodes) : []);
-  }, [snapshot, detail, sessionId, replaceAll]);
+    if (!plan.fill || !sessionId || !snapshot) return;
+    hydratedFor.current = sessionId;
+    replaceAll(
+      plan.fill === "items"
+        ? snapshot.items
+        : itemsFromNodes(sessionId, detail?.nodes ?? []),
+    );
+  }, [sessionId, snapshot, detail, detailPending, replaceAll]);
 
   // 그림은 마운트 시 1회만 밀어 넣는다(`initialData`가 그때만 읽힌다).
   // sceneKey는 씬이 도착한 뒤에야 생긴다 — sessionId로 키를 잡으면 세션 전환
@@ -199,13 +272,19 @@ export function CanvasWorkspace({ spaceId }: Props) {
   );
 
   const hasClip = useCallback(
-    (clipId: string) =>
-      store.items.some((i) => i.data.clip?.clipId === clipId),
+    (clipId: string) => store.items.some((i) => i.data.clip?.clipId === clipId),
     [store.items],
   );
 
+  // 스트림이 새 카드의 부모를 정할 때 지금 캔버스에 뭐가 있는지 봐야 한다
+  // (D151). 값이 아니라 함수로 준다 — 배열을 주면 스트리밍 중 글자 하나마다
+  // `send`의 신원이 바뀐다.
+  const getItems = useEventCallback(() => store.items);
+
   const stream = useCanvasStream({
     sessionId,
+    getItems,
+    onSessionGone: dropSession,
     upsertLocal,
     onPersisted,
     nextSeq,
@@ -225,6 +304,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
         x: i.x,
         y: i.y,
         parentItemId: i.parentItemId,
+        // 트리 판정 (D151) — AI 개념 카드만 트리에 들어간다.
+        kind: i.kind,
+        source: i.source,
       })),
     [store.items],
   );
@@ -243,8 +325,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   // --- 조작 ------------------------------------------------------------------
 
-  const { patch, moveMany, remove, items, addChildNote } = store;
-  const { getObstacles: getObs, setTool, clearElementSelection } = bridge;
+  const { patch, moveMany, tagMany, patchMany, remove, items } = store;
+  const { setTool, clearElementSelection } = bridge;
 
   const onSelect = useEventCallback((id: string | null, additive?: boolean) => {
     // **그냥 클릭은 교체다** — 도형 선택도 함께 비운다. 안 그러면 글 하나만
@@ -279,6 +361,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   const onDelete = useEventCallback((id: string) => {
     if (editingId === id) setEditingId(null);
+    if (pickedId === id) setPickedId(null);
     setSelectedIds((prev) => {
       if (!prev.has(id)) return prev;
       const next = new Set(prev);
@@ -288,17 +371,62 @@ export function CanvasWorkspace({ spaceId }: Props) {
     remove(id);
   });
 
+  /**
+   * 분류를 바꾸면 **딸린 가지가 통째로 따라간다** — 트리 분리 (D151).
+   *
+   * 그 카드만 옮기면 자식들은 옛 태그를 그대로 갖고 있어 부모와 태그가
+   * 달라지고, 간선 규칙에 따라 각자 뿌리로 **흩어진다.** 학생이 한 일은
+   * "이 이야기를 따로 떼어 놓기"인데 결과가 "가지를 산산조각내기"가 되는
+   * 셈이다. 가지째 옮기면 그 부분 트리가 통째로 새 트리가 된다.
+   */
   const onTagChange = useEventCallback((id: string, tag: string | null) => {
-    patch(id, { tag }, { _needsReflow: true });
+    const kids = descendants(items, id);
+    if (!kids.length) {
+      patch(id, { tag }, { _needsReflow: true });
+      return;
+    }
+    /**
+     * 가지가 딸려 있고 **부모도 있으면** 학생에게 묻는다 (D156).
+     *
+     * 뿌리에는 이어 붙일 할아버지가 없어 고를 것이 하나뿐이다 — 그때는
+     * 묻지 않고 가지째 옮긴다. 물을 것이 하나뿐이면 묻지 않는다.
+     */
+    const hasParent = treeEdges(items).some((e) => e.to === id);
+    if (hasParent) {
+      setSplit({ id, tag });
+      return;
+    }
+    tagMany([id, ...kids], tag, `가지 ${kids.length + 1}개의 분류를 바꿨습니다`);
   });
 
-  // 태그 자체를 다룬다(세션 전역). useEventCallback으로 감싸 신원을 고정한다 —
-  // store.renameTag/removeTag는 items에 의존해 매번 새 함수라, 그대로 handlers에
-  // 넣으면 memo(TextItem)가 깨진다(D145).
-  const onRenameTag = useEventCallback((from: string, to: string) =>
-    store.renameTag(from, to),
-  );
-  const onRemoveTag = useEventCallback((tag: string) => store.removeTag(tag));
+  /** "자식 노드들도 같이 끊기" — 가지 전체가 새 트리가 된다. */
+  const splitAll = useCallback(() => {
+    if (!split) return;
+    const kids = descendants(items, split.id);
+    tagMany([split.id, ...kids], split.tag, `가지 ${kids.length + 1}개의 분류를 바꿨습니다`);
+    setSplit(null);
+  }, [split, items, tagMany]);
+
+  /**
+   * "자식 노드를 부모 노드에 연결하고 끊기" — 이 글만 빠진다.
+   *
+   * 바로 아래 자식만 할아버지에게 잇는다. 손자는 자기 부모를 그대로 따라가므로
+   * 건드릴 필요가 없다.
+   */
+  const splitReattach = useCallback(() => {
+    if (!split) return;
+    const edges = treeEdges(items);
+    const grandparent = edges.find((e) => e.to === split.id)?.from ?? null;
+    const kids = edges.filter((e) => e.from === split.id).map((e) => e.to);
+    patchMany(
+      [
+        { id: split.id, patch: { tag: split.tag } },
+        ...kids.map((k) => ({ id: k, patch: { parent_item_id: grandparent } })),
+      ],
+      "이 글만 떼어 냈습니다",
+    );
+    setSplit(null);
+  }, [split, items, patchMany]);
 
   /**
    * 드래그가 끝나면 학생이 정한 자리다 — 배치 엔진은 이제 이걸 읽기만 한다.
@@ -308,19 +436,29 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 좌표만 맞춰 주면 된다.
    */
   const onDragEnd = useEventCallback((id: string, x: number, y: number, dx: number, dy: number) => {
-    if (!selectedIds.has(id) || selectedIds.size <= 1) {
+    /**
+     * 끈 것 + 함께 고른 것 + **그 아래 가지 전부** (D154, 사용자 지시
+     * 2026-08-02: "부모 노드를 드래그해서 움직이면 모든 자식 노드가 함께
+     * 움직여야 해").
+     *
+     * 화면에서는 이미 함께 움직였다(TextItem이 DOM을 밀었다) — 여기서는
+     * 좌표만 맞춰 준다. 한 항목으로 되돌릴 수 있게 `moveMany`를 쓴다:
+     * patch를 반복하면 되돌리기가 마지막 하나만 남아 가지 하나만 제자리로 온다.
+     */
+    const roots = selectedIds.has(id) && selectedIds.size > 1 ? [...selectedIds] : [id];
+    const all = new Set(roots);
+    for (const r of roots) for (const d of descendants(items, r)) all.add(d);
+
+    if (all.size === 1) {
       patch(id, { x, y, pinned: true });
       return;
     }
-    for (const sid of selectedIds) {
-      if (sid === id) {
-        patch(sid, { x, y, pinned: true });
-        continue;
-      }
-      const p = layout.positions.get(sid);
-      if (!p) continue;
-      patch(sid, { x: p.x + dx, y: p.y + dy, pinned: true });
-    }
+    const moves = [...all].flatMap((mid) => {
+      if (mid === id) return [{ id: mid, x, y }];
+      const p = layout.positions.get(mid);
+      return p ? [{ id: mid, x: p.x + dx, y: p.y + dy }] : [];
+    });
+    moveMany(moves, roots.length > 1 ? "위치를 옮겼습니다" : "가지를 옮겼습니다");
   });
 
   /**
@@ -357,29 +495,19 @@ export function CanvasWorkspace({ spaceId }: Props) {
     patch(id, { data: rest });
   });
 
+  /**
+   * "위치 정리" — **고정을 푼다** (D161).
+   *
+   * 예전에는 빈 자리를 직접 찾아 그 좌표에 다시 고정했다(`reflowOne`). 그
+   * 함수는 열이 고정 피치라는 전제 위에 있었는데, tidy tree(D159)에서 열 x는
+   * **누적**이라 그 계산이 엉뚱한 자리를 냈다.
+   *
+   * 지금은 배치 엔진이 트리 모양을 스스로 만든다. 그러니 "정리"의 뜻은
+   * 하나뿐이다 — **엔진에게 맡긴다.** 고정을 풀면 다음 배치에서 제자리를
+   * 찾아간다. 계산이 두 곳에 있지 않으니 어긋날 자리도 없다.
+   */
   const onReflow = useEventCallback((id: string) => {
-    const target = items.find((i) => i.id === id);
-    if (!target) return;
-    const toInput = (i: (typeof items)[number]): LayoutInput => ({
-      id: i.id,
-      tag: i.tag,
-      seq: i.seq,
-      pinned: i.pinned,
-      // 다른 아이템의 "현재 자리"는 배치 결과다 — 원본 x/y가 아니다.
-      x: layout.positions.get(i.id)?.x ?? i.x,
-      y: layout.positions.get(i.id)?.y ?? i.y,
-      width: layout.sizes.get(i.id)?.w ?? ITEM_W,
-      height: layout.sizes.get(i.id)?.h ?? FALLBACK_H,
-      parentItemId: i.parentItemId,
-    });
-    const spot = reflowOne(
-      toInput(target),
-      items.filter((i) => i.id !== id).map(toInput),
-      getObs(),
-      layout.tagOrder,
-    );
-    // 정리 결과도 고정이다. 안 그러면 다음 배치에서 열 흐름이 다시 옮긴다.
-    patch(id, { x: spot.x, y: spot.y, pinned: true }, { _needsReflow: false });
+    patch(id, { pinned: false }, { _needsReflow: false });
   });
 
   const onDismissReflow = useEventCallback((id: string) => {
@@ -391,30 +519,32 @@ export function CanvasWorkspace({ spaceId }: Props) {
     );
   });
 
-  // 학생 글 → 그 내용이 인용된 채 입력창이 열린다(D126).
+  /**
+   * "다시 질문하기" — 이 노드를 골라 둔다 (D149 → D151).
+   *
+   * 고르는 것 자체가 기능이다. 버튼은 그 지름길일 뿐이고, 노드를 그냥 눌러도
+   * 같은 일이 일어난다(사용자 지시 2026-08-02: "그 노드를 클릭하고 질문하면
+   * 자연스럽게 작동").
+   */
   const onAsk = useEventCallback((id: string) => {
-    const it = items.find((i) => i.id === id);
-    if (it) setQuote({ id, text: it.body.slice(0, 200) });
-  });
-
-  const onDismissAsk = useEventCallback((id: string) => {
-    const cur = items.find((i) => i.id === id);
-    patch(id, { data: { ...cur?.data, askHidden: true } });
+    setPickedId(id);
+    // 버튼을 눌렀다는 것은 "지금 묻겠다"는 뜻이다 — 커서를 입력창으로.
+    setAskFocus((n) => n + 1);
   });
 
   /**
-   * 인출 연습 결과를 캔버스에 남긴다 (D138).
+   * 노드를 **끌지 않고 눌렀다** — 그 가지에서 이어 묻겠다는 뜻이다 (D151).
    *
-   * 학생이 쓴 회상은 **그 카드의 자식 글**이 된다 — 배치가 옆에 놓고
-   * 연결선이 이어 준다. 사라지면 산출물이 아니고, 다음에 이 카드를 볼 때
-   * "내가 그때 이만큼 기억했구나"가 함께 보여야 의미가 있다.
-   *
-   * `askHidden`을 켜 둔다: 이건 이미 학생이 스스로 쓴 글이라 "AI에게 묻기"를
-   * 권할 자리가 아니다.
+   * AI 개념 카드만 고를 수 있다. 학생 메모나 도판을 고르면 이어 붙일 트리가
+   * 없어서 아무 일도 일어나지 않는데, 골라진 것처럼 보이면 거짓말이 된다.
    */
-  const onRecall = useEventCallback((id: string, text: string) => {
-    if (!sessionId) return;
-    void addChildNote(sessionId, id, text, nextSeq());
+  const onPick = useEventCallback((id: string | null) => {
+    if (!id) {
+      setPickedId(null);
+      return;
+    }
+    const it = items.find((i) => i.id === id);
+    setPickedId(it && it.kind === "concept" && it.source === "ai" ? id : null);
   });
 
   /**
@@ -437,18 +567,15 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onCommitEdit,
       onDelete,
       onTagChange,
-      onRenameTag,
-      onRemoveTag,
       onDragEnd,
       onResize,
       onResetSize,
       onReflow,
       onDismissReflow,
       onAsk,
-      onDismissAsk,
-      onRecall,
+      onPick,
     }),
-    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onDismissAsk, onRecall],
+    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onPick],
   );
 
   /**
@@ -465,6 +592,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
       ?.blur();
     setSelectedIds((prev) => (prev.size ? new Set<string>() : prev));
     setEditingId(null);
+    // 빈 곳을 눌렀으면 어느 가지에서도 이어 묻지 않는다는 뜻이다 (D151).
+    setPickedId(null);
   }, []);
 
   /**
@@ -580,13 +709,141 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   const vp = useViewport();
 
-  const handleMinimapJump = useCallback(
-    (world: { x: number; y: number }) => {
+  /**
+   * 트리 걷기 (D157) — 고른 노드로 가고, 카메라를 그 자리로 옮긴다.
+   *
+   * **배율은 그대로 둔다.** 한 걸음마다 확대·축소가 바뀌면 어디를 보고 있는지
+   * 감각이 끊긴다. 지도에서 고른 것과는 다르다 — 그쪽은 "이걸 읽겠다"이고
+   * 이쪽은 "둘러보겠다"이다.
+   */
+  const goToNode = useCallback(
+    (id: string | null) => {
+      if (!id) return;
+      setPickedId(id);
+      const p = layout.positions.get(id);
+      if (!p) return;
+      const size = layout.sizes.get(id) ?? { w: ITEM_W, h: FALLBACK_H };
       const { w, h } = viewport();
       const z = cameraRef.current.zoom;
-      flyTo({ zoom: z, scrollX: w / 2 / z - world.x, scrollY: h / 2 / z - world.y });
+      flyTo({
+        zoom: z,
+        scrollX: w / 2 / z - (p.x + size.w / 2),
+        scrollY: h / 2 / z - (p.y + size.h / 2),
+      });
     },
-    [cameraRef, flyTo],
+    [layout, cameraRef, flyTo],
+  );
+
+  const navGo = useEventCallback((dir: NavDir) => {
+    goToNode(navigate(items, layout.tagOrder, pickedId, dir));
+  });
+
+  /** 아래 버튼이 쪼개질 갈래. 이름은 제목(없으면 본문 앞부분)으로. */
+  const navBranches = useMemo(
+    () =>
+      branchesOf(items, pickedId).map((id) => {
+        const it = items.find((i) => i.id === id);
+        return { id, label: (it?.title?.trim() || it?.body || "").slice(0, 14) || "다음" };
+      }),
+    [items, pickedId],
+  );
+
+  /**
+   * 방향키. **입력 중에는 절대 가로채지 않는다** — 질문을 쓰다 커서를 옮기려고
+   * ←를 눌렀는데 화면이 다른 트리로 날아가면 안 된다(도구 단축키와 같은 규칙).
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+      ) {
+        return;
+      }
+      const dir =
+        e.key === "ArrowUp"
+          ? "up"
+          : e.key === "ArrowDown"
+            ? "down"
+            : e.key === "ArrowLeft"
+              ? "left"
+              : e.key === "ArrowRight"
+                ? "right"
+                : null;
+      if (!dir) return;
+      e.preventDefault();
+      // Excalidraw도 방향키로 도형을 옮긴다 — 전파를 끊어야 둘이 겹치지 않는다.
+      e.stopPropagation();
+      navGo(dir);
+    };
+    document.addEventListener("keydown", onKey, { capture: true });
+    return () => document.removeEventListener("keydown", onKey, { capture: true });
+  }, [navGo]);
+
+  /**
+   * 입력창에 붙는 인용 칩 — **고른 노드에서 파생한다** (D151).
+   *
+   * 예전에는 `quote` state가 따로 있었다. 고른 노드와 인용이 두 곳에 살면
+   * 반드시 어긋난다(노드를 지웠는데 칩이 남는 식). 하나만 두고 파생시킨다.
+   */
+  const pickedItem = useMemo(
+    () => items.find((i) => i.id === pickedId) ?? null,
+    [items, pickedId],
+  );
+  const quote = useMemo(
+    () =>
+      pickedItem
+        ? {
+            id: pickedItem.id,
+            tag: pickedItem.tag,
+            text: (pickedItem.title?.trim() || pickedItem.body).slice(0, 200),
+          }
+        : null,
+    [pickedItem],
+  );
+
+  /**
+   * 질문을 보내고, 답이 붙은 자리로 초점을 옮긴다 (D151).
+   *
+   * 초점을 그대로 두면 이어 물을수록 같은 노드에서 형제가 옆으로 쌓인다.
+   * 학생이 기대하는 것은 방금 받은 답 **뒤에** 이어지는 것이다.
+   */
+  const handleSend = useCallback(
+    (question: string) => {
+      const from = pickedId;
+      const tag = pickedItem?.tag ?? null;
+      void stream.send(question, { pickedId: from }).then((created) => {
+        setPickedId(nextFocus(from, tag, created));
+      });
+    },
+    [pickedId, pickedItem, stream],
+  );
+
+  /**
+   * 지도에서 무언가를 누르면 **그것이 화면을 채우도록** 옮긴다 (D155).
+   *
+   * 예전에는 중심 좌표만 옮기고 배율은 그대로였다. 축소해 놓고 지도를 보다
+   * 노드를 누르면 여전히 깨알 같은 글자 앞에 서 있게 된다 — 지도에서 고른
+   * 이유는 그걸 **읽으려는** 것이다(사용자 지시 2026-08-02: "그 노드가
+   * 화면에 엄청 크게 보이도록 확대해서 이동").
+   *
+   * 배율은 그 사각형이 여백을 두고 들어가는 값으로 잡되 2.5배를 넘지
+   * 않는다(그 이상은 글자가 뭉개진다). 작은 노드 하나를 눌러도 화면을
+   * 가득 채운다.
+   */
+  const handleMinimapFocus = useCallback(
+    (r: { x: number; y: number; w: number; h: number }) => {
+      const { w, h } = viewport();
+      const pad = 120;
+      const zoom = Math.min(
+        2.5,
+        Math.max(0.2, Math.min((w - pad) / Math.max(1, r.w), (h - pad) / Math.max(1, r.h))),
+      );
+      flyTo(cameraForRect(r, { w, h }, zoom));
+    },
+    [flyTo],
   );
 
   /**
@@ -600,7 +857,17 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const handleShapeDrag = useCallback(
     (dx: number, dy: number, done: boolean) => {
       if (!selectedIds.size) return;
-      const ids = [...selectedIds];
+      /**
+       * 도형과 함께 끌 때도 **가지가 따라온다** (D161).
+       *
+       * 글을 직접 끌 때는 자손이 함께 갔는데(D154) 이 경로만 빠져 있었다.
+       * 같은 동작이 어디서 시작했느냐에 따라 다르게 굴면 학생은 규칙을
+       * 배울 수 없다.
+       */
+      const roots = [...selectedIds];
+      const withKids = new Set(roots);
+      for (const r of roots) for (const d of descendants(items, r)) withKids.add(d);
+      const ids = [...withKids];
       if (!done) {
         const shift = `translate(${dx}px, ${dy}px)`;
         for (const id of ids) {
@@ -629,7 +896,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
         patch(id, { x: pos.x + dx, y: pos.y + dy, pinned: true });
       }
     },
-    [selectedIds, layout, patch],
+    [selectedIds, items, layout, patch],
   );
 
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
@@ -650,11 +917,15 @@ export function CanvasWorkspace({ spaceId }: Props) {
   );
 
   /**
-   * 답이 생긴 자리로 카메라를 옮긴다 (사용자 지적).
+   * 답이 생긴 자리로 카메라를 옮긴다 — **크게 당겨서** (D162).
    *
    * 스트림은 좌표를 모르므로 id만 알려 주고, **배치가 좌표를 낸 뒤** 여기서
    * 옮긴다. 아이템 위쪽을 화면 상단 1/3에 두는데, 정중앙에 두면 글이 아래로
    * 자라면서 곧 화면을 벗어난다.
+   *
+   * 배율은 그때의 값을 쓰지 않고 `NEW_NODE_ZOOM`으로 고정한다(사용자 지시
+   * 2026-08-03: "노드를 생성하면 그 노드가 아주 크게 보이게 확대"). 축소해
+   * 놓고 질문하면 답이 깨알같이 생겨서 정작 읽지를 못했다.
    */
   const { focusId, clearFocus } = stream;
   useEffect(() => {
@@ -662,14 +933,14 @@ export function CanvasWorkspace({ spaceId }: Props) {
     const p = layout.positions.get(focusId);
     if (!p) return; // 아직 배치 전 — 다음 렌더에 다시 시도한다
     const { w, h: vh } = vp;
-    const z = cameraRef.current.zoom;
+    const z = NEW_NODE_ZOOM;
     flyTo({
       zoom: z,
       scrollX: w / 2 / z - (p.x + ITEM_W / 2),
       scrollY: vh / 3 / z - p.y,
     });
     clearFocus();
-  }, [focusId, layout.positions, vp, cameraRef, flyTo, clearFocus]);
+  }, [focusId, layout.positions, vp, flyTo, clearFocus]);
 
   const banner =
     drawError ??
@@ -712,6 +983,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
               세션이 잡히고 스냅샷이 도착한 뒤에만 판단한다. */}
           {!!sessionId && !!snapshot && items.length === 0 && <EmptyHint />}
           {banner && <SaveBanner message={banner} onClose={store.clearError} />}
+          {split &&
+            (() => {
+              const it = items.find((i) => i.id === split.id);
+              if (!it) return null;
+              return (
+                <SplitPrompt
+                  title={(it.title?.trim() || it.body).slice(0, 30)}
+                  kidCount={descendants(items, split.id).length}
+                  tag={split.tag}
+                  onDetachAll={splitAll}
+                  onReattach={splitReattach}
+                  onCancel={() => setSplit(null)}
+                />
+              );
+            })()}
           {store.undo && <UndoToast label={store.undo.label} onUndo={store.undo.run} />}
           <Minimap
             items={items}
@@ -720,19 +1006,29 @@ export function CanvasWorkspace({ spaceId }: Props) {
             tagOrder={layout.tagOrder}
             camera={bridge.camera}
             viewport={vp}
-            onJump={handleMinimapJump}
+            pickedId={pickedId}
+            onFocus={handleMinimapFocus}
           />
-          <div className="ui absolute bottom-28 left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2">
+          <div className="ui absolute bottom-[152px] left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2">
             <SessionFilesBar sessionId={sessionId} uploadError={uploadError} />
           </div>
+          <TreeNav
+            canUp={!!navigate(items, layout.tagOrder, pickedId, "up")}
+            canLeft={!!navigate(items, layout.tagOrder, pickedId, "left")}
+            canRight={!!navigate(items, layout.tagOrder, pickedId, "right")}
+            branches={navBranches}
+            onGo={navGo}
+            onGoBranch={goToNode}
+          />
           <AskBar
             onAttach={handleAttach}
             busy={stream.busy}
             reply={stream.reply}
             quote={quote}
             disabled={!sessionId}
-            onClearQuote={() => setQuote(null)}
-            onSend={(q, parentItemId) => void stream.send(q, { parentItemId })}
+            focusSignal={askFocus}
+            onClearQuote={() => setPickedId(null)}
+            onSend={handleSend}
           />
         </>
       }
@@ -747,6 +1043,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
         zoom={bridge.camera.zoom}
         selectedIds={selectedIds}
         editingId={editingId}
+        pickedId={pickedId}
         measure={layout.measure}
         handlers={handlers}
       />

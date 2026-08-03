@@ -732,6 +732,10 @@ export interface AdminRestoreResult {
       nodes: number;
       ai_logs: number;
       heads_relinked: number;
+      /** D152 — 캔버스가 곧 대화 내용이다(D122). 옛 백업에는 없어 optional. */
+      canvas_items?: number;
+      canvas_links?: number;
+      canvas_drawings?: number;
     };
     settings?: { app_settings: number };
   };

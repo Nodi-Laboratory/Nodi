@@ -122,6 +122,26 @@ export function linkGeometry(rawParent: Rect, rawChild: Rect): LinkGeometry {
   const a = { x: a0.x + na.x * END_GAP, y: a0.y + na.y * END_GAP };
   const b = { x: b0.x + nb.x * END_GAP, y: b0.y + nb.y * END_GAP };
 
+  /**
+   * **세로로 이어질 때는 왼쪽 홈통을 탄다** (D158, 사용자 지시 2026-08-03:
+   * "연결선이 어색해 — 더 자연스럽게").
+   *
+   * 기본 앵커는 상대 중심을 향해 변 위를 미끄러진다. 카드가 넓어지면
+   * (ITEM_W 560) 그 지점이 글 한가운데 밑이라, 선이 문단 아래에서 불쑥
+   * 나와 다음 문단 한가운데로 들어간다 — 어느 글에서 어느 글로 가는지가
+   * 아니라 "글을 가로지르는 선"으로 보인다.
+   *
+   * 왼쪽 끝(괘선이 있는 자리)에서 나와 왼쪽 끝으로 들어가면 트리의 등뼈가
+   * 된다. 들여쓴 자식으로 갈 때는 짧은 S가 되어 갈라짐이 그대로 읽힌다.
+   */
+  const vertical =
+    (a0.side === "bottom" || a0.side === "top") &&
+    (b0.side === "top" || b0.side === "bottom");
+  if (vertical) {
+    a.x = parent.x + EDGE_INSET;
+    b.x = child.x + EDGE_INSET;
+  }
+
   // 제어점 거리 — 멀수록 완만하게. 상한이 없으면 멀리 떨어진 답으로 가는
   // 곡선이 화면 밖으로 크게 부푼다.
   const bow = clamp(Math.hypot(b.x - a.x, b.y - a.y) * 0.42, 36, 190);

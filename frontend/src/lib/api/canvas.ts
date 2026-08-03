@@ -5,7 +5,6 @@
  * (근거: backend/app/services/canvas_items.py 모듈 docstring).
  */
 import type { CanvasItem, ItemData, ItemKind, ItemSource } from "@/lib/canvas2/types";
-import { figureDataForSave } from "@/lib/canvas2/figureData";
 import { isRealId } from "@/lib/ids";
 import { API_BASE, authHeaders, ensureOk } from "./_core";
 
@@ -133,16 +132,11 @@ export async function patchItem(
       !isRealId(patch.parent_item_id)) {
     throw new Error("저장되지 않은 항목을 부모로 지정할 수 없습니다.");
   }
-  // 네트워크 경계에서 도판 signed URL을 비운다(D87) — 어떤 호출부가 도판
-  // data를 PATCH해도 만료 URL이 화석화되지 않게 한다. 로컬 낙관적 상태는
-  // 이 경로를 타지 않으므로 살아 있는 url을 그대로 유지한다.
-  const wire =
-    patch.data !== undefined ? { ...patch, data: figureDataForSave(patch.data) } : patch;
   const res = await ensureOk(
     await fetch(`${API_BASE}/canvas/items/${itemId}`, {
       method: "PATCH",
       headers: await authHeaders(true),
-      body: JSON.stringify(wire),
+      body: JSON.stringify(patch),
     }),
   );
   return toItem(await res.json());
