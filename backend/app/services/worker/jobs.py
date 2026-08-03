@@ -136,6 +136,31 @@ async def _fail_file_for_job(
                 },
                 {"status": "failed"},
             )
+    elif kind == "lecture_parse":
+        # D149: 파싱 영구 실패 — 영상만 failed(파일·다른 인제스트 불가침).
+        await svc.update(
+            "lecture_videos",
+            {"id": f"eq.{file_id}"},
+            {"status": "failed", "error": (error or "")[:500]},
+        )
+    elif kind == "lecture_embed":
+        # D149·D88 격리: 임베딩 잡 영구 실패는 파일·영상 status와 무관.
+        # 범위 내 pending 클립 행만 seq 기준으로 failed로 둔다.
+        rng = job.get("batch_range") or {}
+        if "from_seq" in rng and "to_seq" in rng:
+            await svc.update(
+                "lecture_clips",
+                {
+                    "video_id": f"eq.{file_id}",
+                    "and": f"(seq.gte.{int(rng['from_seq'])},seq.lt.{int(rng['to_seq'])})",
+                    "status": "eq.pending",
+                },
+                {"status": "failed"},
+            )
+    elif kind == "lecture_atom":
+        # D88 격리: 원자 잡 영구 실패는 클립·영상·파일 전부 불가침
+        # (핸들러가 원자 행 status를 직접 처리한다).
+        pass
     else:  # embedding_batch: fail this batch's still-pending chunks, then finalize
         rng = job.get("batch_range") or {}
         if "from_seq" in rng and "to_seq" in rng:

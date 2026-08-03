@@ -15,7 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ...config import get_settings
 from ...db.client import ServiceClient, get_service_client
-from . import atoms, batch, common, figures, jobs, split
+from . import atoms, batch, common, figures, jobs, lectures, split
 
 logger = logging.getLogger("nodi.worker.runner")
 settings = get_settings()
@@ -120,6 +120,12 @@ async def _process(svc: ServiceClient, job: dict[str, Any]) -> None:
             await figures._handle_figure_batch(svc, job)
         elif job["kind"] == "atom_batch":
             await atoms._handle_atom_batch(svc, job)
+        elif job["kind"] == "lecture_parse":
+            await lectures._handle_lecture_parse(svc, job)
+        elif job["kind"] == "lecture_embed":
+            await lectures._handle_lecture_embed(svc, job)
+        elif job["kind"] == "lecture_atom":
+            await lectures._handle_lecture_atom(svc, job)
         else:
             await jobs._fail_job(svc, job["id"], f"unknown kind {job['kind']}")
     except Exception as exc:  # noqa: BLE001
