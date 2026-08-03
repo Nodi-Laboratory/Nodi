@@ -86,3 +86,6 @@ export {
   purgeAdminData,
 } from "./admin";
 
+// D149: 강의 클립 추천 — admin 인제스트 + teacher 노출 토글.
+export * from "./lectures";
+

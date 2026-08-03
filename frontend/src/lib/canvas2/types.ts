@@ -6,7 +6,7 @@
  * 옮기거나 고칠 자리가 아예 없었다.
  */
 
-export type ItemKind = "concept" | "note" | "figure";
+export type ItemKind = "concept" | "note" | "figure" | "clip";
 export type ItemSource = "ai" | "user";
 
 /** 아이템 부가 정보. 스키마를 늘리기 애매한 렌더 힌트만 담는다. */
@@ -18,6 +18,17 @@ export interface ItemData {
     page: number;
     caption: string;
     url: string;
+    score?: number;
+  };
+  /** 강의 클립(kind='clip') 메타. page_url은 안정적(EBS 공식 링크) — 영속한다. */
+  clip?: {
+    clipId: string;
+    videoId?: string;
+    title: string;
+    startSec: number;
+    timelineLabel: string;
+    pageUrl: string;
+    videoTitle?: string;
     score?: number;
   };
   /**

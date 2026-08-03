@@ -164,6 +164,16 @@ export interface ChatDoneEvent {
     url?: string | null;
     score?: number;
   }> | null;
+  /** D149: 강의 클립 추천. 스킬이 찾아 done에 실어 보낸다(snake_case). */
+  clips?: Array<{
+    clip_id: string;
+    title: string;
+    start_sec: number;
+    timeline_label: string;
+    page_url: string;
+    video_title?: string;
+    score?: number;
+  }> | null;
 }
 
 // ── Stage 4a: 홈 ─────────────────────────────────────────────────────
