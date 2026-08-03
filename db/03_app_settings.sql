@@ -37,5 +37,12 @@ insert into public.app_settings (key, value) values
     ('rag_query_rewrite_enabled',       'false'),
     -- (D134: figure_caption_generate_enabled 노브는 제거 — 캡션은 생성 단독)
     ('semantic_chunking_enabled',       'false'),
-    ('semantic_chunking_max_chars',     '120000')
+    ('semantic_chunking_max_chars',     '120000'),
+    -- 강의 클립 추천 (D149)
+    ('lecture_pipeline_enabled',        'true'),
+    ('lecture_retrieve_max_distance',   '0.55'),
+    ('lecture_atom_enabled',            'true'),
+    ('lecture_atom_max_distance',       '0.45'),
+    ('lecture_atoms_per_clip',          '4'),
+    ('lecture_atom_concurrency',        '4')
 on conflict (key) do nothing;

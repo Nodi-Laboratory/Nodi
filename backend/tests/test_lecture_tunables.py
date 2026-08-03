@@ -1,0 +1,32 @@
+from pathlib import Path
+from app.config import get_settings
+from app.services import admin_console
+
+
+def test_config_defaults():
+    s = get_settings()
+    assert s.lecture_pipeline_enabled is True
+    assert s.lecture_retrieve_max_distance == 0.55
+    assert s.lecture_atom_enabled is True
+    assert s.lecture_atom_max_distance == 0.45
+    assert s.lecture_atoms_per_clip == 4
+    assert s.lecture_atom_concurrency == 4
+    assert s.lecture_atom_model == "solar-pro3"
+    assert s.lecture_retrieve_top_k == 3
+    assert s.lecture_batch_size == 16
+
+
+def test_app_settings_seed_has_lecture_knobs():
+    sql = (Path(__file__).resolve().parents[2] / "db/03_app_settings.sql").read_text()
+    for k in ("'lecture_pipeline_enabled'", "'lecture_retrieve_max_distance'",
+              "'lecture_atom_enabled'", "'lecture_atom_max_distance'",
+              "'lecture_atoms_per_clip'", "'lecture_atom_concurrency'"):
+        assert k in sql
+
+
+def test_admin_console_widgets_present():
+    keys = {s["key"] for s in admin_console._SPECS}
+    for k in ("lecture_pipeline_enabled", "lecture_retrieve_max_distance",
+              "lecture_atom_enabled", "lecture_atom_max_distance",
+              "lecture_atoms_per_clip", "lecture_atom_concurrency"):
+        assert k in keys

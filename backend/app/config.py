@@ -148,6 +148,17 @@ class Settings(BaseSettings):
     # (services/files.py). 판정 생략 폴백은 D88 시절 동작으로, 더 이상 없다.
     judge_api_key: str = ""
 
+    # --- 강의 클립 추천 (D149) ---
+    lecture_pipeline_enabled: bool = True          # 인제스트 킬 스위치
+    lecture_retrieve_max_distance: float = 0.55    # 직접(본문) 거리 게이트
+    lecture_atom_enabled: bool = True              # PIKE 원자화+이중 검색
+    lecture_atom_max_distance: float = 0.45        # 원자(질문) 거리 게이트
+    lecture_atoms_per_clip: int = 4                # 클립당 생성 질문 수
+    lecture_atom_concurrency: int = 4              # solar 동시 호출
+    lecture_atom_model: str = "solar-pro3"         # 원자 생성 모델(config/env 전용)
+    lecture_retrieve_top_k: int = 3                # 추천 개수(config 전용)
+    lecture_batch_size: int = 16                   # 임베딩/원자 잡 팬아웃 단위
+
     # ── PIKE-RAG (TASK 6, D129~D132) ─────────────────────────────
     # A. 지식 원자화 (D129) — 킬스위치 off 출하, 캘리브레이션 후 on
     atom_rag_enabled: bool = False
