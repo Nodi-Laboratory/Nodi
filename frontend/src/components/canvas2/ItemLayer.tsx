@@ -13,6 +13,7 @@ import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Placed } from "@/lib/canvas2/layout";
 import { UNTAGGED } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
+import { ClipItem } from "./ClipItem";
 import { ConnectorLayer } from "./ConnectorLayer";
 import { FigureItem } from "./FigureItem";
 import type { ResizeCommit } from "./ResizeHandles";
@@ -90,6 +91,22 @@ export function ItemLayer({
       {items.map((item) => {
         const p = positions.get(item.id);
         if (!p) return null;
+        if (item.kind === "clip") {
+          return (
+            <ClipItem
+              key={item.id}
+              item={item}
+              x={p.x}
+              y={p.y}
+              zoom={zoom}
+              selected={selectedIds.has(item.id)}
+              measure={measure}
+              onSelect={handlers.onSelect}
+              onDragEnd={handlers.onDragEnd}
+              onDelete={handlers.onDelete}
+            />
+          );
+        }
         if (item.kind === "figure") {
           return (
             <FigureItem
