@@ -76,6 +76,8 @@ interface Deps {
   nextSeq: () => number;
   /** 이 도판이 이미 캔버스에 있나 (D95 세션 내 중복 제거). */
   hasFigure: (figureId: string) => boolean;
+  /** 이 클립이 이미 캔버스에 있나 (D149 세션 내 중복 제거). */
+  hasClip: (clipId: string) => boolean;
 }
 
 let tempCounter = 0;
@@ -105,16 +107,20 @@ function toPayload(it: CanvasItem): NewItemInput {
     pinned: false,
     seq: it.seq,
     // 도판은 data에 메타가 있다. url은 빼고 보낸다(만료되는 값, D87).
+    // 클립은 page_url이 안정적(EBS 공식 링크)이라 그대로 영속한다(D149) —
+    // 도판처럼 지우지 않는다.
     // 그 외에는 렌더 힌트만 남긴다 — 특히 `askHidden`을 흘리면 이미 물어본
     // 질문 글에 "AI에게 묻기" 버튼이 새로고침마다 되살아난다.
     data:
       it.kind === "figure" && it.data.figure
         ? { figure: { ...it.data.figure, url: "" } }
-        : {
-            ...(it.data.askedQuestion ? { askedQuestion: it.data.askedQuestion } : {}),
-            ...(it.data.askHidden ? { askHidden: true } : {}),
-            ...(it.data.reflowDismissed ? { reflowDismissed: true } : {}),
-          },
+        : it.kind === "clip" && it.data.clip
+          ? { clip: it.data.clip }
+          : {
+              ...(it.data.askedQuestion ? { askedQuestion: it.data.askedQuestion } : {}),
+              ...(it.data.askHidden ? { askHidden: true } : {}),
+              ...(it.data.reflowDismissed ? { reflowDismissed: true } : {}),
+            },
   };
 }
 
@@ -124,6 +130,7 @@ export function useCanvasStream({
   onPersisted,
   nextSeq,
   hasFigure,
+  hasClip,
 }: Deps): CanvasStreamApi {
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
@@ -266,6 +273,42 @@ export function useCanvasStream({
                   },
                 });
               }
+              // 강의 클립(D149) — 서버가 done에 실어 보낸다. page_url은
+              // 안정적이라 그대로 영속한다(도판과 달리 재발급 불필요).
+              for (const c of d.clips ?? []) {
+                // D149: 도판과 같은 세션 내 중복 제거 — 앞 턴에서 나온 같은
+                // 클립이 다시 쌓이지 않게 화면 전체를 본다.
+                if (hasClip(c.clip_id) || made.some((m) => m.data.clip?.clipId === c.clip_id)) {
+                  continue;
+                }
+                made.push({
+                  id: tempId(),
+                  sessionId,
+                  nodeId: null,
+                  parentItemId,
+                  kind: "clip",
+                  source: "ai",
+                  title: null,
+                  body: "",
+                  tag: null,
+                  x: 0,
+                  y: 0,
+                  pinned: false,
+                  seq: baseSeq + made.length,
+                  data: {
+                    ...(askedQuestion ? { askedQuestion } : {}),
+                    clip: {
+                      clipId: c.clip_id,
+                      title: c.title,
+                      startSec: c.start_sec,
+                      timelineLabel: c.timeline_label,
+                      pageUrl: c.page_url,
+                      videoTitle: c.video_title ?? "",
+                      score: c.score,
+                    },
+                  },
+                });
+              }
             },
             onError: (msg) => setError(msg),
           },
@@ -280,7 +323,7 @@ export function useCanvasStream({
       for (const it of made) {
         it._pending = false;
         // 질문 아이템은 우리가 만든 것이라 노드에 속하지 않는다.
-        if (it.kind === "concept" || it.kind === "figure") it.nodeId = nodeId;
+        if (it.kind === "concept" || it.kind === "figure" || it.kind === "clip") it.nodeId = nodeId;
       }
       flush();
       setBusy(false);
@@ -305,7 +348,7 @@ export function useCanvasStream({
         setError(`저장하지 못했습니다 — ${(e as Error).message}`);
       }
     },
-    [sessionId, busy, upsertLocal, onPersisted, nextSeq, hasFigure],
+    [sessionId, busy, upsertLocal, onPersisted, nextSeq, hasFigure, hasClip],
   );
 
   const clearFocus = useCallback(() => setFocusId(null), []);

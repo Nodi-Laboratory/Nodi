@@ -198,12 +198,19 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [store.items],
   );
 
+  const hasClip = useCallback(
+    (clipId: string) =>
+      store.items.some((i) => i.data.clip?.clipId === clipId),
+    [store.items],
+  );
+
   const stream = useCanvasStream({
     sessionId,
     upsertLocal,
     onPersisted,
     nextSeq,
     hasFigure,
+    hasClip,
   });
 
   // --- 배치 ------------------------------------------------------------------
