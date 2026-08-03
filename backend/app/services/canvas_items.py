@@ -43,7 +43,7 @@ ITEM_SELECT = (
     "x,y,pinned,seq,data,created_at,updated_at"
 )
 
-KINDS = ("concept", "note", "figure")
+KINDS = ("concept", "note", "figure", "clip")
 SOURCES = ("ai", "user")
 
 # 한 번에 만들 수 있는 아이템 수. 모델이 형식을 어겨 개념을 수십 개 뱉어도

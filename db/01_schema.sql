@@ -1444,7 +1444,7 @@ CREATE TABLE IF NOT EXISTS public.canvas_items (
     -- 부모가 지워져도 답변 자체는 남긴다 → SET NULL.
     parent_item_id uuid REFERENCES public.canvas_items(id) ON DELETE SET NULL,
 
-    kind   text NOT NULL CHECK (kind IN ('concept', 'note', 'figure')),
+    kind   text NOT NULL CHECK (kind IN ('concept', 'note', 'figure', 'clip')),
     source text NOT NULL CHECK (source IN ('ai', 'user')),
 
     title  text,

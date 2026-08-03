@@ -23,3 +23,21 @@ def test_schema_mirrors_migration():
         assert f"public.{t}" in sql
     for k in ("'lecture_parse'", "'lecture_embed'", "'lecture_atom'"):
         assert k in sql
+
+
+def test_migration_adds_clip_to_canvas_items_kind():
+    """D149: 기 기동 DB의 canvas_items CHECK를 'clip' 포함으로 갱신(멱등)."""
+    sql = MIG.read_text(encoding="utf-8")
+    assert "canvas_items_kind_check" in sql
+    assert "DROP CONSTRAINT IF EXISTS canvas_items_kind_check" in sql
+    assert "'clip'" in sql
+
+
+def test_schema_canvas_items_kind_allows_clip():
+    """신규 볼륨 기동 경로(01_schema.sql)도 'clip'을 허용한다."""
+    sql = SCHEMA.read_text(encoding="utf-8")
+    check_line = next(
+        line for line in sql.splitlines()
+        if "kind" in line and "CHECK (kind IN" in line
+    )
+    assert "'clip'" in check_line

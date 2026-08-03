@@ -180,6 +180,19 @@ async def test_알_수_없는_kind_source는_거절한다(bad):
 
 
 @aio
+async def test_clip_kind는_통과한다():
+    """D149: 강의 클립 캔버스 아이템(kind='clip')이 저장 배치를 죽이지 않는다.
+
+    화이트리스트에 없으면 create_items가 422로 배치 전체를 거절해 그 턴의
+    개념 카드까지 함께 사라진다.
+    """
+    assert "clip" in svc.KINDS
+    c = FakeClient()
+    await svc.create_items(c, "s1", [{"body": "강의", "kind": "clip"}])
+    assert c.inserted[0]["kind"] == "clip"
+
+
+@aio
 async def test_생성은_알_수_없는_키를_버린다():
     """입력에 섞여 온 클라이언트 전용 필드(_height 등)가 INSERT에 새면 안 된다."""
     c = FakeClient()

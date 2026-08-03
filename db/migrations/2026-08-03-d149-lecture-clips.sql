@@ -73,6 +73,13 @@ ALTER TABLE public.jobs ADD CONSTRAINT jobs_kind_check CHECK
                       'atom_batch'::text,'lecture_parse'::text,'lecture_embed'::text,
                       'lecture_atom'::text])));
 
+-- 캔버스 아이템 kind에 'clip' 추가 (D149) — 기 기동 DB의 CHECK 갱신.
+-- canvas_items는 D122 마이그레이션이 CREATE TABLE IF NOT EXISTS로 만들었으므로
+-- 재적용돼도 CHECK가 갱신되지 않는다 → 여기서 명시적으로 ALTER한다(멱등).
+ALTER TABLE public.canvas_items DROP CONSTRAINT IF EXISTS canvas_items_kind_check;
+ALTER TABLE public.canvas_items ADD CONSTRAINT canvas_items_kind_check
+  CHECK (kind = ANY (ARRAY['concept'::text, 'note'::text, 'figure'::text, 'clip'::text]));
+
 -- RLS: 카탈로그는 전역 콘텐츠 — 인증 사용자 읽기, admin 쓰기. 워커(BYPASSRLS) 인제스트.
 ALTER TABLE public.lecture_packages ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lecture_packages_select ON public.lecture_packages;

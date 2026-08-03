@@ -853,6 +853,13 @@ async def add_lecture_video(
     워커 DSN이 없으면(get_service_client None) 행만 만들고 잡·자막은 건너뛴다 —
     files.py 업로드 경로와 같은 계약(en큐 불가 시 조용히 비활성).
     """
+    # page_url은 프론트에서 <a href>로 렌더된다. javascript:/data: URL이면
+    # 학생 클릭 시 스크립트가 실행되므로 http(s)만 허용한다 (D149).
+    if not page_url.lower().startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="page_url은 http:// 또는 https://로 시작해야 합니다.",
+        )
     client = UserClient.from_user(user)
     video = await client.insert(
         "lecture_videos",
