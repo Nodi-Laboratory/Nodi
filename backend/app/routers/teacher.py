@@ -154,3 +154,63 @@ async def list_materials(
         },
     )
 
+
+class ToggleLecturePackageBody(BaseModel):
+    enabled: bool
+
+
+@router.get("/classes/{class_id}/lecture-packages")
+async def list_class_lecture_packages(
+    class_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_teacher),
+) -> list[dict[str, Any]]:
+    """전체 강의 패키지 카탈로그 + 이 학급의 켜짐 여부(enabled) (D149).
+
+    카탈로그(lecture_packages)는 전역 콘텐츠라 인증만 되면 읽힌다. 켜짐 매핑은
+    class_lecture_packages를 학급으로 좁혀 읽어(clp_select_member) enabled로 합친다.
+    _assert_teaches로 가르치는 학급인지 먼저 확인한다.
+    """
+    client = UserClient.from_user(user)
+    await _assert_teaches(client, class_id)
+    packages = await client.select(
+        "lecture_packages",
+        {"select": "id,grade,subject,title", "order": "grade.asc"},
+    )
+    enabled_rows = await client.select(
+        "class_lecture_packages",
+        {"class_id": f"eq.{class_id}", "select": "package_id"},
+    )
+    enabled = {str(r["package_id"]) for r in enabled_rows}
+    return [{**p, "enabled": str(p["id"]) in enabled} for p in packages]
+
+
+@router.put("/classes/{class_id}/lecture-packages/{package_id}")
+async def toggle_class_lecture_package(
+    class_id: str,
+    package_id: str,
+    body: ToggleLecturePackageBody,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_teacher),
+) -> dict[str, Any]:
+    """학급에 강의 패키지를 켜거나 끈다 (D149).
+
+    켜면 class_lecture_packages에 upsert(중복 시 무시), 끄면 해당 행을 삭제한다.
+    쓰기는 clp_write_teacher(RLS my_taught_class_ids)가 강제하고, 앱은
+    _assert_teaches로 가르치는 학급인지 먼저 확인한다.
+    """
+    client = UserClient.from_user(user)
+    await _assert_teaches(client, class_id)
+    if body.enabled:
+        await client.upsert(
+            "class_lecture_packages",
+            {"class_id": class_id, "package_id": package_id},
+            on_conflict="class_id,package_id",
+        )
+    else:
+        await client.delete(
+            "class_lecture_packages",
+            {"class_id": f"eq.{class_id}", "package_id": f"eq.{package_id}"},
+        )
+    return {"ok": True, "enabled": body.enabled}
+
