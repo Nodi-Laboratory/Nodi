@@ -11,10 +11,14 @@ import {
   listClassMaterials,
   listClassStudents,
   listFiles,
+  listLecturePackages,
+  listLectureVideos,
   listSessionFiles,
   listSessions,
   listStudentClassSessions,
   listTeacherClasses,
+  type LecturePackage,
+  type LectureVideo,
   type SpaceTarget,
 } from "@/lib/api";
 import type {
@@ -97,6 +101,39 @@ export function useClassMaterials(classId: string | null) {
       const data = query.state.data;
       const active = data?.some((f) => FILE_IN_PROGRESS.has(f.status));
       return active ? 2500 : false;
+    },
+  });
+}
+
+// ── 강의 패키지 (admin, D149) ────────────────────────────────────────
+
+export function lecturePackagesKey() {
+  return ["lecture-packages"] as const;
+}
+export function lectureVideosKey(pkgId: string) {
+  return ["lecture-videos", pkgId] as const;
+}
+
+/** 강의 패키지 목록. */
+export function useLecturePackages() {
+  return useQuery<LecturePackage[]>({
+    queryKey: lecturePackagesKey(),
+    queryFn: listLecturePackages,
+  });
+}
+
+/** 선택 패키지의 영상 목록. 파싱 대기·진행 중이면 3초 폴링(materials 패턴). */
+export function useLectureVideos(pkgId: string | null) {
+  return useQuery<LectureVideo[]>({
+    queryKey: lectureVideosKey(pkgId ?? ""),
+    queryFn: () => listLectureVideos(pkgId as string),
+    enabled: !!pkgId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const active = data?.some(
+        (v) => v.status === "pending" || v.status === "parsing",
+      );
+      return active ? 3000 : false;
     },
   });
 }
