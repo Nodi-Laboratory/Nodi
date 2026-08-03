@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 from ...config import get_settings
-from .. import app_settings, lecture_parse, qdrant_store, subtitle_parse, upstage
+from .. import app_settings, atomize, lecture_parse, qdrant_store, solar, subtitle_parse, upstage
 from . import common, jobs
 
 logger = logging.getLogger("nodi.worker.lectures")
@@ -90,6 +90,12 @@ async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
                      {"status": "done", "updated_at": common._now_iso()})
 
 
+# 회로차단 임계 — solar가 연속 이만큼 실패하면 잔여 클립 생성을 생략하고 배치를
+# 실패 처리한다(atoms.CIRCUIT_BREAK_THRESHOLD와 동형). 죽은 엔드포인트에서 클립마다
+# 재시도가 누적돼 잡이 무한정 길어지는 사고를 막는다.
+_ATOM_CIRCUIT_BREAK = 5
+
+
 async def _handle_lecture_embed(svc: Any, job: dict[str, Any]) -> None:
     video_id = job["target_id"]
     rng = job.get("batch_range") or {}
@@ -156,5 +162,126 @@ async def _handle_lecture_embed(svc: Any, job: dict[str, Any]) -> None:
             "batch_range": {"from_seq": from_seq, "to_seq": to_seq},
             "status": "queued"}, returning=False)
 
+    await svc.update("jobs", {"id": f"eq.{job['id']}"},
+                     {"status": "done", "updated_at": common._now_iso()})
+
+
+async def _handle_lecture_atom(svc: Any, job: dict[str, Any]) -> None:
+    """embedded 클립의 제목+본문에서 solar-pro3로 예상 질문을 생성→임베딩→Qdrant
+    적재(D149, PIKE-RAG D129 동형). atoms._handle_atom_batch를 미러한다.
+
+    실패 격리(D88): 원자 실패는 클립·영상·files.status를 절대 건드리지 않는다 —
+    핸들러가 만지는 상태는 lecture_clip_atoms.status와 잡 상태뿐이다. 연속
+    _ATOM_CIRCUIT_BREAK회 생성 실패면 회로차단·배치 실패(attempts 재시도 상속).
+    Qdrant 페이로드는 식별자만(질문 본문 금지 — Qdrant 신뢰 경계 아님 불변식).
+    """
+    video_id = job["target_id"]
+    rng = job.get("batch_range") or {}
+    from_seq, to_seq = int(rng.get("from_seq", 0)), int(rng.get("to_seq", 0))
+    overlay = await app_settings.get_overlay()
+    if not app_settings.as_bool(overlay, "lecture_atom_enabled", settings.lecture_atom_enabled):
+        # 킬 스위치 off — 팬아웃 후 꺼졌으면 solar 없이 조용히 마감.
+        await svc.update("jobs", {"id": f"eq.{job['id']}"},
+                         {"status": "done", "updated_at": common._now_iso()})
+        return
+
+    clips = await svc.select("lecture_clips", {
+        "video_id": f"eq.{video_id}",
+        "and": f"(seq.gte.{from_seq},seq.lt.{to_seq})",
+        "status": "eq.embedded",
+        "select": "id,seq,title,transcript", "order": "seq.asc"})
+    clips = [c for c in clips if (c.get("transcript") or "").strip()]   # 본문 있는 것만
+    if not clips:
+        await svc.update("jobs", {"id": f"eq.{job['id']}"},
+                         {"status": "done", "updated_at": common._now_iso()})
+        return
+
+    # 멱등: 이 클립들의 기존 원자(행+Qdrant 포인트) 제거 후 재생성.
+    clip_ids = [str(c["id"]) for c in clips]
+    old = await svc.select("lecture_clip_atoms",
+        {"clip_id": f"in.({','.join(clip_ids)})", "select": "id"})
+    if old:
+        await common._qdrant_delete_points([str(o["id"]) for o in old],
+                                           collection=qdrant_store.COL_LECTURE_CLIP_ATOMS)
+        await svc.delete("lecture_clip_atoms", {"clip_id": f"in.({','.join(clip_ids)})"})
+
+    vids = await svc.select("lecture_videos",
+        {"id": f"eq.{video_id}", "select": "id,package_id", "limit": "1"})
+    if not vids:
+        await jobs._fail_job(svc, job["id"], "lecture video row missing")
+        return
+    package_id = vids[0]["package_id"]
+
+    n = app_settings.as_int(overlay, "lecture_atoms_per_clip", settings.lecture_atoms_per_clip, 1, 8)
+    concurrency = app_settings.as_int(overlay, "lecture_atom_concurrency", settings.lecture_atom_concurrency, 1, 16)
+    sem = asyncio.Semaphore(max(1, concurrency))
+    # 회로차단 상태 — 세마포어로 직렬화된 임계 구간에서만 갱신(락 불필요, atoms.py 동형).
+    state = {"consecutive": 0, "broken": False}
+
+    async def _gen(clip: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        async with sem:
+            if state["broken"]:
+                return clip, []  # 회로 개방 — 잔여 클립 생성 생략
+            try:
+                text = f"{clip['title']}\n\n{clip['transcript']}"
+                comp = await solar.complete(
+                    atomize.build_atom_messages(text, n),
+                    max_tokens=256, model=settings.lecture_atom_model)  # solar-pro3
+                qs = atomize.parse_atom_questions((comp.message or {}).get("content") or "", n)
+                state["consecutive"] = 0
+                await common.touch_job(svc, job["id"])   # 하트비트 — 스테일 복구 오탐 방지(D120)
+                return clip, qs
+            except Exception:  # noqa: BLE001 - 개별 실패는 그 클립만 건너뜀
+                state["consecutive"] += 1
+                if state["consecutive"] >= _ATOM_CIRCUIT_BREAK:
+                    state["broken"] = True
+                return clip, []
+
+    results = await asyncio.gather(*(_gen(c) for c in clips))
+    if state["broken"]:
+        await jobs._fail_job(svc, job["id"], "lecture atom circuit break")
+        return
+
+    rows = [{"clip_id": clip["id"], "package_id": str(package_id),
+             "question": q, "status": "pending"}
+            for clip, qs in results for q in qs]
+    if not rows:
+        await svc.update("jobs", {"id": f"eq.{job['id']}"},
+                         {"status": "done", "updated_at": common._now_iso()})
+        return
+
+    inserted = await svc.insert("lecture_clip_atoms", rows, returning=True)
+    try:
+        vectors = await upstage.embed_passages([r["question"] for r in inserted])
+    except Exception as exc:  # noqa: BLE001
+        for r in inserted:
+            await svc.update("lecture_clip_atoms", {"id": f"eq.{r['id']}"}, {"status": "failed"})
+        await jobs._fail_job(svc, job["id"], f"lecture atom embed error: {exc}")
+        return
+    if len(vectors) != len(inserted):
+        for r in inserted:
+            await svc.update("lecture_clip_atoms", {"id": f"eq.{r['id']}"}, {"status": "failed"})
+        await jobs._fail_job(svc, job["id"], "lecture atom embedding count mismatch")
+        return
+
+    points = [{"id": r["id"], "vector": v, "payload": {
+        "atom_id": r["id"], "clip_id": str(r["clip_id"]), "package_id": str(package_id)}}
+        for r, v in zip(inserted, vectors, strict=True)]
+    try:
+        await common._qdrant_upsert(points, collection=qdrant_store.COL_LECTURE_CLIP_ATOMS)
+    except Exception as exc:  # noqa: BLE001
+        for r in inserted:
+            await svc.update("lecture_clip_atoms", {"id": f"eq.{r['id']}"}, {"status": "failed"})
+        await jobs._fail_job(svc, job["id"], f"lecture atom qdrant error: {exc}")
+        return
+
+    sem2 = asyncio.Semaphore(8)
+
+    async def _mark(aid: str) -> None:
+        async with sem2:
+            await svc.update("lecture_clip_atoms", {"id": f"eq.{aid}"}, {"status": "embedded"})
+    await asyncio.gather(*(_mark(r["id"]) for r in inserted))
+
+    # D88 격리: files.status·lecture_videos.status 절대 안 건드림(원자 실패는 클립과 독립).
     await svc.update("jobs", {"id": f"eq.{job['id']}"},
                      {"status": "done", "updated_at": common._now_iso()})
