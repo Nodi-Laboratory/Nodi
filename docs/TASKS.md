@@ -248,3 +248,22 @@ on 시 — 학생 복합 질문에서 원자 경유 히트(via=atom)가 관측�
   0035·0036 + 보류 시드 0029·0030 **원격 적용 완료** — 남은 배포 항목은
   Supabase Storage 전역 상한 500MB(대시보드)뿐. 게이트: 리뷰 Approved +
   실브라우저 검증(자동 주입·출처 칩·인사말 차단) PASS. 스펙 §6, 상세는 원장.
+
+## TASK 7. 강의 클립(숏폼) 추천 (D149)
+
+- [x] 구현 완료 (2026-08-03 — `feat/d149-lecture-clip`, 태스크 T1~T18 + fix, task
+  리뷰 전건 통과, 백엔드 469 passed·프론트 tsc/build/vitest 통과).
+  **라이브 E2E(docker·로컬 DB / EBS 네트워크 / solar-pro3)는 사용자 환경에서 검증 대기.**
+
+**범위**: admin 전역 강의 추천 카탈로그. admin이 (학년·과목) 패키지에 EBS 링크+자막을
+올리면 HTML 타임라인 목차로 챕터 경계를 잡고 그 구간 자막을 본문으로 채워 **제목+본문
+임베딩** + **solar-pro3 예상 질문(원자) 임베딩**. 선생님이 워크스페이스에서 패키지를
+켜면 학생 질의에 ReAct 스킬 `search_lecture_clip`이 **이중 검색**(직접 본문 0.55 + 원자
+질문 0.45)으로 캔버스 `ClipItem` 카드를 추천(공식 EBS 페이지 링크 새 탭, 딥링크 seek 없음).
+
+스펙: `docs/superpowers/specs/2026-08-02-lecture-clip-recommendation-design.md`
+계획: `docs/superpowers/plans/2026-08-03-lecture-clip-recommendation.md`
+
+**미해결/리스크**: 프로덕션 IP의 EBS WAF 차단 가능성(로컬 GET 통과 확인), `solar-pro3`
+실 가용성(실패 시 원자 격리로 클립 본문 검색은 정상), 신규 마이그레이션
+`db/migrations/2026-08-03-d149-lecture-clips.sql` **원격 적용은 별도 승인** 대상.
