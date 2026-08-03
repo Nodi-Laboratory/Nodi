@@ -289,6 +289,9 @@ async def chat_stream(
         answer_parts: list[str] = []
         # ReAct는 스킬이, 레거시는 위 gather가 채운다 — 이후 경로는 동일하다.
         skill_figures: list[dict] = list(legacy_figures)
+        # D149: 강의 클립 — 오케스트레이터가 모아 done 이벤트로만 실어 보낸다
+        # (canvas_items 클라이언트 영속에 의존, 서버 attachments 영속 안 함).
+        skill_clips: list[dict] = []
 
         try:
             try:
@@ -327,6 +330,8 @@ async def chat_stream(
                             # 스킬이 찾아온 출처·도판을 아래 영속 경로가 쓴다.
                             rag_sources = payload.rag_sources
                             skill_figures = payload.figures
+                            # D149: 스킬이 모은 강의 클립을 done으로 흘린다.
+                            skill_clips = payload.clips
                             # D112: 근거 블록이 붙은 **실제 전송 프롬프트**로
                             # 덮어쓴다. 안 하면 admin 로그가 실제와 달라진다
                             # (D35의 "저장한 프롬프트 = 실제" 계약).
@@ -406,6 +411,8 @@ async def chat_stream(
                         # D109: ReAct 경로에서는 도판을 스킬이 찾으므로 프론트가
                         # 선행 호출하지 않는다. done에 실어 캔버스가 바로 띄운다.
                         "figures": skill_figures,
+                        # D149: 강의 클립 — 캔버스가 카드로 띄운다.
+                        "clips": skill_clips,
                     },
                 )
 
