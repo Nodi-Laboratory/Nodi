@@ -23,6 +23,9 @@ logger = logging.getLogger("nodi.lecture_parse")
 settings = get_settings()
 
 _SEEK_RE = re.compile(r"player\.Command\.seek\((\d+)\)")
+# MP4 URL은 플레이어 HTML에 노출된다 — 호스트 표기가 대문자 `WSTR`이라 대소문자
+# 무시로 잡는다(개정 R2, 자동 전사용 오디오 소스). 로그인·헤드리스 불필요.
+_MEDIA_RE = re.compile(r"https?://[^\"'\s]*wstr\.ebsi\.co\.kr/[^\"'\s]+\.mp4", re.IGNORECASE)
 _LABEL_RE = re.compile(r"^\s*\[?\d{1,2}:\d{2}(?::\d{2})?\]?\s*")
 _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36")
@@ -88,6 +91,12 @@ def parse_ebs_player(html: str) -> list[LectureChapter]:
         seen.add(sec)
         out.append(LectureChapter(start_sec=sec, title=title[:300]))
     return out
+
+
+def extract_media_url(html: str) -> str | None:
+    """플레이어 HTML에서 EBS MP4 URL을 뽑는다(자동 전사 오디오 소스). 없으면 None."""
+    m = _MEDIA_RE.search(html or "")
+    return m.group(0) if m else None
 
 
 def fmt_timeline(sec: int) -> str:

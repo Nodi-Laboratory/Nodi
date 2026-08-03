@@ -11,11 +11,23 @@ import logging
 from typing import Any
 
 from ...config import get_settings
-from .. import app_settings, atomize, lecture_parse, qdrant_store, solar, subtitle_parse, upstage
+from .. import (app_settings, atomize, lecture_parse, qdrant_store, solar,
+                subtitle_parse, upstage, whisper_transcribe)
 from . import common, jobs
 
 logger = logging.getLogger("nodi.worker.lectures")
 settings = get_settings()
+
+
+async def _heartbeat_loop(svc: Any, job_id: str, interval: int = 30) -> None:
+    """장기 전사 동안 주기적으로 잡을 touch — 스테일 복구 오탐 방지(D133 동형)."""
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            await common.touch_job(svc, job_id)
+    except asyncio.CancelledError:
+        pass
+
 
 
 async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
@@ -52,7 +64,8 @@ async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
         await jobs._fail_job(svc, job["id"], "no chapters")
         return
 
-    # 자막 본문(개정 R1) — 있으면 구간별로 슬라이스, 없으면 빈 본문(제목만 임베딩).
+    # 본문(transcript) 소스: 업로드 자막 우선(R1), 없으면 Whisper 자동 전사(R2).
+    # 어떤 실패든 본문만 비고 파이프라인은 계속(제목만 임베딩으로 강등).
     cues = []
     if video.get("subtitle_path"):
         try:
@@ -60,6 +73,20 @@ async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
             cues = subtitle_parse.parse_subtitle(data, video["subtitle_path"])
         except Exception:  # noqa: BLE001 - 자막 실패는 본문만 비운다(파이프라인 계속)
             logger.warning("자막 로드/파싱 실패 video=%s", video_id, exc_info=True)
+    elif app_settings.as_bool(overlay, "lecture_whisper_enabled",
+                              settings.lecture_whisper_enabled):
+        media_url = lecture_parse.extract_media_url(html)
+        if not media_url:
+            logger.warning("MP4 URL 추출 실패 video=%s — 제목만 임베딩", video_id)
+        else:
+            # 전사는 수 분 걸린다(블로킹) — 스레드로 돌리고 하트비트로 스테일 방지.
+            beat = asyncio.create_task(_heartbeat_loop(svc, job["id"]))
+            try:
+                cues = await asyncio.to_thread(whisper_transcribe.transcribe_media, media_url)
+            except Exception:  # noqa: BLE001 - 전사 실패는 격리(본문만 빔)
+                logger.warning("Whisper 전사 실패 video=%s", video_id, exc_info=True)
+            finally:
+                beat.cancel()
 
     # 재파싱 멱등: 기존 클립 제거 후 재삽입. end_sec = 다음 챕터 시작(마지막은 None).
     await svc.delete("lecture_clips", {"video_id": f"eq.{video_id}"})

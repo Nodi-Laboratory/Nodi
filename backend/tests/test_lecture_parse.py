@@ -16,3 +16,10 @@ def test_fmt_timeline():
     assert fmt_timeline(896) == "14:56"
     assert fmt_timeline(65) == "1:05"
     assert fmt_timeline(3723) == "1:02:03"
+
+
+def test_extract_media_url_case_insensitive_wstr():
+    from app.services.lecture_parse import extract_media_url
+    html = 'var u = "https://WSTR.ebsi.co.kr/M45K2501/S1/S1_500K_100.mp4"; //...'
+    assert extract_media_url(html) == "https://WSTR.ebsi.co.kr/M45K2501/S1/S1_500K_100.mp4"
+    assert extract_media_url("<html>no media</html>") is None

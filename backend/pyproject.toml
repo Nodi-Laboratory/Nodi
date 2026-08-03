@@ -17,6 +17,7 @@ dependencies = [
     "asyncpg>=0.30",
     "pyjwt>=2.9",
     "bcrypt>=4.2",
+    "faster-whisper>=1.2.1",
 ]
 
 [build-system]

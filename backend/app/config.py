@@ -158,6 +158,11 @@ class Settings(BaseSettings):
     lecture_atom_model: str = "solar-pro3"         # 원자 생성 모델(config/env 전용)
     lecture_retrieve_top_k: int = 3                # 추천 개수(config 전용)
     lecture_batch_size: int = 16                   # 임베딩/원자 잡 팬아웃 단위
+    # 자동 전사(개정 R2) — 업로드 자막이 없으면 EBS 오디오를 Whisper로 전사.
+    lecture_whisper_enabled: bool = True           # 자막 없을 때 자동 전사(오버레이 폴백 가능)
+    lecture_whisper_model: str = "small"           # faster-whisper 모델(config/env 전용)
+    lecture_whisper_language: str = "ko"           # 전사 언어(config/env 전용)
+    lecture_whisper_ffmpeg_timeout_seconds: int = 900  # ffmpeg 스트림·추출 상한
 
     # ── PIKE-RAG (TASK 6, D129~D132) ─────────────────────────────
     # A. 지식 원자화 (D129) — 킬스위치 off 출하, 캘리브레이션 후 on
