@@ -15,6 +15,7 @@ import {
 import { ApiError, deleteFile, retryFile, uploadFile } from "@/lib/api";
 import { classMaterialsKey, useClassMaterials } from "@/lib/queries";
 import type { FileRow, FileStatus } from "@/lib/types";
+import { LecturePackagesSection } from "./LecturePackagesSection";
 
 /**
  * 자료 탭: 학급 자료실(class_material) 목록 + 업로드 + 임베딩 진행률.
@@ -197,6 +198,10 @@ export function MaterialsTab({ classId }: { classId: string }) {
           ))}
         </ul>
       )}
+
+      <div className="mt-4 border-t border-accent-border/20 pt-4">
+        <LecturePackagesSection classId={classId} />
+      </div>
     </div>
   );
 }

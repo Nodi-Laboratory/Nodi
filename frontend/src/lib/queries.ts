@@ -8,6 +8,7 @@ import {
   getHomeSummary,
   fetchTeacherOverview,
   getSession,
+  listClassLecturePackages,
   listClassMaterials,
   listClassStudents,
   listFiles,
@@ -17,6 +18,7 @@ import {
   listSessions,
   listStudentClassSessions,
   listTeacherClasses,
+  type ClassLecturePackage,
   type LecturePackage,
   type LectureVideo,
   type SpaceTarget,
@@ -135,6 +137,19 @@ export function useLectureVideos(pkgId: string | null) {
       );
       return active ? 3000 : false;
     },
+  });
+}
+
+// ── 학급 강의 패키지 선택 (teacher, D149) ────────────────────────────
+
+export const classLecturePackagesKey = (classId: string) =>
+  ["class-lecture-packages", classId] as const;
+
+/** 이 학급에서 켜고 끌 수 있는 admin 강의 패키지 목록. */
+export function useClassLecturePackages(classId: string) {
+  return useQuery<ClassLecturePackage[]>({
+    queryKey: classLecturePackagesKey(classId),
+    queryFn: () => listClassLecturePackages(classId),
   });
 }
 
