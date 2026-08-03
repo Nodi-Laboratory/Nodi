@@ -255,6 +255,7 @@ async def complete(
     *,
     tools: list[dict[str, Any]] | None = None,
     max_tokens: int | None = None,
+    model: str | None = None,  # D149: 원자화만 solar-pro3로. None=전역 채팅 모델.
 ) -> Completion:
     """비스트리밍 1회 호출 — ReAct 루프의 도구 판단 단계용(D109).
 
@@ -264,10 +265,14 @@ async def complete(
 
     스트리밍을 쓰지 않는 이유: 이 단계의 텍스트는 사용자에게 보내지 않는다.
     도구를 고르는 판단만 필요하므로 완성된 응답 하나면 충분하다.
+
+    `model`을 주면 그 호출만 해당 모델로 나간다(D149 — 강의 원자 생성이
+    solar-pro3를 쓰되 전역 채팅 모델은 건드리지 않기 위함). None이면 전역
+    모델을 그대로 써 기존 호출부 동작이 불변이다.
     """
-    url, model, key = _require_config()
+    url, default_model, key = _require_config()
     payload: dict[str, Any] = {
-        "model": model,
+        "model": model or default_model,
         "messages": messages,
         "temperature": settings.chat_temperature,
         "max_tokens": max_tokens or settings.chat_max_tokens,
