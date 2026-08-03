@@ -19,7 +19,7 @@ RLS가 최종 방어선이다. 카탈로그를 뚫어도 남의 데이터는 못
 from __future__ import annotations
 
 # 실제로 데이터를 가져오는 도구 — 스코프가 결정한다.
-_CLASS_ONLY = ["search_class_material", "search_textbook_figure"]
+_CLASS_ONLY = ["search_class_material", "search_textbook_figure", "search_lecture_clip"]
 
 # 이 세션에서 만든 개념 조회 — 어디서나 가능하지만 **카드가 있을 때만** 넣는다.
 # 첫 질문(카드 0장)에 노출하면 모델이 부르고 빈 목록을 받는다. think가 도구
