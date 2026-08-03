@@ -319,15 +319,29 @@ class _BaseClient:
                 for c in cols
                 if c not in [x.strip() for x in on_conflict.split(",")]
             )
+            # 갱신할 비-키 컬럼이 없으면(행 전체가 곧 충돌 키) `DO UPDATE SET`이
+            # 빈 문자열이 되어 SQL 문법 오류다. 이 경우 의도는 "행을 보장한다"
+            # (멱등 삽입)이므로 `DO NOTHING`을 낸다. 비-키 컬럼이 있는 기존
+            # 호출부(app_settings·canvas_drawings 등)는 그대로 DO UPDATE.
+            do_update = bool(updates)
+            conflict = (
+                f"ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"
+                if do_update
+                else f"ON CONFLICT ({conflict_cols}) DO NOTHING"
+            )
             sql = (
                 f"INSERT INTO {Q._ident(table)} ({col_sql}) VALUES ({ph}) "
-                f"ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates} RETURNING *"
+                f"{conflict} RETURNING *"
             )
             args = [_encode(row[c]) for c in cols]
             async with self._conn() as conn:
                 await _prepare(conn)
                 out = _rows(await _fetch(conn, sql, args))
                 if not out:
+                    if not do_update:
+                        # DO NOTHING + 이미 존재하는 행 → RETURNING이 비지만 정상.
+                        # 삽입하려던 행이 곧 보장하려는 상태다.
+                        return dict(row)
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
                         detail="Database request failed.",
