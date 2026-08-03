@@ -31,6 +31,13 @@ COL_TEXTBOOK_FIGURES = "textbook_figures"
 # embedding-passage로 임베딩해 저장한다. 페이로드는 {atom_id, chunk_id, file_id,
 # owner_id}만(질문 본문 금지) — 히트 후 chunk_id로 file_chunks를 RLS 재조회한다.
 COL_CHUNK_ATOMS = "chunk_atoms"
+# 강의 클립 임베딩 컬렉션(D149). 클립 제목+본문을 embedding-passage로 임베딩하고,
+# package_id 페이로드 필터로 스코핑한다(file_id가 아니라 package_id — search의
+# scope_field 매개변수로 강제). 페이로드엔 식별자만, 히트 후 RLS 재조회.
+COL_LECTURE_CLIPS = "lecture_clips"
+# 강의 클립 원자 질문 임베딩 컬렉션(D149). chunk_atoms와 동형이나 스코프 키가
+# package_id다.
+COL_LECTURE_CLIP_ATOMS = "lecture_clip_atoms"
 
 _client: AsyncQdrantClient | None = None
 
@@ -55,6 +62,8 @@ async def ensure_collections() -> None:
             COL_FILE_CHUNKS,
             COL_TEXTBOOK_FIGURES,
             COL_CHUNK_ATOMS,
+            COL_LECTURE_CLIPS,
+            COL_LECTURE_CLIP_ATOMS,
         ):
             if not await client.collection_exists(name):
                 await client.create_collection(
@@ -91,6 +100,16 @@ async def ensure_collections() -> None:
             )
         except Exception:  # noqa: BLE001
             logger.debug("chunk_atoms file_id 인덱스 생성 생략")
+        # 강의 클립 컬렉션은 package_id KEYWORD 인덱스로 스코핑 (D149).
+        for col in (COL_LECTURE_CLIPS, COL_LECTURE_CLIP_ATOMS):
+            try:
+                await client.create_payload_index(
+                    collection_name=col,
+                    field_name="package_id",
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("%s package_id 인덱스 생성 생략", col)
     except Exception:  # noqa: BLE001 - 부팅을 죽이지 않는다
         logger.warning(
             "Qdrant 컬렉션 보장 실패 — 부팅은 계속, 사용 시점에 에러로 드러남 (url=%s)",
@@ -122,13 +141,15 @@ async def search(
     k: int,
     *,
     file_ids: list[str] | None = None,
+    scope_field: str = "file_id",  # D149: 강의 클립은 "package_id"로 스코프
     score_threshold: float | None = None,
 ) -> list[dict]:
     """코사인 유사도 검색 -> [{"id","score","payload"}] (score 높을수록 유사).
 
-    file_ids가 주어지면 payload.file_id MatchAny 필터를 must로 강제한다
-    (RAG 스코핑 — 호출부는 RLS로 스코프된 조회에서 접근 가능 file_id를 파생).
-    빈 목록은 "접근 가능한 파일 없음" — 즉시 빈 결과.
+    file_ids가 주어지면 payload.{scope_field} MatchAny 필터를 must로 강제한다
+    (RAG 스코핑 — 호출부는 RLS로 스코프된 조회에서 접근 가능 id를 파생).
+    scope_field 기본은 "file_id"(자료 청크·figure·원자) — 강의 클립은
+    "package_id"로 넘긴다. 빈 목록은 "접근 가능 항목 없음" — 즉시 빈 결과.
     """
     if file_ids is not None and not file_ids:
         return []
@@ -137,7 +158,7 @@ async def search(
         query_filter = models.Filter(
             must=[
                 models.FieldCondition(
-                    key="file_id",
+                    key=scope_field,
                     match=models.MatchAny(any=[str(f) for f in file_ids]),
                 )
             ]
