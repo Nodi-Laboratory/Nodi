@@ -57,6 +57,8 @@ class TurnOutcome:
     rag_sources: list[dict[str, Any]] = field(default_factory=list)
     # 도판 검색 스킬이 만든 항목 — 캔버스 리프로 띄우고 attachments에 영속한다.
     figures: list[dict[str, Any]] = field(default_factory=list)
+    # 강의 클립 검색 스킬이 만든 항목 — figures와 대칭, clip_id로 dedupe(D149).
+    clips: list[dict[str, Any]] = field(default_factory=list)
     # 실행된 스킬 이름(로그·관측성).
     used_skills: list[str] = field(default_factory=list)
     # 스킬이 돌려준 내용 그대로 — 생성 단계 프롬프트에 근거로 붙는다.
@@ -79,7 +81,7 @@ class TurnOutcome:
 
 
 # 전용 렌더가 이미 담는 키 — 일반 렌더에서 중복으로 싣지 않는다.
-_HANDLED_KEYS = frozenset({"sources", "figures", "captions", "chunks"})
+_HANDLED_KEYS = frozenset({"sources", "figures", "captions", "chunks", "clips"})
 
 # 근거가 **아닌** 스킬. 결과가 조회한 사실이 아니라 모델 자신의 산출물이다.
 #
@@ -321,6 +323,15 @@ class Orchestrator:
                 if fid and fid not in seen:
                     seen.add(fid)
                     outcome.figures.append(f)
+        # D149: 강의 클립 — figures와 같은 방식으로 clip_id 중복만 걸러 누적한다.
+        clips = result.data.get("clips")
+        if isinstance(clips, list):
+            seen_clips = {c.get("clip_id") for c in outcome.clips}
+            for c in clips:
+                cid = c.get("clip_id")
+                if cid and cid not in seen_clips:
+                    seen_clips.add(cid)
+                    outcome.clips.append(c)
 
     @staticmethod
     def _evidence_block(outcome: TurnOutcome) -> str:
@@ -353,6 +364,20 @@ class Orchestrator:
                     "아래 교과서 도판이 학생 화면에 함께 표시됩니다. 설명할 때 "
                     "참고하되, 본문에 이미지 링크나 파일명을 쓰지 마세요.\n\n"
                     + "\n".join(f"- {c}" for c in caps)
+                )
+        if outcome.clips:
+            # D149: 추천 강의 클립 — 제목·타임라인을 근거로 붙인다(figures 대칭).
+            clip_lines = []
+            for c in outcome.clips:
+                title = c.get("title")
+                if title:
+                    clip_lines.append(
+                        f"- 강의 클립: {title} ({c.get('timeline_label', '')})"
+                    )
+            if clip_lines:
+                parts.append(
+                    "아래 강의 클립이 학생 화면에 함께 추천됩니다. 설명할 때 "
+                    "참고하되, 본문에 링크를 쓰지 마세요.\n\n" + "\n".join(clip_lines)
                 )
 
         # 나머지 스킬 결과 — 전용 렌더가 이미 담은 키만 빼고 그대로 보여 준다.
