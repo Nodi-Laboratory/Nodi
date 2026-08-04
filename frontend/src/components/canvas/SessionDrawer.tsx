@@ -48,7 +48,9 @@ export default function SessionDrawer({
             <X size={16} />
           </button>
         </div>
-        <SessionList target={target} />
+        {/* 대화를 고르면 스스로 닫는다 (D173). 안 닫으면 목록이 캔버스를
+            덮은 채로 남고, 그 반투명 오버레이가 캔버스 클릭을 통째로 먹는다. */}
+        <SessionList target={target} onPicked={onClose} />
       </div>
     </div>
   );

@@ -1006,7 +1006,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   );
 
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
-  const sessionTitle = detail?.session?.title?.trim() || "새 대화";
+  const sessionTitle = detail?.session?.title?.trim() || "제목 없는 대화";
 
   // 세션 컨텍스트 파일 첨부 (D83) — 업로드 후 칩 바가 상태를 보여 준다.
   const handleAttach = useCallback(

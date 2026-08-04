@@ -28,10 +28,40 @@ import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type { SessionRow } from "@/lib/types";
 
 /**
+ * 제목이 아직 없는 대화의 표시 이름 (D173).
+ *
+ * 예전에는 이것도 "새 대화"였다. 그러면 목록이 이렇게 보인다:
+ *
+ *     [+ 새 대화]   ← 만드는 **버튼**
+ *        새 대화     ← 그냥 제목 없는 **대화**
+ *        새 대화
+ *
+ * 같은 글자가 동작과 항목 둘 다를 뜻해서 어느 쪽이 만들기인지 알 수 없다.
+ * 만들기 동작만 "새 대화"라는 이름을 갖는다.
+ */
+const UNTITLED = "제목 없는 대화";
+
+/**
  * 대화기록 사이드바(좌): 현재 공간의 세션 목록 + "새 대화" + 항목 ⋮(이름변경/삭제).
  * 현재 세션 클릭은 no-op(새 공간 생성 금지, D17 버그 수정).
  */
-export function SessionList({ target }: { target: SpaceTarget }) {
+export function SessionList({
+  target,
+  onPicked,
+}: {
+  target: SpaceTarget;
+  /**
+   * 사용자가 **볼 세션을 정했을 때** 불린다 (D173).
+   *
+   * 목록을 슬라이드오버로 띄우는 쪽(SessionDrawer)이 스스로 닫으려면 이
+   * 신호가 필요하다 — 안 그러면 대화를 골라도 목록이 캔버스를 덮은 채로
+   * 남는다(실측: 그 오버레이가 캔버스 클릭을 통째로 먹는다).
+   *
+   * **자동 선택에는 부르지 않는다.** 목록이 처음 로드되며 첫 세션을 고르는
+   * 건 사용자의 결정이 아니다.
+   */
+  onPicked?: () => void;
+}) {
   const queryClient = useQueryClient();
   const { data: sessions, isLoading, isError } = useSessions(target);
   const activeSessionId = useWorkspaceStore((s) => s.activeSessionId);
@@ -83,6 +113,9 @@ export function SessionList({ target }: { target: SpaceTarget }) {
       const session = await createSession(target);
       await invalidate(); // 실데이터로 교체(temp 제거)
       setActiveSession(session.id);
+      // 만들기가 **성공했을 때만** 닫는다. 실패했는데 닫으면 새 대화가 열린
+      // 줄 알고 옛 세션에 질문을 쓰게 된다.
+      onPicked?.();
     } catch {
       // 롤백: 낙관 행 제거
       queryClient.setQueryData<SessionRow[]>(sessionsKey(target), (old) =>
@@ -96,8 +129,12 @@ export function SessionList({ target }: { target: SpaceTarget }) {
   // 세션 선택: 현재 세션이면 no-op(activeNodeId가 null로 초기화돼 빈 화면 되는 버그 방지).
   // 낙관(미확정) 행은 선택 불가(임시 id 차단).
   const handleSelect = (id: string) => {
-    if (id === activeSessionId || !isRealId(id)) return;
-    setActiveSession(id);
+    // 낙관(미확정) 행은 아직 서버에 없다 — 고를 수 없다.
+    if (!isRealId(id)) return;
+    // 지금 보고 있는 세션을 다시 누르면 **전환은 없지만 닫기는 한다**.
+    // "이거 맞다"는 뜻으로 누른 것인데 목록이 그대로 있으면 고장으로 읽힌다.
+    if (id !== activeSessionId) setActiveSession(id);
+    onPicked?.();
   };
 
   const startRename = (s: SessionRow) => {
@@ -126,7 +163,7 @@ export function SessionList({ target }: { target: SpaceTarget }) {
   // 08 F: 삭제도 낙관 — 즉시 목록에서 제거 + active 이동 후 서버 확정 / 실패 시 롤백.
   const handleDelete = async (s: SessionRow) => {
     setMenuId(null);
-    if (!window.confirm(`"${s.title?.trim() || "새 대화"}" 대화를 삭제할까요?`))
+    if (!window.confirm(`"${s.title?.trim() || UNTITLED}" 대화를 삭제할까요?`))
       return;
     const prev = queryClient.getQueryData<SessionRow[]>(sessionsKey(target));
     const prevActive = activeSessionId; // 실패 시 선택 상태도 원복
@@ -188,7 +225,7 @@ export function SessionList({ target }: { target: SpaceTarget }) {
                   <li key={s.id} className="relative">
                     <div className="flex animate-pulse items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg opacity-40">
                       <MessageSquare size={14} className="shrink-0 opacity-70" />
-                      <span className="truncate">새 대화</span>
+                      <span className="truncate">{UNTITLED}</span>
                     </div>
                   </li>
                 );
@@ -238,7 +275,7 @@ export function SessionList({ target }: { target: SpaceTarget }) {
                       >
                         <MessageSquare size={14} className="shrink-0 opacity-70" />
                         <span className="truncate">
-                          {s.title?.trim() || "새 대화"}
+                          {s.title?.trim() || UNTITLED}
                         </span>
                       </button>
                       <button

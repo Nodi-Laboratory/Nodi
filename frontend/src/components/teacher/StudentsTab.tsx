@@ -86,7 +86,7 @@ export function StudentsTab({ classId }: { classId: string }) {
                     }`}
                   >
                     <MessageSquare size={14} className="shrink-0 opacity-70" />
-                    <span className="truncate">{s.title?.trim() || "새 대화"}</span>
+                    <span className="truncate">{s.title?.trim() || "제목 없는 대화"}</span>
                   </button>
                 </li>
               );
