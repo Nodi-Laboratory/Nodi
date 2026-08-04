@@ -29,11 +29,24 @@ CREATE INDEX IF NOT EXISTS idx_chunk_atoms_file ON public.chunk_atoms (file_id, 
 CREATE INDEX IF NOT EXISTS idx_chunk_atoms_chunk ON public.chunk_atoms (chunk_id);
 
 -- ── jobs.kind 확장 — atom_batch 추가 ──────────────────────────────────
--- drop→add는 그 자체로 멱등이다(같은 정의를 다시 세운다). IF EXISTS만 붙이면 된다.
-ALTER TABLE public.jobs DROP CONSTRAINT IF EXISTS jobs_kind_check;
-ALTER TABLE public.jobs ADD CONSTRAINT jobs_kind_check CHECK
-  ((kind = ANY (ARRAY['embedding_split'::text, 'embedding_batch'::text,
-                      'figure_batch'::text, 'atom_batch'::text])));
+-- **이 블록은 제약이 없을 때만 세운다** (D175).
+--
+-- 배포는 db/migrations/*.sql을 **매번 전부** 사전순으로 재실행한다. 예전에는
+-- "drop→add는 그 자체로 멱등"이라고 적어 뒀는데, 그 전제는 **나중에 kind가
+-- 늘면 깨진다**: 재실행이 목록을 도로 좁히고, 그 사이 생긴 새 kind 행이
+-- 제약을 위반해 배포가 통째로 멈춘다(실측 2026-08-04, crosslink 행 때문에
+-- 배포 실패). 전체 목록의 authority는 **가장 늦게 정렬되는 마이그레이션**
+-- 하나만 갖는다.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'jobs_kind_check'
+  ) THEN
+    ALTER TABLE public.jobs ADD CONSTRAINT jobs_kind_check CHECK
+      ((kind = ANY (ARRAY['embedding_split'::text, 'embedding_batch'::text,
+                          'figure_batch'::text, 'atom_batch'::text])));
+  END IF;
+END $$;
 
 -- ── figure 페이지 텍스트 (D131) — 비전 캡션 생성 프롬프트 컨텍스트 ────────
 ALTER TABLE public.textbook_figures

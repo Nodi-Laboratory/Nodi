@@ -10,9 +10,18 @@ BEGIN;
 -- ---------------------------------------------------------------------------
 -- 1) jobs.kind 확장 — 'crosslink'
 --
--- CHECK 제약을 통째로 다시 만든다. 목록을 손으로 늘리는 방식이라 이 자리에서
--- 기존 값을 빠뜨리면 워커가 돌던 잡이 en큐 불가가 된다 — 01_schema.sql의
--- jobs_kind_check와 **같은 목록**이어야 한다.
+-- **이 파일이 jobs_kind_check의 유일한 authority다** (D175).
+--
+-- 배포는 db/migrations/*.sql을 매번 전부 **사전순으로** 재실행한다. 그래서
+-- 제약을 여러 파일에서 drop→add 하면, 늦게 정렬되는 파일이 이긴다 — 반대로
+-- 옛 파일이 목록을 도로 좁히면 그 사이 생긴 새 kind 행이 제약을 위반해
+-- **배포가 통째로 멈춘다**(실측 2026-08-04: crosslink 행 때문에 실패).
+--
+-- 그래서 옛 마이그레이션들은 "제약이 없을 때만" 세우도록 바꿨고, 전체 목록은
+-- 여기서만 정한다. **kind를 새로 추가할 때는 이 목록에 더하거나, 이보다
+-- 늦게 정렬되는 파일에서 다시 세워라.**
+--
+-- 01_schema.sql의 jobs_kind_check와도 같은 목록이어야 한다.
 -- ---------------------------------------------------------------------------
 ALTER TABLE public.jobs DROP CONSTRAINT IF EXISTS jobs_kind_check;
 ALTER TABLE public.jobs ADD CONSTRAINT jobs_kind_check CHECK (kind = ANY (ARRAY[
