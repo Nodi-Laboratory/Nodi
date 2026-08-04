@@ -40,6 +40,27 @@ export async function openCanvas(page: Page): Promise<void> {
 }
 
 /**
+ * 빈 대화를 하나 열어 캔버스를 비운다.
+ *
+ * `createNote`는 캔버스의 **고정 좌표**를 클릭해 노트를 만든다. 개인 세션은
+ * 지난 실행이 남긴 글로 차 있어서 그 자리가 이미 카드에 덮여 있으면 클릭이
+ * 카드 선택으로 먹히고 편집기가 뜨지 않는다 — 실측 2026-08-04: 이 이유로
+ * `canvas.spec`·`tag.spec`이 둘 다 createNote에서 타임아웃했다. 세션을 새로
+ * 열면 매 실행이 같은 조건에서 시작한다.
+ */
+export async function openFreshSession(page: Page): Promise<void> {
+  await page.getByLabel("대화 목록 열기").click();
+  // 목록의 세션 행에도 "새 대화"라는 글자가 뜬다(제목 없는 세션의 기본 이름).
+  // 만드는 버튼은 title 속성으로 정확히 집는다.
+  await page.locator('button[title="새 대화"]').click();
+  await expect(page.locator("[data-canvas-item]")).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
+  // 서랍을 닫아 캔버스를 가리지 않게 한다.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden({ timeout: 10_000 });
+}
+
+/**
  * 손으로 글 노트를 하나 만들고 텍스트를 저장한 뒤, **서버에 저장(진짜 id)**
  * 될 때까지 기다려 그 노트 Locator를 돌려준다.
  *

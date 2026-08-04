@@ -6,6 +6,7 @@ import {
   loginAndOpenCanvas,
   noteByText,
   openCanvas,
+  openFreshSession,
 } from "./helpers";
 
 /**
@@ -25,6 +26,10 @@ test.describe("카드 드래그·수정·삭제·영속", () => {
 
   test("드래그하면 새로고침 후에도 옮긴 자리에 있다", async ({ page }) => {
     await loginAndOpenCanvas(page);
+    // 빈 대화에서 시작한다 — 지난 실행이 남긴 카드가 `createNote`의 클릭
+    // 자리를 덮고 있으면 편집기가 뜨지 않는다(helpers.openFreshSession 참조).
+    // 뒤따르는 테스트들은 이 세션을 다시 열어 이어 간다.
+    await openFreshSession(page);
 
     const note = await createNote(page, NOTE);
     const before = await itemPos(note);

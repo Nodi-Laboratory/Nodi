@@ -1,5 +1,11 @@
 import { expect, test, type Page, type Locator } from "@playwright/test";
-import { createNote, loginAndOpenCanvas, noteByText, openCanvas } from "./helpers";
+import {
+  createNote,
+  loginAndOpenCanvas,
+  noteByText,
+  openCanvas,
+  openFreshSession,
+} from "./helpers";
 
 /**
  * 카드 태그 조작 E2E (D147) — 지정·이름변경·detach·삭제 + 새로고침 영속.
@@ -44,6 +50,9 @@ async function expectChecked(page: Page, note: Locator, tag: string): Promise<vo
 
 test("태그 지정·이름변경·detach·삭제가 되고 새로고침에도 유지된다", async ({ page }) => {
   await loginAndOpenCanvas(page);
+  // 빈 대화에서 시작한다(helpers.openFreshSession 참조) — 지난 실행이 남긴
+  // 카드가 `createNote`의 클릭 자리를 덮고 있으면 편집기가 뜨지 않는다.
+  await openFreshSession(page);
   const ts = Date.now();
   const A = `태그A-${ts}`;
   const B = `태그B-${ts}`;
