@@ -13,6 +13,18 @@ import { Providers } from "./providers";
  *   본문   Pretendard        한글 가변 폰트. 밀도 높은 문단에 제일 잘 읽힌다
  *   UI     IBM Plex Sans KR  각진 터미널 — 제도 도구의 인상. 한글을 지원한다
  *   라벨   IBM Plex Mono     태그·단축키·수치. 고정폭이 "계측"의 감각을 준다
+ *
+ * D164에서 넷째 역할이 붙었다(사용자 지시 2026-08-03):
+ *
+ *   캔버스 글  나눔손글씨 야근하는 김주임   학생·AI가 노트에 쓴 글. **여기에만**
+ *
+ * D127이 손글씨를 걷어낸 근거(긴 글이 안 읽힌다·화면이 학습지가 된다)는
+ * 여전하므로 UI 크롬과 앱의 나머지 화면에는 절대 번지지 않게 `.canvas2 .hand`
+ * 로 스코프한다(globals.css).
+ *
+ * 캔버스 폰트만 **이 파일에 없다**(2026-08-04, Gaegu 대체). Google Fonts에 없어
+ * 자체 호스팅해야 하는데, 여기에 두면 앱 전체가 그 CSS를 받는다. @font-face는
+ * `components/canvas2/hand-font.css`(생성물)에 있고 CanvasStage가 임포트한다.
  */
 const plexSans = IBM_Plex_Sans_KR({
   subsets: ["latin"],

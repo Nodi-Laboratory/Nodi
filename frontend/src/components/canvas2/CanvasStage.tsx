@@ -20,6 +20,10 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
+// 캔버스 손글씨 @font-face (D164). **여기서** 임포트하는 이유는 unicode-range
+// 목록이 gzip 13KB이기 때문이다 — globals.css에 넣으면 로그인·홈·관리자 화면도
+// 그걸 받는다. 폰트가 캔버스 전용이니 CSS도 캔버스 라우트 청크에만 둔다.
+import "./hand-font.css";
 import type { DrawingScene } from "@/lib/api/canvas";
 import type { Camera } from "@/lib/canvas2/types";
 import type { Bridge } from "@/lib/canvas2/useExcalidrawBridge";

@@ -10,9 +10,11 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { toBlocks, toRuns } from "@/lib/canvas2/markup";
+import { toBlocks } from "@/lib/canvas2/markup";
+import { INK_TAIL, splitRun, toInkDoc, type InkBlock, type InkRun } from "@/lib/canvas2/ink";
+import { tuneOf } from "@/lib/canvas2/handScript";
 import { useTypewriter } from "@/lib/canvas2/useTypewriter";
-import type { RenderBlock } from "@/lib/canvas2/types";
+import { TunedText } from "./TunedText";
 
 /** 이 블록 수를 넘으면 접는다. 열이 화면 몇 개 높이로 길어지는 걸 막는다. */
 const FOLD_AFTER = 6;
@@ -46,18 +48,37 @@ function BodyView({ body, streaming }: { body: string; streaming?: boolean }) {
   const visible = typing ? body.slice(0, chars) : body;
 
   // 매 프레임 파싱을 피한다 — toBlocks는 글자당 토큰 객체를 만든다.
-  const blocks = useMemo(() => toBlocks(visible), [visible]);
+  const doc = useMemo(() => toInkDoc(toBlocks(visible)), [visible]);
+  const blocks = doc.blocks;
   const [open, setOpen] = useState(false);
   // 스트리밍 중에는 접지 않는다 — 글이 자라는 걸 보는 게 이 화면의 재미다.
   const folded = !open && !streaming && blocks.length > FOLD_AFTER;
   const shownBlocks = folded ? blocks.slice(0, FOLD_AFTER) : blocks;
 
+  /**
+   * 이 색인부터가 "지금 써지는" 글자다 (D164).
+   *
+   * 타이핑이 아닐 때 `Infinity`인 것이 중요하다 — 재수화된 글은 쪼개지도,
+   * 애니메이션하지도 않는다. 새로고침할 때마다 온 캔버스가 다시 써지면
+   * 학생이 이미 읽은 글을 또 기다려야 한다.
+   */
+  const writing = typing || !!streaming;
+  const tailFrom = writing ? doc.total - INK_TAIL : Infinity;
+
   return (
-    <div>
+    /**
+     * `data-writing`은 **지금 이 글이 써지는 중**이라는 표식이다 (D164).
+     *
+     * E2E가 "어느 아이템이 자라고 있나"를 골라내는 데 쓴다 — 캔버스에 이미
+     * 여러 글이 있으면 전체 글자 수만 봐서는 뭉텅 붙은 것과 한 글자씩 얹힌
+     * 것이 구분되지 않는다. 스타일은 붙이지 않는다.
+     */
+    <div data-writing={writing ? "1" : undefined}>
       {shownBlocks.map((b, i) => (
         <Block
-          key={i}
+          key={b.start}
           block={b}
+          tailFrom={tailFrom}
           last={(typing || streaming) && i === shownBlocks.length - 1}
         />
       ))}
@@ -81,24 +102,73 @@ function BodyView({ body, streaming }: { body: string; streaming?: boolean }) {
   );
 }
 
-function Block({ block, last }: { block: RenderBlock; last?: boolean }) {
-  const runs = toRuns(block.tokens);
+/**
+ * 런 하나의 내용 — 마른 앞부분은 통째로, 지금 써지는 꼬리는 글자마다 (D164).
+ *
+ * key가 배열 위치가 아니라 **절대 색인**인 것이 이 컴포넌트의 전부다. 꼬리가
+ * 한 칸 나아갈 때 React가 같은 글자의 span을 그대로 재사용해야 애니메이션이
+ * 한 번만 돈다(`lib/canvas2/ink.ts` 주석 참조).
+ */
+function RunContent({ run, tailFrom }: { run: InkRun; tailFrom: number }) {
+  const { dry, wet } = splitRun(run, tailFrom);
+  return (
+    <>
+      {dry && (
+        <span key="dry">
+          <TunedText text={dry} />
+        </span>
+      )}
+      {wet.map(([at, ch]) => {
+        // 꼬리는 이미 글자 하나씩이라 구간을 나눌 게 없다 — 그 글자만 판정한다.
+        const tune = tuneOf(ch.codePointAt(0)!);
+        return (
+          <span
+            key={at}
+            data-ink="1"
+            data-tune={tune ?? undefined}
+            className={tune ? "c2-ink c2-tune" : "c2-ink"}
+          >
+            {ch}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+function Block({
+  block,
+  tailFrom,
+  last,
+}: {
+  block: InkBlock;
+  tailFrom: number;
+  last?: boolean;
+}) {
   const content = (
     <>
-      {runs.map((r, i) =>
+      {block.runs.map((r) =>
         r.h ? (
           <mark
-            key={i}
+            key={r.start}
             style={{ background: "var(--c-mark)", color: "inherit", padding: "0 1px" }}
           >
-            {r.b ? <b>{r.text}</b> : r.text}
+            {r.b ? (
+              <b>
+                <RunContent run={r} tailFrom={tailFrom} />
+              </b>
+            ) : (
+              <RunContent run={r} tailFrom={tailFrom} />
+            )}
           </mark>
         ) : r.b ? (
-          <b key={i} style={{ fontWeight: 700 }}>
-            {r.text}
+          <b key={r.start} style={{ fontWeight: 700 }}>
+            <RunContent run={r} tailFrom={tailFrom} />
           </b>
         ) : (
-          <span key={i}>{r.text}</span>
+          <span key={r.start}>
+            <RunContent run={r} tailFrom={tailFrom} />
+          </span>
         ),
       )}
       {last && <Caret />}
@@ -124,17 +194,45 @@ function Block({ block, last }: { block: RenderBlock; last?: boolean }) {
   );
 }
 
+/**
+ * 쓰는 손 — 펜 (D165).
+ *
+ * 막대 캐럿을 펜 그림으로 바꾼다. 이유는 글자 wipe의 **세로 경계를 가리는**
+ * 것이다 — 경계가 그대로 보이면 "잘려 있다"로 읽히고, 펜이 그 자리에 있으면
+ * "지금 여기서 나오는 중"으로 읽힌다.
+ *
+ * 펜은 촉이 좌하단(3,31)에 오도록 그렸다. 배치·회전축·흔들림은 전부
+ * `globals.css`의 `.c2-nib`이 잡는다 — 촉 좌표와 transform-origin(9% 91%)이
+ * 묶여 있으므로 SVG 좌표를 바꾸면 CSS도 같이 바꿔야 한다.
+ *
+ * 사라질 때 페이드는 없다. 마지막 글자의 wipe(0.22s)가 끝나는 순간 함께
+ * 사라지는데, 그 자체가 부드러운 마무리라 상태를 하나 더 두면서까지 200ms를
+ * 벌 이유가 없다.
+ */
 function Caret() {
   return (
-    <span
-      aria-hidden
-      className="ml-0.5 inline-block w-[2px] align-text-bottom"
-      style={{
-        height: "1em",
-        background: "var(--c-live)",
-        animation: "c2-caret 1s step-end infinite",
-      }}
-    />
+    <span aria-hidden data-nib="1" className="c2-nib">
+      <svg viewBox="0 0 34 34" fill="none">
+        {/* 촉 — 회전축이자 글이 나오는 지점 */}
+        <path d="M4.9 24.9 L9.1 29.1 L3 31 Z" fill="currentColor" />
+        {/* 몸통 — 종이색으로 채워야 아래 글자가 비쳐 보이지 않는다 */}
+        <path
+          d="M4.9 24.9 L22.9 6.9 L27.1 11.1 L9.1 29.1 Z"
+          fill="var(--c-paper)"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+        />
+        {/* 뚜껑 */}
+        <path
+          d="M22.9 6.9 L26.9 2.9 L31.1 7.1 L27.1 11.1 Z"
+          fill="currentColor"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
   );
 }
 

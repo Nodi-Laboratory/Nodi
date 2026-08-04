@@ -28,15 +28,23 @@ import { useEffect, useRef, useState } from "react";
 
 /** 한 프레임에 드러낼 최소 글자 수. */
 const MIN_PER_FRAME = 1;
-/** 한 프레임 최대. 이 이상이면 "타이핑"이 아니라 그냥 붙는 것으로 보인다. */
-const MAX_PER_FRAME = 12;
+/**
+ * 한 프레임 최대. 이 이상이면 "타이핑"이 아니라 그냥 붙는 것으로 보인다.
+ *
+ * D164에서 12 → 6으로 내렸다. 글자마다 wipe 애니메이션(0.22s)이 붙으면서
+ * 이 값이 **동시에 애니메이션 중인 글자 수**를 결정하게 됐기 때문이다:
+ * 6자/프레임 × 60fps × 0.22s ≈ 80자 < INK_TAIL(96). 여기를 올리려면
+ * `ink.ts`의 INK_TAIL도 같이 올려야 한다 — 안 그러면 아직 써지는 중인
+ * 글자가 꼬리 창 밖으로 밀려나 완성 상태로 툭 튄다.
+ */
+const MAX_PER_FRAME = 6;
 /**
  * 목표 소요 시간(ms). 남은 글자를 이 시간 안에 다 드러내도록 속도를 정한다.
  * 짧은 답은 또박또박, 긴 답은 빠르게 — 어느 쪽도 지루하지 않다.
  */
-const TARGET_MS = 900;
+const TARGET_MS = 1100;
 /** 스트림이 끝난 뒤에는 이 배수로 서둘러 끝낸다. */
-const CATCHUP = 4;
+const CATCHUP = 5;
 
 export interface Typewriter {
   /** 지금 드러낼 글자 수. 본문을 이 길이로 잘라 렌더한다. */

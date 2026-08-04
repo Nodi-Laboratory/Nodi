@@ -43,6 +43,7 @@ import { ItemMenu } from "./ItemMenu";
 import { QuestionTip } from "./QuestionTip";
 import { ResizeHandles, type ResizeCommit } from "./ResizeHandles";
 import { ReflowButton } from "./ReflowButton";
+import { TunedText } from "./TunedText";
 
 /** 드래그로 인정하는 최소 이동(화면 px). 이보다 작으면 클릭이다. */
 const DRAG_THRESHOLD = 4;
@@ -499,10 +500,12 @@ function TextItemImpl(props: TextItemProps) {
       <div className="relative">
         {item.title && (
           <h3
-            className="ui mb-2.5 text-[21px] font-semibold leading-snug"
+            className="hand mb-2.5 text-[21px] font-bold leading-snug"
             style={{ color: "var(--c-ink)" }}
           >
-            {item.title}
+            {/* 본문과 같은 크기 보정을 받는다 (D165) — 제목에 한자가 섞이면
+                본문보다 더 눈에 띈다. 보정할 글자가 없으면 원문 그대로다. */}
+            <TunedText text={item.title} />
           </h3>
         )}
 
@@ -511,7 +514,9 @@ function TextItemImpl(props: TextItemProps) {
           // 15px였다. "정보가 화면을 채울 정도로 커야 학습 효과가 있다"는
           // 디자이너 의견(사용자 전달 2026-08-03)에 따라 키웠다. 폭도 함께
           // 키웠으므로(ITEM_W 560) 한 줄 글자 수는 비슷하게 유지된다.
-          className="text-[18px]"
+          // `hand`가 손글씨로 바꾼다 (D164). 캔버스 위의 글에만 붙는
+          // 클래스이고, 스코프는 globals.css의 `.canvas2 .hand`가 잡는다.
+          className="hand text-[18px]"
           style={{ color: "var(--c-ink)" }}
         >
           <ItemBody
