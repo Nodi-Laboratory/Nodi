@@ -37,6 +37,26 @@ interface WorkspaceState {
   setActiveNode: (id: string | null) => void;
   setActiveSpace: (spaceId: string) => void;
   setPendingSession: (p: PendingSession | null) => void;
+
+  /**
+   * 세션을 옮긴 **뒤에** 초점을 맞출 카드 (D171 교차 연결 이동).
+   *
+   * 이동 시점에는 목적지 세션이 아직 안 채워져 있다 — 수화는 세션당 한 번이고
+   * 비동기다(D147). 그래서 "가서 이 카드를 보여 달라"는 요청을 여기 남기고,
+   * 캔버스가 그 카드를 실제로 갖게 됐을 때 소비한다.
+   */
+  pendingFocusItemId: string | null;
+  setPendingFocusItem: (id: string | null) => void;
+
+  /**
+   * 교차 연결로 과거 대화에 들어왔을 때 **돌아올 자리**.
+   *
+   * 어제 세션에 던져 놓고 끝내면 학생은 길을 잃는다. 원래 보던 곳을 기억해
+   * 두고 한 번에 돌아갈 수 있게 한다.
+   */
+  returnTo: { sessionId: string; spaceId: string; itemId: string | null } | null;
+  setReturnTo: (r: WorkspaceState["returnTo"]) => void;
+
   reset: () => void;
 }
 
@@ -55,7 +75,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setActiveNode: (id) => set({ activeNodeId: id }),
   setActiveSpace: (spaceId) => set({ activeSpaceId: spaceId }),
   setPendingSession: (p) => set({ pendingSession: p }),
+  pendingFocusItemId: null,
+  setPendingFocusItem: (id) => set({ pendingFocusItemId: id }),
+  returnTo: null,
+  setReturnTo: (r) => set({ returnTo: r }),
   // pendingSession은 의도적으로 유지(홈에서 설정 후 워크스페이스 마운트 시 소비)
   reset: () =>
-    set({ activeSessionId: null, activeSessionSpaceId: null, activeNodeId: null }),
+    set({
+      activeSessionId: null,
+      activeSessionSpaceId: null,
+      activeNodeId: null,
+      pendingFocusItemId: null,
+      returnTo: null,
+    }),
 }));

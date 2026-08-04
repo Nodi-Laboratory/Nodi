@@ -177,9 +177,13 @@ class Settings(BaseSettings):
     # ── 교차 세션 개념 연결 (D171) ────────────────────────────────
     # 거리는 상한이 아니라 **띠**다. 너무 가까운 히트는 융합이 아니라 중복이라
     # 바닥 아래는 버린다("어제도 광합성, 오늘도 광합성").
+    # 숫자는 **실측이다**(2026-08-04, embedding-query/passage, 한국어 개념 카드):
+    #   중복(같은 주제 다른 표현) 0.347 · 융합(다른 과목, 축 공유) 0.567~0.686 ·
+    #   남남 0.880~0.904. 처음 눈대중으로 잡았던 0.20~0.38은 **중복만 걸리고
+    #   융합은 전부 놓치는** 값이었다 — 재 보지 않았으면 기능이 한 번도 안 떴다.
     crosslink_enabled: bool = True
-    crosslink_min_distance: float = 0.20   # 이보다 가까우면 같은 얘기 — 버린다
-    crosslink_max_distance: float = 0.38   # 이보다 멀면 남남
+    crosslink_min_distance: float = 0.45   # 이보다 가까우면 같은 얘기 — 버린다
+    crosslink_max_distance: float = 0.72   # 이보다 멀면 남남
     crosslink_top_k: int = 8               # 검색 폭(링크는 통과한 첫 1개만)
 
     # ── PIKE-RAG (TASK 6, D129~D132) ─────────────────────────────

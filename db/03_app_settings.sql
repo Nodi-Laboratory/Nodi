@@ -49,8 +49,9 @@ insert into public.app_settings (key, value) values
     --
     -- 거리는 상한이 아니라 **띠**다. 너무 가까운 히트는 융합이 아니라 중복이다
     -- ("어제도 광합성, 오늘도 광합성"). 바닥 아래는 같은 얘기라 버린다.
+    -- 값은 실측(2026-08-04): 중복 0.347 · 융합 0.567~0.686 · 남남 0.880~0.904.
     ('crosslink_enabled',               'true'),
-    ('crosslink_min_distance',          '0.20'),
-    ('crosslink_max_distance',          '0.38'),
+    ('crosslink_min_distance',          '0.45'),
+    ('crosslink_max_distance',          '0.72'),
     ('crosslink_top_k',                 '8')
 on conflict (key) do nothing;

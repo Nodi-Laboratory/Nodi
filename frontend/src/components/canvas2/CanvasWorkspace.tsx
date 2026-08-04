@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { Undo2, X } from "lucide-react";
 import { getCanvas, putDrawing } from "@/lib/api/canvas";
 import { ApiError } from "@/lib/api/_core";
@@ -53,6 +54,9 @@ import { CanvasTopBar } from "./CanvasTopBar";
 import { Minimap } from "./Minimap";
 import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
+import { CrossLinkLayer } from "./CrossLinkLayer";
+import { useCrossLinks } from "@/lib/canvas2/useCrossLinks";
+import type { CrossLink } from "@/lib/api";
 import { SplitPrompt } from "./SplitPrompt";
 
 interface Props {
@@ -149,6 +153,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const spring = useCameraSpring(bridge);
   const store = useCanvasItems();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
+  // 교차 연결 이동 (D171) — 공간·세션을 함께 옮기고, 도착 후 초점을 맞춘다.
+  const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
+  const setReturnTo = useWorkspaceStore((s) => s.setReturnTo);
+  const returnTo = useWorkspaceStore((s) => s.returnTo);
+  const pendingFocusItemId = useWorkspaceStore((s) => s.pendingFocusItemId);
+  const setPendingFocusItem = useWorkspaceStore((s) => s.setPendingFocusItem);
+  const router = useRouter();
   const { sessionId, dropSession } = useSessionBinding(spaceId);
 
   /**
@@ -286,9 +297,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   // 임시 id로 그려 둔 아이템을 서버가 준 진짜 행으로 갈아 끼운다.
   // 갈아 끼우지 않으면 그 아이템은 영영 로컬 전용이라 편집·삭제가 서버에 안 간다.
+  /**
+   * 교차 세션 개념 연결 (D171). 연결은 워커가 턴 **뒤에** 만든다 —
+   * 턴 안에서 돌리면 답이 늦어지고, 그건 "RAG는 채팅을 절대 막지 않는다"는
+   * 불변식을 어긴다. 여기서는 조회와 표시만 한다.
+   */
+  const crossLinks = useCrossLinks(sessionId);
+  const scheduleCrossCheck = crossLinks.scheduleCheck;
+
   const onPersisted = useCallback(
-    (tempIds: string[], saved: CanvasItem[]) => replaceTemp(tempIds, saved),
-    [replaceTemp],
+    (tempIds: string[], saved: CanvasItem[]) => {
+      replaceTemp(tempIds, saved);
+      // 카드가 서버에 들어간 뒤라야 워커가 그 id로 잡을 돌린다 (D171).
+      scheduleCrossCheck();
+    },
+    [replaceTemp, scheduleCrossCheck],
   );
 
   const nextSeq = useCallback(
@@ -765,6 +788,68 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [layout, cameraRef, flyTo],
   );
 
+  /**
+   * 교차 연결이 가리키는 과거 대화로 이동한다 (D171).
+   *
+   * **세션만 바꾸면 안 된다.** 세션은 공간에 속하므로(D148) 공간까지 함께
+   * 옮기지 않으면 학급 공간에서 개인 세션이 열린다 — 남의 공간에서 남의 글을
+   * 편집할 수 있게 됐던 그 사고다.
+   *
+   * 도착해서 바로 초점을 맞출 수는 없다. 목적지 세션은 아직 안 채워져 있고
+   * 수화는 비동기이며 세션당 한 번이다(D147). 그래서 "가서 이 카드를 보여
+   * 달라"를 스토어에 남기고, 캔버스가 그 카드를 실제로 갖게 됐을 때 소비한다.
+   *
+   * 돌아올 자리도 남긴다 — 어제 세션에 던져 놓고 끝내면 학생은 길을 잃는다.
+   */
+  const goToPastConversation = useEventCallback((link: CrossLink) => {
+    const targetSpace =
+      link.to.spaceKind === "class" && link.to.spaceRef
+        ? link.to.spaceRef
+        : "personal";
+    if (sessionId) {
+      setReturnTo({
+        sessionId,
+        spaceId,
+        itemId: link.fromItemId,
+      });
+    }
+    setPendingFocusItem(link.to.itemId);
+    setActiveSpace(targetSpace);
+    setActiveSession(link.to.sessionId, targetSpace);
+    if (targetSpace !== spaceId) router.push(`/space/${targetSpace}`);
+  });
+
+  /** 원래 보던 곳으로. 갈 때와 **같은 규칙**으로 공간·세션을 함께 옮긴다. */
+  const returnToOrigin = useEventCallback(() => {
+    if (!returnTo) return;
+    const { sessionId: sid, spaceId: sp, itemId } = returnTo;
+    setReturnTo(null);
+    setPendingFocusItem(itemId);
+    setActiveSpace(sp);
+    setActiveSession(sid, sp);
+    if (sp !== spaceId) router.push(`/space/${sp}`);
+  });
+
+  /**
+   * 남겨 둔 초점 요청을 소비한다. 그 카드를 **실제로 갖게 된 뒤**라야 한다 —
+   * 배치가 아직 없으면 goToNode가 조용히 아무것도 안 한다.
+   *
+   * **한 프레임 미룬다.** 이펙트 본문에서 바로 옮기면 두 가지가 겹친다:
+   * React Compiler가 금지하는 이펙트 내 동기 setState이고(억제하지 않고
+   * 구조로 푼다), 그보다 실질적으로는 **아직 안 잰 크기로 카메라를 계산한다**.
+   * 아이템 높이는 그려진 뒤에 측정되므로(layout.measure), 페인트 뒤에 옮겨야
+   * 카드가 화면 가운데에 온다.
+   */
+  useEffect(() => {
+    if (!pendingFocusItemId) return;
+    if (!layout.positions.has(pendingFocusItemId)) return;
+    const id = requestAnimationFrame(() => {
+      goToNode(pendingFocusItemId);
+      setPendingFocusItem(null);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [pendingFocusItemId, layout.positions, goToNode, setPendingFocusItem]);
+
   const navGo = useEventCallback((dir: NavDir) => {
     goToNode(navigate(items, layout.tagOrder, pickedId, dir));
   });
@@ -1015,6 +1100,23 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onShapeDrag={handleShapeDrag}
       chrome={
         <>
+          {/* 교차 연결로 과거 대화에 들어왔을 때만 뜬다 (D171).
+              어제 세션에 던져 놓고 끝내면 학생은 길을 잃는다 — 원래 보던
+              곳으로 한 번에 돌아갈 수 있어야 한다. 지금 세션이 곧 돌아갈
+              세션이면 이미 도착한 것이므로 숨긴다. */}
+          {returnTo && returnTo.sessionId !== sessionId ? (
+            <button
+              type="button"
+              onClick={returnToOrigin}
+              className="pointer-events-auto absolute left-1/2 top-16 z-20 flex -translate-x-1/2
+                         items-center gap-1.5 rounded-full border border-accent-border/60
+                         bg-bg-elevated px-3 py-1.5 text-xs font-medium text-accent-deep
+                         shadow-md transition-colors hover:bg-accent/10"
+            >
+              <Undo2 size={13} />
+              원래 보던 곳으로
+            </button>
+          ) : null}
           <CanvasTopBar
             title={sessionTitle}
             zoom={bridge.camera.zoom}
@@ -1090,6 +1192,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
         pickedId={pickedId}
         measure={layout.measure}
         handlers={handlers}
+      />
+      <CrossLinkLayer
+        links={crossLinks.links}
+        positions={layout.positions}
+        sizes={layout.sizes}
+        onOpen={crossLinks.markOpened}
+        onNavigate={goToPastConversation}
       />
     </CanvasStage>
   );

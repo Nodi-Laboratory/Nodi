@@ -89,3 +89,6 @@ export {
 // D149: 강의 클립 추천 — admin 인제스트 + teacher 노출 토글.
 export * from "./lectures";
 
+
+// D171: 교차 세션 개념 연결 — 카드 배지 + 과거 대화로 돌아가기.
+export * from "./crosslink";
