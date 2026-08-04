@@ -139,6 +139,20 @@ class JoinClassBody(BaseModel):
     code: str = Field(min_length=1, max_length=32)
 
 
+def _normalize_join_code(raw: str) -> str:
+    """학급 코드를 저장된 형태로 맞춘다 (D170).
+
+    `nodi_gen_join_code()`의 알파벳은 `ABCDEFGHJKMNPQRSTUVWXYZ23456789` —
+    **언제나 대문자**다. 그런데 조회는 `where join_code = p_code`로 정확히
+    비교하므로 학생이 소문자로 치면 **무엇을 쳐도 실패한다.** 화면 어디에도
+    대문자로 바꿔 주는 곳이 없었다.
+
+    공백도 지운다 — 칠판·채팅으로 받아 적다 보면 중간에 끼거나("JYN WJ9")
+    복사할 때 앞뒤로 붙는다. 코드 알파벳에 공백이 없으니 지워도 잃을 것이 없다.
+    """
+    return "".join(raw.split()).upper()
+
+
 @router.post("/me/classes")
 async def join_class(
     body: JoinClassBody, user: CurrentUser = Depends(get_current_user)
@@ -150,7 +164,13 @@ async def join_class(
     """
     client = UserClient.from_user(user)
     try:
-        await client.rpc("join_class_by_code", {"p_code": body.code.strip()})
+        code = _normalize_join_code(body.code)
+        if not code:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="유효하지 않은 학급 코드입니다.",
+            )
+        await client.rpc("join_class_by_code", {"p_code": code})
     except HTTPException as exc:
         # **원인은 HTTPException 안에 들어 있다** (D169). `UserClient.rpc`는 어떤
         # DB 예외든 `_fail()`로 502로 바꿔 `raise ... from exc` 한다. 그래서 아래

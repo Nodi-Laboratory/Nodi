@@ -139,10 +139,16 @@ export default function ProfilePage() {
           <input
             type="text"
             value={code}
-            onChange={(e) => setCode(e.target.value)}
+            /* 코드는 언제나 대문자다(D170) — 친 그대로 보여 주면 소문자로
+               쳤을 때 "맞게 쳤는데 안 된다"가 된다. 서버도 정규화하지만
+               화면이 먼저 알려 주는 편이 낫다. */
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleJoinClass();
             }}
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
             placeholder="학급 코드"
             className="flex-1 rounded-lg border border-accent-border/50 bg-bg px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
           />

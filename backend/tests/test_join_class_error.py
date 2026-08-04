@@ -17,8 +17,10 @@ class _Stub:
 
     def __init__(self, cause: Exception | None) -> None:
         self._cause = cause
+        self.seen: str | None = None
 
     async def rpc(self, fn: str, args: dict) -> None:
+        self.seen = args.get("p_code")
         if self._cause is None:
             return None
         raise HTTPException(
@@ -64,3 +66,40 @@ async def test_other_db_error_stays_502(monkeypatch, _user):
 @pytest.mark.asyncio
 async def test_success_returns_joined(monkeypatch, _user):
     assert await _call(monkeypatch, None, _user) == {"joined": True}
+
+
+# ── D170: 코드 정규화 ──────────────────────────────────────────────────
+#
+# `nodi_gen_join_code()`는 대문자·숫자만 낸다(`ABCDEFGHJKMNPQRSTUVWXYZ23456789`).
+# 조회는 정확 비교라 소문자로 치면 **무엇을 쳐도 실패한다** — 프로덕션 로그에
+# 같은 학생의 실패가 12번 연속으로 찍혔다(2026-08-04).
+
+
+@pytest.mark.parametrize(
+    ("typed", "sent"),
+    [
+        ("jynwj9", "JYNWJ9"),      # 소문자
+        ("  JYNWJ9  ", "JYNWJ9"),  # 앞뒤 공백(복사·붙여넣기)
+        ("JYN WJ9", "JYNWJ9"),     # 중간 공백(받아 적기)
+        ("jYn wJ9\n", "JYNWJ9"),   # 섞인 것
+    ],
+)
+@pytest.mark.asyncio
+async def test_code_is_normalized(monkeypatch, _user, typed, sent):
+    stub = _Stub(None)
+    monkeypatch.setattr(me.UserClient, "from_user", lambda _u: stub)
+    await me.join_class(me.JoinClassBody(code=typed), _user)
+
+    assert stub.seen == sent
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_code_is_404(monkeypatch, _user):
+    """공백만 남으면 DB까지 가지 않는다."""
+    stub = _Stub(None)
+    monkeypatch.setattr(me.UserClient, "from_user", lambda _u: stub)
+    with pytest.raises(HTTPException) as ei:
+        await me.join_class(me.JoinClassBody(code="   "), _user)
+
+    assert ei.value.status_code == status.HTTP_404_NOT_FOUND
+    assert stub.seen is None

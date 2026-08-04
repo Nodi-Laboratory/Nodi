@@ -66,10 +66,15 @@ export default function OnboardingPage() {
             id="join-code"
             type="text"
             value={code}
-            onChange={(e) => setCode(e.target.value)}
+            /* 코드는 언제나 대문자다(D170). 서버도 정규화하지만 화면이 먼저
+               알려 주는 편이 낫다. */
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleJoin();
             }}
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
             placeholder="예: ABC123"
             className="flex-1 rounded-lg border border-accent-border/50 bg-bg px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
           />
