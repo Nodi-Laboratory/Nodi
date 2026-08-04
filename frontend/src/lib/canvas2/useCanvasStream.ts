@@ -547,10 +547,33 @@ export function useCanvasStream({
          * 카드 셋이 전부 뿌리로 그려져 지도에 간선이 하나도 없었다).
          */
         const linked = saved.map((row, i) => {
+          if (!row) return row;
+          let next = row;
+
+          /**
+           * 방금 받은 signed URL을 서버 행에 되돌려 놓는다 (D167).
+           *
+           * url은 만료되므로 저장하지 않는다(D87 — `toPayload`가 지운다).
+           * 그래서 서버 행에는 주소가 없고, 그 행으로 로컬을 갈아끼우면
+           * **살아 있던 이미지가 스켈레톤으로 되돌아간다**(실측: 생성 1.3초
+           * 뒤 사라졌다). 저장 안 하는 것과 화면에서 지우는 것은 다르다 —
+           * 손에 있는 주소는 그대로 쓴다.
+           *
+           * 이게 없어도 FigureItem이 다시 받아 오지만(D167), 방금 받은 것을
+           * 버리고 다시 묻는 왕복 + 그동안의 깜빡임은 그냥 손해다.
+           */
+          const liveUrl = made[i]?.data.figure?.url;
+          if (next.kind === "figure" && liveUrl && !next.data.figure?.url) {
+            next = {
+              ...next,
+              data: { ...next.data, figure: { ...next.data.figure!, url: liveUrl } },
+            };
+          }
+
           const p = made[i]?.parentItemId;
-          if (!row || !p || isRealId(p)) return row;
+          if (!p || isRealId(p)) return next;
           const real = realOf.get(p);
-          return real ? { ...row, parentItemId: real } : row;
+          return real ? { ...next, parentItemId: real } : next;
         });
         onPersisted(tempIds, linked);
 
