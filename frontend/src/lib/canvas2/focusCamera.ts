@@ -11,13 +11,33 @@
  *
  * 그래서 규칙을 둘로 나눈다:
  *
- *   딸린 것이 없다 → **D162 그대로**. 235%, 카드를 가로 가운데·위 1/3에.
+ *   딸린 것이 없다 → 카드 하나가 **다 들어오는 선에서 가장 크게**(상한 235%),
+ *                    가로 가운데·위 1/3에.
  *   딸린 것이 있다 → 카드 + 딸린 것 **묶음이 다 들어오는 배율**로. 대신
  *                    아래로는 `minZoom`까지만 — 다 보여 주겠다고 글씨를
  *                    못 읽을 만큼 축소하면 그것대로 D162를 어긴다.
  *
  * 기하는 컴포넌트가 아니라 여기에 둔다. 이런 결함(화면 밖에 놓았다)은 눈보다
  * 테스트로 잡힌다 — 실제로 눈으로는 "추천이 안 뜬다"로만 보였다.
+ *
+ * ## 235%는 상한이지 고정값이 아니다 (D166)
+ *
+ * D162는 배율을 **고정**했다. 딸린 것이 없으면 무조건 235%였는데, 폭 560
+ * 카드는 235%에서 화면 위 **1316px**을 먹는다. 교실 노트북(1366×768)·구형
+ * 크롬북(1024×768)에서는 화면보다 넓어서 **양쪽이 다 잘린다** — 실측
+ * 2026-08-04, 1024폭에서 왼쪽 114px·오른쪽 178px이 화면 밖이었고 줄마다
+ * 첫 글자가 왼쪽 레일 밑에 깔렸다. 학생 눈에는 "답이 안 뜬다"로 보인다.
+ *
+ * 그래서 235%를 **상한**으로 바꾼다. 넓은 화면에서는 그대로 235%이므로 D162의
+ * "생기는 순간 읽을 수 있는 크기"는 지켜지고, 좁은 화면에서는 카드가 다
+ * 들어오는 만큼만 당긴다. **잘린 큰 글씨보다 온전한 작은 글씨가 읽힌다.**
+ *
+ * ## 화면 크기가 아니라 **쓸 수 있는 자리**로 잰다 (D166)
+ *
+ * 캔버스 위에는 UI가 늘 떠 있다 — 왼쪽 레일·오른쪽 도구 레일·아래 질문창.
+ * 뷰포트 전체로 계산하면 딱 맞췄다고 생각한 카드가 그 밑에 깔린다(D163이
+ * 딸린 것 있는 쪽에서만 빼고 있었는데, 잘리는 건 양쪽 다 마찬가지였다).
+ * 그래서 `vp`가 **여백(inset)까지 받아** 두 갈래가 같은 자리를 본다.
  */
 
 import { union, type Rect } from "./rect";
@@ -29,7 +49,7 @@ export interface Camera {
 }
 
 export interface FocusOpts {
-  /** 딸린 것이 없을 때 쓰는 배율 (D162: 2.35). */
+  /** 배율 **상한** (D162의 2.35). 넓은 화면에서는 이 값이 그대로 쓰인다. */
   maxZoom: number;
   /** 묶음을 담느라 축소할 수 있는 하한. 글이 읽혀야 한다. */
   minZoom: number;
@@ -38,35 +58,72 @@ export interface FocusOpts {
 }
 
 /**
+ * 뷰포트 + 그 위에 늘 떠 있는 UI가 먹는 자리(px).
+ *
+ * 캔버스 스테이지는 창 전체를 덮고 UI가 그 위에 겹쳐 뜬다. 그래서 "쓸 수 있는
+ * 자리"는 창보다 작다 — 안 빼면 초점이 레일 밑으로 들어간다(D166).
+ */
+export interface FocusViewport {
+  w: number;
+  h: number;
+  left?: number;
+  right?: number;
+  top?: number;
+  bottom?: number;
+}
+
+/** UI를 뺀, 실제로 글을 놓을 수 있는 화면 사각형. */
+function usable(vp: FocusViewport): Rect {
+  const left = vp.left ?? 0;
+  const top = vp.top ?? 0;
+  return {
+    x: left,
+    y: top,
+    // 여백이 화면보다 크게 잡히는 극단(아주 작은 창)에서도 0으로 죽지 않게 한다.
+    w: Math.max(1, vp.w - left - (vp.right ?? 0)),
+    h: Math.max(1, vp.h - top - (vp.bottom ?? 0)),
+  };
+}
+
+/**
  * 초점 카메라.
  *
  * @param target      새로 생긴 개념 카드
  * @param attached    그 카드에 딸린 것들(강의 클립·교과서 도판). 없으면 빈 배열.
- * @param vp          뷰포트 크기(px)
+ * @param vp          뷰포트 크기와 UI 여백(px)
  */
 export function focusCamera(
   target: Rect,
   attached: readonly Rect[],
-  vp: { w: number; h: number },
+  vp: FocusViewport,
   { maxZoom, minZoom, pad }: FocusOpts,
 ): Camera {
-  // 딸린 것이 없다 — D162 그대로다. 여기를 건드리면 "노드가 크게 보인다"가
-  // 조용히 깨진다.
+  const box = usable(vp);
+
+  /**
+   * 딸린 것이 없다 — 카드 하나만 보면 된다 (D162 → D166).
+   *
+   * 배율은 **상한 안에서 카드가 다 들어오는 값**이다. 넓은 화면에서는 상한에
+   * 걸려 235% 그대로이고, 좁은 화면에서는 잘리지 않을 만큼만 당긴다.
+   * 세로는 재지 않는다 — 글은 아래로 자라므로 높이를 맞추려 들면 긴 답일수록
+   * 축소되어 D162가 뒤집힌다. 위 1/3에 두는 것이 그 자리의 답이다.
+   */
   if (!attached.length) {
-    const z = maxZoom;
+    const fit = (box.w - pad * 2) / Math.max(target.w, 1);
+    const z = Math.min(maxZoom, Math.max(minZoom, fit));
     return {
       zoom: z,
-      scrollX: vp.w / 2 / z - (target.x + target.w / 2),
+      scrollX: (box.x + box.w / 2) / z - (target.x + target.w / 2),
       // 정중앙이 아니라 위 1/3 — 글이 아래로 자라기 때문이다(D162).
-      scrollY: vp.h / 3 / z - target.y,
+      scrollY: (box.y + box.h / 3) / z - target.y,
     };
   }
 
   const b = union([target, ...attached]) as Rect;   // 비지 않으므로 null이 아니다
   const fit = Math.min(
     maxZoom,
-    (vp.w - pad * 2) / Math.max(b.w, 1),
-    (vp.h - pad * 2) / Math.max(b.h, 1),
+    (box.w - pad * 2) / Math.max(b.w, 1),
+    (box.h - pad * 2) / Math.max(b.h, 1),
   );
   const zoom = Math.min(maxZoom, Math.max(minZoom, fit));
 
@@ -76,13 +133,20 @@ export function focusCamera(
    * 넘칠 때 가운데에 두면 양옆이 똑같이 잘리는데, 왼쪽에 있는 것은 개념
    * 카드(=답)다. 답의 첫 글자가 화면 밖에 있는 것보다는 제일 먼 첨부가
    * 잘리는 편이 낫다 — 글도 트리도 왼쪽·위에서부터 읽는다.
+   *
+   * 넘칠 때는 `pad`를 **쓰지 않는다** (D166). 여백은 들어갈 때 숨 쉴 자리로
+   * 두는 것이지, 이미 넘치는 묶음에서 왼쪽에 72px을 비우면 그만큼이 그대로
+   * 오른쪽 밖으로 밀린다 — 실측 2026-08-04: 배율이 하한(1.15)에 걸린 1280
+   * 화면에서 클립 카드의 오른쪽이 딱 그 폭만큼 잘렸다.
    */
-  const fitsH = b.w * zoom <= vp.w - pad * 2;
-  const fitsV = b.h * zoom <= vp.h - pad * 2;
+  const fitsH = b.w * zoom <= box.w - pad * 2;
+  const fitsV = b.h * zoom <= box.h - pad * 2;
   return {
     zoom,
-    scrollX: fitsH ? vp.w / 2 / zoom - (b.x + b.w / 2) : pad / zoom - b.x,
-    scrollY: fitsV ? (vp.h - b.h * zoom) / 2 / zoom - b.y : pad / zoom - b.y,
+    scrollX: fitsH ? (box.x + box.w / 2) / zoom - (b.x + b.w / 2) : box.x / zoom - b.x,
+    scrollY: fitsV
+      ? (box.y + (box.h - b.h * zoom) / 2) / zoom - b.y
+      : box.y / zoom - b.y,
   };
 }
 

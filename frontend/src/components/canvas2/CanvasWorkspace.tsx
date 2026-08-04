@@ -63,9 +63,11 @@ interface Props {
 const FALLBACK_H = 180;
 
 /**
- * 새 답이 생겼을 때의 배율 (D162, 사용자 지시: 235%).
+ * 새 답이 생겼을 때의 배율 **상한** (D162, 사용자 지시: 235%).
  *
- * 읽으라고 만든 글이니 만들어지는 순간 읽을 수 있는 크기여야 한다.
+ * 읽으라고 만든 글이니 만들어지는 순간 읽을 수 있는 크기여야 한다. 다만
+ * 고정값이 아니라 상한이다(D166) — 폭 560 카드는 235%에서 1316px이라
+ * 교실 노트북에서는 화면보다 넓어 양쪽이 잘렸다. 잘린 큰 글씨는 안 읽힌다.
  */
 const NEW_NODE_ZOOM = 2.35;
 
@@ -79,15 +81,21 @@ const ATTACH_MIN_ZOOM = 1.15;
 /** 묶음 둘레 여백(px). 화면 가장자리에 딱 붙으면 잘린 것처럼 보인다. */
 const FOCUS_PAD = 72;
 /**
- * 초점 계산에서 빼는 UI 자리 (D163).
+ * 초점 계산에서 빼는 UI 자리 (D163 → D166).
  *
- * 뷰포트는 `<main>` 전체지만 그 위에 항상 떠 있는 것이 둘 있다 — 오른쪽
- * 아래의 도구 레일과 아래쪽의 질문창. 그걸 세지 않고 배율을 맞추면 딱
- * 맞췄다고 계산한 아이템이 실제로는 그 밑에 깔린다.
+ * 뷰포트는 `<main>` 전체지만 그 위에 항상 떠 있는 것들이 있다 — 왼쪽 레일,
+ * 오른쪽 도구 레일, 아래쪽 질문창, 위쪽 상단바. 그걸 세지 않고 배율을
+ * 맞추면 딱 맞췄다고 계산한 아이템이 실제로는 그 밑에 깔린다.
+ *
+ * D163은 **딸린 것이 있을 때만** 뺐다. 잘리는 건 양쪽 다 마찬가지였으므로
+ * (실측 2026-08-04: 카드 하나짜리 답의 줄마다 첫 글자가 왼쪽 레일에 가려
+ * 있었다) 이제 두 갈래가 같은 여백을 쓴다.
  *
  * 개념 지도(오른쪽 위)는 빼지 않는다 — 접을 수 있고, 폭이 340이라 빼기
  * 시작하면 쓸 수 있는 자리가 확 줄어 오히려 더 축소된다.
  */
+const UI_LEFT = 72;
+const UI_TOP = 56;
 const UI_RIGHT = 80;
 const UI_BOTTOM = 150;
 
@@ -947,9 +955,11 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 옮긴다. 아이템 위쪽을 화면 상단 1/3에 두는데, 정중앙에 두면 글이 아래로
    * 자라면서 곧 화면을 벗어난다.
    *
-   * 배율은 그때의 값을 쓰지 않고 `NEW_NODE_ZOOM`으로 고정한다(사용자 지시
+   * 배율은 그때의 값을 쓰지 않고 `NEW_NODE_ZOOM`까지 당긴다(사용자 지시
    * 2026-08-03: "노드를 생성하면 그 노드가 아주 크게 보이게 확대"). 축소해
-   * 놓고 질문하면 답이 깨알같이 생겨서 정작 읽지를 못했다.
+   * 놓고 질문하면 답이 깨알같이 생겨서 정작 읽지를 못했다. 다만 **상한**이라
+   * 카드가 화면보다 넓어지면 그만큼 물러선다(D166) — 잘린 큰 글씨는 아예
+   * 안 읽힌다.
    */
   const { focusId, clearFocus } = stream;
   const storeItems = store.items;
@@ -980,9 +990,15 @@ export function CanvasWorkspace({ spaceId }: Props) {
           const as = layout.sizes.get(a.id) as Size;
           return { x: ap.x, y: ap.y, w: as.w, h: as.h };
         }),
-        attached.length
-          ? { w: vp.w - UI_RIGHT, h: vp.h - UI_BOTTOM }
-          : { w: vp.w, h: vp.h },   // 딸린 것이 없으면 D162 그대로 둔다
+        // 딸린 것이 있든 없든 같은 여백을 본다 (D166).
+        {
+          w: vp.w,
+          h: vp.h,
+          left: UI_LEFT,
+          right: UI_RIGHT,
+          top: UI_TOP,
+          bottom: UI_BOTTOM,
+        },
         { maxZoom: NEW_NODE_ZOOM, minZoom: ATTACH_MIN_ZOOM, pad: FOCUS_PAD },
       ),
     );
