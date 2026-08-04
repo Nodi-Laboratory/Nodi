@@ -151,10 +151,13 @@ async def join_class(
     client = UserClient.from_user(user)
     try:
         await client.rpc("join_class_by_code", {"p_code": body.code.strip()})
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 - 코드 오류와 그 외를 구분해 전달
-        if "invalid_join_code" in str(exc):
+    except HTTPException as exc:
+        # **원인은 HTTPException 안에 들어 있다** (D169). `UserClient.rpc`는 어떤
+        # DB 예외든 `_fail()`로 502로 바꿔 `raise ... from exc` 한다. 그래서 아래
+        # `except Exception`의 invalid_join_code 분기는 **닿을 수 없었고**, 코드를
+        # 잘못 친 학생에게 "유효하지 않은 학급 코드입니다" 대신 502
+        # "Database request failed."가 떴다(실측 2026-08-04). 원인 사슬을 본다.
+        if "invalid_join_code" in str(exc.__cause__ or ""):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="유효하지 않은 학급 코드입니다.",

@@ -220,12 +220,21 @@ class _BaseClient:
                 for r in rows:
                     r[tname] = None
                 continue
-            col_sql = ", ".join(Q._ident(c) for c in cols)
+            # `id`가 cols에 이미 있으면 두 번 뽑지 않는다(`SELECT id, id, …`).
+            extra = [Q._ident(c) for c in cols if c != "id"]
+            col_sql = ("id, " + ", ".join(extra)) if extra else "id"
             sub = await conn.fetch(
-                f"SELECT id, {col_sql} FROM {Q._ident(tname)} WHERE id = ANY($1)",
+                f"SELECT {col_sql} FROM {Q._ident(tname)}"
+                f" WHERE id = ANY($1::uuid[])",
                 ids,
             )
-            by_id = {r["id"]: {c: r[c] for c in cols} for r in sub}
+            # **바깥 행과 같은 표현으로 맞춘다** (D169). 바깥 rows는 이미
+            # `_rows()`를 거쳐 uuid가 **문자열**인데, 여기서 raw Record를 그대로
+            # 쓰면 키가 `UUID` 객체가 되어 `by_id.get("...")`이 **언제나 빗나간다**.
+            # 실패가 예외가 아니라 **조용한 null**이라 화면에서만 티가 났다 —
+            # 학급 이름이 전부 사라져 사이드바가 "학급"만 여러 개 띄웠다.
+            # `_jsonable`의 docstring이 경고한 바로 그 UUID vs str 사고다.
+            by_id = {r["id"]: {c: r[c] for c in cols} for r in _rows(sub)}
             for r in rows:
                 r[tname] = by_id.get(r.get(fk))
 
