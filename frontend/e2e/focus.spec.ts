@@ -76,3 +76,21 @@ for (const s of SCREENS) {
     expect(geo.width, "카드가 기본 크기(560)보다 작게 축소됐다").toBeGreaterThan(560);
   });
 }
+
+/**
+ * 검은 상하좌우 이동 막대(TreeNav, D157)를 걷어냈다 (사용자 지시 2026-08-04).
+ *
+ * 방향키 이동 자체는 남아 있다 — 없앤 것은 화면 위의 막대뿐이다.
+ */
+test("캔버스에 검은 상하좌우 화살표 막대가 없다", async ({ page }) => {
+  await loginAndOpenCanvas(page);
+
+  for (const label of [
+    "이전 노드 (위 화살표)",
+    "다음 노드 (아래 화살표)",
+    "왼쪽 트리 (왼쪽 화살표)",
+    "오른쪽 트리 (오른쪽 화살표)",
+  ]) {
+    await expect(page.getByLabel(label)).toHaveCount(0);
+  }
+});

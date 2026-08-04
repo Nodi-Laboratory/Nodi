@@ -41,7 +41,7 @@ import type { Size } from "@/lib/canvas2/useItemLayout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
 import { descendants, nextFocus, treeEdges } from "@/lib/canvas2/tree";
-import { branchesOf, navigate, type NavDir } from "@/lib/canvas2/navigate";
+import { navigate, type NavDir } from "@/lib/canvas2/navigate";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
@@ -54,7 +54,6 @@ import { Minimap } from "./Minimap";
 import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
 import { SplitPrompt } from "./SplitPrompt";
-import { TreeNav } from "./TreeNav";
 
 interface Props {
   spaceId: string;
@@ -770,16 +769,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     goToNode(navigate(items, layout.tagOrder, pickedId, dir));
   });
 
-  /** 아래 버튼이 쪼개질 갈래. 이름은 제목(없으면 본문 앞부분)으로. */
-  const navBranches = useMemo(
-    () =>
-      branchesOf(items, pickedId).map((id) => {
-        const it = items.find((i) => i.id === id);
-        return { id, label: (it?.title?.trim() || it?.body || "").slice(0, 14) || "다음" };
-      }),
-    [items, pickedId],
-  );
-
   /**
    * 방향키. **입력 중에는 절대 가로채지 않는다** — 질문을 쓰다 커서를 옮기려고
    * ←를 눌렀는데 화면이 다른 트리로 날아가면 안 된다(도구 단축키와 같은 규칙).
@@ -1075,14 +1064,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
           <div className="ui absolute bottom-[152px] left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2">
             <SessionFilesBar sessionId={sessionId} uploadError={uploadError} />
           </div>
-          <TreeNav
-            canUp={!!navigate(items, layout.tagOrder, pickedId, "up")}
-            canLeft={!!navigate(items, layout.tagOrder, pickedId, "left")}
-            canRight={!!navigate(items, layout.tagOrder, pickedId, "right")}
-            branches={navBranches}
-            onGo={navGo}
-            onGoBranch={goToNode}
-          />
           <AskBar
             onAttach={handleAttach}
             busy={stream.busy}
