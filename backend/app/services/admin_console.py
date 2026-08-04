@@ -366,6 +366,65 @@ _SPECS: list[dict[str, Any]] = [
         "description": "원자 생성 solar 호출을 몇 개씩 병렬로 돌릴지.",
         "effect": "인제스트 속도 ↔ 모델 부하",
     },
+    # ── 개념 연결 (D171·D172) ────────────────────────────────────────
+    {
+        "key": "crosslink_enabled",
+        "label": "개념 연결",
+        "group": "개념 연결",
+        "widget": "toggle",
+        "scope": "live",
+        "description": (
+            "다른 과목·다른 세션에서 한 이야기와 이어지면 카드에 알림을 띄운다."
+        ),
+        "effect": "융합 학습 지원 on/off",
+    },
+    {
+        "key": "crosslink_always_on",
+        "label": "개념 연결 상시 켜기 (테스트용)",
+        "group": "개념 연결",
+        "widget": "toggle",
+        "scope": "live",
+        "description": (
+            "거리 띠를 무시하고 후보가 있으면 무조건 잇는다. **테스트가 끝나면 "
+            "반드시 끈다** — 켜 두면 '드물게 떠서 반가운 것'이라는 성질이 사라진다."
+        ),
+        "effect": "무조건 연결(엄격도 무시)",
+    },
+    {
+        "key": "crosslink_min_distance",
+        "label": "개념 연결 거리 바닥",
+        "group": "개념 연결",
+        "widget": "slider",
+        "min": 0.0, "max": 0.9, "step": 0.01,
+        "scope": "live",
+        "description": (
+            "이보다 가까우면 **같은 얘기**라 버린다(융합이 아니라 중복). "
+            "실측: 중복 0.347 · 융합 0.567~0.686."
+        ),
+        "effect": "중복 히트 차단 강도",
+    },
+    {
+        "key": "crosslink_max_distance",
+        "label": "개념 연결 거리 천장",
+        "group": "개념 연결",
+        "widget": "slider",
+        "min": 0.0, "max": 0.9, "step": 0.01,
+        "scope": "live",
+        "description": (
+            "이보다 멀면 남남이라 버린다. 실측: 남남 0.880~0.904."
+        ),
+        "effect": "연결 빈도 ↔ 관련성",
+    },
+    {
+        "key": "crosslink_top_k",
+        "label": "개념 연결 검색 폭",
+        "group": "개념 연결",
+        "widget": "number",
+        "min": 1, "max": 50, "step": 1, "unit": "개",
+        "scope": "live",
+        "description": "후보를 몇 개까지 받아 볼지. 링크는 통과한 첫 1개만 만든다.",
+        "effect": "후보 폭 ↔ 검색 비용",
+    },
 ]
 
 _SPEC_BY_KEY = {s["key"]: s for s in _SPECS}
@@ -377,6 +436,7 @@ _GROUP_ORDER = [
     "업로드",
     "교과서 도판",
     "강의 클립",
+    "개념 연결",
     "PIKE-RAG",
     "기타",
 ]
