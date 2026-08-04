@@ -55,9 +55,16 @@ class Settings(BaseSettings):
     # 동작한다(figure_judge.is_configured).
     #
     # 비대칭 임베딩: 질의 embedding-query / 문서 embedding-passage (혼용 금지).
+    #
+    # 2026-08-04: 대화 생성 모델을 solar-pro2 → solar-pro3으로 올렸다(사용자
+    # 지시). 이 값은 판단 단계(solar.complete)와 생성 단계(solar.stream_answer)를
+    # 모두 지배한다 — 개념 카드 형식은 생성 단계 프롬프트가 강제하므로 모델을
+    # 바꾸면 형식 준수를 다시 확인해야 한다. 인제스트 시점 LLM 작업(원자 질문
+    # D129·의미 청킹 D132)도 solar.complete를 재사용하므로 함께 바뀐다.
+    # 강의 클립 원자화만 자기 노브(lecture_atom_model)로 따로 간다.
     upstage_api_key: str = ""
     upstage_base_url: str = "https://api.upstage.ai/v1"
-    upstage_chat_model: str = "solar-pro2"
+    upstage_chat_model: str = "solar-pro3"
     upstage_embedding_query_model: str = "embedding-query"
     upstage_embedding_passage_model: str = "embedding-passage"
     upstage_document_parse_model: str = "document-parse"

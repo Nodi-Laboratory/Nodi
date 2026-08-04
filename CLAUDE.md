@@ -62,8 +62,9 @@ Manager는 기능 구현 작업 시 다음 문서 체계를 따른다 — **작�
 
 Next.js(App Router, `frontend/`) · FastAPI(`backend/`) · Postgres(RLS로 권한 강제·자체 인증)
 · Qdrant(벡터 1024d/Cosine, `docker compose up -d qdrant`) · Upstage(임베딩 + 문서 파싱)
-· Upstage `solar-pro2`(대화 생성 — 스트리밍 + tool calling, D108. 인제스트 시점
-LLM 작업 — 원자 질문 생성 D129·의미 청킹 경계 판단 D132 — 도 이 모델을 재사용한다).
+· Upstage `solar-pro3`(대화 생성 — 스트리밍 + tool calling, D108. 인제스트 시점
+LLM 작업 — 원자 질문 생성 D129·의미 청킹 경계 판단 D132 — 도 이 모델을 재사용한다.
+2026-08-04 사용자 지시로 solar-pro2에서 올렸다 — `UPSTAGE_CHAT_MODEL`로 되돌린다).
 교과서 도판 비전만 별도 계열(judge_* 노브)이다 — OpenAI 호환 비전 엔드포인트면
 무엇이든 꽂히고, 배포 서버는 자체 GPU에 llama.cpp로 EXAONE-4.5-33B를 띄워
 쓴다(D118). 이 계열이 지금 하는 일은 **캡션 생성**이다(`figure_caption.py`,

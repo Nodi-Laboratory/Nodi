@@ -5,7 +5,7 @@
 > 근거로 답한다.
 
 Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
-**Qdrant**(벡터 1024d) · **Upstage**(대화 생성 `solar-pro2` + 임베딩 + 문서 파싱).
+**Qdrant**(벡터 1024d) · **Upstage**(대화 생성 `solar-pro3` + 임베딩 + 문서 파싱).
 
 > ## 📌 변경 보고서 — 먼저 읽으세요
 >
@@ -190,7 +190,7 @@ deploy/deploy.sh       # 이후 배포 — 빌드 → 마이그레이션 → 재
   ai/                       ReAct 스킬 루프 — 도구 판단 → 스킬 실행 → 생성 (D109)
     catalog.py              (공간·역할·세션 상태)로 노출 도구를 먼저 좁힌다
     skills/                 스킬 하나가 파일 하나 (9종)
-  services/solar.py         대화 생성(Upstage solar-pro2, 스트리밍 + tool calling)
+  services/solar.py         대화 생성(Upstage solar-pro3, 스트리밍 + tool calling)
   services/upstage.py       임베딩(embedding-query/passage, 1024d) + 문서 파싱
   services/qdrant_store.py  컬렉션 file_chunks / textbook_figures
   services/figure_*.py      교과서 도판 추출·비전 판정
