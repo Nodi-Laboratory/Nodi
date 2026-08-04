@@ -185,6 +185,18 @@ class Settings(BaseSettings):
     crosslink_min_distance: float = 0.45   # 이보다 가까우면 같은 얘기 — 버린다
     crosslink_max_distance: float = 0.72   # 이보다 멀면 남남
     crosslink_top_k: int = 8               # 검색 폭(링크는 통과한 첫 1개만)
+
+    # ── 캔버스 화면 동작 (D174) ───────────────────────────────────
+    # 지금까지 프론트에 상수로 박혀 있어 **관리자가 아무것도 못 만졌다.**
+    # 서버가 값을 갖고 `GET /settings/client`로 내려보낸다.
+    canvas_cards_per_turn: int = 1         # 한 턴에 만들 개념 카드 수 (D162)
+    canvas_type_chars_per_frame: int = 2   # 글자 나오는 속도(프레임당 글자 수)
+    canvas_focus_zoom: float = 2.35        # 새 카드로 확대할 배율 **상한** (D166)
+    canvas_map_node_zoom: float = 1.8      # 지도에서 노드·간선이 보이기 시작하는 배율
+    canvas_connectors_default_on: bool = True  # 캔버스 연결선 기본 표시 (D151)
+    canvas_col_gap: int = 760              # 태그 열 사이 간격
+    canvas_row_gap: int = 240              # 부모–자식 세로 간격
+    canvas_sib_gap: int = 200              # 형제 서브트리 좌우 간격
     # 상시 켜기 (D172) — 거리 띠를 무시하고 가장 가까운 후보를 무조건 잇는다.
     # **테스트용이다.** 켜 두면 "드물게"라는 성질이 사라진다.
     crosslink_always_on: bool = False

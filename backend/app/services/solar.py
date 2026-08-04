@@ -33,6 +33,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from ..config import get_settings
+from . import app_settings
 
 logger = logging.getLogger("nodi.solar")
 settings = get_settings()
@@ -192,6 +193,26 @@ class Completion:
     usage: dict[str, int] = field(default_factory=dict)
 
 
+async def _gen_params(max_tokens: int | None = None) -> tuple[float, int]:
+    """생성 파라미터를 **admin 오버레이 우선**으로 읽는다 (D174).
+
+    예전에는 config 값을 그대로 썼다 — 관리자 콘솔에 노브가 있어도 실제
+    호출은 그 값을 안 봤다는 뜻이다("화면에만 있는 설정"). 튜너블 규약(D62)은
+    오버레이 > config다.
+
+    호출부가 넘긴 `max_tokens`는 그대로 존중한다 — 판단 단계처럼 짧게 끊어야
+    하는 호출이 있고, 그건 전역 분량과 다른 이야기다.
+    """
+    overlay = await app_settings.get_overlay()
+    temp = app_settings.as_float(
+        overlay, "chat_temperature", settings.chat_temperature, 0.0, 1.5
+    )
+    limit = max_tokens or app_settings.as_int(
+        overlay, "chat_max_tokens", settings.chat_max_tokens, 256, 8192
+    )
+    return temp, limit
+
+
 async def stream_answer(
     history: list[tuple[str, str]],
     question: str,
@@ -210,12 +231,13 @@ async def stream_answer(
     usage는 마지막 청크로 한 번 오는 곁다리 정보라 싱크가 더 맞는다.
     """
     url, model, key = _require_config()
+    temperature, max_out = await _gen_params()
     payload = {
         "model": model,
         "messages": _build_messages(system_prompt, history, question),
         "stream": True,
-        "temperature": settings.chat_temperature,
-        "max_tokens": settings.chat_max_tokens,
+        "temperature": temperature,
+        "max_tokens": max_out,
     }
     if usage_sink is not None:
         # 실측(2026-07-28): 이 옵션이 **없으면 스트리밍 응답에 usage가 아예
@@ -271,11 +293,12 @@ async def complete(
     모델을 그대로 써 기존 호출부 동작이 불변이다.
     """
     url, default_model, key = _require_config()
+    temperature, max_out = await _gen_params(max_tokens)
     payload: dict[str, Any] = {
         "model": model or default_model,
         "messages": messages,
-        "temperature": settings.chat_temperature,
-        "max_tokens": max_tokens or settings.chat_max_tokens,
+        "temperature": temperature,
+        "max_tokens": max_out,
     }
     if tools:
         payload["tools"] = tools

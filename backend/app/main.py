@@ -25,7 +25,7 @@ from .routers import (
     sessions,
     teacher,
 )
-from .services import qdrant_store, worker
+from .services import admin_console, qdrant_store, worker
 
 settings = get_settings()
 
@@ -39,6 +39,10 @@ async def lifespan(_app: FastAPI):
     # 임베딩 워커(워커 DSN 미설정이면 no-op). DB 풀은 첫 사용 시 지연 생성된다.
     # Qdrant 컬렉션 보장(멱등, 절대 raise 안 함 — Qdrant 다운이어도 부팅 계속).
     await qdrant_store.ensure_collections()
+    # D174: 카탈로그에 있는데 app_settings에 행이 없는 노브를 채운다.
+    # 03_app_settings.sql은 빈 볼륨일 때 한 번만 돌아서, 그 뒤에 추가된 노브는
+    # 콘솔에 "DB 행 없음" 경보로 뜬다(동작은 멀쩡한데 고장으로 보인다).
+    await admin_console.ensure_setting_rows()
     worker.start(_app)
     yield
     # D104: PostgREST httpx 풀 → asyncpg 풀. 종료 시 함께 닫는다.

@@ -32,7 +32,9 @@ async def search_class_clips(
             return []
 
         overlay = await app_settings.get_overlay()
-        top_k = settings.lecture_retrieve_top_k
+        top_k = app_settings.as_int(
+            overlay, "lecture_retrieve_top_k", settings.lecture_retrieve_top_k, 1, 10
+        )
         direct_gate = app_settings.as_float(overlay, "lecture_retrieve_max_distance",
                                             settings.lecture_retrieve_max_distance, 0.1, 0.9)
         atom_on = app_settings.as_bool(

@@ -57,7 +57,9 @@ async def search_class_figures(
         hits = await qdrant_store.search(
             qdrant_store.COL_TEXTBOOK_FIGURES,
             vec,
-            settings.figure_retrieve_top_k,
+            app_settings.as_int(
+                overlay, "figure_retrieve_top_k", settings.figure_retrieve_top_k, 1, 10
+            ),
             file_ids=file_ids,
             # 거리 규약 distance = 1 - score.
             score_threshold=1.0 - max_dist,

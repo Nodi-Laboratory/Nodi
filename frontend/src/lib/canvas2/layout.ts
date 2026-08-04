@@ -69,7 +69,7 @@ export const ITEM_MIN_W = 132;
  * 대가는 이동 거리다. 열이 늘수록 가로로 길어지므로 지도 클릭 이동과
  * "전체 보기"가 그만큼 더 중요해진다.
  */
-export const COL_GAP = 760;
+export let COL_GAP = 760;
 // 240이었다. 카드 폭이 460→560으로 커지면서 열 사이가 상대적으로 더 좁아
 // 보였다("트리들이 너무 촘촘하게 붙어있다" — 사용자 지시 2026-08-03).
 /**
@@ -79,7 +79,7 @@ export const COL_GAP = 760;
  * 더 띄워라. 그냥 모든 노드들 사이의 거리가 더 길어지도록." 연결선이 지나갈
  * 자리이기도 해서, 넓을수록 어느 노드에서 어느 노드로 가는지가 또렷하다.
  */
-export const ROW_GAP = 240;
+export let ROW_GAP = 240;
 /** 열의 시작 y. 태그 라벨이 위에 붙을 자리를 남긴다. */
 export const COL_TOP = 0;
 /** 자식(AI 응답)을 부모(메모) 옆에 둘 때의 가로 간격. */
@@ -99,7 +99,7 @@ const ATTACH_KINDS = new Set(["clip", "figure"]);
  * 96이었다. 노드를 만들면 235%로 당겨 보는 흐름(D162)에서는 화면에 한 장만
  * 들어오므로, 좁은 간격은 이득이 없고 축소했을 때 가지 구분만 흐려진다.
  */
-export const SIB_GAP = 200;
+export let SIB_GAP = 200;
 /** 겹침 회피 루프 안전 상한. 정상적으로는 장애물 수만큼도 안 돈다. */
 const MAX_PUSH = 400;
 
@@ -496,4 +496,28 @@ export function placeBesideParent(
 /** 배치 결과 + 실측 크기 → 사각형. 카메라 이동·미니맵·연결선이 쓴다. */
 export function rectOf(pos: Placed, size: { w: number; h: number }): Rect {
   return { x: pos.x, y: pos.y, w: size.w, h: size.h };
+}
+
+
+/**
+ * 배치 간격을 관리자 설정으로 바꾼다 (D174).
+ *
+ * 이 셋은 원래 상수라 관리자가 못 만졌다. `const`를 `let`으로 바꾸고 여기서만
+ * 고친다 — ESM은 라이브 바인딩이라 이걸 읽는 쪽(배치 함수·컴포넌트)은 코드를
+ * 하나도 안 바꿔도 새 값을 본다.
+ *
+ * **모듈 상태를 고치는 것이 맞다.** 이 값들은 순수 함수 십여 개가 읽는데,
+ * 전부에 인자를 하나씩 더하면 호출부와 테스트가 통째로 흔들린다. 대신
+ * "언제 바뀌는가"를 한 곳으로 좁힌다 — 앱이 설정을 받은 직후 한 번이다.
+ *
+ * 값이 바뀌면 **이미 그려진 화면은 그대로다.** 다음 배치 계산부터 반영된다.
+ */
+export function configureLayout(next: {
+  colGap?: number;
+  rowGap?: number;
+  sibGap?: number;
+}): void {
+  if (next.colGap && next.colGap > 0) COL_GAP = next.colGap;
+  if (next.rowGap && next.rowGap > 0) ROW_GAP = next.rowGap;
+  if (next.sibGap && next.sibGap > 0) SIB_GAP = next.sibGap;
 }

@@ -56,6 +56,7 @@ import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
 import { CrossLinkLayer } from "./CrossLinkLayer";
 import { useCrossLinks } from "@/lib/canvas2/useCrossLinks";
+import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 import type { CrossLink } from "@/lib/api";
 import { SplitPrompt } from "./SplitPrompt";
 
@@ -72,6 +73,7 @@ const FALLBACK_H = 180;
  * 고정값이 아니라 상한이다(D166) — 폭 560 카드는 235%에서 1316px이라
  * 교실 노트북에서는 화면보다 넓어 양쪽이 잘렸다. 잘린 큰 글씨는 안 읽힌다.
  */
+// D174: 기본값. 실제 값은 관리자 설정에서 온다(useClientSettings).
 const NEW_NODE_ZOOM = 2.35;
 
 /**
@@ -302,6 +304,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 턴 안에서 돌리면 답이 늦어지고, 그건 "RAG는 채팅을 절대 막지 않는다"는
    * 불변식을 어긴다. 여기서는 조회와 표시만 한다.
    */
+  // D174: 캔버스 화면 동작 값(확대 배율·간격 등)은 관리자가 정한다.
+  const clientSettings = useClientSettings();
   const crossLinks = useCrossLinks(sessionId);
   const scheduleCrossCheck = crossLinks.scheduleCheck;
 
@@ -1073,11 +1077,18 @@ export function CanvasWorkspace({ spaceId }: Props) {
           top: UI_TOP,
           bottom: UI_BOTTOM,
         },
-        { maxZoom: NEW_NODE_ZOOM, minZoom: ATTACH_MIN_ZOOM, pad: FOCUS_PAD },
+        {
+          maxZoom: clientSettings.focusZoom || NEW_NODE_ZOOM,
+          minZoom: ATTACH_MIN_ZOOM,
+          pad: FOCUS_PAD,
+        },
       ),
     );
     clearFocus();
-  }, [focusId, layout.positions, layout.sizes, storeItems, vp, flyTo, clearFocus]);
+  }, [
+    focusId, layout.positions, layout.sizes, storeItems, vp, flyTo, clearFocus,
+    clientSettings.focusZoom,
+  ]);
 
   const banner =
     drawError ??

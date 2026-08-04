@@ -20,7 +20,7 @@ from ..auth.deps import (
 from ..auth.email import EmailAddress
 from ..auth.tokens import create_access_token
 from ..db.client import UserClient
-from ..services import accounts
+from ..services import accounts, admin_console
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -221,3 +221,18 @@ async def complete_onboarding(
     await client.rpc("mark_onboarded", {})
     return {"onboarded": True}
 
+
+
+@router.get("/settings/client")
+async def get_client_settings(
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """캔버스 화면 동작 값 (D174).
+
+    프론트에 상수로 박혀 있던 것들이라 관리자가 아무것도 못 만졌다. 서버가
+    값을 갖고 여기서 내려보낸다.
+
+    **학생도 부르는 경로다.** 그래서 화면 동작에 쓰이는 것만 담는다 —
+    거리 게이트·모델명 같은 운영 값은 `/admin/settings`에만 있다.
+    """
+    return await admin_console.client_settings()

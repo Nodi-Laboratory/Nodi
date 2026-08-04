@@ -34,6 +34,7 @@ import { isRealId } from "@/lib/ids";
 import type { ChatDoneEvent } from "@/lib/types";
 import type { CanvasItem } from "./types";
 import { appendLine, createStreamParser } from "./streamParser";
+import { useClientSettings } from "./useClientSettings";
 
 /** 도구 호출을 학생 말로 옮긴다. v1 TOOL_LABELS 이식. */
 const TOOL_LABELS: Record<string, string> = {
@@ -110,7 +111,8 @@ interface Deps {
  * 60fps 기준 2자/프레임 ≈ 120자/초. 한국어 한 문단(약 120자)이 1초에 걸쳐
  * 흐른다.
  */
-const CHARS_PER_FRAME = 2;
+// D174: 이 값의 기본값은 `lib/api/clientSettings.ts`가 갖는다 —
+// 서버를 못 부를 때 쓰는 fallback도 그쪽 한 곳에만 둔다.
 /**
  * 스트림이 끝난 뒤 남은 글을 마저 내보낼 때의 상한 프레임 수.
  *
@@ -171,6 +173,10 @@ export function useCanvasStream({
   hasClip,
   onSessionGone,
 }: Deps): CanvasStreamApi {
+  // D174: 글자 속도·한 턴 카드 수는 관리자가 정한다.
+  const clientSettings = useClientSettings();
+  const charsPerFrame = Math.max(1, clientSettings.typeCharsPerFrame);
+  const cardsPerTurn = Math.max(1, clientSettings.cardsPerTurn);
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -274,8 +280,8 @@ export function useCanvasStream({
         if (head && shown < target.length) {
           const left = target.length - shown;
           const per = streamDone
-            ? Math.max(CHARS_PER_FRAME, Math.ceil(left / TAIL_FRAMES))
-            : CHARS_PER_FRAME;
+            ? Math.max(charsPerFrame, Math.ceil(left / TAIL_FRAMES))
+            : charsPerFrame;
           shown = Math.min(target.length, shown + per);
           head.body = target.slice(0, shown);
           flush();
@@ -307,7 +313,15 @@ export function useCanvasStream({
              * 남기고 본문을 뒤에 붙인다. 내용을 잘라 내면 학생이 받은 답의
              * 일부가 사라지는데, 그건 "노드 하나"보다 나쁜 결과다.
              */
-            const already = made.find((m) => m.kind === "concept");
+            /**
+             * D174: 상한이 **1로 고정**이었다(D162). 이제 관리자가 정한다 —
+             * 상한에 닿았으면 새 카드를 만들지 않고 마지막 카드에 이어 붙인다.
+             */
+            const concepts = made.filter((m) => m.kind === "concept");
+            const already =
+              concepts.length >= cardsPerTurn
+                ? concepts[concepts.length - 1]
+                : undefined;
             if (already) {
               current = already;
               if (ev.title) target = appendLine(target, `**${ev.title}**`);
@@ -616,7 +630,12 @@ export function useCanvasStream({
       }
       return created();
     },
-    [sessionId, busy, getItems, upsertLocal, onPersisted, nextSeq, hasFigure, hasClip, onSessionGone],
+    [
+      sessionId, busy, getItems, upsertLocal, onPersisted, nextSeq,
+      hasFigure, hasClip, onSessionGone,
+      // D174: 관리자가 바꾸면 다음 턴부터 새 값으로 돈다.
+      charsPerFrame, cardsPerTurn,
+    ],
   );
 
   const clearFocus = useCallback(() => setFocusId(null), []);

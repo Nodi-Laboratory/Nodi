@@ -40,6 +40,7 @@ import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { Camera, CanvasItem } from "@/lib/canvas2/types";
 import { buildTrees, treeEdges } from "@/lib/canvas2/tree";
 import { useCollapsible } from "@/lib/canvas2/useCollapsible";
+import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 
 /** 펼쳤을 때 크기. 점과 라벨이 겹치지 않으려면 이만큼은 필요하다(v1과 같은 값). */
 const W = 340;
@@ -66,6 +67,7 @@ const LABEL_H = 16;
  * 1.8이면 화면에 담기던 것이 대략 세 배 면적으로 퍼진다 — 노드 스무 개가
  * 서로 떨어져 찍히기 시작하는 지점이다(그보다 낮으면 점이 붙어 선이 안 읽힌다).
  */
+// D174: 기본값. 실제 값은 관리자 설정에서 온다(useClientSettings).
 const NODE_ZOOM = 1.8;
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 6;
@@ -128,6 +130,7 @@ export function Minimap({
   // 학생이 접어 두면 **접힌 채로 남는다**(D140). 처음 방문은 화면 폭으로 정한다.
   const { open, setOpen } = useCollapsible("map", viewport.w >= COLLAPSE_BELOW);
   // 캔버스에도 트리 선을 그릴 것인가 — ConnectorLayer가 같은 키를 본다.
+  const clientSettings = useClientSettings();
   const { open: edgesOnCanvas, setOpen: setEdgesOnCanvas } = useCollapsible(
     "canvas-edges",
     true,
@@ -163,7 +166,8 @@ export function Minimap({
    * 화면이 엉뚱한 데로 튄다.
    */
   const movedRef = useRef(false);
-  const nodeView = zoom >= NODE_ZOOM;
+  // D174: 관리자가 정한 임계. 못 받았으면 예전 상수 그대로.
+  const nodeView = zoom >= (clientSettings.mapNodeZoom || NODE_ZOOM);
 
   const model = useMemo(() => {
     /** 태그 → 그 태그 글들의 사각형. */

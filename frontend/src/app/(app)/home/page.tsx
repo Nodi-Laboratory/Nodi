@@ -133,7 +133,7 @@ export default function HomePage() {
                       )}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-fg">
-                      {s.title?.trim() || "새 대화"}
+                      {s.title?.trim() || "제목 없는 대화"}
                     </span>
                     <span className="shrink-0 text-xs text-fg-muted">
                       {spaceName(s.space_kind, s.space_ref)}

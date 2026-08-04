@@ -21,7 +21,7 @@ import time
 from typing import Any
 
 from ..config import get_settings
-from ..db.client import UserClient
+from ..db.client import UserClient, get_service_client
 from . import app_settings, embedding, figure_search, qdrant_store, rag
 
 logger = logging.getLogger("nodi.admin_console")
@@ -425,10 +425,175 @@ _SPECS: list[dict[str, Any]] = [
         "description": "후보를 몇 개까지 받아 볼지. 링크는 통과한 첫 1개만 만든다.",
         "effect": "후보 폭 ↔ 검색 비용",
     },
+    # ── 답변 생성 (D174) ─────────────────────────────────────────────
+    #
+    # 지금까지 config에만 있어 관리자가 못 만졌다. 학생이 체감하는 값 중
+    # 가장 큰 둘이다 — 답이 얼마나 길게 나오는가, 얼마나 딱딱한가.
+    {
+        "key": "chat_max_tokens",
+        "label": "답변 최대 분량",
+        "group": "답변 생성",
+        "widget": "number",
+        "min": 256, "max": 8192, "step": 128, "unit": "토큰",
+        "scope": "live",
+        "description": (
+            "한 번의 답이 쓸 수 있는 상한. 한국어는 대략 1토큰≈1자다 — "
+            "2048이면 2천 자 안팎에서 끊긴다. 올리면 길어지지만 읽는 부담과 "
+            "생성 시간도 함께 는다."
+        ),
+        "effect": "답변 길이 ↔ 대기 시간",
+    },
+    {
+        "key": "chat_temperature",
+        "label": "답변 다양성",
+        "group": "답변 생성",
+        "widget": "slider",
+        "min": 0.0, "max": 1.5, "step": 0.05,
+        "scope": "live",
+        "description": (
+            "낮으면 매번 비슷하고 안전하게, 높으면 표현이 다양해지는 대신 "
+            "사실이 흔들릴 수 있다. 교실용이라면 낮은 쪽이 안전하다."
+        ),
+        "effect": "일관성 ↔ 표현 다양성",
+    },
+    {
+        "key": "figure_retrieve_top_k",
+        "label": "교과서 도판 표시 개수",
+        "group": "교과서 도판",
+        "widget": "number",
+        "min": 1, "max": 10, "step": 1, "unit": "개",
+        "scope": "live",
+        "description": "한 답에 곁들일 도판 수 상한(거리 게이트를 통과한 것 중).",
+        "effect": "도판 노출량",
+    },
+    {
+        "key": "lecture_retrieve_top_k",
+        "label": "강의 클립 표시 개수",
+        "group": "강의 클립",
+        "widget": "number",
+        "min": 1, "max": 10, "step": 1, "unit": "개",
+        "scope": "live",
+        "description": "한 답에 곁들일 강의 클립 수 상한.",
+        "effect": "클립 노출량",
+    },
+    {
+        "key": "lecture_whisper_enabled",
+        "label": "자막 없을 때 자동 전사",
+        "group": "강의 클립",
+        "widget": "toggle",
+        "scope": "new-only",
+        "description": (
+            "업로드 자막이 없으면 영상 오디오를 Whisper로 전사한다. 끄면 "
+            "제목만 임베딩되어 매칭이 약해지지만 인제스트가 훨씬 빠르다."
+        ),
+        "effect": "매칭 품질 ↔ 인제스트 시간",
+    },
+    # ── 캔버스 화면 (D174) ───────────────────────────────────────────
+    #
+    # 프론트에 상수로 박혀 있던 값들이다. 서버가 갖고 `/settings/client`로
+    # 내려보내므로 여기서 바꾸면 학생 화면이 바뀐다.
+    {
+        "key": "canvas_cards_per_turn",
+        "label": "한 턴에 만들 카드 수",
+        "group": "캔버스 화면",
+        "widget": "number",
+        "min": 1, "max": 5, "step": 1, "unit": "개",
+        "scope": "live",
+        "description": (
+            "질문 하나에 개념 카드를 몇 장까지 만들지. 1이면 한 번에 하나씩만 "
+            "생긴다(D162) — 여러 장이 쏟아지면 학생이 어디를 읽어야 할지 잃는다."
+        ),
+        "effect": "한 번에 나오는 카드 수",
+    },
+    {
+        "key": "canvas_type_chars_per_frame",
+        "label": "글자 나오는 속도",
+        "group": "캔버스 화면",
+        "widget": "number",
+        "min": 1, "max": 12, "step": 1, "unit": "자/프레임",
+        "scope": "live",
+        "description": (
+            "손으로 쓰는 것처럼 한 글자씩 나오는 속도. 60fps 기준이라 2면 "
+            "초당 120자쯤이다. 올리면 빨리 읽히지만 '쓰는 중'이라는 느낌이 준다."
+        ),
+        "effect": "체감 속도 ↔ 손글씨 느낌",
+    },
+    {
+        "key": "canvas_focus_zoom",
+        "label": "새 카드 확대 배율",
+        "group": "캔버스 화면",
+        "widget": "slider",
+        "min": 1.0, "max": 4.0, "step": 0.05, "unit": "배",
+        "scope": "live",
+        "description": (
+            "답이 나오면 그 카드로 얼마나 당길지의 **상한**이다. 카드가 화면에 "
+            "다 안 들어가면 이보다 작게 잡는다 — 잘린 큰 글씨보다 온전한 작은 "
+            "글씨가 읽힌다(D166)."
+        ),
+        "effect": "새 답의 크기",
+    },
+    {
+        "key": "canvas_map_node_zoom",
+        "label": "지도에 그래프가 보이는 배율",
+        "group": "캔버스 화면",
+        "widget": "slider",
+        "min": 1.0, "max": 4.0, "step": 0.1, "unit": "배",
+        "scope": "live",
+        "description": (
+            "지도를 이 배율 이상으로 확대하면 태그 점 대신 **노드와 연결선**이 "
+            "보인다. 낮추면 일찍 그래프가 뜨지만 노드가 많을 때 지도가 회색 "
+            "판이 된다."
+        ),
+        "effect": "지도 상세도",
+    },
+    {
+        "key": "canvas_connectors_default_on",
+        "label": "캔버스 연결선 기본 표시",
+        "group": "캔버스 화면",
+        "widget": "toggle",
+        "scope": "live",
+        "description": (
+            "학생이 따로 끄지 않았을 때 캔버스에 연결선을 그릴지(D151). "
+            "학생은 지도에서 언제든 켜고 끌 수 있다."
+        ),
+        "effect": "연결선 기본값",
+    },
+    {
+        "key": "canvas_col_gap",
+        "label": "분류(열) 사이 간격",
+        "group": "캔버스 화면",
+        "widget": "number",
+        "min": 300, "max": 2000, "step": 20, "unit": "px",
+        "scope": "live",
+        "description": "서로 다른 분류의 트리를 좌우로 얼마나 떼어 놓을지.",
+        "effect": "트리 사이 여백",
+    },
+    {
+        "key": "canvas_row_gap",
+        "label": "부모–자식 세로 간격",
+        "group": "캔버스 화면",
+        "widget": "number",
+        "min": 80, "max": 800, "step": 20, "unit": "px",
+        "scope": "live",
+        "description": "한 트리 안에서 부모 카드와 자식 카드의 세로 거리.",
+        "effect": "트리 세로 밀도",
+    },
+    {
+        "key": "canvas_sib_gap",
+        "label": "형제 가지 좌우 간격",
+        "group": "캔버스 화면",
+        "widget": "number",
+        "min": 60, "max": 800, "step": 20, "unit": "px",
+        "scope": "live",
+        "description": "같은 부모에서 갈라진 가지들을 좌우로 얼마나 벌릴지.",
+        "effect": "분기 가독성",
+    },
 ]
 
 _SPEC_BY_KEY = {s["key"]: s for s in _SPECS}
 _GROUP_ORDER = [
+    "답변 생성",
+    "캔버스 화면",
     "AI 흐름",
     "RAG 검색",
     "청킹·임베딩",
@@ -834,3 +999,96 @@ async def rag_test(
             result["notes"].append("도판 검색에 실패했습니다(로그 참고).")
 
     return result
+
+
+async def ensure_setting_rows() -> int:
+    """카탈로그의 모든 노브에 app_settings 행이 있도록 보장한다 (D174).
+
+    **왜 필요한가**: `db/03_app_settings.sql`은 **빈 볼륨일 때 한 번만** 돈다.
+    그래서 DB가 만들어진 뒤에 추가된 노브는 행이 없고, 콘솔이 그걸 빨간
+    "DB 행 없음" 경보로 띄운다 — 동작은 멀쩡한데(코드 기본값으로 돈다)
+    관리자 눈에는 고장으로 보인다. 실측 2026-08-04: 로컬 32개 중 **18개**가
+    이 상태였다.
+
+    노브를 추가할 때마다 마이그레이션을 쓰게 하면 반드시 빠뜨린다. 카탈로그가
+    노브의 단일 소유자이므로(D113), 부팅 때 카탈로그를 보고 **없는 행만** 채운다.
+
+    값은 config 기본값이라 **동작이 바뀌지 않는다.** 되돌리기(reset)가 행을
+    지우면 다음 부팅에 같은 기본값으로 다시 생기므로 의미도 그대로다.
+
+    부팅 경로이므로 **절대 raise하지 않는다.** 워커 DSN이 없으면 조용히 건너뛴다
+    (files.py 업로드 경로와 같은 계약).
+    """
+    svc = get_service_client()
+    if svc is None:
+        return 0
+    try:
+        rows = await svc.select("app_settings", {"select": "key"})
+        have = {r["key"] for r in rows}
+        missing = [
+            {"key": s["key"], "value": default_for(s["key"])}
+            for s in _SPECS
+            if s["key"] not in have and default_for(s["key"]) is not None
+        ]
+        if not missing:
+            return 0
+        await svc.insert("app_settings", missing, returning=False)
+        app_settings.bust_cache()
+        logger.info(
+            "app_settings 기본 행 %d개 생성: %s",
+            len(missing),
+            ", ".join(m["key"] for m in missing),
+        )
+        return len(missing)
+    except Exception:  # noqa: BLE001 - 부팅을 죽이지 않는다
+        logger.warning("app_settings 기본 행 보장 실패", exc_info=True)
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# 클라이언트 설정 (D174)
+#
+# 캔버스 상수들은 지금까지 프론트에 박혀 있어 관리자가 못 만졌다. 서버가
+# 값을 갖고 이 목록만 내려보낸다 — **화면 동작에 쓰이는 것만** 담는다.
+# 학생도 부르는 경로이므로 거리 게이트·모델명 같은 운영 값은 절대 넣지 않는다.
+# ---------------------------------------------------------------------------
+CLIENT_KEYS = (
+    "canvas_cards_per_turn",
+    "canvas_type_chars_per_frame",
+    "canvas_focus_zoom",
+    "canvas_map_node_zoom",
+    "canvas_connectors_default_on",
+    "canvas_col_gap",
+    "canvas_row_gap",
+    "canvas_sib_gap",
+)
+
+
+async def client_settings() -> dict[str, Any]:
+    """프론트가 쓰는 값만 골라 돌려준다 (D174).
+
+    스펙의 min/max로 clamp한다 — 관리자가 DB를 직접 만져 이상한 값을 넣어도
+    화면이 깨지지 않게. 실패는 config 기본값으로 조용히 떨어진다(이 경로가
+    죽으면 캔버스가 안 뜬다).
+    """
+    try:
+        overlay = await app_settings.get_overlay()
+    except Exception:  # noqa: BLE001
+        overlay = {}
+    out: dict[str, Any] = {}
+    for key in CLIENT_KEYS:
+        default = default_for(key)
+        spec = _SPEC_BY_KEY.get(key) or {}
+        if isinstance(default, bool):
+            out[key] = app_settings.as_bool(overlay, key, default)
+        elif isinstance(default, int):
+            out[key] = app_settings.as_int(
+                overlay, key, default, spec.get("min", 0), spec.get("max", 10_000)
+            )
+        elif isinstance(default, float):
+            out[key] = app_settings.as_float(
+                overlay, key, default, spec.get("min", 0.0), spec.get("max", 100.0)
+            )
+        else:
+            out[key] = default
+    return out
