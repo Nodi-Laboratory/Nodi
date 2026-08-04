@@ -13,8 +13,16 @@ export async function getProfile(): Promise<Profile | null> {
   const headers = await authHeaders();
   if (!headers.Authorization) return null;
   const res = await fetch(`${API_BASE}/auth/me`, { headers });
-  // 401은 "아직/더는 로그인 안 됨" — 오류가 아니라 빈 상태다.
-  if (res.status === 401) return null;
+  /**
+   * 401은 "아직/더는 로그인 안 됨" — 오류가 아니라 빈 상태다.
+   *
+   * **404도 같이 본다** (D168). 토큰은 서명·만료가 멀쩡한데 그 계정의 프로필
+   * 행이 사라진 경우다(관리자가 계정을 지웠거나 DB를 되돌렸을 때). 그대로
+   * 두면 화면은 로그인된 것처럼 뜨지만 세션을 만들 수 없어(FK 위반 502)
+   * **입력창이 영원히 잠긴 채 "세션을 준비하는 중"에 머문다** — 실측으로
+   * 잡았다(15초를 기다려도 안 열렸다). 없는 계정은 없는 것으로 친다.
+   */
+  if (res.status === 401 || res.status === 404) return null;
   return (await ensureOk(res)).json();
 }
 
