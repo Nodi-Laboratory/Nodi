@@ -67,6 +67,26 @@ def allowed_space_kinds(current_space_kind: str) -> list[str]:
     return ["personal", "class"]
 
 
+def band_verdict(
+    distance: float, lo: float, hi: float, always_on: bool = False
+) -> tuple[str, str]:
+    """거리 하나의 판정 → (verdict, 한국어 사유). 관리자 로그에 그대로 실린다.
+
+    `always_on`(D172)이면 띠를 건너뛴다 — **테스트용이다.** 켜 둔 채로 두면
+    "드물게 뜬다"는 이 기능의 성질이 사라진다.
+    """
+    if always_on:
+        return "accepted", f"상시 켜기 — 띠를 무시하고 채택 (거리 {distance:.3f})"
+    if distance < lo:
+        return (
+            "too_close",
+            f"거리 {distance:.3f}가 바닥 {lo}보다 가깝다 — 융합이 아니라 중복",
+        )
+    if distance > hi:
+        return "too_far", f"거리 {distance:.3f}가 천장 {hi}를 넘는다"
+    return "accepted", f"띠 안 (거리 {distance:.3f})"
+
+
 def in_band(distance: float, lo: float, hi: float) -> bool:
     """거리 띠 판정 (D171).
 
@@ -147,6 +167,11 @@ async def read_knobs() -> dict[str, Any]:
         ),
         "top_k": app_settings.as_int(
             overlay, "crosslink_top_k", settings.crosslink_top_k, 1, 50
+        ),
+        # D172: 켜면 거리 띠를 건너뛴다. 테스트용 — 켜 둔 채로 두면
+        # "드물게 뜬다"는 이 기능의 성질이 사라진다.
+        "always_on": app_settings.as_bool(
+            overlay, "crosslink_always_on", settings.crosslink_always_on
         ),
     }
 

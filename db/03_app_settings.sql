@@ -53,5 +53,8 @@ insert into public.app_settings (key, value) values
     ('crosslink_enabled',               'true'),
     ('crosslink_min_distance',          '0.45'),
     ('crosslink_max_distance',          '0.72'),
-    ('crosslink_top_k',                 '8')
+    ('crosslink_top_k',                 '8'),
+    -- 상시 켜기 (D172). 켜면 **거리 띠를 무시하고** 가장 가까운 후보를 무조건
+    -- 잇는다. 테스트용이다 — 이걸 켜 두면 "드물게"라는 성질이 사라진다.
+    ('crosslink_always_on',             'false')
 on conflict (key) do nothing;

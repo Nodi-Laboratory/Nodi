@@ -137,3 +137,46 @@ def test_explain_prompt_handles_missing_tag():
         {"title": "다", "body": "라", "tag": ""},
     )
     assert "(분류 없음)" in msgs[-1]["content"]
+
+
+# ── 판정과 사유 (D172 관리자 로그) ──────────────────────────────────────
+#
+# 관리자 화면이 "왜 떨어졌는지"를 보여 주려면 판정마다 사유가 붙어야 한다.
+
+
+def test_verdict_too_close_says_why():
+    v, reason = crosslink.band_verdict(0.10, 0.45, 0.72)
+    assert v == "too_close"
+    assert "중복" in reason
+
+
+def test_verdict_too_far_says_why():
+    v, reason = crosslink.band_verdict(0.90, 0.45, 0.72)
+    assert v == "too_far"
+    assert "천장" in reason
+
+
+def test_verdict_accepted_in_band():
+    v, _ = crosslink.band_verdict(0.60, 0.45, 0.72)
+    assert v == "accepted"
+
+
+def test_always_on_bypasses_the_band():
+    """상시 켜기는 **띠를 무시한다** — 테스트할 때 무조건 뜨게 하려는 노브다."""
+    for d in (0.01, 0.50, 0.99):
+        v, reason = crosslink.band_verdict(d, 0.45, 0.72, always_on=True)
+        assert v == "accepted"
+        assert "상시" in reason
+
+
+def test_always_on_off_by_default():
+    """기본은 꺼져 있어야 한다 — 켜 두면 '드물게'라는 성질이 사라진다."""
+    v, _ = crosslink.band_verdict(0.99, 0.45, 0.72)
+    assert v == "too_far"
+
+
+def test_verdict_agrees_with_in_band():
+    """두 표현이 어긋나면 화면과 동작이 갈린다."""
+    for d in (0.0, 0.44, 0.45, 0.60, 0.72, 0.73, 1.0):
+        accepted = crosslink.band_verdict(d, 0.45, 0.72)[0] == "accepted"
+        assert accepted == crosslink.in_band(d, 0.45, 0.72), d

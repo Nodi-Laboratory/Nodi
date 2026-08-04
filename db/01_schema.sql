@@ -1652,6 +1652,57 @@ CREATE POLICY item_links_delete_owner ON public.item_links
 GRANT SELECT, UPDATE, DELETE ON public.item_links TO nodi_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.item_links TO nodi_worker;
 
+-- ---------------------------------------------------------------------------
+-- 교차 연결 판정 로그 (D172).
+--
+-- item_links는 **성공한 링크만** 남긴다. 탈락한 후보는 흔적 없이 사라져
+-- "왜 안 뜨지"를 볼 방법이 없었다. 이 표는 한 번의 판정 전체를 남긴다 —
+-- 어떤 세션들을 뒤졌고, 각 후보의 유사도가 얼마였고, 무엇이 왜 떨어졌는지.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.crosslink_runs (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_id        uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+
+    -- 카드가 지워져도 조사 기록은 남긴다(SET NULL) — 지워졌다고 기록까지
+    -- 사라지면 사후 분석이 불가능하다.
+    from_item_id    uuid REFERENCES public.canvas_items(id) ON DELETE SET NULL,
+    from_session_id uuid REFERENCES public.sessions(id) ON DELETE SET NULL,
+    from_title      text,
+    from_tag        text,
+    from_space_kind text,
+
+    knobs           jsonb NOT NULL DEFAULT '{}'::jsonb,
+    -- 원소 하나가 후보 하나: {item_id, session_id, session_title, tag,
+    -- space_kind, distance, verdict, reason}
+    candidates      jsonb NOT NULL DEFAULT '[]'::jsonb,
+
+    outcome         text NOT NULL,   -- linked|no_candidate|all_rejected|disabled|skipped
+    link_id         uuid REFERENCES public.item_links(id) ON DELETE SET NULL,
+    explanation     text NOT NULL DEFAULT '',
+    searched_sessions integer NOT NULL DEFAULT 0,
+    duration_ms     integer,
+
+    created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_crosslink_runs_created
+    ON public.crosslink_runs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_crosslink_runs_owner
+    ON public.crosslink_runs (owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_crosslink_runs_outcome
+    ON public.crosslink_runs (outcome);
+
+ALTER TABLE public.crosslink_runs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS crosslink_runs_select_admin ON public.crosslink_runs;
+
+-- **관리자만** 읽는다. 진단 기록이지 학습 자료가 아니다.
+CREATE POLICY crosslink_runs_select_admin ON public.crosslink_runs
+    FOR SELECT USING ((SELECT public.is_admin()));
+
+GRANT SELECT ON public.crosslink_runs TO nodi_app;
+GRANT SELECT, INSERT, DELETE ON public.crosslink_runs TO nodi_worker;
+
 -- updated_at 자동 갱신. 프론트가 매번 실어 보내게 하면 빠뜨린다.
 CREATE OR REPLACE FUNCTION public.touch_updated_at() RETURNS trigger
     LANGUAGE plpgsql AS $$

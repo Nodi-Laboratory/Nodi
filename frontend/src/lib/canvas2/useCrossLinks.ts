@@ -42,7 +42,20 @@ export function useCrossLinks(sessionId: string | null) {
     queryFn: (): Promise<CrossLink[]> => listCrossLinks(sessionId as string),
     // 로컬 임시 id인 세션은 서버에 없다 — 부르면 404다.
     enabled: enabled && !!sessionId && isRealId(sessionId),
-    staleTime: 30_000,
+    /**
+     * **배지는 저절로 사라지면 안 된다** (사용자 지시 2026-08-04).
+     *
+     * staleTime을 짧게 두면 배경 재조회가 돌고, 그 한 번이 실패하거나 빈
+     * 목록을 물고 오면 배지가 조용히 사라진다. 학생 눈에는 "있다가 없어졌다"로
+     * 보이는데 원인을 짚을 단서가 화면에 하나도 안 남는다.
+     *
+     * 그래서 **명시적 무효화로만** 다시 읽는다(scheduleCheck·열람 표시).
+     * 세션을 다시 열면 어차피 새로 읽는다.
+     */
+    staleTime: Infinity,
+    gcTime: Infinity,
+    // 다시 읽는 동안에도 지금 있는 것을 계속 보여 준다 — 깜빡임 방지.
+    placeholderData: (prev) => prev,
   });
 
   useEffect(() => {

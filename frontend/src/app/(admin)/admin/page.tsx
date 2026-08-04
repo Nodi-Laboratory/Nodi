@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   Archive,
   Clapperboard,
+  Link2,
   FlaskConical,
   GitBranch,
   LayoutDashboard,
@@ -29,6 +30,7 @@ import { DocumentsTab } from "@/components/admin/DocumentsTab";
 import { RagLabTab } from "@/components/admin/RagLabTab";
 import { DataTab } from "@/components/admin/DataTab";
 import { LecturePackagesTab } from "@/components/admin/LecturePackagesTab";
+import { CrossLinksTab } from "@/components/admin/CrossLinksTab";
 
 /**
  * 관리자 운영 콘솔 (Stage 4c → D113).
@@ -50,6 +52,7 @@ type Tab =
   | "settings"
   | "data"
   | "lectures"
+  | "crosslinks"
   | "users";
 
 const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
@@ -63,6 +66,8 @@ const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: "settings", label: "설정", icon: Sliders },
   { id: "data", label: "데이터", icon: Archive },
   { id: "lectures", label: "강의 패키지", icon: Clapperboard },
+  // D172: 교차 연결이 왜 떴는지/왜 안 떴는지를 보는 자리.
+  { id: "crosslinks", label: "개념 연결", icon: Link2 },
   { id: "users", label: "권한", icon: Users },
 ];
 
@@ -124,6 +129,7 @@ function AdminConsole() {
         {tab === "settings" && <SettingsTab />}
         {tab === "data" && <DataTab />}
         {tab === "lectures" && <LecturePackagesTab />}
+        {tab === "crosslinks" && <CrossLinksTab />}
         {tab === "users" && <UsersTab currentUserId={profile?.id ?? ""} />}
       </main>
     </div>

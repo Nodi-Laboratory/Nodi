@@ -967,3 +967,68 @@ def _as_list(rows: Any) -> list[dict[str, Any]]:
         return [rows]
     return list(rows)
 
+
+
+# ---------------------------------------------------------------------------
+# 교차 연결 판정 로그 (D172)
+#
+# item_links는 성공한 링크만 남긴다. 여기 있는 것은 **판정 전체**다 — 어떤
+# 세션들을 뒤졌고, 각 후보의 유사도가 얼마였고, 무엇이 왜 떨어졌는지.
+# "왜 안 뜨지"에 답하려면 떨어진 이유가 남아 있어야 한다.
+# ---------------------------------------------------------------------------
+_CROSSLINK_RUN_SELECT = (
+    "id,owner_id,from_item_id,from_session_id,from_title,from_tag,"
+    "from_space_kind,knobs,candidates,outcome,link_id,explanation,"
+    "searched_sessions,duration_ms,created_at"
+)
+
+
+@router.get("/crosslink-runs")
+async def list_crosslink_runs(
+    outcome: str | None = Query(None, description="linked|all_rejected|no_candidate|skipped"),
+    limit: int = Query(30, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """교차 연결 판정 기록(최신순). 후보별 유사도·판정 사유까지 그대로 준다."""
+    client = UserClient.from_user(user)
+    params: dict[str, str] = {
+        "select": _CROSSLINK_RUN_SELECT,
+        "order": "created_at.desc",
+        "limit": str(limit),
+        "offset": str(offset),
+    }
+    if outcome:
+        params["outcome"] = f"eq.{outcome}"
+    rows = await client.select("crosslink_runs", params)
+
+    # 사람이 읽는 화면이므로 소유자 이메일을 붙인다 — id만으로는 누구인지 모른다.
+    owner_ids = sorted({str(r["owner_id"]) for r in rows if r.get("owner_id")})
+    emails: dict[str, str] = {}
+    if owner_ids:
+        profs = await client.select(
+            "profiles",
+            {"id": f"in.({','.join(owner_ids)})", "select": "id,email,display_name"},
+        )
+        emails = {
+            str(p["id"]): (p.get("display_name") or p.get("email") or "")
+            for p in profs
+        }
+    for r in rows:
+        r["owner_label"] = emails.get(str(r.get("owner_id") or ""), "")
+    return {"items": rows, "limit": limit, "offset": offset}
+
+
+@router.get("/crosslink-runs/summary")
+async def crosslink_runs_summary(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """결과별 건수. 게이트가 너무 빡빡한지 한눈에 보는 용도."""
+    client = UserClient.from_user(user)
+    out: dict[str, int] = {}
+    for name in ("linked", "all_rejected", "no_candidate", "skipped"):
+        out[name] = await client.count("crosslink_runs", {"outcome": f"eq.{name}"})
+    out["total"] = sum(out.values())
+    return out

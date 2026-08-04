@@ -84,7 +84,11 @@ export {
   downloadAdminBackup,
   restoreAdminBackup,
   purgeAdminData,
+  // D172 교차 연결 판정 로그
+  getCrossLinkRuns,
+  getCrossLinkSummary,
 } from "./admin";
+export type { CrossLinkRun, CrossLinkCandidate } from "./admin";
 
 // D149: 강의 클립 추천 — admin 인제스트 + teacher 노출 토글.
 export * from "./lectures";

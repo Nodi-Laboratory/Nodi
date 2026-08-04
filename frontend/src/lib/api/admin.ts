@@ -302,3 +302,66 @@ export async function runRagTest(body: {
   return res.json();
 }
 
+
+// ── D172: 교차 연결 판정 로그 ────────────────────────────────────────────
+//
+// item_links는 **성공한 링크만** 남긴다. 여기 오는 것은 판정 전체다 —
+// 어떤 세션들을 뒤졌고, 각 후보의 유사도가 얼마였고, 무엇이 왜 떨어졌는지.
+
+/** 후보 하나의 판정. `verdict`가 왜 떨어졌는지를 말한다. */
+export interface CrossLinkCandidate {
+  item_id: string;
+  session_id: string;
+  session_title?: string | null;
+  title?: string | null;
+  tag: string | null;
+  space_kind: string | null;
+  distance: number;
+  verdict: "accepted" | "too_close" | "too_far" | "no_explanation" | "vanished";
+  reason: string;
+}
+
+export interface CrossLinkRun {
+  id: string;
+  owner_id: string;
+  owner_label: string;
+  from_item_id: string | null;
+  from_session_id: string | null;
+  from_title: string | null;
+  from_tag: string | null;
+  from_space_kind: string | null;
+  knobs: Record<string, unknown>;
+  candidates: CrossLinkCandidate[];
+  outcome: "linked" | "all_rejected" | "no_candidate" | "skipped" | "disabled";
+  link_id: string | null;
+  explanation: string;
+  searched_sessions: number;
+  duration_ms: number | null;
+  created_at: string;
+}
+
+export async function getCrossLinkRuns(opts: {
+  outcome?: string | null;
+  limit?: number;
+  offset?: number;
+}): Promise<{ items: CrossLinkRun[]; limit: number; offset: number }> {
+  const params = new URLSearchParams();
+  if (opts.outcome) params.set("outcome", opts.outcome);
+  params.set("limit", String(opts.limit ?? 30));
+  params.set("offset", String(opts.offset ?? 0));
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/crosslink-runs?${params.toString()}`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
+
+export async function getCrossLinkSummary(): Promise<Record<string, number>> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/crosslink-runs/summary`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}

@@ -185,6 +185,9 @@ class Settings(BaseSettings):
     crosslink_min_distance: float = 0.45   # 이보다 가까우면 같은 얘기 — 버린다
     crosslink_max_distance: float = 0.72   # 이보다 멀면 남남
     crosslink_top_k: int = 8               # 검색 폭(링크는 통과한 첫 1개만)
+    # 상시 켜기 (D172) — 거리 띠를 무시하고 가장 가까운 후보를 무조건 잇는다.
+    # **테스트용이다.** 켜 두면 "드물게"라는 성질이 사라진다.
+    crosslink_always_on: bool = False
 
     # ── PIKE-RAG (TASK 6, D129~D132) ─────────────────────────────
     # A. 지식 원자화 (D129) — 킬스위치 off 출하, 캘리브레이션 후 on
