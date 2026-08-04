@@ -1,5 +1,6 @@
 from pathlib import Path
-from app.services.subtitle_parse import parse_subtitle, transcript_for, Cue
+
+from app.services.subtitle_parse import Cue, parse_subtitle, transcript_for
 
 FIX = Path(__file__).parent / "fixtures"
 

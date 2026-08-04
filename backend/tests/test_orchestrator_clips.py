@@ -3,8 +3,8 @@
 figures 채널과 대칭 — 스킬 result.data["clips"]를 clip_id로 dedupe.
 """
 
-from app.ai.orchestrator import Orchestrator, TurnOutcome
 from app.ai.base import SkillResult
+from app.ai.orchestrator import Orchestrator, TurnOutcome
 
 
 def test_collect_gathers_clips_dedup_by_clip_id():

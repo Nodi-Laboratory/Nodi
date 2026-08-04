@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import AsyncMock, patch
-from app.ai.skills.search_lecture_clip import SearchLectureClip
+
+import pytest
+
 from app.ai.base import SkillContext
+from app.ai.skills.search_lecture_clip import SearchLectureClip
 
 
 def _ctx(space_kind="class"):
@@ -31,7 +33,6 @@ async def test_returns_clips_in_data():
 
 @pytest.mark.asyncio
 async def test_registered_and_in_catalog():
-    from app import ai
     from app.ai import catalog
     assert "search_lecture_clip" in catalog.ALL_DECLARED
     names = catalog.skills_for("class", "student")

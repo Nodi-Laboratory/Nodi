@@ -11,8 +11,16 @@ import logging
 from typing import Any
 
 from ...config import get_settings
-from .. import (app_settings, atomize, lecture_parse, qdrant_store, solar,
-                subtitle_parse, upstage, whisper_transcribe)
+from .. import (
+    app_settings,
+    atomize,
+    lecture_parse,
+    qdrant_store,
+    solar,
+    subtitle_parse,
+    upstage,
+    whisper_transcribe,
+)
 from . import common, jobs
 
 logger = logging.getLogger("nodi.worker.lectures")
@@ -239,8 +247,20 @@ async def _handle_lecture_atom(svc: Any, job: dict[str, Any]) -> None:
         return
     package_id = vids[0]["package_id"]
 
-    n = app_settings.as_int(overlay, "lecture_atoms_per_clip", settings.lecture_atoms_per_clip, 1, 8)
-    concurrency = app_settings.as_int(overlay, "lecture_atom_concurrency", settings.lecture_atom_concurrency, 1, 16)
+    n = app_settings.as_int(
+        overlay,
+        "lecture_atoms_per_clip",
+        settings.lecture_atoms_per_clip,
+        1,
+        8,
+    )
+    concurrency = app_settings.as_int(
+        overlay,
+        "lecture_atom_concurrency",
+        settings.lecture_atom_concurrency,
+        1,
+        16,
+    )
     sem = asyncio.Semaphore(max(1, concurrency))
     # 회로차단 상태 — 세마포어로 직렬화된 임계 구간에서만 갱신(락 불필요, atoms.py 동형).
     state = {"consecutive": 0, "broken": False}

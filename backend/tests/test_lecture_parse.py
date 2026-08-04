@@ -1,5 +1,6 @@
 from pathlib import Path
-from app.services.lecture_parse import parse_ebs_player, fmt_timeline, LectureChapter
+
+from app.services.lecture_parse import fmt_timeline, parse_ebs_player
 
 FIX = Path(__file__).parent / "fixtures/ebs_player.html"
 

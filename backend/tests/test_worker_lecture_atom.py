@@ -1,5 +1,7 @@
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from app.services.worker import lectures
 
 
@@ -7,9 +9,12 @@ from app.services.worker import lectures
 async def test_atom_generates_and_upserts_with_model_override():
     svc = AsyncMock()
     svc.select.side_effect = [
-        [{"id": "c1", "seq": 0, "title": "고려 토지제도", "transcript": "전시과 본문"}],  # embedded clips
-        [],                                                                              # 기존 원자 없음
-        [{"id": "v1", "package_id": "p1"}],                                              # video package
+        # embedded clips
+        [{"id": "c1", "seq": 0, "title": "고려 토지제도", "transcript": "전시과 본문"}],
+        # 기존 원자 없음
+        [],
+        # video package
+        [{"id": "v1", "package_id": "p1"}],
     ]
     svc.insert.return_value = [{"id": "a1", "clip_id": "c1", "question": "전시과는?"}]
     captured = {}

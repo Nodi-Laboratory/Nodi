@@ -35,7 +35,11 @@ async def search_class_clips(
         top_k = settings.lecture_retrieve_top_k
         direct_gate = app_settings.as_float(overlay, "lecture_retrieve_max_distance",
                                             settings.lecture_retrieve_max_distance, 0.1, 0.9)
-        atom_on = app_settings.as_bool(overlay, "lecture_atom_enabled", settings.lecture_atom_enabled)
+        atom_on = app_settings.as_bool(
+            overlay,
+            "lecture_atom_enabled",
+            settings.lecture_atom_enabled,
+        )
         atom_gate = app_settings.as_float(overlay, "lecture_atom_max_distance",
                                           settings.lecture_atom_max_distance, 0.1, 0.9)
         vec = await upstage.embed_query(query)

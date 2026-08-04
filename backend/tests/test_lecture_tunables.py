@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from app.config import get_settings
 from app.services import admin_console
 
@@ -19,7 +20,11 @@ def test_config_defaults():
 
 
 def test_app_settings_seed_has_lecture_knobs():
-    sql = (Path(__file__).resolve().parents[2] / "db/03_app_settings.sql").read_text()
+    sql = (Path(__file__).resolve().parents[2] / "db/03_app_settings.sql").read_text(
+        # 인코딩을 안 주면 OS 기본을 쓴다 — 한글 Windows(cp949)에서 UTF-8 SQL을
+        # 읽다 UnicodeDecodeError로 죽는다. CI(리눅스)에서는 안 드러난다.
+        encoding="utf-8"
+    )
     for k in ("'lecture_pipeline_enabled'", "'lecture_retrieve_max_distance'",
               "'lecture_atom_enabled'", "'lecture_atom_max_distance'",
               "'lecture_atoms_per_clip'", "'lecture_atom_concurrency'"):

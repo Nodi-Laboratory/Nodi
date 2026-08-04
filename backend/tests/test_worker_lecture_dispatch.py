@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import AsyncMock, patch
-from app.services.worker import runner, jobs
+
+import pytest
+
+from app.services.worker import jobs, runner
 
 
 @pytest.mark.asyncio
@@ -12,7 +14,9 @@ async def test_runner_dispatches_lecture_kinds():
         await runner._process(svc, {"id": "j", "kind": "lecture_parse", "attempts": 0})
         await runner._process(svc, {"id": "j", "kind": "lecture_embed", "attempts": 0})
         await runner._process(svc, {"id": "j", "kind": "lecture_atom", "attempts": 0})
-    ph.assert_awaited_once(); eh.assert_awaited_once(); ah.assert_awaited_once()
+    ph.assert_awaited_once()
+    eh.assert_awaited_once()
+    ah.assert_awaited_once()
 
 
 @pytest.mark.asyncio
