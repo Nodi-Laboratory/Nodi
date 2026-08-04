@@ -44,5 +44,13 @@ insert into public.app_settings (key, value) values
     ('lecture_atom_enabled',            'true'),
     ('lecture_atom_max_distance',       '0.45'),
     ('lecture_atoms_per_clip',          '4'),
-    ('lecture_atom_concurrency',        '4')
+    ('lecture_atom_concurrency',        '4'),
+    -- 교차 세션 개념 연결 (D171)
+    --
+    -- 거리는 상한이 아니라 **띠**다. 너무 가까운 히트는 융합이 아니라 중복이다
+    -- ("어제도 광합성, 오늘도 광합성"). 바닥 아래는 같은 얘기라 버린다.
+    ('crosslink_enabled',               'true'),
+    ('crosslink_min_distance',          '0.20'),
+    ('crosslink_max_distance',          '0.38'),
+    ('crosslink_top_k',                 '8')
 on conflict (key) do nothing;

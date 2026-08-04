@@ -15,7 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ...config import get_settings
 from ...db.client import ServiceClient, get_service_client
-from . import atoms, batch, common, figures, jobs, lectures, split
+from . import atoms, batch, common, crosslinks, figures, jobs, lectures, split
 
 logger = logging.getLogger("nodi.worker.runner")
 settings = get_settings()
@@ -126,6 +126,8 @@ async def _process(svc: ServiceClient, job: dict[str, Any]) -> None:
             await lectures._handle_lecture_embed(svc, job)
         elif job["kind"] == "lecture_atom":
             await lectures._handle_lecture_atom(svc, job)
+        elif job["kind"] == "crosslink":
+            await crosslinks._handle_crosslink(svc, job)
         else:
             await jobs._fail_job(svc, job["id"], f"unknown kind {job['kind']}")
     except Exception as exc:  # noqa: BLE001

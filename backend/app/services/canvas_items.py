@@ -34,7 +34,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
-from ..db.client import UserClient
+from ..db.client import UserClient, get_service_client
 
 logger = logging.getLogger("nodi.canvas_items")
 
@@ -190,7 +190,43 @@ async def create_items(
     rows = [_clean_new(session_id, it) for it in items]
     created = await client.insert("canvas_items", rows)
     logger.info("캔버스 아이템 %d개 생성 session=%s", len(rows), session_id)
-    return created if isinstance(created, list) else [created]
+    out = created if isinstance(created, list) else [created]
+    await _enqueue_crosslinks(out)
+    return out
+
+
+async def _enqueue_crosslinks(created: list[dict[str, Any]]) -> None:
+    """새 AI 개념 카드마다 교차 연결 잡을 en큐한다 (D171).
+
+    **어떤 실패도 저장을 되돌리지 않는다.** 학생의 글이 이미 들어간 뒤이고,
+    연결은 있으면 좋은 것이지 저장의 전제가 아니다 — 잡을 못 걸면 그 카드에
+    링크가 안 생길 뿐이다(나중에 백필로 채운다).
+
+    워커 DSN이 없으면(get_service_client None) 조용히 건너뛴다 — files.py
+    업로드 경로와 같은 계약이다.
+    """
+    svc = get_service_client()
+    if svc is None:
+        return
+    targets = [
+        r for r in created
+        if r.get("kind") == "concept"
+        and r.get("source") == "ai"
+        and (r.get("body") or "").strip()
+    ]
+    if not targets:
+        return
+    try:
+        await svc.insert(
+            "jobs",
+            [
+                {"kind": "crosslink", "target_id": str(r["id"]), "status": "queued"}
+                for r in targets
+            ],
+            returning=False,
+        )
+    except Exception:  # noqa: BLE001 - en큐 실패는 저장을 되돌리지 않는다
+        logger.warning("교차 연결 잡 en큐 실패 (카드 %d개)", len(targets), exc_info=True)
 
 
 async def patch_item(

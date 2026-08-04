@@ -161,6 +161,10 @@ async def _fail_file_for_job(
         # D88 격리: 원자 잡 영구 실패는 클립·영상·파일 전부 불가침
         # (핸들러가 원자 행 status를 직접 처리한다).
         pass
+    elif kind == "crosslink":
+        # D171: 링크가 안 생기는 것으로 끝이다. 카드에는 상태 컬럼이 없고,
+        # 있어야 할 이유도 없다 — 연결은 있으면 좋은 것이지 학습의 전제가 아니다.
+        pass
     else:  # embedding_batch: fail this batch's still-pending chunks, then finalize
         rng = job.get("batch_range") or {}
         if "from_seq" in rng and "to_seq" in rng:

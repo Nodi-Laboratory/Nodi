@@ -38,6 +38,14 @@ COL_LECTURE_CLIPS = "lecture_clips"
 # 강의 클립 원자 질문 임베딩 컬렉션(D149). chunk_atoms와 동형이나 스코프 키가
 # package_id다.
 COL_LECTURE_CLIP_ATOMS = "lecture_clip_atoms"
+# 학생의 AI 개념 카드 임베딩 컬렉션 (D171 교차 세션 개념 연결).
+#
+# **canvas_cards(D105)의 부활이 아니다.** 저건 좌표·제목을 벡터로 들고 배치에
+# 쓰던 것이고, 이건 "어제 다른 과목에서 한 이야기"를 찾기 위한 의미 색인이다.
+# 페이로드는 식별자만 — {item_id, session_id, owner_id, tag_norm, space_kind}.
+# 본문·제목은 넣지 않고, 히트 후 canvas_items를 USER 클라이언트로 재조회해
+# RLS가 재검증한다(file_chunks와 같은 계약).
+COL_CANVAS_CONCEPTS = "canvas_concepts"
 
 _client: AsyncQdrantClient | None = None
 
@@ -64,6 +72,7 @@ async def ensure_collections() -> None:
             COL_CHUNK_ATOMS,
             COL_LECTURE_CLIPS,
             COL_LECTURE_CLIP_ATOMS,
+            COL_CANVAS_CONCEPTS,
         ):
             if not await client.collection_exists(name):
                 await client.create_collection(
@@ -110,6 +119,18 @@ async def ensure_collections() -> None:
                 )
             except Exception:  # noqa: BLE001
                 logger.debug("%s package_id 인덱스 생성 생략", col)
+        # 개념 카드 컬렉션은 세 필드로 필터한다 (D171): owner_id(본인만) ·
+        # session_id(현재 세션 제외) · space_kind(개인→학급 반입 금지).
+        # tag_norm은 must_not 하나뿐이라 인덱스 없이도 되지만 같은 값이다.
+        for field in ("owner_id", "session_id", "space_kind", "tag_norm"):
+            try:
+                await client.create_payload_index(
+                    collection_name=COL_CANVAS_CONCEPTS,
+                    field_name=field,
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("canvas_concepts %s 인덱스 생성 생략", field)
     except Exception:  # noqa: BLE001 - 부팅을 죽이지 않는다
         logger.warning(
             "Qdrant 컬렉션 보장 실패 — 부팅은 계속, 사용 시점에 에러로 드러남 (url=%s)",
@@ -170,6 +191,63 @@ async def search(
         limit=k,
         query_filter=query_filter,
         score_threshold=score_threshold,
+        with_payload=True,
+    )
+    return [
+        {"id": str(pt.id), "score": pt.score, "payload": pt.payload or {}}
+        for pt in res.points
+    ]
+
+
+async def search_concepts(
+    vector: list[float],
+    k: int,
+    *,
+    owner_id: str,
+    exclude_session_id: str,
+    exclude_tag_norm: str | None,
+    allowed_space_kinds: list[str],
+) -> list[dict]:
+    """개념 카드 교차 검색 (D171). -> [{"id","score","payload"}] (score 높을수록 유사).
+
+    기존 `search()`는 스코프 필드 **하나**의 MatchAny만 받는다. 여기는 must 셋 +
+    must_not 둘이라 별도 함수로 둔다 — `search()`에 매개변수를 늘리면 자료 청크·
+    도판·강의 클립 세 호출부가 전부 이 복잡도를 떠안는다.
+
+    필터는 **전부 Qdrant에서** 건다. 받아 온 뒤 파이썬으로 거르면 k개를 채우려고
+    같은 세션 카드가 상위를 차지해 진짜 히트가 잘려 나간다.
+
+    Qdrant는 신뢰 경계가 아니다 — owner_id 필터는 성능·정확도용이고, 실제 권한은
+    호출부가 canvas_items를 USER 클라이언트로 재조회할 때 RLS가 판정한다.
+    """
+    must: list[models.Condition] = [
+        models.FieldCondition(
+            key="owner_id", match=models.MatchValue(value=str(owner_id))
+        ),
+        models.FieldCondition(
+            key="space_kind",
+            match=models.MatchAny(any=[str(s) for s in allowed_space_kinds]),
+        ),
+    ]
+    must_not: list[models.Condition] = [
+        models.FieldCondition(
+            key="session_id", match=models.MatchValue(value=str(exclude_session_id))
+        )
+    ]
+    # 같은 태그는 다른 세션이라도 제외한다(사용자 지시). 태그가 없는 카드는
+    # 제외 대상이 없으므로 조건을 걸지 않는다.
+    if exclude_tag_norm:
+        must_not.append(
+            models.FieldCondition(
+                key="tag_norm", match=models.MatchValue(value=exclude_tag_norm)
+            )
+        )
+    client = get_client()
+    res = await client.query_points(
+        collection_name=COL_CANVAS_CONCEPTS,
+        query=vector,
+        limit=k,
+        query_filter=models.Filter(must=must, must_not=must_not),
         with_payload=True,
     )
     return [

@@ -174,6 +174,14 @@ class Settings(BaseSettings):
     lecture_whisper_language: str = "ko"           # 전사 언어(config/env 전용)
     lecture_whisper_ffmpeg_timeout_seconds: int = 900  # ffmpeg 스트림·추출 상한
 
+    # ── 교차 세션 개념 연결 (D171) ────────────────────────────────
+    # 거리는 상한이 아니라 **띠**다. 너무 가까운 히트는 융합이 아니라 중복이라
+    # 바닥 아래는 버린다("어제도 광합성, 오늘도 광합성").
+    crosslink_enabled: bool = True
+    crosslink_min_distance: float = 0.20   # 이보다 가까우면 같은 얘기 — 버린다
+    crosslink_max_distance: float = 0.38   # 이보다 멀면 남남
+    crosslink_top_k: int = 8               # 검색 폭(링크는 통과한 첫 1개만)
+
     # ── PIKE-RAG (TASK 6, D129~D132) ─────────────────────────────
     # A. 지식 원자화 (D129) — 킬스위치 off 출하, 캘리브레이션 후 on
     atom_rag_enabled: bool = False

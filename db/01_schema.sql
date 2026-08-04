@@ -577,7 +577,7 @@ CREATE TABLE public.jobs (
     space_ref uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['embedding_split'::text, 'embedding_batch'::text, 'figure_batch'::text, 'atom_batch'::text, 'lecture_parse'::text, 'lecture_embed'::text, 'lecture_atom'::text]))),
+    CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['embedding_split'::text, 'embedding_batch'::text, 'figure_batch'::text, 'atom_batch'::text, 'lecture_parse'::text, 'lecture_embed'::text, 'lecture_atom'::text, 'crosslink'::text]))),
     CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'done'::text, 'failed'::text])))
 );
 
@@ -1596,6 +1596,61 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.canvas_items    TO nodi_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.canvas_drawings TO nodi_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.canvas_items    TO nodi_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.canvas_drawings TO nodi_worker;
+
+-- ---------------------------------------------------------------------------
+-- 교차 세션 개념 연결 (D171). 어제 생명과학에서 한 이야기와 오늘 지구과학에서
+-- 하는 이야기가 이어져 있을 때 그 연결을 보여 준다.
+-- 스펙: docs/superpowers/specs/2026-08-04-crosslink-design.md
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.item_links (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_id     uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+
+    -- 지금 보고 있는 카드(새로 만들어진 쪽).
+    from_item_id uuid NOT NULL REFERENCES public.canvas_items(id) ON DELETE CASCADE,
+    -- 과거의 카드. 이쪽으로 "돌아가기"가 이동한다.
+    to_item_id   uuid NOT NULL REFERENCES public.canvas_items(id) ON DELETE CASCADE,
+
+    explanation  text NOT NULL DEFAULT '',
+    -- 거리 규약: distance = 1 - score.
+    distance     double precision NOT NULL,
+
+    -- 한 번 열면 깜빡임을 멈춘다. 본 알림이 계속 깜빡이면 그냥 소음이다.
+    opened_at    timestamptz,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+
+    -- 같은 쌍의 반복 추천을 **구조로** 막는다(앱 코드 검사는 동시 실행에서 샌다).
+    CONSTRAINT item_links_pair_unique UNIQUE (from_item_id, to_item_id),
+    CONSTRAINT item_links_not_self CHECK (from_item_id <> to_item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_links_from  ON public.item_links (from_item_id);
+CREATE INDEX IF NOT EXISTS idx_item_links_to    ON public.item_links (to_item_id);
+CREATE INDEX IF NOT EXISTS idx_item_links_owner ON public.item_links (owner_id);
+
+ALTER TABLE public.item_links ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS item_links_select       ON public.item_links;
+DROP POLICY IF EXISTS item_links_select_admin ON public.item_links;
+DROP POLICY IF EXISTS item_links_update_owner ON public.item_links;
+DROP POLICY IF EXISTS item_links_delete_owner ON public.item_links;
+
+CREATE POLICY item_links_select ON public.item_links
+    FOR SELECT USING (owner_id = (SELECT auth.uid()));
+
+CREATE POLICY item_links_select_admin ON public.item_links
+    FOR SELECT USING ((SELECT public.is_admin()));
+
+CREATE POLICY item_links_update_owner ON public.item_links
+    FOR UPDATE USING (owner_id = (SELECT auth.uid()));
+
+CREATE POLICY item_links_delete_owner ON public.item_links
+    FOR DELETE USING (owner_id = (SELECT auth.uid()));
+
+-- **INSERT 정책은 없다.** 링크는 워커(BYPASSRLS)만 만든다 — 학생이 임의의 두
+-- 카드를 이어 붙일 수 있으면 이 기능의 의미가 사라진다.
+GRANT SELECT, UPDATE, DELETE ON public.item_links TO nodi_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.item_links TO nodi_worker;
 
 -- updated_at 자동 갱신. 프론트가 매번 실어 보내게 하면 빠뜨린다.
 CREATE OR REPLACE FUNCTION public.touch_updated_at() RETURNS trigger

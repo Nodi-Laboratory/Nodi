@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from ..auth.deps import CurrentUser, get_current_user
 from ..db.client import UserClient
 from ..services import canvas_items as svc
+from ..services import item_links as links_svc
 
 router = APIRouter(tags=["canvas"])
 
@@ -117,3 +118,27 @@ async def delete_item(
     user: CurrentUser = Depends(get_current_user),
 ) -> None:
     await svc.delete_item(UserClient.from_user(user), item_id)
+
+
+# ---------------------------------------------------------------------------
+# 교차 세션 개념 연결 (D171)
+#
+# 링크는 **워커만 만든다** — 학생이 임의의 두 카드를 이어 붙일 수 있으면 이
+# 기능의 의미가 사라진다(item_links에 INSERT 정책이 없다). 여기 있는 것은
+# 읽기와 "열어 봤다" 표식뿐이다.
+# ---------------------------------------------------------------------------
+@router.get("/sessions/{session_id}/canvas/links")
+async def list_links(
+    session_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    return await links_svc.list_links(UserClient.from_user(user), session_id)
+
+
+@router.post("/canvas/links/{link_id}/open")
+async def open_link(
+    link_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """열어 본 표식 — 깜빡임을 멈춘다. 멱등."""
+    return await links_svc.mark_opened(UserClient.from_user(user), link_id)
