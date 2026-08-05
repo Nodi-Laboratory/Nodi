@@ -411,21 +411,37 @@ TREE_MAX_CHARS = 24000
 """
 
 
+LOOSE_TAG = " untagged"
+"""분류 없는 가지가 모이는 트리의 열쇠 (D180).
+
+학생이 별 포인터로 가지를 떼어내면 그 가지는 **분류 없는 가지**가 된다. 그래도
+트리이긴 해야 한다 — 안 그러면 떼어낸 순간 가지 안쪽 관계까지 사라져 AI가 받는
+순서가 낱장으로 흩어진다.
+
+⚠️ 프론트 `tree.ts`의 `LOOSE_TAG`와 **같은 문자열**이다.
+"""
+
+
+def _tree_key(r: dict[str, Any]) -> str:
+    return (r.get("tag") or "").strip() or LOOSE_TAG
+
+
 def _tree_lines(rows: list[dict[str, Any]]) -> dict[str, list[tuple[int, dict]]]:
     """행 목록 → 태그별 (깊이, 행) 목록. 태그 순서는 첫 등장 순서.
 
     ## 프론트와 같은 규칙이어야 한다
 
     간선 판정은 `frontend/src/lib/canvas2/tree.ts`와 **글자 그대로 같은 규칙**
-    이다: AI가 쓴 개념 카드만 노드이고, 부모가 존재하며 **태그가 같을 때만**
+    이다: AI가 쓴 개념 카드가 노드이고, 부모가 존재하며 **트리 열쇠가 같을 때만**
     이어진다. 한쪽만 고치면 학생이 화면에서 본 트리와 AI가 받는 순서가 갈린다.
+
+    **태그를 요구하지 않는다** (D180) — 분류 없는 카드끼리도 `LOOSE_TAG` 트리를
+    이룬다. 그래야 떼어낸 가지가 화면에서든 프롬프트에서든 모양을 유지한다.
     """
     nodes = [
         r
         for r in rows
-        if r.get("kind") == "concept"
-        and r.get("source") == "ai"
-        and (r.get("tag") or "").strip()
+        if r.get("kind") == "concept" and r.get("source") == "ai"
     ]
     nodes.sort(key=lambda r: r.get("seq") or 0)
     by_id = {r["id"]: r for r in nodes}
@@ -437,13 +453,13 @@ def _tree_lines(rows: list[dict[str, Any]]) -> dict[str, list[tuple[int, dict]]]
         parent = by_id.get(p)
         if not parent:
             return None
-        return p if (parent.get("tag") or "") == (r.get("tag") or "") else None
+        return p if _tree_key(parent) == _tree_key(r) else None
 
     kids: dict[str, list[dict]] = {}
     roots: dict[str, list[dict]] = {}
     order: list[str] = []
     for r in nodes:
-        tag = (r.get("tag") or "").strip()
+        tag = _tree_key(r)
         if tag not in roots:
             roots[tag] = []
             order.append(tag)
@@ -502,7 +518,8 @@ async def session_tree_context(
 
     blocks: list[str] = []
     for tag, flat in trees.items():
-        head = f"## [{tag}]"
+        # 분류 없는 가지는 이름이 없다 — 학생이 떼어내 놓은 것이라고 말해 준다.
+        head = "## (분류를 떼어 놓은 가지)" if tag == LOOSE_TAG else f"## [{tag}]"
         if focus_tag and tag == focus_tag:
             head += "  ← 학생이 지금 보고 있는 트리"
         lines = [head]

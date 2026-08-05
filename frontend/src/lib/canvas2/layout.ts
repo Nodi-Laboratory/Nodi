@@ -42,7 +42,7 @@
  */
 
 import { bottom, intersects, type Rect } from "./rect";
-import { buildTrees, type TreeItem } from "./tree";
+import { buildTrees, LOOSE_TAG, type TreeItem } from "./tree";
 
 /**
  * 아이템 **최대** 폭. 한 줄에 한국어 30~34자 — 문단이 읽히는 폭이다.
@@ -229,8 +229,13 @@ function asTreeItem(i: LayoutInput): TreeItem {
   };
 }
 
-/** 태그 없는 아이템이 모이는 열의 이름. 사용자에게는 안 보인다. */
-export const UNTAGGED = " untagged";
+/**
+ * 태그 없는 아이템이 모이는 열의 이름. 사용자에게는 안 보인다.
+ *
+ * **트리가 쓰는 값을 그대로 쓴다**(`tree.LOOSE_TAG`). 사본을 두면 무태그
+ * 트리가 어느 열에도 안 들어가 화면에서 사라진다 — 그 상수의 주석 참조.
+ */
+export const UNTAGGED = LOOSE_TAG;
 
 
 /**

@@ -83,9 +83,31 @@ def test_태그_순서는_첫_등장_순서():
     assert list(_tree_lines(rows).keys()) == ["물리", "생명"]
 
 
-def test_분류_없는_카드는_빠진다():
-    rows = [card("a", None, None, 0), card("b", "  ", None, 1)]
-    assert _tree_lines(rows) == {}
+def test_분류_없는_카드도_트리를_이룬다():
+    """**떼어낸 가지는 모양을 유지해야 한다** (D180).
+
+    예전에는 분류 없는 카드가 통째로 빠졌다. 그러면 학생이 별 포인터로 떼어낸
+    가지가 프롬프트에서 낱장으로 흩어지고, 화면에서 본 트리와 AI가 받는 순서가
+    갈린다 — 프론트 `tree.ts`의 같은 이름 테스트와 짝이다.
+    """
+    from app.services.canvas_items import LOOSE_TAG
+
+    rows = [card("a", None, None, 0), card("b", "  ", "a", 1)]
+    out = _tree_lines(rows)
+    assert list(out.keys()) == [LOOSE_TAG]
+    # 둘 다 분류가 없으므로 **이어져 있다** — b가 a의 자식이다.
+    assert [(d, r["id"]) for d, r in out[LOOSE_TAG]] == [(0, "a"), (1, "b")]
+
+
+def test_분류가_다르면_분류_없는_가지와도_안_이어진다():
+    """떼어냈다는 것이 실제로 끊김이어야 한다."""
+    from app.services.canvas_items import LOOSE_TAG
+
+    rows = [card("a", "물리", None, 0), card("b", None, "a", 1)]
+    out = _tree_lines(rows)
+    # b는 a의 자식이 아니라 분류 없는 가지의 **뿌리**다.
+    assert [(d, r["id"]) for d, r in out["물리"]] == [(0, "a")]
+    assert [(d, r["id"]) for d, r in out[LOOSE_TAG]] == [(0, "b")]
 
 
 def test_순환이_있어도_멈추지_않는다():

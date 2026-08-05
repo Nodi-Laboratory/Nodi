@@ -60,9 +60,37 @@ export interface Tree {
   depth: Map<string, number>;
 }
 
-/** 트리에 들어가는 노드인가 — AI가 쓴 개념 카드만. */
+/**
+ * 태그 없는 카드들이 모이는 트리의 열쇠 (D180).
+ *
+ * 학생이 가지를 떼어내면 그 가지는 **분류 없는 가지**가 된다(사용자 결정
+ * 2026-08-05). 그래도 트리이긴 해야 한다 — 안 그러면 떼어낸 순간 가지 안쪽
+ * 연결선까지 전부 사라져 낱장으로 흩어지고, "떼어낸 가지에서 또 떼어내기"가
+ * 성립하지 않는다.
+ *
+ * 앞의 공백은 실제 태그와 부딪히지 않게 하는 장치다. 학생에게는 안 보인다.
+ *
+ * ⚠️ **`layout.UNTAGGED`와 같은 문자열이어야 한다** — 배치는 열을
+ * `it.tag || UNTAGGED`로 묶고 트리는 이 값으로 묶는다. 둘이 갈리면 무태그
+ * 트리가 **어느 열에도 안 들어가 화면에서 통째로 사라진다.** 그래서
+ * `layout.ts`가 이 상수를 그대로 다시 내보낸다(사본을 두지 않는다).
+ */
+export const LOOSE_TAG = " untagged";
+
+/** 이 카드가 속한 트리의 열쇠. 태그가 없으면 "분류 없는 가지"다. */
+export function treeKey(i: TreeItem): string {
+  return i.tag || LOOSE_TAG;
+}
+
+/**
+ * 트리에 들어가는 노드인가 — AI가 쓴 개념 카드.
+ *
+ * **태그를 요구하지 않는다** (D180). 예전에는 `!!i.tag`가 조건이었는데, 그러면
+ * 떼어낸 가지(태그 없음)가 트리에서 통째로 빠져 연결선이 사라졌다. 지금은
+ * 태그가 없는 것도 노드이고, 그 노드들끼리 `LOOSE_TAG` 트리를 이룬다.
+ */
 export function isTreeNode(i: TreeItem): boolean {
-  return i.kind === "concept" && i.source === "ai" && !!i.tag;
+  return i.kind === "concept" && i.source === "ai";
 }
 
 /**
@@ -76,7 +104,8 @@ function linkedParent(i: TreeItem, byId: Map<string, TreeItem>): string | null {
   if (!i.parentItemId || !isTreeNode(i)) return null;
   const p = byId.get(i.parentItemId);
   if (!p || !isTreeNode(p)) return null;
-  return p.tag === i.tag ? p.id : null;
+  // 태그가 둘 다 없어도 **같은 것**이다 — 떼어낸 가지가 모양을 유지하는 근거다.
+  return treeKey(p) === treeKey(i) ? p.id : null;
 }
 
 /**
@@ -88,7 +117,7 @@ export function treeEdges(items: readonly TreeItem[]): TreeEdge[] {
   const out: TreeEdge[] = [];
   for (const i of items) {
     const p = linkedParent(i, byId);
-    if (p) out.push({ from: p, to: i.id, tag: i.tag as string });
+    if (p) out.push({ from: p, to: i.id, tag: treeKey(i) });
   }
   return out;
 }
@@ -108,7 +137,7 @@ export function buildTrees(items: readonly TreeItem[]): Tree[] {
   const tagOrder: string[] = [];
 
   for (const n of nodes) {
-    const tag = n.tag as string;
+    const tag = treeKey(n);
     if (!rootsByTag.has(tag)) {
       rootsByTag.set(tag, []);
       tagOrder.push(tag);

@@ -7,8 +7,10 @@ import {
   isTreeNode,
   nextFocus,
   treeEdges,
+  LOOSE_TAG,
   type TreeItem,
 } from "./tree";
+import { UNTAGGED } from "./layout";
 
 let seq = 0;
 function node(
@@ -33,7 +35,48 @@ describe("isTreeNode", () => {
     expect(isTreeNode(node("a", "물리"))).toBe(true);
     expect(isTreeNode(node("b", "물리", null, { source: "user" }))).toBe(false);
     expect(isTreeNode(node("c", "물리", null, { kind: "figure" }))).toBe(false);
-    expect(isTreeNode(node("d", null))).toBe(false);
+  });
+
+  /**
+   * **태그가 없어도 노드다** (D180). 예전에는 태그를 요구했는데, 그러면 학생이
+   * 떼어낸 가지가 트리에서 통째로 빠져 **가지 안쪽 연결선까지 사라진다** —
+   * 낱장으로 흩어지고 "떼어낸 가지에서 또 떼어내기"가 성립하지 않는다.
+   */
+  it("분류 없는 개념 카드도 노드다", () => {
+    expect(isTreeNode(node("d", null))).toBe(true);
+  });
+});
+
+describe("분류 없는 가지 (D180)", () => {
+  it("떼어낸 가지가 모양을 유지한다", () => {
+    seq = 0;
+    // 학생이 b를 떼어냈다 — b와 그 자손의 태그가 비었다.
+    const items = [
+      node("a", "물리"),
+      node("b", null, "a"),
+      node("c", null, "b"),
+    ];
+    const e = treeEdges(items);
+    // a—b는 끊긴다(태그가 다르다). b—c는 **살아 있다**(둘 다 분류 없음).
+    expect(e).toEqual([{ from: "b", to: "c", tag: LOOSE_TAG }]);
+  });
+
+  it("분류 없는 가지가 자기 트리를 이룬다", () => {
+    seq = 0;
+    const items = [node("a", "물리"), node("b", null), node("c", null, "b")];
+    const trees = buildTrees(items);
+    const loose = trees.find((t) => t.tag === LOOSE_TAG)!;
+    expect(loose.roots).toEqual(["b"]);
+    expect(loose.order).toEqual(["b", "c"]);
+    expect(loose.depth.get("c")).toBe(1);
+  });
+
+  /**
+   * 배치는 열을 `it.tag || UNTAGGED`로 묶는다. 두 상수가 갈리면 무태그 트리가
+   * **어느 열에도 안 들어가 화면에서 사라진다.**
+   */
+  it("배치의 무태그 열 이름과 같은 값이다", () => {
+    expect(LOOSE_TAG).toBe(UNTAGGED);
   });
 });
 
