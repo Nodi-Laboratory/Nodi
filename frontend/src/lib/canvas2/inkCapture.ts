@@ -125,6 +125,29 @@ export interface SceneSource {
   zoom: number;
 }
 
+/**
+ * 이 아이템을 뭐라고 부를까 — 명부와 도식에 함께 쓰는 이름.
+ *
+ * **개념 카드만 `title`을 갖는다.** 도판·클립은 null이라 그대로 쓰면 명부가
+ * `4 = (제목 없음)`이 되고 도식에도 이름 없는 빈 상자가 뜬다. 그러면 모델이
+ * 그 상자를 지목한다 — 실측 2026-08-05: 3번 카드를 동그라미 쳤는데 이름 없는
+ * 5번(클립 상자)이라고 답한 경우가 4번 중 2번이었다.
+ *
+ * 도판은 캡션이, 클립은 강의 제목이 곧 그 상자의 이름이다.
+ */
+function labelOf(it: CanvasItem): string | null {
+  if (it.title?.trim()) return it.title;
+  if (it.kind === "figure") {
+    const cap = it.data.figure?.caption?.trim();
+    return cap ? `교과서 도판 — ${cap}` : "교과서 도판";
+  }
+  if (it.kind === "clip") {
+    const t = it.data.clip?.title?.trim();
+    return t ? `강의 영상 — ${t}` : "강의 영상";
+  }
+  return null;
+}
+
 /** 아이템 → 후보 카드. 자리나 크기를 모르는 것은 그릴 수 없으므로 뺀다. */
 export function toSceneCards(src: SceneSource): SceneCard[] {
   const out: SceneCard[] = [];
@@ -137,7 +160,7 @@ export function toSceneCards(src: SceneSource): SceneCard[] {
     out.push({
       id: it.id,
       kind: it.kind,
-      title: it.title,
+      title: labelOf(it),
       body: it.body,
       // **화면에서 보이는 그대로.** 접촉 판정용 여백은 `buildInkScene`이
       // 얹는다 — 여기서 얹으면 도식의 상자가 실제 카드보다 커져서 닿지
@@ -251,6 +274,7 @@ export async function captureInk(
       n: c.n,
       itemId: c.id,
       title: c.title ?? "",
+      where: c.where,
     })),
     dropped: scene.dropped,
     trace: {

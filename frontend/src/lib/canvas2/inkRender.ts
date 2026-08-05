@@ -43,13 +43,35 @@ const BADGE_FILL = "#343a40";
 const TITLE_COLOR = "#212529";
 const BODY_COLOR = "#495057";
 
-const TITLE_FONT = "600 15px system-ui, -apple-system, 'Segoe UI', sans-serif";
 const BODY_FONT = "13px system-ui, -apple-system, 'Segoe UI', sans-serif";
-const BADGE_FONT = "600 13px system-ui, -apple-system, 'Segoe UI', sans-serif";
 
 const PAD = 10;
-const BADGE_R = 11;
 const LINE_H = 17;
+
+/**
+ * 번호 배지와 제목은 **그림 크기에 비례해 키운다.**
+ *
+ * 고정 크기(배지 반지름 11 · 제목 15px)로 그렸더니 모델이 번호를 못 읽었다 —
+ * 실측 2026-08-05: 내용은 정확히 맞히면서("천문학에 관한 내용이다") 번호만
+ * 틀렸다. 비전 인코더가 1280px 그림을 자기 해상도로 줄이면 22px 배지 안의
+ * 13px 숫자가 뭉개진다. **읽을 수 없는 표시는 없는 표시와 같다.**
+ *
+ * 그래서 그림 높이의 몇 %로 잡는다. 캔버스는 배율 변환 안에서 그리므로
+ * 월드 단위로 `capture.h × 비율`을 쓰면 배율이 상쇄돼 그림에서 늘 같은
+ * 비중이 된다. 카드가 작을 때 배지가 카드를 삼키지 않게 상한도 둔다.
+ */
+const BADGE_MIN_R = 11;
+const BADGE_RATIO = 0.030;
+const TITLE_MIN = 15;
+const TITLE_RATIO = 0.026;
+
+function badgeRadius(captureH: number, cardH: number): number {
+  return Math.max(BADGE_MIN_R, Math.min(captureH * BADGE_RATIO, cardH * 0.34));
+}
+
+function titlePx(captureH: number): number {
+  return Math.max(TITLE_MIN, Math.round(captureH * TITLE_RATIO));
+}
 
 function roundedPath(ctx: CanvasRenderingContext2D, r: Rect, radius: number): void {
   ctx.beginPath();
@@ -102,8 +124,11 @@ function drawCard(
   ctx: CanvasRenderingContext2D,
   card: PickedCard,
   bitmap: ImageBitmap | undefined,
+  captureH: number,
 ): void {
   const r = card.rect;
+  const BADGE_R = badgeRadius(captureH, r.h);
+  const titleFont = `700 ${titlePx(captureH)}px system-ui, -apple-system, sans-serif`;
 
   ctx.save();
   roundedPath(ctx, r, 8);
@@ -128,7 +153,7 @@ function drawCard(
   // 제목: 배지 오른쪽에서 시작한다.
   const textX = r.x + PAD + BADGE_R * 2 + 6;
   const textW = r.w - (textX - r.x) - PAD;
-  let y = r.y + PAD + 13;
+  let y = r.y + PAD + Math.max(13, titlePx(captureH) * 0.85);
   /**
    * **도판 위에는 글자를 얹지 않는다.** 이 그림의 독자는 그림을 읽어야 하는데
    * 제목이 그 위를 가로지르면 정작 봐야 할 도해를 덮는다 — "(제목 없음)"이
@@ -136,10 +161,10 @@ function drawCard(
    * **텍스트 명부로** 따로 가고, 그림에서 필요한 것은 번호(배지)뿐이다.
    */
   if (textW > 20 && !bitmap) {
-    ctx.font = TITLE_FONT;
+    ctx.font = titleFont;
     ctx.fillStyle = TITLE_COLOR;
     ctx.textBaseline = "alphabetic";
-    const title = wrapText(ctx, card.title ?? "(제목 없음)", textW, 2);
+    const title = wrapText(ctx, card.title ?? "(제목 없음)", textW, 1);
     for (const t of title) {
       ctx.fillText(t, textX, y);
       y += LINE_H;
@@ -168,7 +193,7 @@ function drawCard(
   ctx.arc(bx, by, BADGE_R, 0, Math.PI * 2);
   ctx.fillStyle = BADGE_FILL;
   ctx.fill();
-  ctx.font = BADGE_FONT;
+  ctx.font = `700 ${Math.round(BADGE_R * 1.25)}px system-ui, -apple-system, sans-serif`;
   ctx.fillStyle = "#ffffff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -207,7 +232,12 @@ export async function renderScenePng(
   ctx.setTransform(scale, 0, 0, scale, -box.x * scale, -box.y * scale);
 
   for (const card of scene.cards) {
-    drawCard(ctx, card, card.figureId ? figures.get(card.figureId) : undefined);
+    drawCard(
+      ctx,
+      card,
+      card.figureId ? figures.get(card.figureId) : undefined,
+      box.h,
+    );
   }
 
   // 표시는 **맨 위에** — 카드에 가려지면 무엇을 가리키는지 볼 수 없다.

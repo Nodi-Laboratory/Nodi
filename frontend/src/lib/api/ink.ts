@@ -35,6 +35,8 @@ export interface InkCardRef {
   n: number;
   itemId: string;
   title: string;
+  /** "맨 윗줄 가운데" — 번호를 못 읽는 모델을 위한 두 번째 단서. */
+  where: string;
 }
 
 /**
@@ -100,7 +102,9 @@ export async function interpretInk({
     // 카드 본문은 채팅 턴에서 id로 다시 읽는다(D104 신뢰 경계).
     form.append(
       "cards",
-      JSON.stringify(cards.map((c) => ({ n: c.n, title: c.title }))),
+      JSON.stringify(
+        cards.map((c) => ({ n: c.n, title: c.title, where: c.where })),
+      ),
     );
   }
 

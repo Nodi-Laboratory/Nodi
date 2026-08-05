@@ -64,6 +64,14 @@ export interface PickedCard extends SceneCard {
   n: number;
   /** 획이 실제로 닿았나(1단). false면 근처에 있을 뿐(2단). */
   touched: boolean;
+  /**
+   * 그림 안에서 이 카드가 있는 자리 — "맨 윗줄 왼쪽" 같은 말.
+   *
+   * **번호만으로는 모자란다.** 모델이 상자와 번호를 잇는 단서가 배지 숫자뿐인데
+   * 비전 인코더가 그림을 줄이면 그 숫자가 뭉개진다(실측 2026-08-05: 내용은
+   * 맞히면서 번호만 틀렸다). 자리는 줄어들어도 남는 단서라, 명부에 함께 준다.
+   */
+  where: string;
 }
 
 /**
@@ -265,10 +273,39 @@ export function buildInkScene(
     return sameRow ? a.card.rect.x - x.card.rect.x : ay - xy;
   });
 
+  /**
+   * 자리 이름을 붙인다 — **줄**은 세로로 겹치는 것끼리 묶고, 줄 안에서 가로
+   * 순서를 센다. 그림에서 사람이 "맨 윗줄 가운데"라고 부르는 그 방식이다.
+   */
+  const rows: (typeof kept)[] = [];
+  for (const s of kept) {
+    const row = rows.find((r) =>
+      r.some(
+        (o) =>
+          Math.abs(o.card.rect.y - s.card.rect.y) <
+          Math.min(o.card.rect.h, s.card.rect.h) / 2,
+      ),
+    );
+    if (row) row.push(s);
+    else rows.push([s]);
+  }
+  const rowName = (i: number): string =>
+    rows.length === 1 ? "" : i === 0 ? "맨 윗줄 " : i === rows.length - 1 ? "맨 아랫줄 " : `${i + 1}번째 줄 `;
+  const colName = (i: number, n: number): string =>
+    n === 1 ? "가운데" : i === 0 ? "왼쪽" : i === n - 1 ? "오른쪽" : "가운데";
+
+  const whereOf = new Map<string, string>();
+  rows.forEach((row, ri) => {
+    row.forEach((s, ci) => {
+      whereOf.set(s.card.id, (rowName(ri) + colName(ci, row.length)).trim());
+    });
+  });
+
   const picked: PickedCard[] = kept.map((s, i) => ({
     ...s.card,
     n: i + 1,
     touched: s.touched,
+    where: whereOf.get(s.card.id) ?? "",
   }));
 
   const merged = union([inkBox, ...picked.map((c) => c.rect)]) ?? inkBox;

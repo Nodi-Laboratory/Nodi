@@ -173,6 +173,29 @@ describe("buildInkScene", () => {
     expect(scene.cards[0].touched).toBe(true);
   });
 
+  it("자리 이름을 붙인다 — 번호를 못 읽는 모델의 두 번째 단서", () => {
+    // 같은 줄 셋 + 아랫줄 하나.
+    const ink = line(300, 300, 340, 340);
+    const cards = [
+      card("왼", 0, 200),
+      card("가운데", 250, 200),
+      card("오른", 500, 200),
+      card("아래", 250, 400),
+    ];
+    const scene = buildInkScene([ink], cards, { ...OPTS, nearPad: 400, cardMax: 8 })!;
+    const by = new Map(scene.cards.map((c) => [c.id, c.where]));
+    expect(by.get("왼")).toBe("맨 윗줄 왼쪽");
+    expect(by.get("가운데")).toBe("맨 윗줄 가운데");
+    expect(by.get("오른")).toBe("맨 윗줄 오른쪽");
+    expect(by.get("아래")).toBe("맨 아랫줄 가운데");
+  });
+
+  it("한 줄뿐이면 줄 이름을 붙이지 않는다", () => {
+    const ink = line(300, 300, 340, 340);
+    const scene = buildInkScene([ink], [card("혼자", 250, 250)], OPTS)!;
+    expect(scene.cards[0].where).toBe("가운데");
+  });
+
   it("기각된 후보도 판정 기록에 남는다", () => {
     // 뽑힌 것만 남기면 "왜 저 카드는 안 들어갔지"에 답할 근거가 없다.
     const ink = line(0, 50, 400, 50);

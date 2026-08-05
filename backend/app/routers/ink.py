@@ -85,7 +85,12 @@ def _parse_cards(raw: str) -> list[dict]:
         # 줄바꿈을 지운다 — 명부는 한 줄에 하나라 개행이 섞이면 형식이 깨지고,
         # 거기에 지시문 흉내를 넣을 여지가 생긴다.
         clean = " ".join(title.split())[:_TITLE_MAX] if isinstance(title, str) else ""
-        out.append({"n": n, "title": clean})
+        where = item.get("where")
+        out.append({
+            "n": n,
+            "title": clean,
+            "where": " ".join(where.split())[:40] if isinstance(where, str) else "",
+        })
     return out
 
 
