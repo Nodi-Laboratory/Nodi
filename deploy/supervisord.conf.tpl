@@ -137,8 +137,39 @@ startsecs=5
 stdout_logfile=__LOG_DIR__/backup.log
 stderr_logfile=__LOG_DIR__/backup.err.log
 
+[program:ocr]
+; 손글씨 인식 모델 서버 (D176·D177). VARCO-VISION-2.0-1.7B-OCR.
+;
+; llama와 **같은 이유로** supervisor 아래 넣는다: 손으로 띄운 프로세스는
+; 상태에 안 잡히고, 죽어도 아무도 모르고, 워크로드가 재생성되면 되살릴 방법이
+; 어디에도 안 적혀 있다. 이 서버는 그 위에 실패가 더 조용하다 — 죽으면 화면이
+; "준비하고 있어요"(501)라고만 해서 **기능이 아직 안 만들어진 것처럼 보인다.**
+;
+; CUDA_VISIBLE_DEVICES=__OCR_GPU__ — GPU 0은 llama.cpp가 쓴다.
+; PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python — 컨테이너의 오래된 onnx
+;   *_pb2 모듈과 protobuf가 충돌한다. 없으면 import 단계에서 죽는다.
+;
+; 바인딩은 **0.0.0.0 그대로 둔다** — 문서의 브라우저 데모 UI(외부 :30020)가
+; 그 주소로 열린다. 우리 백엔드는 127.0.0.1로 부르므로 loopback으로 좁혀도
+; 되지만, 그러면 데모가 죽는다. 좁힐지는 별도 결정이다(인증이 없는 창구다).
+;
+; autostart=false — 서버 코드가 저장소 밖이라 없는 인스턴스에서 크래시 루프를
+; 돌면 안 된다. bootstrap이 server.py를 확인한 뒤 켠다(llama와 같은 방식).
+; startsecs=60 — 가중치 4GB 적재에 시간이 걸린다.
+command=python3 __OCR_DIR__/server.py --host 0.0.0.0 --port __OCR_PORT__
+directory=__OCR_DIR__
+environment=CUDA_VISIBLE_DEVICES="__OCR_GPU__",PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION="python"
+priority=15
+autostart=false
+autorestart=true
+startsecs=60
+startretries=2
+stopwaitsecs=30
+stdout_logfile=__LOG_DIR__/ocr.log
+stderr_logfile=__LOG_DIR__/ocr.err.log
+
 [group:nodi]
-programs=postgres,qdrant,llama,backend,frontend,cloudflared,backup
+programs=postgres,qdrant,llama,ocr,backend,frontend,cloudflared,backup
 
 ; ---------------------------------------------------------------------------
 ; GitHub Actions self-hosted 러너

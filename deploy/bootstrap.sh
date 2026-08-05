@@ -224,6 +224,8 @@ sed -e "s|__RUN_DIR__|$RUN_DIR|g"                 -e "s|__LOG_DIR__|$LOG_DIR|g" 
     -e "s|__JUDGE_WEIGHTS__|$JUDGE_WEIGHTS|g"     -e "s|__JUDGE_MMPROJ__|$JUDGE_MMPROJ|g" \
     -e "s|__JUDGE_PORT__|$JUDGE_PORT|g"           -e "s|__JUDGE_KEY_FILE__|$JUDGE_KEY_FILE|g" \
     -e "s|__JUDGE_MODEL_ALIAS__|$JUDGE_MODEL_ALIAS|g" \
+    -e "s|__OCR_DIR__|$OCR_DIR|g"                 -e "s|__OCR_PORT__|$OCR_PORT|g" \
+    -e "s|__OCR_GPU__|$OCR_GPU|g" \
     "$REPO_DIR/deploy/supervisord.conf.tpl" > "$SUPERVISOR_CONF"
 ok "$SUPERVISOR_CONF"
 
@@ -247,6 +249,16 @@ ok "supervisor 준비됨"
 if [ "$judge_ready" = 1 ]; then
     $SUPERVISORCTL start nodi:llama >/dev/null 2>&1 || true
     ok "판정 모델 기동 요청 — 적재 완료까지 1~2분 ($LOG_DIR/llama.log)"
+fi
+
+# 손글씨 OCR 모델 서버 (D177). llama와 같은 이유로 autostart=false다 —
+# 서버 코드가 저장소 밖이라 **없는 인스턴스에서 크래시 루프를 돌면 안 된다.**
+# 있으면 매번 켠다(이미 RUNNING이면 supervisorctl이 아무 일도 하지 않는다).
+if [ -f "$OCR_DIR/server.py" ]; then
+    $SUPERVISORCTL start nodi:ocr >/dev/null 2>&1 || true
+    ok "손글씨 OCR 기동 요청 — 적재까지 1분 내외 ($LOG_DIR/ocr.log)"
+else
+    log "손글씨 OCR 건너뜀 — $OCR_DIR/server.py 없음"
 fi
 if grep -qE '^CF_TUNNEL_TOKEN=.+' "$CLOUDFLARED_ENV" 2>/dev/null; then
     $SUPERVISORCTL start nodi:cloudflared >/dev/null 2>&1 || true

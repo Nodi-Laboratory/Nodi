@@ -48,6 +48,15 @@ BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 JUDGE_PORT="${JUDGE_PORT:-8080}"
 
+# --- 손글씨 OCR 모델 서버 (D176·D177) ---------------------------------------
+# VARCO-VISION-2.0-1.7B-OCR. GPU 0은 llama.cpp가 쓰므로 GPU 1에 고정한다.
+#
+# **저장소 밖에 있다** — 가중치와 서버 코드가 이 기계에만 있고 우리는 띄우는
+# 일만 맡는다. 그래서 디렉터리가 없는 인스턴스에서는 항목을 켜지 않는다.
+OCR_DIR="${OCR_DIR:-$NODI_HOME/varco_ocr_server}"
+OCR_PORT="${OCR_PORT:-8083}"
+OCR_GPU="${OCR_GPU:-1}"
+
 # --- 교과서 도판 비전 판정 (D118) -------------------------------------------
 # 이 서버에는 A100 80GB가 두 장 있다. 도판 캡션 판정(figure_judge.py)은
 # OpenAI 호환 비전 엔드포인트면 무엇이든 되는데, 외부 API를 쓸 이유가 없어
