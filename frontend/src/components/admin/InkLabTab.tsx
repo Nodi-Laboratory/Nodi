@@ -381,7 +381,6 @@ export function InkLabTab() {
               items={items}
               positions={layout.positions}
               sizes={layout.sizes}
-              columnX={layout.columnX}
               tagOrder={layout.tagOrder}
               tagOptions={layout.tagOrder}
               zoom={bridge.camera.zoom}

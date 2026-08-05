@@ -24,7 +24,6 @@ interface Props {
   items: CanvasItem[];
   positions: Map<string, Placed>;
   sizes: Map<string, Size>;
-  columnX: Map<string, number>;
   tagOrder: readonly string[];
   tagOptions: readonly string[];
   zoom: number;
@@ -54,7 +53,6 @@ export function ItemLayer({
   items,
   positions,
   sizes,
-  columnX,
   tagOrder,
   tagOptions,
   zoom,
@@ -97,7 +95,7 @@ export function ItemLayer({
 
   return (
     <>
-      <ColumnLabels items={items} positions={positions} columnX={columnX} tagOrder={tagOrder} />
+      <ColumnLabels items={items} positions={positions} tagOrder={tagOrder} />
       <ConnectorLayer items={items} positions={positions} sizes={sizes} />
       {items.map((item) => {
         const p = positions.get(item.id);
@@ -168,12 +166,10 @@ export function ItemLayer({
 function ColumnLabels({
   items,
   positions,
-  columnX,
   tagOrder,
 }: {
   items: CanvasItem[];
   positions: Map<string, Placed>;
-  columnX: Map<string, number>;
   tagOrder: readonly string[];
 }) {
   /** 태그별로 가장 위에 있는 글의 자리. 라벨은 그 위에 붙는다. */
@@ -192,8 +188,19 @@ function ColumnLabels({
         if (tag === UNTAGGED) return null;
         const at = topByTag.get(tag);
         if (!at) return null;
-        // 열 시작보다 왼쪽으로 나가지 않게 한다(뿌리가 가운데일 수 있다).
-        const x = Math.max(columnX.get(tag) ?? at.x, at.x);
+        /**
+         * 라벨은 **자기 태그의 맨 위 글**을 따라간다. 열 시작(`columnX`)은
+         * 안 본다.
+         *
+         * 예전에는 `Math.max(columnX, at.x)`였는데, 그 max가 실제로 값을
+         * 바꾸는 경우는 `at.x < columnX` 하나뿐이다 — 학생이 카드를 자기 열
+         * **왼쪽으로 끌어다 놓았을 때**(pinned, D122). 그때 라벨만 열 자리에
+         * 남아 **엉뚱한 카드 위에 뜬다**(사용자 보고 2026-08-05: "생명공학
+         * 카드 위에 천문학이라는 글자가 있다"). 뿌리가 자식들 위 가운데에
+         * 놓이는 tidy tree(D159)에서는 `at.x >= columnX`라 max가 어차피
+         * `at.x`를 골랐다 — 없애도 그쪽은 그대로다.
+         */
+        const x = at.x;
         const y = at.y;
         return (
           <div
