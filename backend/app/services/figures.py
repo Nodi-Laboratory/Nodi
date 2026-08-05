@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from ..config import get_settings
+from ..db import storage
 from ..db.client import get_service_client
 
 logger = logging.getLogger("nodi.figures")
@@ -43,6 +44,28 @@ def display_caption(row: dict[str, Any]) -> str:
     if caption:
         return caption
     return (row.get("alt") or "").strip()
+
+
+async def figure_bytes(row: dict[str, Any]) -> tuple[bytes, str] | None:
+    """도판 원본 바이트와 확장자 (D178). 경로가 없거나 파일이 없으면 None.
+
+    `sign_figure_url`과 나란히 두는 이유: **버킷 이름과 image_path 규약을 아는
+    곳을 한 군데로 유지**하기 위해서다. 라우터가 `settings.storage_bucket`을
+    직접 알면 저장 위치를 옮길 때 고칠 곳이 둘이 된다.
+
+    signed URL 대신 바이트를 주는 쓰임은 캔버스 오염 회피다 — 자세한 사정은
+    `routers/files.py`의 `get_figure_raw`에 적었다.
+    """
+    path = row.get("image_path")
+    if not path:
+        return None
+    try:
+        data = await storage.download(settings.storage_bucket, path)
+    except storage.StorageError:
+        logger.warning("도판 원본 내려받기 실패 (path=%s)", path, exc_info=True)
+        return None
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    return data, ext
 
 
 async def sign_figure_url(row: dict[str, Any]) -> str | None:

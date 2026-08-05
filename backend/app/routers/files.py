@@ -228,6 +228,52 @@ async def get_figure(
     }
 
 
+@router.get("/figures/{figure_id}/raw")
+async def get_figure_raw(
+    figure_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    """도판 원본 바이트 (D178) — **캔버스에 그려 넣기 위한 창구다.**
+
+    위의 signed URL 창구가 있는데 왜 또 만드나:
+
+    학생이 도판에 그린 표시를 읽으려면 그 도판을 우리 캔버스에
+    `drawImage`로 얹어야 한다. 그런데 **다른 출처의 이미지를 그린 캔버스는
+    오염돼 `toBlob`이 `SecurityError`를 던진다** — 그림이 안 나오는 게 아니라
+    내보내기가 통째로 실패한다. 배포는 프론트와 같은 출처(`/api`)라 안
+    걸리지만, 로컬에서 `NEXT_PUBLIC_API_BASE_URL`을 `http://localhost:8000/api`
+    로 둔 개발자는 **여기서만** 깨진다(배포에서는 멀쩡하다).
+
+    회피는 `fetch`로 바이트를 직접 받아 `createImageBitmap`으로 그리는 것인데,
+    `<img src>`와 달리 `fetch`는 Authorization 헤더를 실을 수 있다. 그래서 이
+    창구는 signed URL이 아니라 **로그인 인증**을 쓴다 — 덤으로 만료 재발급
+    문제(D167)가 이 경로에는 아예 없다.
+
+    접근 통제는 위와 같다: UserClient로 재조회해 RLS가 판정한다(D104).
+    """
+    client = UserClient.from_user(user)
+    rows = await client.select(
+        "textbook_figures",
+        {"id": f"eq.{figure_id}", "select": "id,image_path", "limit": "1"},
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Figure not found or not accessible.",
+        )
+    got = await figures.figure_bytes(rows[0])
+    if got is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="도판 파일이 없습니다."
+        )
+    data, ext = got
+    return Response(
+        content=data,
+        media_type=_BLOB_MIME.get(ext, "application/octet-stream"),
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
 # --- RAG source detail (D41) ---------------------------------------------
 @router.get("/chunks/{chunk_id}/context")
 async def get_chunk_context(
