@@ -43,17 +43,18 @@ settings = get_settings()
 # 2~4문장이면 끝나는 내용이다.
 NOTE_LIMIT = 1200
 
-MARKS_SYSTEM = """너는 학생이 학습 화면에 그린 표시를 **한 문장으로 옮겨 적는** 도우미다.
+MARKS_SYSTEM = """너는 학생이 학습 화면에 그린 표시를 **한국어 문장으로 옮겨 적는** 도우미다.
 
 화면에는 학습 카드가 번호 붙은 상자로 그려져 있고, 학생이 **빨간 펜**으로
-동그라미·화살표·밑줄을 그렸다.
+동그라미·화살표·밑줄·묶음표 같은 표시를 그렸다.
 
-**어느 카드를 짚었는지는 아래에 이미 적혀 있다.** 네가 고르는 것이 아니다.
-그림은 그것이 *어떻게* 그려졌는지 보라고 주는 것이다 — 카드 전체를 감쌌는지
-한 구절만 감쌌는지, 어디에서 어디로 향하는지, 둘을 잇는 모양인지.
+**표시가 무엇을 어느 카드에 했는지는 아래에 이미 적혀 있다.** 네가 고르는 것이
+아니다. 그림은 그것이 *어떻게* 그려졌는지 보라고 주는 것이다 — 카드 전체를
+감쌌는지 한 구절만 감쌌는지, 어느 쪽에서 어느 쪽으로 향하는지, 몇 번을
+덧그었는지, 도판의 어느 부분에 닿았는지.
 
 지켜야 할 것:
-- 적힌 사실과 **다르게 말하지 마라.** 짚었다고 적힌 카드만 짚은 것이다.
+- 적힌 사실과 **다르게 말하지 마라.** 적힌 것이 전부다.
 - 카드 내용을 설명하지 마라. 요약도 하지 마라. 그건 다른 모델이 한다.
 - 카드를 부를 때는 반드시 [카드 N] 형식으로 번호를 써라.
 - 그림에서 확인되지 않는 것은 쓰지 마라. 지어내지 마라."""
@@ -63,19 +64,130 @@ MARKS_SYSTEM = """너는 학생이 학습 화면에 그린 표시를 **한 문�
 # 이게 없으면 모델이 형식을 통째로 무시한다 — 실측 2026-08-05(EXAONE-4.5-33B):
 # 앞의 지시만으로는 800자짜리 마크다운 에세이가 나왔고 파싱이 통째로 실패했다.
 # 그림을 본 직후의 **마지막 지시**가 이긴다.
+#
+# 무엇을 담을지도 여기서 못 박는다. "표시를 설명하라"만 주면 모델이 아는 말
+# ("왼쪽 위에 있다")로 때운다 — 담아야 할 것을 셋으로 쪼개 주면 그만큼 쓴다.
 MARKS_FORMAT = """지금부터 **한 줄만** 출력한다. 머리말·목록·굵은 글씨·이모지·구분선을 쓰지 마라.
 
-설명: <빨간 표시가 무엇을 어떻게 짚었는지 한국어 2~3문장>"""
+그 한 줄에 셋이 들어가야 한다: (1) 표시가 무슨 모양인지, (2) 어느 카드에
+어떻게 닿았는지 — 감쌌는지 끝이 멈췄는지 스쳐 갔는지, (3) 그래서 학생이
+묻는 대상이 무엇인지.
+
+설명: <빨간 표시를 옮겨 적은 한국어 2~4문장>"""
 
 #: 기하가 센 표시 종류 → 사람 말. 프롬프트에 **사실로** 실어 준다.
 MARK_WORDS = {
-    "circled": "동그라미로 감쌌다",
-    "pointed": "화살표·밑줄로 짚었다",
-    "crossed": "빨간 선이 위를 스쳐 지나가기만 했다",
+    "circled": "동그라미가 이 카드를 감쌌다",
+    "within": "이 카드 안에 표시를 그었다",
+    "pointed": "표시의 끝이 이 카드를 가리킨다",
+    "linked": "표시가 이 카드에서 출발해 다른 데로 갔다",
+    "crossed": "표시가 위를 스쳐 지나가기만 했다",
     "near": "표시가 닿지 않았다",
 }
 #: 짚은 것으로 보는 종류(프론트 `POINTING_KINDS`와 같아야 한다).
-POINTING = ("circled", "pointed")
+#:
+#: `linked`는 뺀다 — 화살표가 카드 1에서 카드 3으로 갔다면 학생이 묻는 것은
+#: 카드 3이다. 둘 다 대상으로 치면 SOLAR가 둘 다 설명한다.
+POINTING = ("circled", "within", "pointed")
+
+#: 표시 모양 → 사람이 부르는 이름. 프론트 `GestureShape`와 같은 열쇠다.
+SHAPE_WORDS = {
+    "circle": "동그라미",
+    "arrow": "화살표",
+    "underline": "밑줄",
+    "line": "선",
+    "bracket": "ㄷ자로 꺾인 묶음표",
+    "scribble": "여러 번 덧그은 선",
+}
+
+# 숫자를 한국어로 읽었을 때 받침이 있는 것 — 조사를 고르는 데 쓴다.
+# 끝자리만 보면 된다(11=십일, 20=이십 … 끝자리가 읽기의 끝이다).
+_JONG = frozenset("136780")
+_RIEUL = frozenset("178")  # 일·칠·팔 — ㄹ받침이라 "으로"가 아니라 "로"
+
+
+def _tag(n: int) -> str:
+    return f"[카드 {n}]"
+
+
+def _join(ns: list[int], particle) -> str:
+    """번호 목록 → "[카드 1]과 [카드 3]을" 같은 한 덩어리.
+
+    조사를 맞추는 이유는 이 글을 읽는 것이 **작은 모델**이기 때문이다. 어색한
+    한국어는 그대로 어색한 한국어로 되받아 적히고, 그 문장이 SOLAR에 간다.
+    """
+    if not ns:
+        return ""
+    head = "".join(
+        _tag(n) + ("과 " if str(n)[-1] in _JONG else "와 ") for n in ns[:-1]
+    )
+    return head + _tag(ns[-1]) + particle(ns[-1])
+
+
+def _eul(n: int) -> str:
+    return "을" if str(n)[-1] in _JONG else "를"
+
+
+def _ro(n: int) -> str:
+    d = str(n)[-1]
+    return "으로" if d in _JONG and d not in _RIEUL else "로"
+
+
+def _eseo(_n: int) -> str:
+    return "에서"
+
+
+def _neun(n: int) -> str:
+    return "은" if str(n)[-1] in _JONG else "는"
+
+
+def _has_jong(word: str) -> bool:
+    """마지막 글자에 받침이 있나 — 한글 음절은 (코드 − 0xAC00) % 28로 안다."""
+    if not word:
+        return False
+    c = ord(word[-1])
+    return 0xAC00 <= c <= 0xD7A3 and (c - 0xAC00) % 28 != 0
+
+
+def _w(word: str, has: str, no: str) -> str:
+    """모양 이름에 붙일 조사. "밑줄가"·"밑줄를"이 나오면 안 된다."""
+    return word + (has if _has_jong(word) else no)
+
+
+def gesture_line(g: dict[str, Any]) -> str:
+    """표시 하나 → 한국어 한 줄.
+
+    **카드가 아니라 표시가 주어다.** 카드마다 낱말 하나만 주면 "화살표가
+    [카드 1]에서 [카드 3]으로 향한다"를 말할 방법이 없다 — 방향은 카드 둘
+    사이의 관계라 어느 한 카드에도 안 딸린다. 실측 2026-08-05: 카드 낱말만
+    줬을 때 모델이 쓴 문장은 "왼쪽 카드를 가리킨다" 수준에서 멈췄다.
+    """
+    shape = SHAPE_WORDS.get(str(g.get("shape") or ""), "표시")
+    enc = g.get("encloses") or []
+    win = g.get("within") or []
+    pts = g.get("points") or []
+    frm = g.get("from") or []
+    crs = g.get("crosses") or []
+
+    ga = _w(shape, "이", "가")
+    eul = _w(shape, "을", "를")
+
+    parts: list[str] = []
+    if enc:
+        parts.append(f"{ga} {_join(enc, _eul)} 통째로 감쌌다.")
+    if win:
+        parts.append(f"{_join(win, _eul)} 두른 상자 **안쪽에** {eul} 그었다.")
+    if pts and frm:
+        parts.append(f"{ga} {_join(frm, _eseo)} 시작해 {_join(pts, _ro)} 향한다.")
+    elif pts:
+        parts.append(f"{shape}의 끝이 {_join(pts, _eul)} 가리키며 거기서 멈췄다.")
+    elif frm:
+        parts.append(f"{ga} {_join(frm, _eseo)} 시작해 카드가 없는 쪽으로 나간다.")
+    if crs:
+        parts.append(f"{_join(crs, _neun)} 위를 스쳐 지나가기만 하고 멈추지 않는다.")
+    if not parts:
+        parts.append(f"{eul} 그렸지만 어느 카드에도 닿지 않았다.")
+    return " ".join(parts)
 
 
 def build_marks_messages(
@@ -83,6 +195,7 @@ def build_marks_messages(
     scene_uri: str,
     figure_uri: str | None,
     figure_n: int | None,
+    gestures: list[dict[str, Any]] | None = None,
 ) -> list[dict]:
     """표시 해석 요청 메시지.
 
@@ -106,10 +219,23 @@ def build_marks_messages(
     lines = [
         MARKS_SYSTEM,
         "",
-        f"화면에 있는 카드와 **우리가 이미 판정한 표시**:\n{roster or '(없음)'}",
-        "",
-        "첫 번째 그림이 화면 전체다.",
+        f"화면에 있는 카드:\n{roster or '(없음)'}",
     ]
+
+    shots = gestures or []
+    if shots:
+        drawn = "\n".join(f"- {gesture_line(g)}" for g in shots)
+        lines += ["", f"학생이 그린 표시 {len(shots)}개 (우리가 이미 판정했다):\n{drawn}"]
+
+    # **결론을 한 줄로 못 박는다.** 위의 사실들에서 이걸 유도하게 두면 모델이
+    # 틀린다 — 유도가 필요 없게 답을 적어 준다.
+    targets = [c["n"] for c in cards if str(c.get("mark") or "") in POINTING]
+    if targets:
+        lines += ["", f"→ 학생이 묻는 대상: {', '.join(_tag(n) for n in targets)}"]
+    else:
+        lines += ["", "→ 어느 카드도 확실히 짚지 않았다. 그렇게 말하라."]
+
+    lines += ["", "첫 번째 그림이 화면 전체다."]
     content: list[dict] = [{"type": "image_url", "image_url": {"url": scene_uri}}]
     if figure_uri and figure_n:
         content.append({"type": "image_url", "image_url": {"url": figure_uri}})
@@ -181,6 +307,7 @@ async def read_marks(
     scene_png: bytes,
     figure_png: bytes | None = None,
     figure_n: int | None = None,
+    gestures: list[dict[str, Any]] | None = None,
     *,
     client: httpx.AsyncClient | None = None,
 ) -> MarksResult:
@@ -205,6 +332,7 @@ async def read_marks(
         image_data_uri(scene_png, "png"),
         image_data_uri(figure_png, "png") if figure_png else None,
         figure_n,
+        gestures,
     )
     payload = {
         "model": settings.judge_model,

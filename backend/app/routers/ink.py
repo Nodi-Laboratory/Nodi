@@ -5,12 +5,13 @@
         scene_png  (선택) 카드까지 그린 도식 PNG — 비전 모델로 간다
         figure_png (선택) 도판 확대본
         figure_n   (선택) 그 도판이 몇 번 카드인가
-        cards      (선택) [{"n":1,"title":"천문학","where":"맨 윗줄 왼쪽"}, …] JSON
+        cards      (선택) [{"n":1,"title":"천문학","where":"맨 윗줄 왼쪽","mark":"circled"}, …] JSON
+        gestures   (선택) [{"shape":"arrow","points":[3],"from":[1],…}, …] JSON
         lang       (선택) 기본 "ko"
     200 → {"text": …, "marks_note": …, "confidence": null}
 
 **어느 카드를 짚었는지는 여기서 정하지 않는다** — 프론트가 기하로 이미
-센다(`inkScene.markOf`). 창구는 그 사실을 프롬프트에 실어 주고, 모델은
+센다(`inkScene`·`inkShapes`). 창구는 그 사실을 프롬프트에 실어 주고, 모델은
 설명 문장만 쓴다.
 
 ## 왜 두 모델에 다른 그림을 주나
@@ -101,6 +102,64 @@ def _parse_cards(raw: str) -> list[dict]:
     return out
 
 
+#: 표시 상한. 학생이 낙서를 잔뜩 해도 프롬프트가 지시문을 밀어내면 안 된다.
+_GESTURES_MAX = 8
+#: 표시 하나가 거느릴 수 있는 카드 번호 수.
+_REFS_MAX = 8
+_GESTURE_KEYS = ("encloses", "within", "points", "from", "crosses")
+
+
+def _nums(raw: object, valid: set[int]) -> list[int]:
+    """번호 목록 정규화. **명부에 없는 번호는 버린다.**
+
+    있지도 않은 `[카드 9]`가 프롬프트에 실리면 모델이 그 번호를 그대로 옮겨
+    적고, 그 설명이 SOLAR로 간다 — 아무도 못 잡는 거짓말이 된다.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for v in raw[:_REFS_MAX]:
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n in valid and n not in out:
+            out.append(n)
+    return out
+
+
+def _parse_gestures(raw: str, valid: set[int]) -> list[dict]:
+    """표시 목록 JSON → 정규화된 목록. **못 읽으면 빈 목록**(질문을 막지 않는다).
+
+    카드 명부와 같은 태도다 — 창구는 자기 입력을 믿지 않는다. 모양 이름도
+    아는 것만 통과시킨다(모르는 값은 `gesture_line`이 "표시"로 떨어뜨린다).
+    """
+    if not raw.strip():
+        return []
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        logger.warning("표시 목록을 읽지 못했다 — 카드 명부만으로 진행한다")
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict] = []
+    for i, item in enumerate(data[:_GESTURES_MAX], start=1):
+        if not isinstance(item, dict):
+            continue
+        shape = item.get("shape")
+        row: dict = {
+            "i": i,
+            "shape": shape if shape in ink_marks.SHAPE_WORDS else "",
+        }
+        for key in _GESTURE_KEYS:
+            row[key] = _nums(item.get(key), valid)
+        # 어느 카드와도 관계가 없는 표시는 프롬프트에 실을 것이 없다.
+        if any(row[key] for key in _GESTURE_KEYS):
+            out.append(row)
+    return out
+
+
 async def _read(upload: UploadFile | None, *, label: str) -> bytes:
     """업로드 바이트. 상한을 넘으면 413."""
     if upload is None:
@@ -121,6 +180,7 @@ async def interpret_ink(
     figure_png: UploadFile | None = File(None),
     figure_n: int | None = Form(None),
     cards: str = Form(""),
+    gestures: str = Form(""),
     # 계약에 있어 받지만 VARCO는 언어 인자가 없다(ocr.py와 같은 이유).
     lang: str = Form("ko"),
     user: CurrentUser = Depends(get_current_user),
@@ -144,6 +204,8 @@ async def interpret_ink(
     scene_bytes = await _read(scene_png, label="화면")
     figure_bytes = await _read(figure_png, label="도판")
     roster = _parse_cards(cards)
+    # 번호는 명부가 정한다 — 표시가 명부에 없는 카드를 가리키면 그건 버린다.
+    shots = _parse_gestures(gestures, {c["n"] for c in roster})
 
     async def _ocr() -> str:
         return await svc.recognize(
@@ -156,14 +218,15 @@ async def interpret_ink(
         # 도식이 없으면 볼 것이 없다. 카드가 하나도 없어도 마찬가지 —
         # "무엇을 가리키나"에 후보가 없다.
         if not scene_bytes:
-            return ink_marks.MarksResult(None, "", "no_scene")
+            return ink_marks.MarksResult("", "no_scene")
         if not roster:
-            return ink_marks.MarksResult(None, "", "no_cards")
+            return ink_marks.MarksResult("", "no_cards")
         return await ink_marks.read_marks(
             roster,
             scene_bytes,
             figure_bytes or None,
             figure_n if settings.ink_figure_zoom_enabled else None,
+            shots,
         )
 
     # **동시에 돈다.** OCR은 GPU 1(VARCO), 비전은 GPU 0(llama.cpp)이라

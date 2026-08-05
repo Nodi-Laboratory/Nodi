@@ -56,11 +56,12 @@ def test_명부에_기하_판정이_사실로_실린다():
     ]
     msgs = ink_marks.build_marks_messages(cards, "data:image/png;base64,AAA", None, None)
     text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
-    assert "1 = 천문학 (맨 윗줄 왼쪽) — 동그라미로 감쌌다" in text
-    assert "2 = 지질학 (맨 윗줄 가운데) — 빨간 선이 위를 스쳐 지나가기만 했다" in text
+    assert "1 = 천문학 (맨 윗줄 왼쪽) — 동그라미가 이 카드를 감쌌다" in text
+    assert "2 = 지질학 (맨 윗줄 가운데) — 표시가 위를 스쳐 지나가기만 했다" in text
     # 고르라고 하지 않는다.
     assert "가리킴:" not in text
-    assert "이미 판정한 표시" in text
+    # **결론까지 적어 준다.** 사실에서 유도하게 두면 작은 모델이 틀린다.
+    assert "→ 학생이 묻는 대상: [카드 1]" in text
 
 
 @pytest.mark.asyncio
@@ -293,7 +294,7 @@ def test_형식_지시가_맨_끝에_있다():
     # 메시지는 user 하나뿐 — system에 두면 묻힌다.
     assert len(msgs) == 1 and msgs[0]["role"] == "user"
     text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
-    assert text.rstrip().endswith("설명: <빨간 표시가 무엇을 어떻게 짚었는지 한국어 2~3문장>")
+    assert text.rstrip().endswith("설명: <빨간 표시를 옮겨 적은 한국어 2~4문장>")
     # 그림이 글보다 앞이다(figure_caption과 같은 모양).
     assert msgs[0]["content"][0]["type"] == "image_url"
 
@@ -313,7 +314,129 @@ def test_시스템_프롬프트가_핵심_지시를_담는다():
     s = ink_marks.MARKS_SYSTEM
     # 없으면 작은 모델의 요약이 큰 모델의 근거가 된다
     assert "설명하지 마라" in s
-    # 고르는 일을 맡기지 않는다 — 기하가 이미 정했다
-    assert "네가 고르는 것이 아니다" in s
+    # 고르는 일을 맡기지 않는다 — 기하가 이미 정했다.
+    # 줄바꿈이 낀 자리라 공백을 눌러서 본다(줄 폭 때문에 문장이 접힌다).
+    assert "네가 고르는 것이 아니다" in " ".join(s.split())
     # 없으면 id 매핑이 문자열 추측이 된다
     assert "[카드 N]" in s
+
+
+# ────────────────────── 표시 문장 (D178, 2026-08-05) ──────────────────────
+#
+# 카드마다 낱말 하나만 주던 시절에는 "화살표가 [카드 1]에서 [카드 3]으로
+# 향한다"를 **말할 방법이 없었다** — 방향은 카드 둘 사이의 관계라 어느 한
+# 카드에도 안 딸린다. 그래서 표시를 주어로 하는 문장을 따로 만든다.
+
+
+def test_화살표는_출발과_도착을_한_문장으로_말한다():
+    line = ink_marks.gesture_line(
+        {"shape": "arrow", "from": [1], "points": [3], "crosses": [2],
+         "encloses": [], "within": []}
+    )
+    assert "화살표가 [카드 1]에서 시작해 [카드 3]으로 향한다" in line
+    # 스쳐 간 카드는 **스쳐 갔다고 말해야** 배제가 된다(부정 진술 강제).
+    assert "[카드 2]는 위를 스쳐 지나가기만 하고 멈추지 않는다" in line
+
+
+def test_동그라미가_여럿을_감싼_것을_말한다():
+    line = ink_marks.gesture_line(
+        {"shape": "circle", "encloses": [1, 2], "within": [], "points": [],
+         "from": [], "crosses": []}
+    )
+    assert "동그라미가 [카드 1]과 [카드 2]를 통째로 감쌌다" in line
+
+
+def test_카드_안에_그은_표시를_구분해_말한다():
+    line = ink_marks.gesture_line(
+        {"shape": "underline", "within": [2], "encloses": [], "points": [],
+         "from": [], "crosses": []}
+    )
+    assert "[카드 2]를 두른 상자 **안쪽에** 밑줄을 그었다" in line
+
+
+def test_조사를_숫자_읽기에_맞춘다():
+    """작은 모델에게 어색한 한국어를 주면 어색한 한국어가 돌아온다.
+
+    1(일)·3(삼)은 받침이 있어 "을", 2(이)·4(사)는 "를". "으로/로"는 ㄹ받침이
+    갈린다 — 1은 "1로", 3은 "3으로".
+    """
+    ro = lambda a, b: ink_marks.gesture_line(
+        {"shape": "arrow", "from": [a], "points": [b], "encloses": [],
+         "within": [], "crosses": []}
+    )
+    assert "[카드 3]으로 향한다" in ro(2, 3)
+    assert "[카드 1]로 향한다" in ro(2, 1)
+    eul = lambda n: ink_marks.gesture_line(
+        {"shape": "circle", "encloses": [n], "within": [], "points": [],
+         "from": [], "crosses": []}
+    )
+    assert "[카드 1]을 통째로" in eul(1)
+    assert "[카드 2]를 통째로" in eul(2)
+
+
+def test_어디에도_안_닿은_표시도_말한다():
+    line = ink_marks.gesture_line(
+        {"shape": "circle", "encloses": [], "within": [], "points": [],
+         "from": [], "crosses": []}
+    )
+    assert "어느 카드에도 닿지 않았다" in line
+
+
+def test_모르는_모양은_그냥_표시라고_부른다():
+    """프론트가 새 모양을 추가해도 프롬프트에 빈칸이 생기지 않는다."""
+    line = ink_marks.gesture_line(
+        {"shape": "별표", "points": [1], "encloses": [], "within": [],
+         "from": [], "crosses": []}
+    )
+    assert "표시의 끝이 [카드 1]을 가리키며" in line
+
+
+def test_표시_목록이_프롬프트에_실린다():
+    cards = [
+        {"n": 1, "title": "지질학", "where": "맨 윗줄 왼쪽", "mark": "linked"},
+        {"n": 3, "title": "생명공학", "where": "맨 아랫줄 가운데", "mark": "pointed"},
+    ]
+    gestures = [
+        {"shape": "arrow", "from": [1], "points": [3], "encloses": [],
+         "within": [], "crosses": []}
+    ]
+    msgs = ink_marks.build_marks_messages(
+        cards, "data:image/png;base64,AAA", None, None, gestures
+    )
+    text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
+    assert "학생이 그린 표시 1개" in text
+    assert "[카드 1]에서 시작해 [카드 3]으로 향한다" in text
+    # 출발점은 대상이 아니다 — 결론 줄에 [카드 1]이 들어가면 SOLAR가 둘 다 설명한다.
+    assert "→ 학생이 묻는 대상: [카드 3]" in text
+    # 표시 목록도 형식 지시보다 앞이어야 한다(마지막 지시가 이긴다).
+    assert text.index("학생이 그린 표시") < text.index("한 줄만")
+
+
+def test_짚은_것이_없으면_없다고_말하게_한다():
+    """빈칸으로 두면 모델이 아무 카드나 고른다 — 실측 2026-08-05: 늘 1번."""
+    msgs = ink_marks.build_marks_messages(
+        [{"n": 1, "title": "지질학", "mark": "crossed"}],
+        "data:image/png;base64,AAA", None, None, [],
+    )
+    text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
+    assert "어느 카드도 확실히 짚지 않았다" in text
+
+
+def test_출발점은_짚은_것으로_치지_않는다():
+    """`POINTING`은 프론트 `POINTING_KINDS`와 같아야 한다 — 갈리면 화면의
+    부모 노드와 SOLAR가 받는 대상이 어긋난다."""
+    assert set(ink_marks.POINTING) == {"circled", "within", "pointed"}
+    assert "linked" not in ink_marks.POINTING
+    assert "crossed" not in ink_marks.POINTING
+
+
+def test_모양_이름에도_조사를_맞춘다():
+    """"밑줄가"·"동그라미이"가 나오면 안 된다 — 이 글을 읽는 것이 작은 모델이다."""
+    def line(shape: str) -> str:
+        return ink_marks.gesture_line(
+            {"shape": shape, "encloses": [2], "within": [], "points": [],
+             "from": [], "crosses": []}
+        )
+    assert line("underline").startswith("밑줄이 ")
+    assert line("circle").startswith("동그라미가 ")
+    assert line("line").startswith("선이 ")
