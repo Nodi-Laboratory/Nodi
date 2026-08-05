@@ -241,7 +241,9 @@ export async function renderScenePng(
   }
 
   // 표시는 **맨 위에** — 카드에 가려지면 무엇을 가리키는지 볼 수 없다.
-  drawStrokes(ctx, strokes, { color: MARK_COLOR });
+  // **표시만 그린다**(`scene.marks`) — 틀 잡기 점은 inkScene이 이미 뺐다.
+  // 규칙을 두 곳에 두면 그림과 판정이 갈린다.
+  drawStrokes(ctx, scene.marks, { color: MARK_COLOR });
 
   return toBlob(canvas);
 }

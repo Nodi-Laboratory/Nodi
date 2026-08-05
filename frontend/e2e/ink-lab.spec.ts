@@ -95,7 +95,6 @@ test("읽기가 진짜 창구를 부르고 흐름 로그가 펼쳐진다", async
       body: JSON.stringify({
         text: "이거 더 설명해줘",
         marks_note: "화살표가 [카드 1]을 가리킨다. [카드 2]는 닿지 않는다.",
-        pointed: 1,
         marks_status: "ok",
         confidence: null,
       }),
@@ -116,7 +115,7 @@ test("읽기가 진짜 창구를 부르고 흐름 로그가 펼쳐진다", async
 
   // **결과가 맨 위에 바로 보인다** — 스크롤 없이(사용자 지적 2026-08-05).
   await expect(page.getByText("손글씨 (OCR)")).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText("가리킨 카드 (비전)")).toBeVisible();
+  await expect(page.getByText("짚은 카드 (기하)")).toBeVisible();
   await expect(page.getByText("표시 설명 (비전)")).toBeVisible();
 
   // 흐름 로그가 단계별로 펼쳐진다.

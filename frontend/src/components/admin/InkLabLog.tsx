@@ -35,7 +35,6 @@ export interface InkRun {
     | {
         text: string;
         marksNote: string;
-        pointed: number | null;
         marksStatus: InkMarksStatus;
         ms: number;
       }
@@ -51,6 +50,14 @@ export interface InkRun {
  * 빈 설명만 보여 주면 "고장인가 꺼진 건가"를 알 수 없다. 관리자가 다음에 할
  * 일이 갈래마다 다르다 — 노브를 켜거나, 주소를 채우거나, 서버를 살리거나.
  */
+/** 기하가 센 표시 종류 → 화면 말. */
+const MARK_LABEL: Record<string, string> = {
+  circled: "동그라미",
+  pointed: "화살표·밑줄",
+  crossed: "스쳐 지나감",
+  near: "근처",
+};
+
 const MARKS_REASON: Record<InkMarksStatus, string> = {
   ok: "",
   off: "설정에서 [펜 표시 해석]이 꺼져 있습니다.",
@@ -368,10 +375,10 @@ function Result({ run }: { run: InkRun }) {
       </div>
     );
   }
-  const pointedTitle =
-    r.pointed !== null
-      ? (run.capture.cards.find((c) => c.n === r.pointed)?.title ?? "")
-      : "";
+  // **짚은 카드는 기하가 정한다** — 모델 답이 아니다(D178).
+  const picked = run.capture.pointed
+    .map((n) => ({ n, c: run.capture.cards.find((x) => x.n === n) }))
+    .filter((x) => !!x.c);
   const reason = MARKS_REASON[r.marksStatus];
 
   return (
@@ -390,15 +397,20 @@ function Result({ run }: { run: InkRun }) {
 
       <div>
         <div className="text-[10px] uppercase tracking-wide" style={{ color: C.dim }}>
-          가리킨 카드 (비전)
+          짚은 카드 (기하)
         </div>
-        {r.pointed !== null ? (
-          <span
-            className="inline-block rounded px-1.5 py-0.5 text-[12px] font-semibold"
-            style={{ background: "#16301f", color: "#8ee6a8" }}
-          >
-            [카드 {r.pointed}] {pointedTitle}
-          </span>
+        {picked.length ? (
+          <div className="flex flex-wrap gap-1">
+            {picked.map(({ n, c }) => (
+              <span
+                key={n}
+                className="inline-block rounded px-1.5 py-0.5 text-[12px] font-semibold"
+                style={{ background: "#16301f", color: "#8ee6a8" }}
+              >
+                [카드 {n}] {c!.title} · {MARK_LABEL[c!.mark] ?? c!.mark}
+              </span>
+            ))}
+          </div>
         ) : (
           <span className="text-[12px]" style={{ color: C.dim }}>
             없음

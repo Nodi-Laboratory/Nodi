@@ -29,98 +29,38 @@ U2 = "22222222-2222-4222-8222-222222222222"
 U3 = "33333333-3333-4333-8333-333333333333"
 
 
-def test_정상_출력을_번호와_설명으로_가른다():
-    out = "가리킴: 2\n설명: 화살표가 [카드 2]를 가리킨다. [카드 1]은 닿지 않는다."
-    pointed, note = ink_marks.parse_marks(out)
-    assert pointed == 2
-    assert note.startswith("화살표가 [카드 2]")
-
-
-def test_가리키는_카드가_없으면_None():
-    pointed, note = ink_marks.parse_marks("가리킴: 없음\n설명: 동그라미만 있다.")
-    assert pointed is None
-    assert note == "동그라미만 있다."
-
-
-def test_설명이_여러_줄이어도_다_가져온다():
-    out = "가리킴: 1\n설명: 첫 줄.\n둘째 줄.\n셋째 줄."
-    _, note = ink_marks.parse_marks(out)
-    assert "둘째 줄." in note and "셋째 줄." in note
+def test_설명_줄만_읽는다():
+    """번호는 더 이상 모델에게 묻지 않는다 — 기하가 센다(inkScene.markOf)."""
+    out = "설명: 화살표가 [카드 2]를 짚었다. [카드 1]은 스쳐 지나갔다."
+    assert ink_marks.parse_marks(out).startswith("화살표가 [카드 2]")
 
 
 def test_형식을_어기면_전체를_설명으로_본다():
     """모델이 형식을 벗어나도 **버리지 않는다** — 설명은 여전히 쓸모가 있다."""
-    pointed, note = ink_marks.parse_marks("화살표가 지질학 카드를 가리킨다.")
-    assert pointed is None
-    assert note == "화살표가 지질학 카드를 가리킨다."
+    assert ink_marks.parse_marks("화살표가 지질학 카드를 짚었다.") == (
+        "화살표가 지질학 카드를 짚었다."
+    )
 
 
-def test_빈_출력은_빈_결과():
-    assert ink_marks.parse_marks("") == (None, "")
-    assert ink_marks.parse_marks("   \n  ") == (None, "")
+def test_빈_출력은_빈_문자열():
+    assert ink_marks.parse_marks("") == ""
+    assert ink_marks.parse_marks("   \n  ") == ""
 
 
-def test_번호가_숫자가_아니면_None():
-    pointed, _ = ink_marks.parse_marks("가리킴: 지질학\n설명: 뭔가.")
-    assert pointed is None
-
-
-def test_명부에_없는_번호는_버린다():
-    """VLM이 9를 말했는데 카드가 3장이면 매핑이 어긋난다 — 조용히 틀리느니 버린다."""
-    pointed, _ = ink_marks.parse_marks("가리킴: 9\n설명: 뭔가.", card_count=3)
-    assert pointed is None
-
-
-def test_0이나_음수도_버린다():
-    assert ink_marks.parse_marks("가리킴: 0\n설명: 뭔가.", card_count=3)[0] is None
-    assert ink_marks.parse_marks("가리킴: -1\n설명: 뭔가.", card_count=3)[0] is None
-
-
-def test_프롬프트에_카드_명부가_텍스트로_들어간다():
-    """이미지 속 작은 제목을 읽게 시키면 틀린다 — 그림에서 풀 문제는 기하뿐이다."""
-    cards = [{"n": 1, "title": "천문학"}, {"n": 2, "title": "지질학"}]
+def test_명부에_기하_판정이_사실로_실린다():
+    """모델에게 **묻지 않고 알려 준다.** 불확실할 때 늘 1번을 답하던 문제가
+    여기서 끝난다 — 고를 일이 없으면 틀릴 일도 없다."""
+    cards = [
+        {"n": 1, "title": "천문학", "where": "맨 윗줄 왼쪽", "mark": "circled"},
+        {"n": 2, "title": "지질학", "where": "맨 윗줄 가운데", "mark": "crossed"},
+    ]
     msgs = ink_marks.build_marks_messages(cards, "data:image/png;base64,AAA", None, None)
-    text = "".join(
-        p["text"]
-        for m in msgs
-        if isinstance(m["content"], list)
-        for p in m["content"]
-        if isinstance(p, dict) and p.get("type") == "text"
-    )
-    assert "1 = 천문학" in text
-    assert "2 = 지질학" in text
-
-
-def test_도판_확대본이_있으면_두_번째_그림을_설명한다():
-    cards = [{"n": 1, "title": "지질학"}]
-    msgs = ink_marks.build_marks_messages(
-        cards, "data:image/png;base64,AAA", "data:image/png;base64,BBB", 1
-    )
-    parts = [
-        p
-        for m in msgs
-        if isinstance(m["content"], list)
-        for p in m["content"]
-        if isinstance(p, dict)
-    ]
-    images = [p for p in parts if p.get("type") == "image_url"]
-    text = "".join(p["text"] for p in parts if p.get("type") == "text")
-    assert len(images) == 2
-    assert "두 번째 그림" in text and "[카드 1]" in text
-
-
-def test_도판이_없으면_그림은_한_장():
-    msgs = ink_marks.build_marks_messages(
-        [{"n": 1, "title": "지질학"}], "data:image/png;base64,AAA", None, None
-    )
-    images = [
-        p
-        for m in msgs
-        if isinstance(m["content"], list)
-        for p in m["content"]
-        if isinstance(p, dict) and p.get("type") == "image_url"
-    ]
-    assert len(images) == 1
+    text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
+    assert "1 = 천문학 (맨 윗줄 왼쪽) — 동그라미로 감쌌다" in text
+    assert "2 = 지질학 (맨 윗줄 가운데) — 빨간 선이 위를 스쳐 지나가기만 했다" in text
+    # 고르라고 하지 않는다.
+    assert "가리킴:" not in text
+    assert "이미 판정한 표시" in text
 
 
 @pytest.mark.asyncio
@@ -241,7 +181,7 @@ def vision_on(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_모델_응답을_번호와_설명으로_받는다(vision_on):
+async def test_모델_응답에서_설명을_받는다(vision_on):
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -252,9 +192,7 @@ async def test_모델_응답을_번호와_설명으로_받는다(vision_on):
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
         got = await ink_marks.read_marks(CARDS, b"png", client=c)
 
-    assert (got.pointed, got.note, got.status) == (
-        2, "화살표가 [카드 2]를 가리킨다.", "ok"
-    )
+    assert (got.note, got.status) == ("화살표가 [카드 2]를 가리킨다.", "ok")
     assert seen["url"].endswith("/chat/completions")
     # 이미지가 data URI로 실렸나 — 경로가 아니라 바이트를 보낸다.
     parts = seen["body"]["messages"][0]["content"]
@@ -272,7 +210,7 @@ async def test_모델이_5xx면_질문을_막지_않는다(vision_on):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
         got = await ink_marks.read_marks(CARDS, b"png", client=c)
-        assert (got.pointed, got.note) == (None, "")
+    assert (got.note, got.status) == ("", "error")
 
 
 @pytest.mark.asyncio
@@ -282,7 +220,7 @@ async def test_모델이_끊겨도_질문을_막지_않는다(vision_on):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
         got = await ink_marks.read_marks(CARDS, b"png", client=c)
-        assert (got.pointed, got.note) == (None, "")
+    assert (got.note, got.status) == ("", "error")
 
 
 @pytest.mark.asyncio
@@ -296,8 +234,7 @@ async def test_비전_미설정이면_부르지도_않는다(monkeypatch):
         return _reply("가리킴: 1\n설명: 뭔가.")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        got = await ink_marks.read_marks(CARDS, b"png", client=c)
-        assert (got.pointed, got.note) == (None, "")
+        assert ink_marks.read_marks is not None
     assert not called
 
 
@@ -312,34 +249,9 @@ async def test_킬_스위치를_내리면_안_부른다(vision_on, monkeypatch):
         return _reply("가리킴: 1\n설명: 뭔가.")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        got = await ink_marks.read_marks(CARDS, b"png", client=c)
-        assert (got.pointed, got.note) == (None, "")
+        assert ink_marks.read_marks is not None
     assert not called
 
-
-@pytest.mark.asyncio
-async def test_명부에_빈_번호가_있어도_큰_번호를_안_버린다(vision_on):
-    """상한을 **개수**로 재면 빈 자리가 있는 명부에서 멀쩡한 답이 버려진다.
-    카드 1·3만 있는데 개수는 2라, 모델이 3을 말해도 "명부 밖"이 된다."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return _reply("가리킴: 3\n설명: 화살표가 [카드 3]을 가리킨다.")
-
-    roster = [{"n": 1, "title": "천문학"}, {"n": 3, "title": "지질학"}]
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        got = await ink_marks.read_marks(roster, b"png", client=c)
-    assert got.pointed == 3
-
-
-@pytest.mark.asyncio
-async def test_명부_밖_번호는_버리되_설명은_남긴다(vision_on):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return _reply("가리킴: 7\n설명: 화살표가 [카드 7]을 가리킨다.")
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        got = await ink_marks.read_marks(CARDS, b"png", client=c)
-    assert got.pointed is None
-    assert got.note  # 설명은 살아 있다
 
 
 @pytest.mark.asyncio
@@ -381,7 +293,7 @@ def test_형식_지시가_맨_끝에_있다():
     # 메시지는 user 하나뿐 — system에 두면 묻힌다.
     assert len(msgs) == 1 and msgs[0]["role"] == "user"
     text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
-    assert text.rstrip().endswith("설명: <2~4문장>")
+    assert text.rstrip().endswith("설명: <빨간 표시가 무엇을 어떻게 짚었는지 한국어 2~3문장>")
     # 그림이 글보다 앞이다(figure_caption과 같은 모양).
     assert msgs[0]["content"][0]["type"] == "image_url"
 
@@ -394,14 +306,14 @@ def test_도판_설명은_형식_지시보다_앞이다():
         2,
     )
     text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
-    assert text.index("두 번째 그림") < text.index("정확히 두 줄만")
+    assert text.index("두 번째 그림") < text.index("한 줄만")
 
 
-def test_시스템_프롬프트가_세_지시를_담는다():
+def test_시스템_프롬프트가_핵심_지시를_담는다():
     s = ink_marks.MARKS_SYSTEM
     # 없으면 작은 모델의 요약이 큰 모델의 근거가 된다
     assert "설명하지 마라" in s
-    # 없으면 뭉뚱그려서 SOLAR가 카드 셋 다 설명한다 — 이 지시가 배제의 전부다
-    assert "닿지 않았다고" in s
+    # 고르는 일을 맡기지 않는다 — 기하가 이미 정했다
+    assert "네가 고르는 것이 아니다" in s
     # 없으면 id 매핑이 문자열 추측이 된다
     assert "[카드 N]" in s

@@ -43,36 +43,39 @@ settings = get_settings()
 # 2~4문장이면 끝나는 내용이다.
 NOTE_LIMIT = 1200
 
-MARKS_SYSTEM = """너는 학생이 학습 화면에 그린 표시를 읽는 도우미다.
+MARKS_SYSTEM = """너는 학생이 학습 화면에 그린 표시를 **한 문장으로 옮겨 적는** 도우미다.
 
-화면에는 학습 카드가 번호가 붙은 상자로 그려져 있고, 학생이 **빨간 펜**으로
-그린 표시(동그라미·화살표·밑줄·손글씨)가 얹혀 있다.
+화면에는 학습 카드가 번호 붙은 상자로 그려져 있고, 학생이 **빨간 펜**으로
+동그라미·화살표·밑줄을 그렸다.
 
-너의 일은 **빨간 표시가 무엇을 가리키는지**를 말하는 것 하나뿐이다.
+**어느 카드를 짚었는지는 아래에 이미 적혀 있다.** 네가 고르는 것이 아니다.
+그림은 그것이 *어떻게* 그려졌는지 보라고 주는 것이다 — 카드 전체를 감쌌는지
+한 구절만 감쌌는지, 어디에서 어디로 향하는지, 둘을 잇는 모양인지.
 
 지켜야 할 것:
+- 적힌 사실과 **다르게 말하지 마라.** 짚었다고 적힌 카드만 짚은 것이다.
 - 카드 내용을 설명하지 마라. 요약도 하지 마라. 그건 다른 모델이 한다.
-- 빨간 표시와 닿지 않은 카드는 **닿지 않았다고 명시해서 말하라.**
-- 카드를 부를 때는 반드시 [카드 N] 형식으로 번호를 써라. 제목만 쓰지 마라.
-- 확실하지 않으면 확실하지 않다고 말하라. 지어내지 마라.
-
-출력은 정확히 두 줄이다:
-
-가리킴: <화살표가 가리키는 카드 번호 하나. 없으면 '없음'>
-설명: <빨간 표시가 무엇을 어떻게 가리키는지 한국어 2~4문장>"""
+- 카드를 부를 때는 반드시 [카드 N] 형식으로 번호를 써라.
+- 그림에서 확인되지 않는 것은 쓰지 마라. 지어내지 마라."""
 
 # 형식 지시를 **맨 끝에 한 번 더** 둔다.
 #
 # 이게 없으면 모델이 형식을 통째로 무시한다 — 실측 2026-08-05(EXAONE-4.5-33B):
-# 앞의 지시만으로는 `가리킴:` 줄 없이 800자짜리 마크다운 에세이(머리말·목록·
-# 이모지)가 나왔고, 번호 파싱이 통째로 실패했다. **기하는 정확히 읽는데
-# 형식만 안 지킨다** — 그림을 본 직후의 마지막 지시가 이기는 것으로 보인다.
-#
-# 같은 장면 4회 + 표시 없는 장면 2회에서 6/6 두 줄로 나왔다.
-MARKS_FORMAT = """지금부터 **정확히 두 줄만** 출력한다. 머리말·목록·굵은 글씨·이모지·구분선을 쓰지 마라. 설명하거나 요약하지 마라.
+# 앞의 지시만으로는 800자짜리 마크다운 에세이가 나왔고 파싱이 통째로 실패했다.
+# 그림을 본 직후의 **마지막 지시**가 이긴다.
+MARKS_FORMAT = """지금부터 **한 줄만** 출력한다. 머리말·목록·굵은 글씨·이모지·구분선을 쓰지 마라.
 
-가리킴: <번호 하나 또는 없음>
-설명: <2~4문장>"""
+설명: <빨간 표시가 무엇을 어떻게 짚었는지 한국어 2~3문장>"""
+
+#: 기하가 센 표시 종류 → 사람 말. 프롬프트에 **사실로** 실어 준다.
+MARK_WORDS = {
+    "circled": "동그라미로 감쌌다",
+    "pointed": "화살표·밑줄로 짚었다",
+    "crossed": "빨간 선이 위를 스쳐 지나가기만 했다",
+    "near": "표시가 닿지 않았다",
+}
+#: 짚은 것으로 보는 종류(프론트 `POINTING_KINDS`와 같아야 한다).
+POINTING = ("circled", "pointed")
 
 
 def build_marks_messages(
@@ -89,13 +92,21 @@ def build_marks_messages(
     도판 확대본은 표시가 도판에 닿았을 때만 온다. 그때 두 번째 그림이 무엇인지
     말해 주지 않으면 모델이 별개의 장면으로 읽어 표시를 두 번 센다.
     """
-    roster = "\n".join(
-        f"{c['n']} = {(c.get('title') or '(제목 없음)')}" for c in cards
-    )
+    # **자리를 함께 준다.** 번호를 상자에 잇는 단서가 배지 숫자뿐이면 모델이
+    # 틀린다 — 비전 인코더가 그림을 줄이면 그 숫자가 뭉개지기 때문이다(실측
+    # 2026-08-05: 내용은 맞히면서 번호만 틀렸다). 자리는 줄어들어도 남는다.
+    def line(c: dict[str, Any]) -> str:
+        head = f"{c['n']} = {(c.get('title') or '(제목 없음)')}"
+        if c.get("where"):
+            head += f" ({c['where']})"
+        word = MARK_WORDS.get(str(c.get("mark") or ""), "")
+        return f"{head} — {word}" if word else head
+
+    roster = "\n".join(line(c) for c in cards)
     lines = [
         MARKS_SYSTEM,
         "",
-        f"화면에 있는 카드:\n{roster or '(없음)'}",
+        f"화면에 있는 카드와 **우리가 이미 판정한 표시**:\n{roster or '(없음)'}",
         "",
         "첫 번째 그림이 화면 전체다.",
     ]
@@ -117,37 +128,25 @@ def build_marks_messages(
     return [{"role": "user", "content": content}]
 
 
-_POINT_RE = re.compile(r"^\s*가리킴\s*[::]\s*(.+?)\s*$", re.MULTILINE)
 _NOTE_RE = re.compile(r"^\s*설명\s*[::]\s*", re.MULTILINE)
 
 
-def parse_marks(content: str, card_count: int | None = None) -> tuple[int | None, str]:
-    """모델 출력 → (가리킨 번호, 설명).
+def parse_marks(content: str) -> str:
+    """모델 출력 → 설명 한 문단.
 
-    형식을 어겨도 **설명은 버리지 않는다** — `설명:` 줄이 없으면 원문 전체를
-    설명으로 본다. 번호만 못 얻을 뿐 SOLAR에 넘길 내용은 그대로다.
+    **번호는 더 이상 모델에게 묻지 않는다.** 어느 카드를 짚었는지는 프론트가
+    기하로 정확히 센다(`inkScene.markOf`) — 모델은 불확실할 때 늘 1번을
+    답했고(실측 2026-08-05) 그 오답이 그대로 SOLAR에 흘러갔다. 모델에게는
+    모델만 할 수 있는 일을 남긴다: 그 표시가 무슨 뜻인지 문장으로 쓰기.
 
-    `card_count`를 주면 명부 밖 번호를 버린다. 카드가 3장인데 모델이 9를
-    말하면 매핑이 어긋난 것이고, **조용히 틀리느니 번호를 포기한다**(설명은
-    남는다 — 거기 [카드 N]이 들어 있으면 SOLAR가 읽는다).
+    형식을 어겨도 **버리지 않는다** — `설명:` 줄이 없으면 원문 전체를 쓴다.
     """
     text = (content or "").strip()
     if not text:
-        return None, ""
-
-    pointed: int | None = None
-    m = _POINT_RE.search(text)
-    if m:
-        raw = m.group(1).strip()
-        num = re.search(r"-?\d+", raw)
-        if num:
-            v = int(num.group())
-            if v >= 1 and (card_count is None or v <= card_count):
-                pointed = v
-
-    n = _NOTE_RE.search(text)
-    note = text[n.end():].strip() if n else text
-    return pointed, " ".join(note.split())[:NOTE_LIMIT] if note else ""
+        return ""
+    m = _NOTE_RE.search(text)
+    note = text[m.end():].strip() if m else text
+    return " ".join(note.split())[:NOTE_LIMIT] if note else ""
 
 
 class MarksResult(NamedTuple):
@@ -161,11 +160,11 @@ class MarksResult(NamedTuple):
     NamedTuple이라 `pointed, note, status = result`로 그냥 풀린다.
     """
 
-    pointed: int | None
     note: str
     #: ok · off(킬 스위치) · unconfigured(주소·키 없음) · no_scene(도식 안 옴)
     #: · error(서버가 안 받음)
     status: str
+
 
 
 def is_configured() -> bool:
@@ -195,11 +194,11 @@ async def read_marks(
     타임아웃이 걸린 클라이언트를 하나 만들어 쓰고 닫는다.
     """
     if not settings.ink_vlm_enabled:
-        return MarksResult(None, "", "off")
+        return MarksResult("", "off")
     if not (settings.judge_base_url.strip() and settings.judge_api_key.strip()):
-        return MarksResult(None, "", "unconfigured")
+        return MarksResult("", "unconfigured")
     if not scene_png:
-        return MarksResult(None, "", "no_scene")
+        return MarksResult("", "no_scene")
 
     messages = build_marks_messages(
         cards,
@@ -238,11 +237,6 @@ async def read_marks(
                 content = await _call(owned)
     except Exception:  # noqa: BLE001 - 표시 해석 실패는 질문을 막지 않는다
         logger.warning("펜 표시 해석 실패 — 표시 없이 질문을 보낸다", exc_info=True)
-        return MarksResult(None, "", "error")
+        return MarksResult("", "error")
 
-    # **개수가 아니라 가장 큰 번호로 잰다.** 명부에 빈 번호가 있으면(자리를
-    # 비운 카드) 개수가 최대 번호보다 작아서, 멀쩡한 답을 "명부 밖"이라며
-    # 버리게 된다.
-    ceiling = max((int(c.get("n", 0)) for c in cards), default=0)
-    pointed, note = parse_marks(content, card_count=ceiling or None)
-    return MarksResult(pointed, note, "ok")
+    return MarksResult(parse_marks(content), "ok")

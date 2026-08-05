@@ -139,8 +139,8 @@ describe("buildInkScene", () => {
     expect(scene.capture.h).toBeLessThanOrEqual(scene.inkBox.h * OPTS.boxMaxScale + 0.01);
   });
 
-  it("상자를 잘라도 획은 통째로 들어간다", () => {
-    // 클램프가 획을 잘라 내면 OCR과 VLM이 서로 다른 질문을 보게 된다.
+  it("상자를 잘라도 표시는 통째로 들어간다", () => {
+    // 클램프가 표시를 잘라 내면 OCR과 VLM이 서로 다른 질문을 보게 된다.
     const ink = line(0, 0, 100, 100);
     const huge = card("큰카드", 150, 0, 4000, 4000);
     const { capture, inkBox } = buildInkScene([ink], [huge], OPTS)!;
@@ -148,6 +148,22 @@ describe("buildInkScene", () => {
     expect(capture.y).toBeLessThanOrEqual(inkBox.y);
     expect(capture.x + capture.w).toBeGreaterThanOrEqual(inkBox.x + inkBox.w);
     expect(capture.y + capture.h).toBeGreaterThanOrEqual(inkBox.y + inkBox.h);
+  });
+
+  it("틀 잡기 점은 그리지 않지만, 상자가 커질 여유는 그것이 정한다", () => {
+    // 학생이 멀리 점을 찍는 이유는 "여기까지 봐 줘"다. 그 점까지 그리면 그림의
+    // 대부분이 빈 하늘이 되고, 반대로 그 점을 허용치에서까지 빼면 카드가 잘린다.
+    const ellipse = line(300, 300, 900, 300);
+    const dot: PenStroke = [
+      { x: 0, y: 0, p: 0.6 },
+      { x: 6, y: 6, p: 0.6 },
+    ];
+    const far = card("멀다", 1200, 280, 300, 100);
+    const scene = buildInkScene([dot, ellipse], [far], { ...OPTS, nearPad: 400 })!;
+    // 점은 그림에서 빠진다.
+    expect(scene.marks).toHaveLength(1);
+    // 그래도 상자는 카드를 품는다(점이 허용치를 넓혀 준 덕이다).
+    expect(scene.capture.x + scene.capture.w).toBeGreaterThanOrEqual(1500);
   });
 
   /**

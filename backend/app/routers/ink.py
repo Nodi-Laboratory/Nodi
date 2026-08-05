@@ -5,9 +5,13 @@
         scene_png  (선택) 카드까지 그린 도식 PNG — 비전 모델로 간다
         figure_png (선택) 도판 확대본
         figure_n   (선택) 그 도판이 몇 번 카드인가
-        cards      (선택) [{"n":1,"title":"천문학"}, …] JSON
+        cards      (선택) [{"n":1,"title":"천문학","where":"맨 윗줄 왼쪽"}, …] JSON
         lang       (선택) 기본 "ko"
-    200 → {"text": …, "marks_note": …, "pointed": 2|null, "confidence": null}
+    200 → {"text": …, "marks_note": …, "confidence": null}
+
+**어느 카드를 짚었는지는 여기서 정하지 않는다** — 프론트가 기하로 이미
+센다(`inkScene.markOf`). 창구는 그 사실을 프롬프트에 실어 주고, 모델은
+설명 문장만 쓴다.
 
 ## 왜 두 모델에 다른 그림을 주나
 
@@ -86,10 +90,13 @@ def _parse_cards(raw: str) -> list[dict]:
         # 거기에 지시문 흉내를 넣을 여지가 생긴다.
         clean = " ".join(title.split())[:_TITLE_MAX] if isinstance(title, str) else ""
         where = item.get("where")
+        mark = item.get("mark")
         out.append({
             "n": n,
             "title": clean,
             "where": " ".join(where.split())[:40] if isinstance(where, str) else "",
+            # 기하가 센 값이다 — 모르는 값은 버린다(프롬프트에 헛말을 넣지 않는다).
+            "mark": mark if mark in ink_marks.MARK_WORDS else "",
         })
     return out
 
@@ -167,13 +174,12 @@ async def interpret_ink(
 
     # 표시 해석 실패는 여기서 끝난다. read_marks가 이미 삼키지만, 그 밖의
     # 예외(취소 등)도 질문을 막아서는 안 된다.
-    pointed: int | None = None
     marks_note = ""
     marks_status = "error"
     if isinstance(marks_res, BaseException):
         logger.warning("표시 해석 실패 — 표시 없이 진행", exc_info=marks_res)
     else:
-        pointed, marks_note, marks_status = marks_res
+        marks_note, marks_status = marks_res
 
     # OCR 실패는 다르다 — 질문 자체를 못 얻은 것이라 대체할 것이 없다.
     # 갈래는 /ocr/handwriting과 **같아야 한다**(프론트가 한 문구 표로 읽는다).
@@ -200,7 +206,6 @@ async def interpret_ink(
     return {
         "text": text_res,
         "marks_note": marks_note,
-        "pointed": pointed,
         # **왜 비었는지**를 함께 준다 — 빈 설명만으로는 꺼짐·미설정·오류를
         # 구분할 수 없고, 그러면 관리자 실험실이 "왜 안 읽혔나"에 답을 못 한다.
         "marks_status": marks_status,

@@ -19,6 +19,7 @@
 import { fetchFigureBitmap, type InkCardRef } from "@/lib/api/ink";
 import {
   buildInkScene,
+  POINTING_KINDS,
   rectOverlap,
   type InkTraceRow,
   type PickedCard,
@@ -63,6 +64,8 @@ export interface InkCapture {
   figure: Blob | null;
   figureN: number | null;
   cards: InkCardRef[];
+  /** 기하로 계산한 **짚은 카드** 번호들. 모델 답이 아니다. */
+  pointed: number[];
   /** 상한으로 버린 카드 수. 0이 아니면 알린다 — 조용히 자르지 않는다. */
   dropped: number;
   trace: InkCaptureTrace;
@@ -86,6 +89,7 @@ export const EMPTY_CAPTURE: InkCapture = {
   figure: null,
   figureN: null,
   cards: [],
+  pointed: [],
   dropped: 0,
   trace: EMPTY_TRACE,
 };
@@ -275,7 +279,15 @@ export async function captureInk(
       itemId: c.id,
       title: c.title ?? "",
       where: c.where,
+      mark: c.mark,
     })),
+    /**
+     * **우리가 센 답이다.** 어느 카드를 짚었는지는 기하로 정확히 계산된다 —
+     * 모델에게 물으면 불확실할 때 늘 1번을 답한다(실측 2026-08-05).
+     */
+    pointed: scene.cards
+      .filter((c) => POINTING_KINDS.includes(c.mark))
+      .map((c) => c.n),
     dropped: scene.dropped,
     trace: {
       ...base,

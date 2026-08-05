@@ -37,6 +37,8 @@ export interface InkCardRef {
   title: string;
   /** "맨 윗줄 가운데" — 번호를 못 읽는 모델을 위한 두 번째 단서. */
   where: string;
+  /** 기하로 센 표시 종류 — 프롬프트에 사실로 실어 준다. */
+  mark: string;
 }
 
 /**
@@ -59,8 +61,6 @@ export interface InkInterpretResult {
   text: string;
   /** 표시가 무엇을 가리키는지. 해석이 실패했으면 빈 문자열. */
   marksNote: string;
-  /** 화살표가 가리킨 카드 번호. 없거나 못 읽었으면 null. */
-  pointed: number | null;
   /** 위가 비었을 때 **왜** 비었는지. */
   marksStatus: InkMarksStatus;
 }
@@ -103,7 +103,12 @@ export async function interpretInk({
     form.append(
       "cards",
       JSON.stringify(
-        cards.map((c) => ({ n: c.n, title: c.title, where: c.where })),
+        cards.map((c) => ({
+          n: c.n,
+          title: c.title,
+          where: c.where,
+          mark: c.mark,
+        })),
       ),
     );
   }
@@ -122,13 +127,11 @@ export async function interpretInk({
   const body = (await ensureOk(res).then((r) => r.json())) as {
     text?: unknown;
     marks_note?: unknown;
-    pointed?: unknown;
     marks_status?: unknown;
   };
   return {
     text: typeof body.text === "string" ? body.text : "",
     marksNote: typeof body.marks_note === "string" ? body.marks_note : "",
-    pointed: typeof body.pointed === "number" ? body.pointed : null,
     // 옛 서버(이 필드가 없던 시절)와 붙어도 화면이 깨지지 않게.
     marksStatus:
       typeof body.marks_status === "string" && STATUSES.has(body.marks_status)

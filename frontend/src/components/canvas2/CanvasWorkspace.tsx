@@ -225,7 +225,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [inkContext, setInkContext] = useState<{
     marksNote: string;
     cardIds: string[];
-    pointed: number | null;
+    /**
+     * 학생이 짚은 카드의 **아이템 id** — 이 턴의 답이 그 카드의 자식이 된다.
+     *
+     * 여럿을 짚었으면 **첫 번째**만 부모로 쓴다(D151: 부모는 최대 하나).
+     * 개념 카드가 아니면(도판·클립) 비운다 — 이어 붙일 트리가 없다.
+     */
+    parentId: string | null;
   } | null>(null);
   /**
    * 질문하는 펜을 **켠 순간** 캔버스에 있던 획들.
@@ -1133,7 +1139,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
         );
       }
 
-      const { text, marksNote, pointed } = await interpretInk({
+      const { text, marksNote } = await interpretInk({
         ink: png,
         scene: shot.scene,
         figure: shot.figure,
@@ -1156,9 +1162,25 @@ export function CanvasWorkspace({ spaceId }: Props) {
        * 저장되는 질문은 학생이 쓴 것 그대로여야 툴팁·기록이 맞는다.
        * 가리킨 번호는 설명 안에 `[카드 N]`으로 이미 들어 있다.
        */
+      /**
+       * **짚은 카드가 이 턴의 부모가 된다** (사용자 지시 2026-08-05).
+       *
+       * 학생이 특정 카드를 가리키며 물었으면 그 답은 그 카드에서 갈라져
+       * 나와야 한다 — "이 카드에 대해 더" 라는 뜻이기 때문이다. 트리 부모가
+       * 될 수 있는 것은 **AI 개념 카드**뿐이다(D151) — 도판·클립을 짚었으면
+       * 부모 없이 간다(연결선이 성립하지 않는다).
+       */
+      const first = shot.pointed.length
+        ? shot.cards.find((c) => c.n === shot.pointed[0])
+        : undefined;
+      const target = first ? items.find((i) => i.id === first.itemId) : undefined;
+      const parentId =
+        target && target.kind === "concept" && target.source === "ai"
+          ? target.id
+          : null;
       setInkContext(
         shot.cards.length
-          ? { marksNote, cardIds: shot.cards.map((c) => c.itemId), pointed }
+          ? { marksNote, cardIds: shot.cards.map((c) => c.itemId), parentId }
           : null,
       );
       setInkRecognized(true);
@@ -1202,11 +1224,19 @@ export function CanvasWorkspace({ spaceId }: Props) {
        */
       const ink = inkContext;
       setInkContext(null);
-      void stream.send(question, { pickedId: from, ink }).then((created) => {
-        setPickedId(nextFocus(from, tag, created));
+      /**
+       * **짚은 카드가 있으면 그 가지에서 이어 나간다** — 학생이 고른 노드보다
+       * 우선한다. 손으로 그 카드를 가리키며 물은 것이 더 직접적인 의사표시다.
+       */
+      const parent = ink?.parentId ?? from;
+      const parentTag = ink?.parentId
+        ? (items.find((i) => i.id === ink.parentId)?.tag ?? tag)
+        : tag;
+      void stream.send(question, { pickedId: parent, ink }).then((created) => {
+        setPickedId(nextFocus(parent, parentTag, created));
       });
     },
-    [inkContext, pickedId, pickedItem, stream],
+    [inkContext, items, pickedId, pickedItem, stream],
   );
 
   /**

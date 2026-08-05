@@ -53,8 +53,13 @@ export interface InkSendContext {
   marksNote: string;
   /** 도식에 그려진 순서 그대로. **이 순서가 곧 `[카드 N]`의 N이다.** */
   cardIds: string[];
-  /** 화살표가 가리킨 번호. 지금은 서버에 안 보낸다(설명에 이미 들어 있다). */
-  pointed: number | null;
+  /**
+   * 짚은 카드의 아이템 id — 이 턴의 트리 부모다(D178).
+   *
+   * 서버에는 안 보낸다. 부모 결정은 화면의 일이고(D151 `assignParents`),
+   * 서버는 카드 본문만 다시 읽는다.
+   */
+  parentId: string | null;
 }
 
 export interface SendOpts {
