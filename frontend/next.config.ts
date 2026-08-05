@@ -1,6 +1,39 @@
+import os from "node:os";
 import type { NextConfig } from "next";
 
+/**
+ * dev 서버를 **LAN 주소로 열 때** 허용할 출처 (2026-08-04).
+ *
+ * Next 16은 `/_next/*`(HMR 웹소켓·dev 자산)를 기본적으로 localhost에서만
+ * 받는다. 다른 기기가 `http://10.x.x.x:3000`으로 들어오면 그 요청만 조용히
+ * 막히는데, **증상은 "로그인이 안 된다"로 나타난다** — HTML은 그려지므로
+ * 화면은 멀쩡해 보이고, 클라이언트 번들이 못 붙어 **하이드레이션이 안 되니**
+ * 입력이 React state에 닿지 않아 버튼이 영영 비활성이다(실측: 같은 페이지가
+ * localhost에서는 활성, LAN IP에서는 비활성).
+ *
+ * 그래서 **이 기계의 LAN IPv4를 자동으로 넣는다.** 손으로 적으면 DHCP로 주소가
+ * 바뀔 때마다 같은 증상이 다시 나고, 그때는 원인을 처음부터 다시 찾게 된다.
+ * 도메인이나 다른 주소가 필요하면 `DEV_ORIGINS=a.test,192.168.0.5`로 더한다.
+ *
+ * dev 전용 설정이라 프로덕션 빌드에는 영향이 없다.
+ */
+function devOrigins(): string[] {
+  const origins = new Set<string>();
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const ni of entries ?? []) {
+      if (ni.family === "IPv4" && !ni.internal) origins.add(ni.address);
+    }
+  }
+  for (const extra of (process.env.DEV_ORIGINS ?? "").split(",")) {
+    const value = extra.trim();
+    if (value) origins.add(value);
+  }
+  return [...origins];
+}
+
 const nextConfig: NextConfig = {
+  allowedDevOrigins: devOrigins(),
+
   // 클라우드 VM은 외부 포트를 하나만 열어준다. 브라우저는 항상 이 Next.js
   // 서버에만 말하고, /api/* 요청만 내부 FastAPI(8000)로 서버 사이드 프록시한다.
   //
