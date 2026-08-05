@@ -58,7 +58,7 @@ export { getFigure } from "./retrieve";
 
 export { getHomeSummary } from "./home";
 
-// D171: 펜으로 쓴 질문 → 글자. 백엔드 창구는 개발 중이다(없으면 404 → 준비 중 안내).
+// D176: 펜으로 쓴 질문 → 글자. 백엔드 창구는 개발 중이다(없으면 404 → 준비 중 안내).
 export type { HandwritingOcrResult } from "./ocr";
 export {
   HANDWRITING_ENABLED,
@@ -103,5 +103,5 @@ export type { CrossLinkRun, CrossLinkCandidate } from "./admin";
 export * from "./lectures";
 
 
-// D171: 교차 세션 개념 연결 — 카드 배지 + 과거 대화로 돌아가기.
+// D176: 교차 세션 개념 연결 — 카드 배지 + 과거 대화로 돌아가기.
 export * from "./crosslink";

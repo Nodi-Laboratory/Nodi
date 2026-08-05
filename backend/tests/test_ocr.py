@@ -1,4 +1,4 @@
-"""D171 — 손글씨 OCR 클라이언트 + 창구.
+"""D176 — 손글씨 OCR 클라이언트 + 창구.
 
 외부 호출 없음: `httpx.MockTransport`로 VARCO 서버를 흉내 낸다.
 

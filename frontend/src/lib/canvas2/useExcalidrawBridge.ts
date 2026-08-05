@@ -47,7 +47,7 @@ export interface ExcalidrawApi {
   getSceneElements: () => readonly ExcalidrawElementLike[];
   updateScene: (data: {
     appState?: Record<string, unknown>;
-    /** 씬 전체를 갈아 끼운다 — 질문 필기를 지울 때 쓴다(D171). */
+    /** 씬 전체를 갈아 끼운다 — 질문 필기를 지울 때 쓴다(D176). */
     elements?: readonly ExcalidrawElementLike[];
   }) => void;
   setActiveTool: (tool: { type: string; locked?: boolean }) => void;
@@ -75,7 +75,7 @@ export interface ExcalidrawElementLike {
   /** 자유선의 점별 필압(0~1). 없으면 필압 없는 입력이다. */
   pressures?: readonly number[];
   /**
-   * 우리가 요소에 얹는 표시 (D171: `customData.nodiAsk` — 질문 획).
+   * 우리가 요소에 얹는 표시 (D176: `customData.nodiAsk` — 질문 획).
    * Excalidraw가 저장·복원 때 그대로 들고 다닌다.
    */
   customData?: Record<string, unknown> | null;
@@ -167,7 +167,7 @@ export function useExcalidrawBridge(): Bridge {
    */
   const [rawTool, setRawTool] = useState<string>("selection");
   const [noteMode, setNoteMode] = useState(false);
-  /** 질문하는 펜(D171). note와 같은 처지 — appState만 봐서는 구별할 수 없다. */
+  /** 질문하는 펜(D176). note와 같은 처지 — appState만 봐서는 구별할 수 없다. */
   const [askMode, setAskMode] = useState(false);
   /**
    * 형광펜을 켰나 (D150). note와 같은 처지다 — Excalidraw에는 형광펜이
@@ -253,7 +253,7 @@ export function useExcalidrawBridge(): Bridge {
         setRawTool((prevTool) => (prevTool === t ? prevTool : t));
         // selection으로 돌아갔으면 note 모드도 끝난 것이다.
         if (t !== "selection") setNoteMode(false);
-        // 질문하는 펜은 **자유선**을 물려 쓴다(D171) — 기존 펜이 자연스럽게
+        // 질문하는 펜은 **자유선**을 물려 쓴다(D176) — 기존 펜이 자연스럽게
         // 써지기 때문이다. 그래서 자유선을 벗어났을 때만 끝난 것으로 본다.
         if (t !== "freedraw") setAskMode(false);
         // 자유선을 벗어났으면 형광펜도 끝났다(도형 하나 그린 뒤 Excalidraw가

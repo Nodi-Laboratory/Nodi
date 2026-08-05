@@ -1,4 +1,4 @@
-"""손글씨 OCR 클라이언트 — VARCO-VISION-2.0-1.7B-OCR (D171).
+"""손글씨 OCR 클라이언트 — VARCO-VISION-2.0-1.7B-OCR (D176).
 
 프롬프트창의 펜 입력판(`PenPad.tsx`)이 흰 종이에 검은 획으로 그린 PNG를 보내면,
 이 모듈이 OCR 서버의 `POST /ocr`로 넘겨 **평문 한 덩어리**를 돌려준다.

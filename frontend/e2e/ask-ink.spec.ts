@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { loginAndOpenCanvas, openFreshSession } from "./helpers";
 
 /**
- * D171 E2E — 손으로 써서 묻기.
+ * D176 E2E — 손으로 써서 묻기.
  *
  * 질문 필기는 **기존 펜(Excalidraw 자유선)**이 받는다. 그래서 여기서 확인할
  * 것은 "획이 잘 그려지는가"가 아니라(저쪽이 이미 한다) **그 획이 글자가 되어

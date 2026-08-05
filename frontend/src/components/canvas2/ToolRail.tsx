@@ -45,7 +45,7 @@ const GROUPS: ToolDef[][] = [
   ],
   [
     /**
-     * 질문하는 펜 (D171) — 캔버스에 손으로 질문을 쓴다. 쓰고 나면 하단
+     * 질문하는 펜 (D176) — 캔버스에 손으로 질문을 쓴다. 쓰고 나면 하단
      * 입력창의 버튼이 "글자 인식"으로 바뀐다.
      *
      * 글 쓰기(note)와 나란히 둔다: 둘 다 **무언가를 만드는** 도구이고,
@@ -115,7 +115,7 @@ interface Props {
   /** 다음에 그릴 것의 색·굵기·투명도를 정한다 (D150). */
   setDrawStyle: (style: DrawStyle) => void;
   /**
-   * 지금은 도구를 바꾸지 않는다 (D171) — 펜 입력판을 편 동안.
+   * 지금은 도구를 바꾸지 않는다 (D176) — 펜 입력판을 편 동안.
    *
    * 누르는 것은 투명한 막이 막지만 **단축키는 못 막는다**. 이 핸들러는
    * document에 캡처로 붙어 있어서, 판 안에서 전파를 끊어도 이미 지난 뒤다.
@@ -162,7 +162,7 @@ export function ToolRail({ active, onSelect, setDrawStyle, paused = false }: Pro
   // 'p'를 치면 자유선으로 바뀌는 사고를 막는다.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (paused) return; // 펜으로 쓰는 중 (D171)
+      if (paused) return; // 펜으로 쓰는 중 (D176)
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       // 한글 조합 중에는 도구를 바꾸지 않는다. IME에 따라 라틴 키가 새어
       // 들어올 수 있다.

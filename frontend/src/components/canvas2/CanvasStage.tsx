@@ -70,7 +70,7 @@ interface Props {
   /** 그리기 레이어 마운트 시 적용할 카메라. */
   initialCamera?: { scrollX: number; scrollY: number; zoom: number };
   onSceneCommit: (scene: DrawingScene) => void;
-  /** 씬이 방금 바뀌었다 — 디바운스 없이(D171: 질문 필기 획 세기). */
+  /** 씬이 방금 바뀌었다 — 디바운스 없이(D176: 질문 필기 획 세기). */
   onSceneChange?: (elements: readonly ExcalidrawElementLike[]) => void;
   /** 글쓰기 도구로 빈 캔버스를 클릭했을 때 — world 좌표를 준다. */
   onCanvasClick?: (world: { x: number; y: number }) => void;
@@ -87,12 +87,12 @@ interface Props {
    */
   onShapeDrag?: (dx: number, dy: number, done: boolean) => void;
   viewOnly?: boolean;
-  /** 질문하는 펜을 쓰는 중 (D171) — 도구 단축키를 재운다. */
+  /** 질문하는 펜을 쓰는 중 (D176) — 도구 단축키를 재운다. */
   penWriting?: boolean;
   /** 지금 열린 대화 id. 화면에 드러내 전환 완료를 밖에서 알 수 있게 한다. */
   sessionId?: string | null;
   /**
-   * 도구를 고를 때 부모가 함께 할 일이 있으면 여기로 받는다 (D171: 질문 필기
+   * 도구를 고를 때 부모가 함께 할 일이 있으면 여기로 받는다 (D176: 질문 필기
    * 단계 되돌리기). 없으면 브리지로 바로 간다.
    */
   onToolSelect?: (tool: ToolName) => void;

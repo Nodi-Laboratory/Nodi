@@ -166,7 +166,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const spring = useCameraSpring(bridge);
   const store = useCanvasItems();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
-  // 교차 연결 이동 (D171) — 공간·세션을 함께 옮기고, 도착 후 초점을 맞춘다.
+  // 교차 연결 이동 (D176) — 공간·세션을 함께 옮기고, 도착 후 초점을 맞춘다.
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
   const setReturnTo = useWorkspaceStore((s) => s.setReturnTo);
   const returnTo = useWorkspaceStore((s) => s.returnTo);
@@ -198,7 +198,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   /** 입력창에 커서를 옮겨 달라는 신호 (D157). "묻겠다"일 때만 올린다. */
   const [askFocus, setAskFocus] = useState(0);
   /**
-   * 질문 필기의 단계 (D171).
+   * 질문 필기의 단계 (D176).
    *
    *   null      평소
    *   "writing" 질문하는 펜으로 캔버스에 쓰는 중 — 버튼은 [글자 인식]
@@ -221,7 +221,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
    */
   const markBaseRef = useRef<ReadonlySet<string>>(new Set());
   const askBarRef = useRef<AskBarHandle>(null);
-  // 펜을 쓰는 동안 손날이 만든 click을 화면 전체에서 삼킨다 (D171).
+  // 펜을 쓰는 동안 손날이 만든 click을 화면 전체에서 삼킨다 (D176).
   useCanvasTouchGuard();
   const queryClient = useQueryClient();
 
@@ -337,7 +337,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   // 임시 id로 그려 둔 아이템을 서버가 준 진짜 행으로 갈아 끼운다.
   // 갈아 끼우지 않으면 그 아이템은 영영 로컬 전용이라 편집·삭제가 서버에 안 간다.
   /**
-   * 교차 세션 개념 연결 (D171). 연결은 워커가 턴 **뒤에** 만든다 —
+   * 교차 세션 개념 연결 (D176). 연결은 워커가 턴 **뒤에** 만든다 —
    * 턴 안에서 돌리면 답이 늦어지고, 그건 "RAG는 채팅을 절대 막지 않는다"는
    * 불변식을 어긴다. 여기서는 조회와 표시만 한다.
    */
@@ -349,7 +349,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const onPersisted = useCallback(
     (tempIds: string[], saved: CanvasItem[]) => {
       replaceTemp(tempIds, saved);
-      // 카드가 서버에 들어간 뒤라야 워커가 그 id로 잡을 돌린다 (D171).
+      // 카드가 서버에 들어간 뒤라야 워커가 그 id로 잡을 돌린다 (D176).
       scheduleCrossCheck();
     },
     [replaceTemp, scheduleCrossCheck],
@@ -830,7 +830,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   );
 
   /**
-   * 교차 연결이 가리키는 과거 대화로 이동한다 (D171).
+   * 교차 연결이 가리키는 과거 대화로 이동한다 (D176).
    *
    * **세션만 바꾸면 안 된다.** 세션은 공간에 속하므로(D148) 공간까지 함께
    * 옮기지 않으면 학급 공간에서 개인 세션이 열린다 — 남의 공간에서 남의 글을
@@ -958,7 +958,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 학생이 기대하는 것은 방금 받은 답 **뒤에** 이어지는 것이다.
    */
   /**
-   * 질문 필기 (D171) — **기존 펜(자유선)으로 받는다**.
+   * 질문 필기 (D176) — **기존 펜(자유선)으로 받는다**.
    *
    * 우리 캔버스를 얹어 직접 그리다가 갈아탔다(사용자 보고 2026-08-04: "다음
    * 획마다 끊긴다. 하지만 기존 펜은 자연스럽게 써진다"). 이미 자연스럽게
@@ -1282,19 +1282,19 @@ export function CanvasWorkspace({ spaceId }: Props) {
       initialScene={initialScene}
       onSceneCommit={handleSceneCommit}
       // 질문 필기는 자유선이라 우리 손을 안 거친다 — **저장 디바운스가 아니라**
-      // 변경 신호에 물린다(D171). 저장에 물렸더니 손을 멈춘 뒤에야 버튼이 켜졌다.
+      // 변경 신호에 물린다(D176). 저장에 물렸더니 손을 멈춘 뒤에야 버튼이 켜졌다.
       onSceneChange={recountInk}
       onCanvasClick={handleCreateNote}
       onBackgroundClick={handleBackgroundClick}
       onMarquee={handleMarquee}
       onShapeDrag={handleShapeDrag}
-      // 펜으로 쓰는 중에는 도구 단축키도 재운다 (D171).
+      // 펜으로 쓰는 중에는 도구 단축키도 재운다 (D176).
       penWriting={askPen}
       sessionId={sessionId}
       onToolSelect={handleTool}
       chrome={
         <>
-          {/* 교차 연결로 과거 대화에 들어왔을 때만 뜬다 (D171).
+          {/* 교차 연결로 과거 대화에 들어왔을 때만 뜬다 (D176).
               어제 세션에 던져 놓고 끝내면 학생은 길을 잃는다 — 원래 보던
               곳으로 한 번에 돌아갈 수 있어야 한다. 지금 세션이 곧 돌아갈
               세션이면 이미 도착한 것이므로 숨긴다. */}
@@ -1359,7 +1359,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
           />
           <div
             className="ui absolute left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
-            // 펜 입력판이 펴진 만큼 비킨다 (D171) — 안 비키면 판 위에 겹쳐 뜬다.
+            // 펜 입력판이 펴진 만큼 비킨다 (D176) — 안 비키면 판 위에 겹쳐 뜬다.
             style={{ bottom: 152 }}
           >
             <SessionFilesBar sessionId={sessionId} uploadError={uploadError} />

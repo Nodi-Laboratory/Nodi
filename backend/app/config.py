@@ -155,7 +155,7 @@ class Settings(BaseSettings):
     # (services/files.py). 판정 생략 폴백은 D88 시절 동작으로, 더 이상 없다.
     judge_api_key: str = ""
 
-    # --- 손글씨 OCR (D171) ---
+    # --- 손글씨 OCR (D176) ---
     # VARCO-VISION-2.0-1.7B-OCR 서버(FastAPI, 인증 없음). 프롬프트창의 펜 입력이
     # 여기로 그림을 보내 글자를 받는다.
     #
@@ -193,7 +193,7 @@ class Settings(BaseSettings):
     lecture_whisper_language: str = "ko"           # 전사 언어(config/env 전용)
     lecture_whisper_ffmpeg_timeout_seconds: int = 900  # ffmpeg 스트림·추출 상한
 
-    # ── 교차 세션 개념 연결 (D171) ────────────────────────────────
+    # ── 교차 세션 개념 연결 (D176) ────────────────────────────────
     # 거리는 상한이 아니라 **띠**다. 너무 가까운 히트는 융합이 아니라 중복이라
     # 바닥 아래는 버린다("어제도 광합성, 오늘도 광합성").
     # 숫자는 **실측이다**(2026-08-04, embedding-query/passage, 한국어 개념 카드):

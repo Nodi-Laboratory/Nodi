@@ -103,7 +103,7 @@ def config_report() -> dict:
         ),
     }
 
-    # D171: 손글씨 OCR. base_url이 비면 judge 호스트에서 유도하므로, 진단에는
+    # D176: 손글씨 OCR. base_url이 비면 judge 호스트에서 유도하므로, 진단에는
     # **실제로 부를 주소**를 싣는다(유도값인지 명시값인지가 여기서 갈린다).
     ocr_missing = ocr.missing_config()
     ocr_block = {

@@ -86,7 +86,7 @@ for _router in (
     admin.router,
     files.router,
     teacher.router,
-    # D171: 손글씨 인식(펜 입력판) — 모델 서버 미설정이면 501을 준다.
+    # D176: 손글씨 인식(펜 입력판) — 모델 서버 미설정이면 501을 준다.
     ocr.router,
 ):
     app.include_router(_router, prefix="/api")
