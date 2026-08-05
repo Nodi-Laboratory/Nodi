@@ -212,7 +212,6 @@ function toBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
  */
 export async function renderScenePng(
   scene: InkScene,
-  strokes: readonly PenStroke[],
   figures: ReadonlyMap<string, ImageBitmap>,
   maxSide: number,
 ): Promise<Blob | null> {
@@ -257,6 +256,10 @@ export async function renderScenePng(
  *
  * 그림 밖으로 나간 구간에서는 **획을 끊는다** — 가장자리로 뭉개면 원본에
  * 없는 획이 생긴다.
+ *
+ * `strokes`는 도식과 **같은 것**(`scene.marks`)이어야 한다. 전체 획을 넘기면
+ * 도식에서는 뺀 틀 잡기 점이 확대본에만 찍히고, 그러면 프롬프트가 두 그림에
+ * 대해 "표시의 위치는 같다"고 말하는 것이 거짓이 된다.
  */
 export async function renderFigurePng(
   card: PickedCard,
