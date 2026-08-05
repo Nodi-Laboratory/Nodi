@@ -64,7 +64,14 @@ export function AuthShell({
       )}
 
       {/* form으로 감싸야 엔터 제출·브라우저 자동완성이 동작한다. */}
-      <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-3">
+      {/* 비밀번호 관리자가 폼에도 표식을 남긴다(`__gcruniqueid`) — 로그인·가입
+          화면에서만 나는 하이드레이션 경고의 나머지 절반이다. 이유는
+          app/layout.tsx의 같은 속성 주석 참고. */}
+      <form
+        onSubmit={handleSubmit}
+        className="mt-6 flex flex-col gap-3"
+        suppressHydrationWarning
+      >
         {children}
 
         {error && (

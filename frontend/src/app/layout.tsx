@@ -52,7 +52,22 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ko" className={`h-full ${plexSans.variable} ${plexMono.variable}`}>
+    <html
+      lang="ko"
+      className={`h-full ${plexSans.variable} ${plexMono.variable}`}
+      /**
+       * 하이드레이션 경고를 여기서만 끈다 (2026-08-04 실측).
+       *
+       * 크롬의 비밀번호 관리자·자동완성이 React가 붙기 **전에** DOM을 고친다 —
+       * `<html __gcrremoteframetoken>`. 서버가 보낸 HTML에는 없는 속성이라
+       * 하이드레이션 불일치로 잡히고, 콘솔에 빨간 오류가 매 로드마다 찍힌다.
+       * 우리 코드가 만든 것이 아니고 우리가 없앨 수도 없다(확장·브라우저 기능).
+       *
+       * **한 겹만 덮는다** — 이 요소의 속성·텍스트까지고 자식에는 안 내려간다.
+       * 진짜 불일치(날짜·랜덤·분기)는 그대로 드러난다.
+       */
+      suppressHydrationWarning
+    >
       <head>
         {/* Pretendard (한글 가변 폰트, dynamic subset) */}
         <link
