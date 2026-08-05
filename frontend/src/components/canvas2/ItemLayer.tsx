@@ -14,6 +14,7 @@ import type { Placed } from "@/lib/canvas2/layout";
 import { UNTAGGED } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { treeEdges } from "@/lib/canvas2/tree";
+import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import { ClipItem } from "./ClipItem";
 import { ConnectorLayer } from "./ConnectorLayer";
 import { FigureItem } from "./FigureItem";
@@ -26,6 +27,12 @@ interface Props {
   sizes: Map<string, Size>;
   tagOrder: readonly string[];
   tagOptions: readonly string[];
+  /** 카드 수정 도구가 켜졌나 (D180). */
+  cardEdit?: boolean;
+  /** 별 포인터로 누를 때 맥락을 만든다. */
+  beginEdit?: (id: string) => EditContext | null;
+  /** 별 포인터를 놓았을 때 — 끊김·붙음을 저장한다. */
+  onEditEnd?: (r: EditResult) => void;
   zoom: number;
   selectedIds: ReadonlySet<string>;
   editingId: string | null;
@@ -55,6 +62,9 @@ export function ItemLayer({
   sizes,
   tagOrder,
   tagOptions,
+  cardEdit = false,
+  beginEdit,
+  onEditEnd,
   zoom,
   selectedIds,
   editingId,
@@ -141,6 +151,9 @@ export function ItemLayer({
             question={questionOf.get(item.id) ?? null}
             tagOptions={tagOptions}
             measure={measure}
+            cardEdit={cardEdit}
+            beginEdit={beginEdit}
+            onEditEnd={onEditEnd}
             {...handlers}
           />
         );

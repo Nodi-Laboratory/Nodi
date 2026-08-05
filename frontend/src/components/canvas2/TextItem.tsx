@@ -36,6 +36,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
+import { clearLiveLink, setLiveLink } from "@/lib/canvas2/linkBus";
+import { detachStep } from "@/lib/canvas2/detachDrag";
+import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import { AskAgainButton } from "./AskAgainButton";
 import { ItemBody } from "./ItemBody";
@@ -140,6 +143,17 @@ export interface TextItemProps {
   onResize: (id: string, next: ResizeCommit) => void;
   /** 상자를 자동 크기로 되돌린다. */
   onResetSize: (id: string) => void;
+  /**
+   * 카드 수정 도구가 켜졌나 (D180) — 별 포인터.
+   *
+   * 이름이 `editing`(본문 편집)과 헷갈리기 쉬워 `cardEdit`으로 둔다. 둘은
+   * 아무 상관이 없다: 저쪽은 글자를 고치는 것이고 이쪽은 **관계**를 고치는 것이다.
+   */
+  cardEdit?: boolean;
+  /** 누를 때 한 번 불러 맥락을 받는다(부모·후보·자손). */
+  beginEdit?: (id: string) => EditContext | null;
+  /** 손을 뗐을 때 — 끊김·붙음을 저장한다. */
+  onEditEnd?: (r: EditResult) => void;
 }
 
 function TextItemImpl(props: TextItemProps) {
@@ -168,6 +182,9 @@ function TextItemImpl(props: TextItemProps) {
     onPick,
     onResize,
     onResetSize,
+    cardEdit = false,
+    beginEdit,
+    onEditEnd,
   } = props;
 
   const [hover, setHover] = useState(false);
@@ -184,6 +201,10 @@ function TextItemImpl(props: TextItemProps) {
     /** 누를 때 이미 선택돼 있었나. 손을 뗐을 때 무엇을 할지가 여기서 갈린다. */
     wasSelected: boolean;
     additive: boolean;
+    /** 카드 수정 도구로 끄는 중이면 그 맥락 (D180). 아니면 null. */
+    edit: EditContext | null;
+    /** 부모에게서 이미 끊겼나. 한 번 끊기면 다시 붙기 전까지 장력이 없다. */
+    broken: boolean;
   } | null>(null);
   /** 학생이 손잡이로 정한 크기. 없으면 내용이 정한다 (D142). */
   const size = item.data.size;
@@ -259,6 +280,14 @@ function TextItemImpl(props: TextItemProps) {
       if (additive) onSelect(item.id, true);
       else if (!selected) onSelect(item.id, false);
 
+      /**
+       * 카드 수정 도구 (D180) — 맥락을 **여기서 한 번** 만든다.
+       *
+       * 후보 목록·자손 집합을 매 렌더에 계산하면 아무도 안 끄는 동안에도 카드
+       * 수만큼 곱해진 일이 계속 돈다.
+       */
+      const edit = cardEdit ? (beginEdit?.(item.id) ?? null) : null;
+
       dragRef.current = {
         sx: e.clientX,
         sy: e.clientY,
@@ -266,6 +295,10 @@ function TextItemImpl(props: TextItemProps) {
         group: selected,
         wasSelected: selected,
         additive,
+        edit,
+        // 부모가 없으면 처음부터 끊긴 상태다 — 곧바로 자석이 돈다(뿌리 노드는
+        // 끊을 것이 없으니 그냥 이동 도구가 된다는 사용자 지시 그대로다).
+        broken: !edit?.parentId,
       };
       try {
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -274,7 +307,7 @@ function TextItemImpl(props: TextItemProps) {
         // 편의일 뿐이라 없어도 드래그는 동작한다 — 콘솔만 더럽히지 않는다.
       }
     },
-    [editing, item.id, onSelect, selected],
+    [beginEdit, editing, cardEdit, item.id, onSelect, selected],
   );
 
   const onPointerMove = useCallback(
@@ -290,8 +323,39 @@ function TextItemImpl(props: TextItemProps) {
       }
       // React를 거치지 않는다 — 60fps로 리렌더하면 긴 문단에서 즉시 버벅인다.
       // 함께 선택된 것들도 같은 양만큼 민다.
-      const wx = dx / zoom;
-      const wy = dy / zoom;
+      let wx = dx / zoom;
+      let wy = dy / zoom;
+
+      /**
+       * 카드 수정 도구 (D180) — **장력과 자석이 여기서 좌표를 바꾼다.**
+       *
+       * 포인터가 간 만큼 그대로 옮기지 않는다: 매여 있으면 뒤처지고(고무줄),
+       * 붙으려 하면 부모 쪽으로 끌린다. 계산은 전부 `detachDrag`가 하고 여기서는
+       * 결과를 DOM과 통로에 흘린다 — 손맛을 컴포넌트에 흩어 놓지 않는다.
+       */
+      if (d.edit) {
+        const step = detachStep({
+          dx: wx,
+          dy: wy,
+          hasParent: !!d.edit.parentId,
+          broken: d.broken,
+          rect: d.edit.rect,
+          candidates: d.edit.candidates,
+          blocked: d.edit.blocked,
+        });
+        if (step.breaking) d.broken = true;
+        wx = step.offset.x;
+        wy = step.offset.y;
+        setLiveLink({
+          childId: item.id,
+          // 매여 있으면 원래 부모로, 끊긴 뒤에는 붙으려는 후보로 선이 간다.
+          parentId: d.broken ? step.magnet.id : d.edit.parentId,
+          strain: step.strain,
+          snapped: step.magnet.snapped,
+          broke: step.breaking,
+        });
+      }
+
       const shift = `translate(${wx}px, ${wy}px)`;
       const peers = peerEls(d.group, rootRef.current);
       for (const el of peers) {
@@ -306,7 +370,7 @@ function TextItemImpl(props: TextItemProps) {
         wy,
       );
     },
-    [zoom],
+    [item.id, zoom],
   );
 
   const finishDrag = useCallback(
@@ -318,6 +382,7 @@ function TextItemImpl(props: TextItemProps) {
       const peers = peerEls(d.group, rootRef.current);
       // 연결선은 이제 React가 낸 최종 좌표를 쓴다.
       clearDragOffsets();
+      clearLiveLink();
       if (!d.moved) {
         // 움직이지 않은 클릭. 선택은 pointerdown에서 이미 정해졌고, 남은 경우는
         // 하나뿐이다 — 여럿이 잡힌 상태에서 그중 하나를 그냥 눌렀을 때
@@ -329,16 +394,47 @@ function TextItemImpl(props: TextItemProps) {
         for (const el of peers) el.style.transition = "";
         return;
       }
-      const dx = (e.clientX - d.sx) / zoom;
-      const dy = (e.clientY - d.sy) / zoom;
+      const rawX = (e.clientX - d.sx) / zoom;
+      const rawY = (e.clientY - d.sy) / zoom;
       // transform은 **지우지 않는다.** 새 left/top이 오기 전에 지우면 한 프레임
       // 원래 자리로 돌아갔다 오면서 깜박인다. settle()이 정리한다.
       for (const el of peers) el.style.transition = "";
+
+      /**
+       * 카드 수정 도구 (D180) — 관계 변경과 좌표를 **한 번에** 넘긴다.
+       *
+       * 좌표는 화면에 보이던 그 자리다(장력·자석이 반영된 값). 포인터 좌표를
+       * 그대로 쓰면 손 뗀 순간 카드가 툭 튄다 — 자석에 붙는 연출이 특히 그렇다.
+       */
+      if (d.edit && onEditEnd) {
+        const step = detachStep({
+          dx: rawX,
+          dy: rawY,
+          hasParent: !!d.edit.parentId,
+          broken: d.broken,
+          rect: d.edit.rect,
+          candidates: d.edit.candidates,
+          blocked: d.edit.blocked,
+        });
+        const attach = step.magnet.snapped ? step.magnet.id : null;
+        onEditEnd({
+          id: item.id,
+          dx: step.offset.x,
+          dy: step.offset.y,
+          detached: d.broken && !attach,
+          attachTo: attach,
+        });
+        window.setTimeout(settle, DROP_FALLBACK_MS);
+        return;
+      }
+
+      const dx = rawX;
+      const dy = rawY;
       onDragEnd(item.id, x + dx, y + dy, dx, dy);
       // 좌표가 끝내 안 바뀌는 경우(같은 자리 재배치)의 안전망.
       window.setTimeout(settle, DROP_FALLBACK_MS);
     },
-    [item.id, onDragEnd, onPick, onSelect, settle, x, y, zoom],
+    [item.id, onDragEnd, onEditEnd, onPick, onSelect, settle, x, y, zoom],
   );
 
   // 언마운트 시 남은 타이머의 커서·스타일 잔재를 정리한다.

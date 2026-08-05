@@ -17,6 +17,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { clearDragOffsets, setDragOffsets } from "./dragBus";
+import { clearLiveLink, setLiveLink } from "./linkBus";
+import {
+  detachStep,
+  type Candidate,
+  type MagnetState,
+} from "./detachDrag";
+import type { Rect } from "./rect";
 
 /** 드래그로 인정하는 최소 이동(화면 px). 이보다 작으면 클릭이다. */
 const DRAG_THRESHOLD = 4;
@@ -54,6 +61,52 @@ export function peerEls(group: boolean, self: HTMLElement | null): HTMLElement[]
   return withSelf(selected, self);
 }
 
+/**
+ * 카드 수정 도구로 끌 때 필요한 것들 (D180).
+ *
+ * **누를 때 한 번만** 만든다. 매 렌더에 후보 목록을 계산하면 카드 수만큼
+ * 곱해진 일이 아무도 안 끄는 동안에도 계속 돈다.
+ */
+export interface EditContext {
+  /** 이 카드의 트리 부모. null이면 끊을 것이 없다 — 그냥 이동 도구가 된다. */
+  parentId: string | null;
+  /** 내 자리(world). */
+  rect: Rect;
+  /** 붙을 수 있는 카드들. */
+  candidates: Candidate[];
+  /** 후보에서 뺄 id — 자기 자신과 자기 자손(순환 방지). */
+  blocked: ReadonlySet<string>;
+  /** 함께 움직일 id들 — 자기 가지 전체. */
+  moving: readonly string[];
+}
+
+/** 손을 뗐을 때의 결말. */
+export interface EditResult {
+  id: string;
+  /** 최종 이동량(world). */
+  dx: number;
+  dy: number;
+  /** 부모에게서 끊겼나. */
+  detached: boolean;
+  /** 새로 붙을 부모. 없으면 안 붙었다. */
+  attachTo: string | null;
+}
+
+/**
+ * 이 id들의 아이템 요소. 카드 수정 도구는 **자기 가지 전체**를 데리고 간다 —
+ * 선택 집합이 아니다(D154가 기본 드래그에서 한 것과 같은 정신).
+ */
+export function branchEls(ids: readonly string[]): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  for (const id of ids) {
+    const el = document.querySelector<HTMLElement>(
+      `[data-canvas-item="${CSS.escape(id)}"]`,
+    );
+    if (el) out.push(el);
+  }
+  return out;
+}
+
 export interface UseItemDragArgs {
   id: string;
   x: number;
@@ -67,6 +120,12 @@ export interface UseItemDragArgs {
   rootRef: React.RefObject<HTMLElement | null>;
   onSelect: (id: string | null, additive?: boolean) => void;
   onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
+  /** 카드 수정 도구가 켜졌나 (D180). */
+  editing?: boolean;
+  /** 누를 때 한 번 불러 맥락을 받는다. null이면 평범한 이동으로 떨어진다. */
+  beginEdit?: (id: string) => EditContext | null;
+  /** 손을 뗐을 때. 관계 변경은 여기서 저장한다. */
+  onEditEnd?: (r: EditResult) => void;
 }
 
 export interface UseItemDragResult {
@@ -91,6 +150,9 @@ export function useItemDrag({
   rootRef,
   onSelect,
   onDragEnd,
+  editing = false,
+  beginEdit,
+  onEditEnd,
 }: UseItemDragArgs): UseItemDragResult {
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{
@@ -102,6 +164,12 @@ export function useItemDrag({
     /** 누를 때 이미 선택돼 있었나. */
     wasSelected: boolean;
     additive: boolean;
+    /** 카드 수정 도구로 끄는 중이면 그 맥락. 아니면 null. */
+    edit: EditContext | null;
+    /** 이미 끊겼나. 한 번 끊기면 다시 붙기 전까지 장력이 없다. */
+    broken: boolean;
+    /** 마지막으로 걸린 자석. 손 뗄 때 여기에 붙인다. */
+    magnet: MagnetState | null;
   } | null>(null);
 
   /**
@@ -145,6 +213,15 @@ export function useItemDrag({
       if (additive) onSelect(id, true);
       else if (!selected) onSelect(id, false);
 
+      /**
+       * 카드 수정 도구면 맥락을 **여기서 한 번** 만든다 (D180).
+       *
+       * 부모가 없으면(`beginEdit`이 null을 주거나 `parentId`가 null) 끊을
+       * 것이 없다 — 사용자 지시대로 그냥 이동 도구가 된다. 그래도 맥락은
+       * 들고 있는다: 뿌리 노드도 **다른 카드에 붙일** 수는 있어야 한다.
+       */
+      const edit = editing ? (beginEdit?.(id) ?? null) : null;
+
       dragRef.current = {
         sx: e.clientX,
         sy: e.clientY,
@@ -152,6 +229,10 @@ export function useItemDrag({
         group: selected,
         wasSelected: selected,
         additive,
+        edit,
+        // 부모가 없으면 처음부터 끊긴 상태다 — 곧바로 자석이 돈다.
+        broken: !edit?.parentId,
+        magnet: null,
       };
       try {
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -160,7 +241,7 @@ export function useItemDrag({
         // 편의일 뿐이라 없어도 드래그는 동작한다 — 콘솔만 더럽히지 않는다.
       }
     },
-    [enabled, id, onSelect, selected],
+    [beginEdit, editing, enabled, id, onSelect, selected],
   );
 
   const onPointerMove = useCallback(
@@ -176,10 +257,44 @@ export function useItemDrag({
       }
       // React를 거치지 않는다 — 60fps로 리렌더하면 긴 문단에서 즉시 버벅인다.
       // 함께 선택된 것들도 같은 양만큼 민다.
-      const wx = dx / zoom;
-      const wy = dy / zoom;
+      let wx = dx / zoom;
+      let wy = dy / zoom;
+
+      /**
+       * 카드 수정 도구 (D180) — **장력과 자석이 여기서 좌표를 바꾼다.**
+       *
+       * 포인터가 간 만큼 그대로 옮기지 않는다: 매여 있으면 뒤처지고, 붙으려
+       * 하면 부모 쪽으로 끌린다. 계산은 전부 `detachDrag`가 하고 여기서는
+       * 결과를 DOM과 통로에 흘린다.
+       */
+      if (d.edit) {
+        const step = detachStep({
+          dx: wx,
+          dy: wy,
+          hasParent: !!d.edit.parentId,
+          broken: d.broken,
+          rect: d.edit.rect,
+          candidates: d.edit.candidates,
+          blocked: d.edit.blocked,
+        });
+        if (step.breaking) d.broken = true;
+        d.magnet = step.magnet;
+        wx = step.offset.x;
+        wy = step.offset.y;
+        setLiveLink({
+          childId: id,
+          // 매여 있으면 원래 부모로, 끊긴 뒤에는 붙으려는 후보로 선이 간다.
+          parentId: d.broken ? step.magnet.id : d.edit.parentId,
+          strain: step.strain,
+          snapped: step.magnet.snapped,
+          broke: step.breaking,
+        });
+      }
+
       const shift = `translate(${wx}px, ${wy}px)`;
-      const peers = peerEls(d.group, rootRef.current);
+      const peers = d.edit
+        ? branchEls(d.edit.moving)
+        : peerEls(d.group, rootRef.current);
       for (const el of peers) {
         el.style.transition = "none";
         el.style.transform = shift;
@@ -192,7 +307,7 @@ export function useItemDrag({
         wy,
       );
     },
-    [zoom, rootRef],
+    [id, zoom, rootRef],
   );
 
   const finishDrag = useCallback(
@@ -201,9 +316,12 @@ export function useItemDrag({
       dragRef.current = null;
       if (!d) return;
 
-      const peers = peerEls(d.group, rootRef.current);
+      const peers = d.edit
+        ? branchEls(d.edit.moving)
+        : peerEls(d.group, rootRef.current);
       // 연결선은 이제 React가 낸 최종 좌표를 쓴다.
       clearDragOffsets();
+      clearLiveLink();
       if (!d.moved) {
         // 움직이지 않은 클릭. 선택은 pointerdown에서 이미 정해졌고, 남은 경우는
         // 하나뿐이다 — 여럿이 잡힌 상태에서 그중 하나를 그냥 눌렀을 때
@@ -213,16 +331,47 @@ export function useItemDrag({
         for (const el of peers) el.style.transition = "";
         return;
       }
-      const dx = (e.clientX - d.sx) / zoom;
-      const dy = (e.clientY - d.sy) / zoom;
+      const rawX = (e.clientX - d.sx) / zoom;
+      const rawY = (e.clientY - d.sy) / zoom;
       // transform은 **지우지 않는다.** 새 left/top이 오기 전에 지우면 한 프레임
       // 원래 자리로 돌아갔다 오면서 깜박인다. settle()이 정리한다.
       for (const el of peers) el.style.transition = "";
+
+      /**
+       * 카드 수정 도구 (D180) — 관계 변경과 좌표를 **한 번에** 넘긴다.
+       *
+       * 좌표는 화면에 보이던 그 자리다(장력·자석이 반영된 값). 포인터 좌표를
+       * 그대로 쓰면 손 뗀 순간 카드가 툭 튄다 — 붙는 연출이 특히 그렇다.
+       */
+      if (d.edit && onEditEnd) {
+        const step = detachStep({
+          dx: rawX,
+          dy: rawY,
+          hasParent: !!d.edit.parentId,
+          broken: d.broken,
+          rect: d.edit.rect,
+          candidates: d.edit.candidates,
+          blocked: d.edit.blocked,
+        });
+        const attach = step.magnet.snapped ? step.magnet.id : null;
+        onEditEnd({
+          id,
+          dx: step.offset.x,
+          dy: step.offset.y,
+          detached: d.broken && !attach,
+          attachTo: attach,
+        });
+        window.setTimeout(settle, DROP_FALLBACK_MS);
+        return;
+      }
+
+      const dx = rawX;
+      const dy = rawY;
       onDragEnd(id, x + dx, y + dy, dx, dy);
       // 좌표가 끝내 안 바뀌는 경우(같은 자리 재배치)의 안전망.
       window.setTimeout(settle, DROP_FALLBACK_MS);
     },
-    [id, onDragEnd, onSelect, settle, x, y, zoom, rootRef],
+    [id, onDragEnd, onEditEnd, onSelect, settle, x, y, zoom, rootRef],
   );
 
   // 언마운트 시 남은 드래그 상태를 정리한다.

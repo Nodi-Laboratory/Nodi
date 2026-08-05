@@ -37,6 +37,7 @@ import { linkGeometry, midpoint } from "@/lib/canvas2/connector";
 import { treeEdges } from "@/lib/canvas2/tree";
 import { useCollapsible } from "@/lib/canvas2/useCollapsible";
 import { getDragOffsets, subscribeDrag, type DragOffset } from "@/lib/canvas2/dragBus";
+import { getLiveLink, subscribeLink, type LiveLink } from "@/lib/canvas2/linkBus";
 
 interface Props {
   items: CanvasItem[];
@@ -76,8 +77,100 @@ interface Link {
 /** 카드 옆에 붙는 종류. layout.ts의 ATTACH_KINDS와 같은 목록이다. */
 const ATTACH_KINDS = new Set(["clip", "figure"]);
 
+/**
+ * 끊기·붙기 중인 선의 색 (D180).
+ *
+ * 평소 연결선과 **다른 색**이어야 한다. 같은 색으로 두면 "이건 지금 손대는
+ * 중"이라는 사실이 안 읽히고, 팽팽함도 굵기 변화만으로는 잘 안 보인다.
+ */
+const STRAIN_COLOR = "#e0a32e";
+/** 붙을 수 있을 때의 색 — 학생의 틸(캔버스에서 "내가 만든 것"의 색). */
+const SNAP_COLOR = "var(--c-live-deep)";
+
 function shift(r: Rect, o: DragOffset | undefined): Rect {
   return o ? { ...r, x: r.x + o.dx, y: r.y + o.dy } : r;
+}
+
+/**
+ * 끊기·붙기 중인 선 하나를 그린다 (D180).
+ *
+ * **속성만 고친다.** 노드는 렌더가 한 번 만들어 두고 여기서는 `d`·색·굵기만
+ * 바꾼다 — 매 프레임 만들었다 지우면 그 사이 프레임에 선이 깜박이고, 이 기능의
+ * 그래픽 사고는 대부분 그 깜박임이다.
+ *
+ * 세 얼굴이 있다:
+ *
+ *   장력   원래 부모에게 매여 있다. 팽팽할수록 **가늘어지고 밝아진다** —
+ *          고무줄이 늘어나는 그림이다. 점선 간격도 벌어진다.
+ *   끊김   `broke` 프레임에 굵게 번쩍인다. 다음 프레임에 사라진다.
+ *   예고   붙을 후보로 향한다. 멀면 흐린 점선, 붙을 수 있으면 **실선**이다.
+ */
+function drawLive(
+  svg: SVGSVGElement,
+  live: LiveLink | null,
+  rects: ReadonlyMap<string, Rect>,
+  offsets: ReadonlyMap<string, DragOffset>,
+  ox: number,
+  oy: number,
+): void {
+  const g = svg.querySelector<SVGGElement>("[data-live-link]");
+  if (!g) return;
+  const path = g.querySelector<SVGPathElement>("[data-live-path]");
+  const dot = g.querySelector<SVGCircleElement>("[data-live-dot]");
+  const child = live ? rects.get(live.childId) : undefined;
+  const parent = live?.parentId ? rects.get(live.parentId) : undefined;
+
+  if (!live || !path || !child || !parent) {
+    g.style.display = "none";
+    return;
+  }
+
+  const geo = linkGeometry(
+    shift(parent, offsets.get(live.parentId!)),
+    shift(child, offsets.get(live.childId)),
+  );
+  path.setAttribute(
+    "d",
+    `M ${geo.a.x - ox} ${geo.a.y - oy} C ${geo.c1.x - ox} ${geo.c1.y - oy}, ` +
+      `${geo.c2.x - ox} ${geo.c2.y - oy}, ${geo.b.x - ox} ${geo.b.y - oy}`,
+  );
+
+  if (live.broke) {
+    // 끊기는 순간 — 굵고 밝게 한 번. 상태가 아니라 사건이라 한 프레임이다.
+    path.setAttribute("stroke", STRAIN_COLOR);
+    path.setAttribute("stroke-width", "5");
+    path.setAttribute("opacity", "1");
+    path.removeAttribute("stroke-dasharray");
+  } else if (live.strain > 0) {
+    // 매여 있다 — 늘어날수록 가늘어지고 밝아진다.
+    const t = live.strain;
+    path.setAttribute("stroke", STRAIN_COLOR);
+    path.setAttribute("stroke-width", String(2.6 - 1.5 * t));
+    path.setAttribute("opacity", String(0.55 + 0.45 * t));
+    // 간격이 벌어지는 점선 = 늘어나는 고무줄.
+    path.setAttribute("stroke-dasharray", t > 0.35 ? `${6} ${2 + 14 * t}` : "");
+  } else if (live.snapped) {
+    path.setAttribute("stroke", SNAP_COLOR);
+    path.setAttribute("stroke-width", "3.2");
+    path.setAttribute("opacity", "0.95");
+    path.removeAttribute("stroke-dasharray");
+  } else {
+    // 예고선 — 아직 안 붙었다. 흐리게.
+    path.setAttribute("stroke", SNAP_COLOR);
+    path.setAttribute("stroke-width", "2");
+    path.setAttribute("opacity", "0.35");
+    path.setAttribute("stroke-dasharray", "4 7");
+  }
+
+  // 붙을 자리를 점으로 짚는다 — 붙는 순간에만 보인다(예고 단계에서 점까지
+  // 찍으면 "이미 붙었다"로 읽힌다).
+  if (dot) {
+    dot.style.display = live.snapped ? "" : "none";
+    dot.setAttribute("cx", String(geo.b.x - ox));
+    dot.setAttribute("cy", String(geo.b.y - oy));
+    dot.setAttribute("fill", SNAP_COLOR);
+  }
+  g.style.display = "";
 }
 
 export function ConnectorLayer({ items, positions, sizes }: Props) {
@@ -118,30 +211,63 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
   const w = xs.length ? Math.max(...xs) - minX + PAD : 0;
   const h = ys.length ? Math.max(...ys) - minY + PAD : 0;
 
+  /**
+   * 아이템 사각형 전부 — **붙으려는 상대는 지금 연결선이 없을 수도 있다** (D180).
+   *
+   * `links`는 이미 이어진 관계만 담는다. 자석이 걸린 후보로 예고선을 그리려면
+   * 그 카드의 자리를 알아야 하는데 거기엔 없다.
+   */
+  const rects = new Map<string, Rect>();
+  for (const it of items) {
+    const p = positions.get(it.id);
+    if (!p) continue;
+    const sz = sizes.get(it.id) ?? FALLBACK;
+    rects.set(it.id, { x: p.x, y: p.y, w: sz.w, h: sz.h });
+  }
+
   const svgRef = useRef<SVGSVGElement>(null);
   // 드래그 콜백이 최신 링크·원점을 보게 한다(구독은 한 번만 건다).
   // **렌더 중에 ref를 쓰지 않는다** — React Compiler가 막는다(react-hooks/refs).
-  const stateRef = useRef({ links, minX, minY });
+  const stateRef = useRef({ links, minX, minY, rects });
   useEffect(() => {
-    stateRef.current = { links, minX, minY };
+    stateRef.current = { links, minX, minY, rects };
   });
 
   useEffect(() => {
     const draw = (offsets: ReadonlyMap<string, DragOffset>) => {
       const svg = svgRef.current;
       if (!svg) return;
-      const { links: ls, minX: ox, minY: oy } = stateRef.current;
+      const { links: ls, minX: ox, minY: oy, rects: rs } = stateRef.current;
+      const live = getLiveLink();
+
+      /**
+       * 끌리는 관계의 **원래 선은 숨긴다** (D180).
+       *
+       * 이것이 이 기능의 그래픽 원칙이다: **한 관계에 선은 언제나 하나.** 원래
+       * 선을 둔 채 장력선을 얹으면 둘이 어긋난 채 겹쳐 보이고, 끊긴 뒤에도
+       * 원래 선이 남아 "끊겼는데 이어져 있는" 그림이 된다.
+       */
+      const hidden = live?.childId ?? null;
+      drawLive(svg, live, rs, offsets, ox, oy);
+
       for (const l of ls) {
+        if (l.id === hidden) {
+          const g = svg.querySelector<SVGGElement>(`[data-link="${CSS.escape(l.id)}"]`);
+          if (g) g.style.display = "none";
+          continue;
+        }
         // 노드마다 ref를 다는 대신 조회한다. ref 콜백을 렌더에서 만들면
         // 그 안의 `ref.current` 접근이 렌더 중 접근으로 잡힌다.
         const g0 = svg.querySelector<SVGGElement>(`[data-link="${CSS.escape(l.id)}"]`);
         const path = g0?.querySelector("path");
-        if (!path) continue;
+        if (!g0 || !path) continue;
+        // 앞 드래그에서 숨겨 뒀으면 되살린다 — 안 그러면 선이 영영 안 보인다.
+        if (g0.style.display === "none") g0.style.display = "";
         const n = {
           path,
-          from: g0!.querySelector<SVGCircleElement>('[data-end="from"]'),
-          to: g0!.querySelector<SVGCircleElement>('[data-end="to"]'),
-          label: g0!.querySelector("text"),
+          from: g0.querySelector<SVGCircleElement>('[data-end="from"]'),
+          to: g0.querySelector<SVGCircleElement>('[data-end="to"]'),
+          label: g0.querySelector("text"),
         };
         const g = linkGeometry(
           shift(l.parent, offsets.get(l.parentId)),
@@ -164,19 +290,50 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
     // 마운트 직후에도 한 번 맞춘다 — 드래그 도중에 아이템이 새로 그려지면
     // React가 낸 정적 좌표로 되돌아가 있을 수 있다.
     draw(getDragOffsets());
-    return subscribeDrag(draw);
+    // **두 통로를 같은 그리기로 받는다.** 따로 그리면 한쪽만 갱신된 프레임에
+    // 장력선과 카드가 어긋난다.
+    const offDrag = subscribeDrag(draw);
+    const offLink = subscribeLink(() => draw(getDragOffsets()));
+    return () => {
+      offDrag();
+      offLink();
+    };
   }, []);
 
-  if (!links.length) return null;
+  /**
+   * 연결선이 하나도 없어도 **SVG는 남긴다** (D180).
+   *
+   * 예전에는 여기서 null을 냈다. 그러면 뿌리 카드 하나뿐인 캔버스에서 다른
+   * 카드에 붙이려고 끌 때 예고선을 그릴 자리가 아예 없다 — 자석은 걸리는데
+   * 화면에는 아무 일도 안 일어난다.
+   */
+  const empty = links.length === 0;
 
   return (
     <svg
       aria-hidden
       ref={svgRef}
       className="pointer-events-none absolute"
-      style={{ left: minX, top: minY, width: w, height: h, overflow: "visible" }}
-      viewBox={`0 0 ${w} ${h}`}
+      style={{
+        left: empty ? 0 : minX,
+        top: empty ? 0 : minY,
+        width: empty ? 1 : w,
+        height: empty ? 1 : h,
+        overflow: "visible",
+      }}
+      viewBox={empty ? "0 0 1 1" : `0 0 ${w} ${h}`}
     >
+      {/**
+       * 끊기·붙기 중인 선 (D180) — **언제나 하나뿐인 자리.**
+       *
+       * 렌더에서 만들어 두고 화면 갱신은 `drawLive`가 속성으로만 한다. 상태가
+       * 바뀔 때마다 React로 만들었다 지웠다 하면 매 프레임 트리가 돌고, 지우는
+       * 프레임과 그리는 프레임 사이에 선이 깜박인다.
+       */}
+      <g data-live-link style={{ display: "none" }}>
+        <path data-live-path fill="none" strokeLinecap="round" />
+        <circle data-live-dot r={DOT_R + 1} />
+      </g>
       {links.map((l, i) => {
         const g = geos[i];
         const m = midpoint(g);

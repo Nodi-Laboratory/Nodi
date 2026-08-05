@@ -30,6 +30,9 @@ import { sanitizeScene } from "@/lib/canvas2/sanitizeScene";
 import { itemsFromNodes } from "@/lib/canvas2/legacyItems";
 import { planHydration } from "@/lib/canvas2/hydration";
 import { useCanvasStream } from "@/lib/canvas2/useCanvasStream";
+import type { ItemPatch } from "@/lib/api/canvas";
+import type { Candidate } from "@/lib/canvas2/detachDrag";
+import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem, ToolName } from "@/lib/canvas2/types";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import { spaceTargetFromId } from "@/lib/api";
@@ -42,7 +45,7 @@ import { focusCamera } from "@/lib/canvas2/focusCamera";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
-import { descendants, nextFocus, treeEdges } from "@/lib/canvas2/tree";
+import { descendants, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
 import { navigate, type NavDir } from "@/lib/canvas2/navigate";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
@@ -579,6 +582,106 @@ export function CanvasWorkspace({ spaceId }: Props) {
       return p ? [{ id: mid, x: p.x + dx, y: p.y + dy }] : [];
     });
     moveMany(moves, roots.length > 1 ? "위치를 옮겼습니다" : "가지를 옮겼습니다");
+  });
+
+  /* ── 카드 수정 도구 (D180) — 끊고 붙이기 ─────────────────────────── */
+
+  /**
+   * 별 포인터로 누른 순간의 맥락.
+   *
+   * **여기서 한 번만 만든다.** 후보 목록과 자손 집합을 매 렌더에 계산하면
+   * 아무도 안 끄는 동안에도 카드 수만큼 곱해진 일이 계속 돈다.
+   */
+  const beginEdit = useEventCallback((id: string): EditContext | null => {
+    const at = layout.positions.get(id);
+    const size = layout.sizes.get(id);
+    if (!at || !size) return null;
+
+    const kids = descendants(items, id);
+    // 자기 자신과 자기 가지에는 못 붙는다 — 붙이면 순환이다.
+    const blocked = new Set<string>([id, ...kids]);
+
+    /**
+     * 붙을 수 있는 것은 **AI 개념 카드**뿐이다 (D151: 트리 노드의 조건).
+     * 학생 메모·도판·클립에 붙이면 간선이 성립하지 않아 붙자마자 사라진다.
+     */
+    const candidates: Candidate[] = [];
+    for (const it of items) {
+      if (blocked.has(it.id)) continue;
+      if (!isTreeNode(it)) continue;
+      const p = layout.positions.get(it.id);
+      const sz = layout.sizes.get(it.id);
+      if (!p || !sz) continue;
+      candidates.push({ id: it.id, rect: { x: p.x, y: p.y, w: sz.w, h: sz.h } });
+    }
+
+    return {
+      parentId: treeEdges(items).find((e) => e.to === id)?.from ?? null,
+      rect: { x: at.x, y: at.y, w: size.w, h: size.h },
+      candidates,
+      blocked,
+      moving: [id, ...kids],
+    };
+  });
+
+  /**
+   * 손을 뗐다 — 좌표와 관계를 **한 항목으로** 저장한다.
+   *
+   * 나눠 저장하면 되돌리기가 둘로 갈려서, 한 번 되돌렸을 때 "자리는 돌아왔는데
+   * 관계는 안 돌아온" 상태가 남는다. 학생 눈에는 고장이다.
+   *
+   * 붙일 때 **가지 전체의 분류를 부모 것으로 바꾼다.** 간선은 분류가 같을 때만
+   * 성립하므로(D151), 자기만 바꾸면 자식들이 그 자리에서 흩어진다 — D156이
+   * 분류 변경에서 이미 겪은 그것이다.
+   */
+  const onEditEnd = useEventCallback((r: EditResult) => {
+    const kids = descendants(items, r.id);
+    const branch = [r.id, ...kids];
+    const entries: { id: string; patch: ItemPatch }[] = [];
+
+    // 1) 자리 — 가지 전체가 같은 양만큼 움직였다.
+    for (const mid of branch) {
+      const p = layout.positions.get(mid);
+      if (!p) continue;
+      entries.push({
+        id: mid,
+        patch: { x: p.x + r.dx, y: p.y + r.dy, pinned: true },
+      });
+    }
+    const patchOf = (id: string) => {
+      const found = entries.find((e) => e.id === id);
+      if (found) return found.patch;
+      const made = { id, patch: {} as ItemPatch };
+      entries.push(made);
+      return made.patch;
+    };
+
+    let label = "가지를 옮겼습니다";
+    if (r.attachTo) {
+      const parent = items.find((i) => i.id === r.attachTo);
+      const tag = parent?.tag ?? null;
+      patchOf(r.id).parent_item_id = r.attachTo;
+      // 가지 전체가 부모의 분류를 따라간다 — 안 그러면 자식들이 흩어진다.
+      for (const mid of branch) patchOf(mid).tag = tag;
+      label = "가지를 이어 붙였습니다";
+    } else if (r.detached) {
+      /**
+       * 떼어낸 가지는 **분류가 없다**(사용자 결정 2026-08-05).
+       *
+       * 부모 연결만 끊으면 같은 분류 열에 새 뿌리로 남아 "떼어냈다"가 화면에
+       * 안 드러난다. 분류를 비우면 자기 열로 빠지고, 그러고도 가지 안쪽
+       * 연결은 살아 있다(D180: 분류 없는 가지도 트리다).
+       */
+      patchOf(r.id).parent_item_id = null;
+      for (const mid of branch) patchOf(mid).tag = null;
+      label = "가지를 떼어냈습니다";
+    }
+
+    if (entries.length === 1) {
+      patch(entries[0].id, entries[0].patch);
+      return;
+    }
+    patchMany(entries, label);
   });
 
   /**
@@ -1554,6 +1657,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
         sizes={layout.sizes}
         tagOrder={layout.tagOrder}
         tagOptions={store.tagOptions}
+        cardEdit={bridge.activeTool === "cardedit"}
+        beginEdit={beginEdit}
+        onEditEnd={onEditEnd}
         zoom={bridge.camera.zoom}
         selectedIds={selectedIds}
         editingId={editingId}
