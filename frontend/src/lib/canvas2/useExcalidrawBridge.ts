@@ -45,7 +45,11 @@ export interface ExcalidrawApi {
     selectedElementIds?: Record<string, boolean>;
   };
   getSceneElements: () => readonly ExcalidrawElementLike[];
-  updateScene: (data: { appState?: Record<string, unknown> }) => void;
+  updateScene: (data: {
+    appState?: Record<string, unknown>;
+    /** 씬 전체를 갈아 끼운다 — 질문 필기를 지울 때 쓴다(D171). */
+    elements?: readonly ExcalidrawElementLike[];
+  }) => void;
   setActiveTool: (tool: { type: string; locked?: boolean }) => void;
   scrollToContent?: (target?: unknown, opts?: unknown) => void;
   history?: { clear: () => void };
@@ -68,6 +72,13 @@ export interface ExcalidrawElementLike {
   angle?: number;
   /** 선형 요소의 점들(요소 원점 기준 상대 좌표). */
   points?: readonly (readonly number[])[];
+  /** 자유선의 점별 필압(0~1). 없으면 필압 없는 입력이다. */
+  pressures?: readonly number[];
+  /**
+   * 우리가 요소에 얹는 표시 (D171: `customData.nodiAsk` — 질문 획).
+   * Excalidraw가 저장·복원 때 그대로 들고 다닌다.
+   */
+  customData?: Record<string, unknown> | null;
   /** "transparent"면 속이 비었다 — 테두리만 몸이다. */
   backgroundColor?: string;
 }
@@ -156,6 +167,8 @@ export function useExcalidrawBridge(): Bridge {
    */
   const [rawTool, setRawTool] = useState<string>("selection");
   const [noteMode, setNoteMode] = useState(false);
+  /** 질문하는 펜(D171). note와 같은 처지 — appState만 봐서는 구별할 수 없다. */
+  const [askMode, setAskMode] = useState(false);
   /**
    * 형광펜을 켰나 (D150). note와 같은 처지다 — Excalidraw에는 형광펜이
    * 없어서 자유선을 물려 두고 스타일만 바꾸므로, appState만 봐서는 펜과
@@ -240,6 +253,9 @@ export function useExcalidrawBridge(): Bridge {
         setRawTool((prevTool) => (prevTool === t ? prevTool : t));
         // selection으로 돌아갔으면 note 모드도 끝난 것이다.
         if (t !== "selection") setNoteMode(false);
+        // 질문하는 펜은 **자유선**을 물려 쓴다(D171) — 기존 펜이 자연스럽게
+        // 써지기 때문이다. 그래서 자유선을 벗어났을 때만 끝난 것으로 본다.
+        if (t !== "freedraw") setAskMode(false);
         // 자유선을 벗어났으면 형광펜도 끝났다(도형 하나 그린 뒤 Excalidraw가
         // 스스로 선택 도구로 돌아가는 경우까지 여기서 잡힌다).
         if (t !== "freedraw") setHighlighting(false);
@@ -253,12 +269,17 @@ export function useExcalidrawBridge(): Bridge {
   const setTool = useCallback(
     (tool: ToolName) => {
       setNoteMode(tool === "note");
+      setAskMode(tool === "askpen");
       setHighlighting(tool === "highlighter");
       // 우리 도구 둘은 Excalidraw의 다른 도구를 물려 쓴다.
       //   note        선택 도구 — 캔버스 클릭을 오버레이가 가로챈다
       //   highlighter 자유선   — 스타일만 반투명·굵게 바꾼다
       const type =
-        tool === "note" ? "selection" : tool === "highlighter" ? "freedraw" : tool;
+        tool === "note"
+          ? "selection"
+          : tool === "highlighter" || tool === "askpen"
+            ? "freedraw"
+            : tool;
       setRawTool(type);
       api?.setActiveTool({ type });
     },
@@ -287,13 +308,15 @@ export function useExcalidrawBridge(): Bridge {
    * (image·frame·laser 등 우리 레일에 없는 것)은 selection으로 떨어뜨린다 —
    * 레일에 아무것도 눌리지 않은 상태로 두면 학생이 무엇이 켜졌는지 모른다.
    */
-  const activeTool: ToolName = noteMode
-    ? "note"
-    : highlighting && rawTool === "freedraw"
-      ? "highlighter"
-      : KNOWN_TOOLS.has(rawTool)
-        ? (rawTool as ToolName)
-        : "selection";
+  const activeTool: ToolName = askMode && rawTool === "freedraw"
+    ? "askpen"
+    : noteMode
+      ? "note"
+      : highlighting && rawTool === "freedraw"
+        ? "highlighter"
+        : KNOWN_TOOLS.has(rawTool)
+          ? (rawTool as ToolName)
+          : "selection";
 
   const getObstacles = useCallback((): Rect[] => {
     if (!api) return [];

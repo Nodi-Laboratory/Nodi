@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ..config import get_settings
-from ..services import figure_judge
+from ..services import figure_judge, ocr
 
 router = APIRouter(tags=["health"])
 settings = get_settings()
@@ -103,6 +103,22 @@ def config_report() -> dict:
         ),
     }
 
+    # D171: 손글씨 OCR. base_url이 비면 judge 호스트에서 유도하므로, 진단에는
+    # **실제로 부를 주소**를 싣는다(유도값인지 명시값인지가 여기서 갈린다).
+    ocr_missing = ocr.missing_config()
+    ocr_block = {
+        "configured": not ocr_missing,
+        "missing": ocr_missing,
+        "base_url": ocr.resolve_base_url() or None,
+        "derived_from_judge": not settings.ocr_base_url.strip(),
+        "enabled": settings.ocr_enabled,
+        "role": "optional",
+        "note": (
+            "미설정이어도 채팅은 정상이다. 프롬프트창의 펜 입력만 '준비 중'으로 "
+            "안내된다(501)."
+        ),
+    }
+
     qdrant = {"url": settings.qdrant_url, "configured": bool(settings.qdrant_url)}
     storage = {"root": settings.storage_root, "bucket": settings.storage_bucket}
 
@@ -126,6 +142,7 @@ def config_report() -> dict:
         "qdrant": qdrant,
         "storage": storage,
         "judge": judge,
+        "ocr": ocr_block,
     }
 
 

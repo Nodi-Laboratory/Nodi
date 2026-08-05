@@ -25,7 +25,8 @@ import { useCallback, useEffect, useRef } from "react";
 // 그걸 받는다. 폰트가 캔버스 전용이니 CSS도 캔버스 라우트 청크에만 둔다.
 import "./hand-font.css";
 import type { DrawingScene } from "@/lib/api/canvas";
-import type { Camera } from "@/lib/canvas2/types";
+import type { Camera, ToolName } from "@/lib/canvas2/types";
+import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import type { Bridge } from "@/lib/canvas2/useExcalidrawBridge";
 import {
   useCameraFrame,
@@ -69,6 +70,8 @@ interface Props {
   /** 그리기 레이어 마운트 시 적용할 카메라. */
   initialCamera?: { scrollX: number; scrollY: number; zoom: number };
   onSceneCommit: (scene: DrawingScene) => void;
+  /** 씬이 방금 바뀌었다 — 디바운스 없이(D171: 질문 필기 획 세기). */
+  onSceneChange?: (elements: readonly ExcalidrawElementLike[]) => void;
   /** 글쓰기 도구로 빈 캔버스를 클릭했을 때 — world 좌표를 준다. */
   onCanvasClick?: (world: { x: number; y: number }) => void;
   /** 그 외 도구로 빈 캔버스를 클릭했을 때 — 선택 해제용. */
@@ -84,6 +87,15 @@ interface Props {
    */
   onShapeDrag?: (dx: number, dy: number, done: boolean) => void;
   viewOnly?: boolean;
+  /** 질문하는 펜을 쓰는 중 (D171) — 도구 단축키를 재운다. */
+  penWriting?: boolean;
+  /** 지금 열린 대화 id. 화면에 드러내 전환 완료를 밖에서 알 수 있게 한다. */
+  sessionId?: string | null;
+  /**
+   * 도구를 고를 때 부모가 함께 할 일이 있으면 여기로 받는다 (D171: 질문 필기
+   * 단계 되돌리기). 없으면 브리지로 바로 간다.
+   */
+  onToolSelect?: (tool: ToolName) => void;
   /** 화면 고정 UI(상단바·입력창 등) */
   chrome?: React.ReactNode;
   children: React.ReactNode;
@@ -95,11 +107,15 @@ export function CanvasStage({
   sceneKey,
   initialCamera,
   onSceneCommit,
+  onSceneChange,
   onCanvasClick,
   onBackgroundClick,
   onMarquee,
   onShapeDrag,
   viewOnly = false,
+  penWriting = false,
+  sessionId = null,
+  onToolSelect,
   chrome,
   children,
 }: Props) {
@@ -267,6 +283,15 @@ export function CanvasStage({
     <div
       ref={rootRef}
       className="canvas2 relative h-full w-full overflow-hidden"
+      /**
+       * 지금 열린 대화 (2026-08-05 플로우 점검).
+       *
+       * "어느 대화를 보고 있나"가 화면에서 **관찰 불가능**했다. 그래서 대화를
+       * 새로 만든 직후에 파일을 붙이면 앞 대화로 들어가는 것을 아무도 못 봤다
+       * (실측: 새 대화로 바꾼 뒤 붙인 파일이 이전 세션에 달렸고, 화면에는
+       * 아무 표시도 없었다). 전환이 끝났는지 밖에서 알 수 있어야 한다.
+       */
+      data-session={sessionId ?? ""}
       style={{ cursor: activeTool === "note" ? "text" : undefined }}
     >
       {/* 격자는 변환 평면 **밖**에 두고 background-position으로 흉내 낸다 —
@@ -279,6 +304,7 @@ export function CanvasStage({
         onApi={bridge.setApi}
         initialScene={initialScene}
         onSceneCommit={onSceneCommit}
+        onSceneChange={onSceneChange}
         viewOnly={viewOnly}
         initialCamera={initialCamera}
       />
@@ -313,8 +339,9 @@ export function CanvasStage({
 
       {!viewOnly && (
         <ToolRail
+          paused={penWriting}
           active={activeTool}
-          onSelect={bridge.setTool}
+          onSelect={onToolSelect ?? bridge.setTool}
           setDrawStyle={bridge.setDrawStyle}
         />
       )}

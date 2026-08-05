@@ -30,7 +30,8 @@ import { sanitizeScene } from "@/lib/canvas2/sanitizeScene";
 import { itemsFromNodes } from "@/lib/canvas2/legacyItems";
 import { planHydration } from "@/lib/canvas2/hydration";
 import { useCanvasStream } from "@/lib/canvas2/useCanvasStream";
-import type { CanvasItem } from "@/lib/canvas2/types";
+import type { CanvasItem, ToolName } from "@/lib/canvas2/types";
+import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import { spaceTargetFromId } from "@/lib/api";
 import { useSessionDetail } from "@/lib/queries";
 import { intersects, union } from "@/lib/canvas2/rect";
@@ -49,7 +50,17 @@ import SessionFilesBar from "@/components/canvas/SessionFilesBar";
 import { uploadFile } from "@/lib/api";
 import { sessionFilesKey } from "@/lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
-import { AskBar } from "./AskBar";
+import { useCanvasTouchGuard } from "@/lib/canvas2/penGuard";
+import {
+  allAskStrokes,
+  markAsk,
+  pendingStrokes,
+  toStrokes,
+  withoutStrokes,
+} from "@/lib/canvas2/askInk";
+import { renderInkPng } from "@/lib/canvas2/penPad";
+import { ocrErrorMessage, recognizeHandwriting } from "@/lib/api";
+import { AskBar, type AskBarHandle } from "./AskBar";
 import { CanvasTopBar } from "./CanvasTopBar";
 import { Minimap } from "./Minimap";
 import { CanvasStage } from "./CanvasStage";
@@ -186,6 +197,32 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [split, setSplit] = useState<{ id: string; tag: string | null } | null>(null);
   /** 입력창에 커서를 옮겨 달라는 신호 (D157). "묻겠다"일 때만 올린다. */
   const [askFocus, setAskFocus] = useState(0);
+  /**
+   * 질문 필기의 단계 (D171).
+   *
+   *   null      평소
+   *   "writing" 질문하는 펜으로 캔버스에 쓰는 중 — 버튼은 [글자 인식]
+   *   "review"  인식이 끝나 글자가 입력창에 들어옴 — [다시 쓰기] [AI에게 묻기]
+   *
+   * 도구 선택(`bridge.activeTool`)과 **따로 둔다**: 인식이 끝난 뒤에도 도구는
+   * 질문하는 펜인 채로 두어야 "다시 쓰기"가 곧바로 이어진다.
+   */
+  const [inkRecognized, setInkRecognized] = useState(false);
+  const [inkCount, setInkCount] = useState(0);
+  const [inkBusy, setInkBusy] = useState(false);
+  /**
+   * 질문하는 펜을 **켠 순간** 캔버스에 있던 획들.
+   *
+   * 표시를 찍을 때만 쓴다 — "지금부터 그은 것"을 가려내는 용도다. 판정 자체는
+   * 표시(`customData.nodiAsk`)가 하므로, 이 집합이 사라져도 이미 찍힌 질문
+   * 획은 계속 질문 획이다. 이걸 안 두면 앞서 **일반 펜으로 그린 그림에까지**
+   * 표시가 찍힌다(실측 2026-08-05: 질문 1획 + 그림 1획인데 2획이 아니라
+   * 3획으로 셌다).
+   */
+  const markBaseRef = useRef<ReadonlySet<string>>(new Set());
+  const askBarRef = useRef<AskBarHandle>(null);
+  // 펜을 쓰는 동안 손날이 만든 click을 화면 전체에서 삼킨다 (D171).
+  useCanvasTouchGuard();
   const queryClient = useQueryClient();
 
   useEffect(() => setActiveSpace(spaceId), [spaceId, setActiveSpace]);
@@ -920,6 +957,145 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 초점을 그대로 두면 이어 물을수록 같은 노드에서 형제가 옆으로 쌓인다.
    * 학생이 기대하는 것은 방금 받은 답 **뒤에** 이어지는 것이다.
    */
+  /**
+   * 질문 필기 (D171) — **기존 펜(자유선)으로 받는다**.
+   *
+   * 우리 캔버스를 얹어 직접 그리다가 갈아탔다(사용자 보고 2026-08-04: "다음
+   * 획마다 끊긴다. 하지만 기존 펜은 자연스럽게 써진다"). 이미 자연스럽게
+   * 써지는 것이 같은 화면에 있는데 흉내를 고치는 것은 순서가 틀렸다.
+   * 우리가 하는 일은 그 획을 **글자로 바꾸는 것**뿐이다.
+   *
+   * `inkPhase`는 **파생값이다** — state로 들고 이펙트에서 맞추면 도구와 단계가
+   * 어긋나는 순간이 생기고(렌더 한 번 사이), React Compiler도 막는다.
+   */
+  const askPen = bridge.activeTool === "askpen";
+  const inkPhase: "writing" | "review" | null = !askPen
+    ? null
+    : inkRecognized
+      ? "review"
+      : "writing";
+
+  /**
+   * 캔버스에 남아 있는 질문 획 전부 — **표시로 고른다**(시점이 아니라).
+   *
+   * 도구를 잠깐 바꿨다 돌아와도 앞서 쓴 질문 획이 계속 잡힌다. 기준선으로
+   * 가르던 때는 그것들이 미아가 됐다(인식도 안 되고 지워지지도 않았다).
+   */
+  const askStrokes = useCallback(
+    () => allAskStrokes(bridge.api?.getSceneElements() ?? [], markBaseRef.current),
+    [bridge.api],
+  );
+
+  /**
+   * 방금 그은 획들에 **질문 표시를 찍는다** — 획이 끝난 뒤의 discrete한 순간에만.
+   *
+   * `updateScene({elements})`는 `replaceAllElements`라 **그리는 중에 부르면
+   * 그리던 획이 끊긴다**(공식 문서가 드래그 중 사용을 금한다). 그래서 도구를
+   * 바꿀 때와 인식할 때만 부른다.
+   */
+  const markPending = useCallback(() => {
+    const els = bridge.api?.getSceneElements() ?? [];
+    const fresh = pendingStrokes(els, markBaseRef.current);
+    if (!fresh.length) return;
+    const ids = new Set(fresh.map((e) => e.id));
+    bridge.api?.updateScene({
+      elements: els.map((e) => (ids.has(e.id) ? markAsk(e) : e)),
+    });
+  }, [bridge.api]);
+
+  /**
+   * 도구를 바꿀 때 필기 단계를 **함께** 되돌린다.
+   *
+   * 이벤트 핸들러라 이펙트가 필요 없다. 질문하는 펜을 켤 때 기준선을 새로 찍는다.
+   *
+   * **획 스타일은 건드리지 않는다** — 기존 펜이 쓰던 그대로 쓴다(사용자 지시
+   * 2026-08-04: "기존 펜의 글씨 써지는 라이브러리만 사용"). 화면에 무슨 색으로
+   * 그려지든 OCR과 무관하다: 보내는 그림은 **점에서 다시 그린다**(흰 종이에
+   * 검은 획). 그래서 색·굵기를 우리가 정할 이유가 없다.
+   */
+  const handleTool = useCallback(
+    (tool: ToolName) => {
+      setInkRecognized(false);
+      setInkCount(0);
+      // 질문하는 펜을 떠나기 전에 방금 쓴 것을 표시해 둔다 — 그래야 다시
+      // 돌아왔을 때 앞서 쓴 질문 획이 계속 질문 획이다.
+      if (bridge.activeTool === "askpen" && tool !== "askpen") markPending();
+      if (tool === "askpen") {
+        markBaseRef.current = new Set(
+          (bridge.api?.getSceneElements() ?? []).map((e) => e.id),
+        );
+      }
+      bridge.setTool(tool);
+    },
+    [bridge, markPending],
+  );
+
+  /**
+   * 그은 만큼 버튼이 켜지게 — 자유선은 우리 손을 안 거치므로 **씬을 본다**.
+   *
+   * **저장 신호(`onSceneCommit`)에 물리면 안 된다** — 거기엔 1.5초 디바운스가
+   * 걸려 있어서, 쓰는 동안 타이머가 계속 밀리고 **손을 멈춘 뒤에야** 버튼이
+   * 켜진다(사용자 보고 2026-08-05: "글씨를 쓰면 왜 버튼이 활성화되지 않지?").
+   * 저장과 화면 반응은 리듬이 다르다.
+   */
+  const recountInk = useCallback(
+    (elements: readonly ExcalidrawElementLike[]) => {
+      if (bridge.activeTool !== "askpen") {
+        // 다른 도구로 그린 획에는 표시를 찍지 않는다 — 그것이 구분의 전부다.
+        return;
+      }
+      /**
+       * **세기만 한다.** 여기서 씬을 되쓰면(표시를 찍으면) 그리던 획이 끊긴다 —
+       * 이 신호는 획을 긋는 **도중에도** 오기 때문이다. 표시는 도구를 바꾸거나
+       * 인식할 때 찍는다.
+       */
+      setInkCount(allAskStrokes(elements, markBaseRef.current).length);
+    },
+    [bridge.activeTool],
+  );
+
+  const recognizeInk = useCallback(async () => {
+    if (inkBusy) return;
+    // 획이 끝난 뒤의 순간이다 — 여기서 표시를 찍어 둔다(그리는 중이 아니라).
+    markPending();
+    const els = askStrokes();
+    if (!els.length) return;
+    const png = await renderInkPng(toStrokes(els), window.devicePixelRatio || 1);
+    if (!png) return;
+    setInkBusy(true);
+    try {
+      const { text } = await recognizeHandwriting(png);
+      const clean = text.trim();
+      if (!clean) {
+        setDrawError("글씨를 알아보지 못했어요. 조금 크게 다시 써 볼까요?");
+        return;
+      }
+      // 글자가 됐으므로 획은 캔버스에서 사라진다(사용자 결정 2026-08-04).
+      const gone = new Set(els.map((e) => e.id));
+      const rest = withoutStrokes(bridge.api?.getSceneElements() ?? [], gone);
+      bridge.api?.updateScene({ elements: rest });
+      setInkCount(0);
+      askBarRef.current?.appendText(clean);
+      setInkRecognized(true);
+      setDrawError(null);
+    } catch (err) {
+      setDrawError(ocrErrorMessage(err));
+    } finally {
+      setInkBusy(false);
+    }
+  }, [askStrokes, bridge.api, inkBusy, markPending]);
+
+  /** 다시 쓰기 — 빈 화면에서 새로 (인식 때 이미 지워졌다). */
+  const writeInkAgain = useCallback(() => {
+    const gone = new Set(askStrokes().map((e) => e.id));
+    if (gone.size) {
+      const rest = withoutStrokes(bridge.api?.getSceneElements() ?? [], gone);
+      bridge.api?.updateScene({ elements: rest });
+    }
+    setInkCount(0);
+    setInkRecognized(false);
+  }, [askStrokes, bridge.api]);
+
   const handleSend = useCallback(
     (question: string) => {
       const from = pickedId;
@@ -1105,10 +1281,17 @@ export function CanvasWorkspace({ spaceId }: Props) {
       initialCamera={INITIAL_CAMERA}
       initialScene={initialScene}
       onSceneCommit={handleSceneCommit}
+      // 질문 필기는 자유선이라 우리 손을 안 거친다 — **저장 디바운스가 아니라**
+      // 변경 신호에 물린다(D171). 저장에 물렸더니 손을 멈춘 뒤에야 버튼이 켜졌다.
+      onSceneChange={recountInk}
       onCanvasClick={handleCreateNote}
       onBackgroundClick={handleBackgroundClick}
       onMarquee={handleMarquee}
       onShapeDrag={handleShapeDrag}
+      // 펜으로 쓰는 중에는 도구 단축키도 재운다 (D171).
+      penWriting={askPen}
+      sessionId={sessionId}
+      onToolSelect={handleTool}
       chrome={
         <>
           {/* 교차 연결로 과거 대화에 들어왔을 때만 뜬다 (D171).
@@ -1174,10 +1357,45 @@ export function CanvasWorkspace({ spaceId }: Props) {
             pickedId={pickedId}
             onFocus={handleMinimapFocus}
           />
-          <div className="ui absolute bottom-[152px] left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2">
+          <div
+            className="ui absolute left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
+            // 펜 입력판이 펴진 만큼 비킨다 (D171) — 안 비키면 판 위에 겹쳐 뜬다.
+            style={{ bottom: 152 }}
+          >
             <SessionFilesBar sessionId={sessionId} uploadError={uploadError} />
           </div>
+          {/**
+           * 질문 필기의 상태를 화면 밖으로 낸다 — e2e가 **몇 획인지** 잰다.
+           * 픽셀로는 못 센다(획끼리 겹치고, 캔버스에는 학생이 그린 그림도 있다).
+           */}
+          <span
+            data-testid="ask-ink"
+            data-strokes={inkCount}
+            data-phase={inkPhase ?? "off"}
+            className="sr-only"
+            aria-hidden="true"
+          />
+          {inkPhase === "writing" && inkCount === 0 && (
+            <p
+              data-testid="ask-ink-hint"
+              className="ui pointer-events-none absolute left-1/2 top-20 z-30 -translate-x-1/2 rounded-full px-3 py-1.5 text-[13px]"
+              style={{
+                background: "var(--c-raised)",
+                color: "var(--c-ink-soft)",
+                border: "1px solid var(--c-rule)",
+                boxShadow: "var(--c-shadow-sm)",
+              }}
+            >
+              캔버스에 질문을 손으로 써 보세요
+            </p>
+          )}
           <AskBar
+            ref={askBarRef}
+            inkPhase={inkPhase}
+            inkReady={inkCount > 0}
+            inkBusy={inkBusy}
+            onRecognize={recognizeInk}
+            onWriteAgain={writeInkAgain}
             onAttach={handleAttach}
             busy={stream.busy}
             reply={stream.reply}

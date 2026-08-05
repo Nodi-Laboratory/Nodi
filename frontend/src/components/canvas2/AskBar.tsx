@@ -8,8 +8,8 @@
  * 무엇에 대해 묻는지 보이지 않으면 답이 어디에 붙을지도 모른다(D149).
  */
 
-import { ArrowUp, Paperclip, Quote, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ArrowUp, Check, Loader2, Paperclip, Pencil, Quote, X } from "lucide-react";
+import { useEffect, useImperativeHandle, useRef, useState } from "react";
 
 interface Props {
   busy: boolean;
@@ -31,6 +31,32 @@ interface Props {
   disabled?: boolean;
   /** 세션 컨텍스트 파일 첨부 (D83). 없으면 버튼을 숨긴다. */
   onAttach?: (file: File) => void;
+  /**
+   * 질문 필기의 단계 (D171). 보내기 버튼 자리가 이걸 따라 바뀐다.
+   *
+   *   null      평소 — [보내기]
+   *   "writing" 질문하는 펜으로 쓰는 중 — [글자 인식]
+   *   "review"  인식이 끝나 글자가 입력창에 들어옴 — [다시 쓰기] [AI에게 묻기]
+   */
+  inkPhase: "writing" | "review" | null;
+  /** 지금 인식할 만큼 썼나 — 획이 없으면 버튼을 누를 수 없다. */
+  inkReady: boolean;
+  /** 인식 중(모델 왕복 3~8초). */
+  inkBusy: boolean;
+  onRecognize: () => void;
+  onWriteAgain: () => void;
+  ref?: React.Ref<AskBarHandle>;
+}
+
+export interface AskBarHandle {
+  /**
+   * 인식한 글자를 입력창에 **덧붙인다**.
+   *
+   * 프롭으로 넘겨 이펙트에서 반영하지 않는다 — 이펙트 안의 setState는 렌더를
+   * 연쇄시키고 React Compiler가 막는다. "밖에서 일어난 일 → state 갱신"은
+   * 명령형 손잡이가 제자리다.
+   */
+  appendText: (text: string) => void;
 }
 
 export function AskBar({
@@ -42,6 +68,12 @@ export function AskBar({
   disabled,
   onAttach,
   focusSignal,
+  inkPhase,
+  inkReady,
+  inkBusy,
+  onRecognize,
+  onWriteAgain,
+  ref,
 }: Props) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
@@ -69,6 +101,28 @@ export function AskBar({
   };
 
   /**
+   * 인식한 글자를 입력창에 **덧붙이고** 커서를 끝으로 보낸다 (D171).
+   *
+   * 덮어쓰지 않는 이유: 인식은 한 번에 한 덩어리씩 하게 되고, 앞서 넣은 것이
+   * 사라지면 다시 써야 한다. 곧바로 보내지도 않는다 — 손글씨 OCR은 "빛"과
+   * "및"을 바꾸고, 그대로 나가면 학생은 자기가 안 한 질문의 답을 받는다.
+   */
+  useImperativeHandle(ref, () => ({
+    appendText: (text: string) => {
+      const t = text.trim();
+      if (!t) return;
+      setValue((v) => (v.trim() ? `${v.replace(/\s+$/, "")} ${t}` : t));
+      // 값이 반영된 뒤에 커서를 옮겨야 끝으로 간다.
+      requestAnimationFrame(() => {
+        const el = taRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      });
+    },
+  }), []);
+
+  /**
    * **보내는 순간부터 보인다** (D160, 사용자 지적 2026-08-03: "AI가 생각하는
    * 시간 동안 아무 내용이 없어서 렉 걸리는 것처럼 보인다").
    *
@@ -84,7 +138,7 @@ export function AskBar({
       data-no-pan
       // bottom-6이었다. 아래 방향 버튼(D157)이 입력창 **아래**에 놓이므로
       // 그만큼 올린다 — 사용자 지시: "아래쪽 버튼은 입력 공간의 아래에".
-      className="ui absolute bottom-[52px] left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
+      className="ui absolute bottom-[52px] left-1/2 z-50 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
     >
       {showStatus && (
         <div
@@ -215,16 +269,69 @@ export function AskBar({
           style={{ color: "var(--c-ink)", caretColor: "var(--c-live)" }}
           aria-label="질문 입력"
         />
-        <button
-          type="button"
-          onClick={submit}
-          disabled={!value.trim() || busy || disabled}
-          aria-label="보내기"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-30"
-          style={{ background: "var(--c-live-deep)", color: "var(--c-paper)" }}
-        >
-          <ArrowUp size={16} strokeWidth={2.4} />
-        </button>
+        {/**
+          * **버튼 자리가 단계를 말한다** (D171, 사용자 지시 2026-08-04).
+          *
+          * 질문하는 펜을 고르면 보내기가 **글자 인식**으로 바뀌고(색도 학생의
+          * 틸로), 인식이 끝나면 **둘로 갈라진다**: 다시 쓰기 · AI에게 묻기.
+          * 한 자리에서 바뀌므로 학생이 다음에 무엇을 할지 찾아다닐 필요가 없다.
+          */}
+        {inkPhase === "writing" ? (
+          <button
+            type="button"
+            onClick={onRecognize}
+            disabled={!inkReady || inkBusy || disabled}
+            data-testid="ink-recognize"
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] transition-opacity disabled:opacity-30"
+            // 학생이 쓴 것이므로 틸이다(D120의 색 규칙) — 보내기(오커)와 갈린다.
+            style={{ background: "var(--c-hand)", color: "var(--c-paper)" }}
+          >
+            {inkBusy ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Check size={13} strokeWidth={2.4} />
+            )}
+            글자 인식
+          </button>
+        ) : inkPhase === "review" ? (
+          <>
+            <button
+              type="button"
+              onClick={onWriteAgain}
+              disabled={disabled}
+              data-testid="ink-again"
+              aria-label="다시 쓰기"
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] transition-colors hover:bg-[var(--c-sunk)]"
+              style={{ borderColor: "var(--c-rule)", color: "var(--c-ink-soft)" }}
+            >
+              <Pencil size={13} />
+              다시 쓰기
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!value.trim() || busy || disabled}
+              data-testid="ink-send"
+              aria-label="AI에게 묻기"
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] transition-opacity disabled:opacity-30"
+              style={{ background: "var(--c-live-deep)", color: "var(--c-paper)" }}
+            >
+              <ArrowUp size={13} strokeWidth={2.4} />
+              AI에게 묻기
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!value.trim() || busy || disabled}
+            aria-label="보내기"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-30"
+            style={{ background: "var(--c-live-deep)", color: "var(--c-paper)" }}
+          >
+            <ArrowUp size={16} strokeWidth={2.4} />
+          </button>
+        )}
       </div>
     </div>
   );

@@ -39,6 +39,15 @@ interface Props {
   initialScene: DrawingScene | null;
   /** 디바운스 후 호출. 저장은 호출부 책임. */
   onSceneCommit: (scene: DrawingScene) => void;
+  /**
+   * 씬이 **방금** 바뀌었다 — 디바운스 없이 즉시.
+   *
+   * `onSceneCommit`은 저장용이라 1.5초 디바운스가 걸려 있다. 화면이 곧바로
+   * 반응해야 하는 것을 거기 물리면 **손을 멈춘 뒤에야 켜진다**(사용자 보고
+   * 2026-08-05: 질문 필기 획을 세는 데 이걸 썼더니 "글씨를 쓰면 왜 버튼이
+   * 활성화되지 않지?"). 저장과 반응은 리듬이 다르다.
+   */
+  onSceneChange?: (elements: readonly ExcalidrawElementLike[]) => void;
   /** 읽기 전용(교사 뷰 등) */
   viewOnly?: boolean;
   /**
@@ -56,6 +65,7 @@ export function ExcalidrawLayer({
   onApi,
   initialScene,
   onSceneCommit,
+  onSceneChange,
   viewOnly = false,
   initialCamera,
 }: Props) {
@@ -63,9 +73,11 @@ export function ExcalidrawLayer({
   // 최신 콜백을 ref에 담아 둔다 — 렌더 중에 쓰면 React Compiler가 막으므로
   // 이펙트에서 동기화한다. 디바운스 타이머가 옛 콜백을 붙잡는 걸 막는 게 목적이다.
   const commitRef = useRef(onSceneCommit);
+  const changeRef = useRef(onSceneChange);
   useEffect(() => {
     commitRef.current = onSceneCommit;
-  }, [onSceneCommit]);
+    changeRef.current = onSceneChange;
+  }, [onSceneCommit, onSceneChange]);
 
   /**
    * 마지막으로 저장(또는 불러온) 씬의 서명.
@@ -82,6 +94,8 @@ export function ExcalidrawLayer({
     (elements: readonly ExcalidrawElementLike[], _state: unknown, files: unknown) => {
       if (viewOnly) return;
       const live = elements.filter((e) => !e.isDeleted);
+      // 화면이 곧바로 반응해야 하는 쪽은 **디바운스 앞에서** 알린다.
+      changeRef.current?.(live);
       // version은 요소를 고칠 때마다 오른다 — 좌표만 비교하면 색·굵기 변경을 놓친다.
       const sig = live.map((e) => `${e.id}:${e.version ?? 0}`).join("|");
       if (sig === savedSigRef.current) return;

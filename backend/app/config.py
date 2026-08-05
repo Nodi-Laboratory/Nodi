@@ -155,6 +155,25 @@ class Settings(BaseSettings):
     # (services/files.py). 판정 생략 폴백은 D88 시절 동작으로, 더 이상 없다.
     judge_api_key: str = ""
 
+    # --- 손글씨 OCR (D171) ---
+    # VARCO-VISION-2.0-1.7B-OCR 서버(FastAPI, 인증 없음). 프롬프트창의 펜 입력이
+    # 여기로 그림을 보내 글자를 받는다.
+    #
+    # **주소 기본값은 judge_base_url에서 끌어온다** (사용자 지시 2026-08-04):
+    # 두 모델이 **같은 기계의 다른 GPU**에 떠 있어(비전 GPU0/llama.cpp,
+    # OCR GPU1) 호스트가 늘 같다. 배포마다 IP를 두 번 적게 하면 한쪽만 바뀐 채
+    # 남는다 — judge가 사는 호스트의 ocr_port로 유도하고, 다른 기계로 옮길 때만
+    # OCR_BASE_URL로 덮는다(services/ocr.py resolve_base_url).
+    ocr_enabled: bool = True                       # 킬 스위치(모델 서버 점검 등)
+    ocr_base_url: str = ""                         # env OCR_BASE_URL. 비면 judge 호스트 유도
+    ocr_port: int = 30020                          # 유도 시 붙일 포트(문서 기준 8083→30020)
+    # 문서 권장 2048. 프롬프트 한 줄 질문은 수십 토큰이면 끝나고, 상한이 크면
+    # 오작동 시 GPU를 오래 문다(요청은 GPU 락으로 직렬 처리된다).
+    ocr_max_new_tokens: int = 512
+    ocr_max_image_bytes: int = 8 * 1024 * 1024     # 입력판 PNG는 보통 수십 KB
+    # 문서 실측 6~8초 + 직렬 대기. 학생이 기다리는 경로라 무한정 잡지 않는다.
+    ocr_timeout_seconds: int = 90
+
     # --- 강의 클립 추천 (D149) ---
     lecture_pipeline_enabled: bool = True          # 인제스트 킬 스위치
     # 직접(본문) 거리 게이트. 0.55였는데 실측에서 정직하게 관련 있는 클립이

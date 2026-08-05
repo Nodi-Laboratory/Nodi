@@ -19,6 +19,7 @@ import {
   Highlighter,
   Minus,
   MousePointer2,
+  PenLine,
   Pencil,
   Square,
   Type,
@@ -43,6 +44,14 @@ const GROUPS: ToolDef[][] = [
     { tool: "hand", icon: Hand, label: "화면 이동", key: "h" },
   ],
   [
+    /**
+     * 질문하는 펜 (D171) — 캔버스에 손으로 질문을 쓴다. 쓰고 나면 하단
+     * 입력창의 버튼이 "글자 인식"으로 바뀐다.
+     *
+     * 글 쓰기(note)와 나란히 둔다: 둘 다 **무언가를 만드는** 도구이고,
+     * 아래 그룹의 그리기 도구(자국을 남기는 것)와 성격이 다르다.
+     */
+    { tool: "askpen", icon: PenLine, label: "질문하는 펜", key: "q" },
     { tool: "note", icon: Type, label: "글 쓰기", key: "t" },
   ],
   [
@@ -105,9 +114,16 @@ interface Props {
   onSelect: (tool: ToolName) => void;
   /** 다음에 그릴 것의 색·굵기·투명도를 정한다 (D150). */
   setDrawStyle: (style: DrawStyle) => void;
+  /**
+   * 지금은 도구를 바꾸지 않는다 (D171) — 펜 입력판을 편 동안.
+   *
+   * 누르는 것은 투명한 막이 막지만 **단축키는 못 막는다**. 이 핸들러는
+   * document에 캡처로 붙어 있어서, 판 안에서 전파를 끊어도 이미 지난 뒤다.
+   */
+  paused?: boolean;
 }
 
-export function ToolRail({ active, onSelect, setDrawStyle }: Props) {
+export function ToolRail({ active, onSelect, setDrawStyle, paused = false }: Props) {
   const pen = useStickyChoice(
     "pen.color",
     PEN_COLORS.map((c) => c.value),
@@ -146,6 +162,7 @@ export function ToolRail({ active, onSelect, setDrawStyle }: Props) {
   // 'p'를 치면 자유선으로 바뀌는 사고를 막는다.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (paused) return; // 펜으로 쓰는 중 (D171)
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       // 한글 조합 중에는 도구를 바꾸지 않는다. IME에 따라 라틴 키가 새어
       // 들어올 수 있다.
@@ -172,7 +189,7 @@ export function ToolRail({ active, onSelect, setDrawStyle }: Props) {
     // 이미 저쪽이 처리한 뒤다.
     document.addEventListener("keydown", onKey, { capture: true });
     return () => document.removeEventListener("keydown", onKey, { capture: true });
-  }, [onSelect]);
+  }, [onSelect, paused]);
 
   // 접힘 — 켜진 도구 하나만 보여 주고, 누르면 펼친다.
   if (!open) {
@@ -301,9 +318,11 @@ function Palette({
             aria-checked={on}
             aria-label={c.name}
             title={`${title} — ${c.name}`}
-            onClick={() => onPick(c.value)}
+                onClick={() => onPick(c.value)}
             className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-            style={{ background: on ? "var(--c-sunk)" : "transparent" }}
+            style={{
+                  background: on ? "var(--c-sunk)" : "transparent",
+            }}
           >
             <span
               className="block rounded-full transition-all"
