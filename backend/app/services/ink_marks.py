@@ -182,6 +182,7 @@ async def read_marks(
         "presence_penalty": 1.5,
         "chat_template_kwargs": {"enable_thinking": False},
     }
+
     async def _call(c: httpx.AsyncClient) -> str:
         resp = await c.post(
             f"{settings.judge_base_url.rstrip('/')}/chat/completions",
@@ -203,4 +204,8 @@ async def read_marks(
         logger.warning("펜 표시 해석 실패 — 표시 없이 질문을 보낸다", exc_info=True)
         return None, ""
 
-    return parse_marks(content, card_count=len(cards))
+    # **개수가 아니라 가장 큰 번호로 잰다.** 명부에 빈 번호가 있으면(자리를
+    # 비운 카드) 개수가 최대 번호보다 작아서, 멀쩡한 답을 "명부 밖"이라며
+    # 버리게 된다.
+    ceiling = max((int(c.get("n", 0)) for c in cards), default=0)
+    return parse_marks(content, card_count=ceiling or None)

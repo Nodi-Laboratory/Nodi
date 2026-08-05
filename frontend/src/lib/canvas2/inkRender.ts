@@ -129,7 +129,13 @@ function drawCard(
   const textX = r.x + PAD + BADGE_R * 2 + 6;
   const textW = r.w - (textX - r.x) - PAD;
   let y = r.y + PAD + 13;
-  if (textW > 20) {
+  /**
+   * **도판 위에는 글자를 얹지 않는다.** 이 그림의 독자는 그림을 읽어야 하는데
+   * 제목이 그 위를 가로지르면 정작 봐야 할 도해를 덮는다 — "(제목 없음)"이
+   * 다이어그램을 가로지르는 그림을 보내는 셈이 된다. 제목은 어차피 프롬프트에
+   * **텍스트 명부로** 따로 가고, 그림에서 필요한 것은 번호(배지)뿐이다.
+   */
+  if (textW > 20 && !bitmap) {
     ctx.font = TITLE_FONT;
     ctx.fillStyle = TITLE_COLOR;
     ctx.textBaseline = "alphabetic";

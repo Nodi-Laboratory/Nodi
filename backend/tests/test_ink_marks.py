@@ -312,6 +312,20 @@ async def test_킬_스위치를_내리면_안_부른다(vision_on, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_명부에_빈_번호가_있어도_큰_번호를_안_버린다(vision_on):
+    """상한을 **개수**로 재면 빈 자리가 있는 명부에서 멀쩡한 답이 버려진다.
+    카드 1·3만 있는데 개수는 2라, 모델이 3을 말해도 "명부 밖"이 된다."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _reply("가리킴: 3\n설명: 화살표가 [카드 3]을 가리킨다.")
+
+    roster = [{"n": 1, "title": "천문학"}, {"n": 3, "title": "지질학"}]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        pointed, _ = await ink_marks.read_marks(roster, b"png", client=c)
+    assert pointed == 3
+
+
+@pytest.mark.asyncio
 async def test_명부_밖_번호는_버리되_설명은_남긴다(vision_on):
     def handler(request: httpx.Request) -> httpx.Response:
         return _reply("가리킴: 7\n설명: 화살표가 [카드 7]을 가리킨다.")
