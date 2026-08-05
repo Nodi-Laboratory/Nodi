@@ -274,10 +274,23 @@ export type JoinKind = "none" | "decoration" | "continuation";
 
 /** 이음매에서 갈라지는 각도의 상한(라디안). 넘으면 한 붓으로 못 그린다. */
 const JOIN_TURN_MAX = (100 * Math.PI) / 180;
-/** 곁가지로 볼 길이 비 — 이보다 길면 그건 또 하나의 표시다. */
+/**
+ * 곁가지 판정의 두 잣대 — **비율과 절대 크기를 함께 본다.**
+ *
+ * 비율만 보면 긴 화살표 옆의 짧은 화살표가 그 화살표의 촉이 된다. 몸통이
+ * 1500px이면 300px짜리 이웃도 "20%"라 곁가지로 통과하기 때문이다(실측
+ * 2026-08-05: "이거 두개 비교해줘"에서 가까운 카드로 간 화살표가 통째로
+ * 먹혔다 — 12/120).
+ *
+ * **화살촉은 몸통이 길어져도 커지지 않는다.** 사람이 그리는 촉은 언제나
+ * 20~40px쯤이다. 그래서 이음매 거리(`joinGap`)에 묶인 절대 상한을 함께 건다.
+ */
 const DECOR_LEN = 0.35;
-/** 곁가지가 이음매에서 벗어날 수 있는 거리(몸통 길이 대비). */
 const DECOR_REACH = 0.2;
+/** 곁가지의 길이 상한(이음매 거리 대비). 이보다 크면 그건 또 하나의 표시다. */
+const DECOR_MAX = 8;
+/** 곁가지가 이음매에서 벗어날 수 있는 거리의 상한(이음매 거리 대비). */
+const DECOR_FAR_MAX = 4;
 
 /** 획의 양 끝에서 안쪽으로 조금 들어간 점 — 이음매의 진행 방향을 잰다. */
 function inward(s: StrokeInfo, atStart: boolean): Pt {
@@ -306,8 +319,11 @@ export function joinKind(a: StrokeInfo, b: StrokeInfo, gap: number): JoinKind {
 
   // 1) 곁가지 — 짧고, 몸통 끝 근처를 못 벗어난다. 획 위 아무 데나 닿아도 된다
   //    (촉을 끝이 아니라 조금 뒤에서부터 그리는 사람이 많다).
-  if (short.len < long.len * DECOR_LEN) {
-    const reach = Math.max(gap * 2, long.len * DECOR_REACH);
+  if (short.len < long.len * DECOR_LEN && short.len <= gap * DECOR_MAX) {
+    const reach = Math.max(
+      gap * 2,
+      Math.min(long.len * DECOR_REACH, gap * DECOR_FAR_MAX),
+    );
     const near =
       distToStroke(short.a, long, gap) <= gap ||
       distToStroke(short.z, long, gap) <= gap;

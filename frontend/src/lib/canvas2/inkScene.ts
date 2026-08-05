@@ -295,7 +295,7 @@ const TIP_MIN = 24;
  * 표시 길이에 묶는 이유는 **짧은 표시가 멀리 우기지 못하게** 하기 위해서다.
  * 화면 크기에 묶으면 톡 그은 5px 선이 반대편 카드를 겨눴다고 주장한다.
  */
-const AIM_REACH = 0.8;
+const AIM_REACH = 2.5;
 /** 카드의 이 비율 이상이 고리 안에 들면 **감쌌다**고 본다. */
 const ENCLOSE_MIN = 0.5;
 /** 카드 안에 그린 표시로 볼 최소 크기(카드 대각선 대비). */
@@ -436,11 +436,121 @@ export function buildInkScene(
     };
   });
 
-  const eligible = scored.filter((s) => s.touched || s.gap <= opts.nearPad);
-  // 접촉 먼저, 그다음 가까운 순. 상한을 넘으면 뒤에서 잘린다.
-  eligible.sort((a, x) =>
-    a.touched !== x.touched ? (a.touched ? -1 : 1) : a.gap - x.gap,
+  /**
+   * 획을 셋으로 가른다 — **점 / 글씨 / 표시.**
+   *
+   *   · 점   그리지도 판정하지도 않는다. 다만 상자가 커질 허용치는 정한다.
+   *   · 글씨 그리기는 한다(모델이 질문도 봐야 한다). 판정에서는 뺀다.
+   *   · 표시 그리고 판정한다.
+   *
+   * 고정 길이로는 안 된다 — 같은 15px가 좁은 그림에서는 뚜렷한 표시이고 넓은
+   * 그림에서는 티끌이다(실측 2026-08-05). 카드 위에 찍은 점은 남긴다("이거").
+   */
+  const dotMax = Math.max(DOT_MIN, diag * DOT_RATIO);
+  const drawn = infos.filter((s) => {
+    if (s.len >= dotMax) return true;
+    const p = s.pts[0];
+    return !!p && cards.some((c) => inside(p.x, p.y, c.rect));
+  });
+
+  const markMin = Math.max(dotMax * 3, diag * MARK_RATIO);
+  const joinGap = Math.max(JOIN_MIN, diag * JOIN_RATIO);
+
+  /**
+   * 표시의 **몸통**이 될 획들. 글씨는 여기서 걸러진다.
+   *
+   * 짧아도 **카드 안에 온전히 그린 것**은 몸통이다 — 한 구절 밑줄·별표·체크.
+   * 카드 크기에 비례해 잡는다(글자 획은 이 잣대를 못 넘는다).
+   */
+  const seeds = drawn.filter((s) => {
+    if (crowded(s, drawn)) return false;
+    if (s.len >= markMin) return true;
+    // 후보 **전체**를 본다 — 이 판정이 선정보다 앞서 돌기 때문이다.
+    return scored.some((k) => {
+      const d = Math.hypot(k.card.rect.w, k.card.rect.h);
+      return contains(k.hit, s.box) && strokeSize(s) >= d * WITHIN_RATIO;
+    });
+  });
+
+  /**
+   * 몸통에 **붙은** 짧은 획은 표시의 일부다 — 대개 화살촉이다.
+   *
+   * 크기만으로 자르면 이게 통째로 사라진다. 화살촉은 짧고(몸통의 10분의 1쯤)
+   * 글씨와 크기가 비슷하다. 가르는 것은 크기가 아니라 **어디에 붙었나**다:
+   * 촉은 몸통 끝에 붙어 있고 글씨는 아무 데도 안 붙어 있다. `crowded`가 이미
+   * 글씨 줄을 걸렀으므로, 남은 짧은 획 중 몸통에 닿은 것만 주우면 된다.
+   */
+  const seedSet = new Set(seeds);
+  const marked = drawn.filter((s) => {
+    if (seedSet.has(s)) return true;
+    if (crowded(s, drawn)) return false;
+    return seeds.some((b) => strokesTouch(s, b, joinGap));
+  });
+
+  const tipReach = Math.max(TIP_MIN, diag * TIP_RATIO);
+  /**
+   * 표시가 아닌 획 = **학생이 쓴 질문 글씨.** 그 자리가 방향의 기준점이다.
+   *
+   * 버리지 않고 상자로 남긴다 — 이것이 없으면 화살표의 방향을 그리는 순서로만
+   * 정하게 되고, 카드에서 질문으로 그은 학생은 아무것도 못 짚는다.
+   */
+  const markSet = new Set(marked);
+  const textBox = union(drawn.filter((s) => !markSet.has(s)).map((s) => s.box));
+  const shapes = readGestures(marked, { joinGap }).map((g) =>
+    anchorToText(g, textBox, tipReach),
   );
+
+  /**
+   * 표시 × 카드 관계를 **후보 전체에 대해** 한 번 계산한다.
+   *
+   * 선정보다 **앞선다.** 그래야 "겨눈 카드"가 선정에 참여할 수 있다 — 화살표가
+   * 한참 못 미쳐 멈추면 획 상자와 그 카드 사이가 근접 반경을 넘고, 그러면 카드가
+   * 후보에조차 못 든다(실측 2026-08-05: 무작위 900장면 중 6개가 이 갈래였다).
+   * 아무리 정확히 겨눠도 후보에 없으면 짚을 수 없다.
+   *
+   * **폭주하지 않는다.** 겨눔은 획에서만 계산되고 늘어난 상자를 되먹이지
+   * 않는다 — 종료는 여전히 알고리즘의 성질이다(파일 머리말 참조).
+   */
+  const kindsOf: MarkKind[][] = shapes.map((g) => {
+    const kinds = scored.map((s) => relate(g, s.card.rect, s.hit, tipReach));
+    /**
+     * 아무것도 못 짚었으면 **겨눈 쪽으로 늘여** 본다. 짚은 것이 하나라도
+     * 있으면 늘이지 않는다 — 이미 답이 있는데 더 찾으면 없는 대상이 붙는다.
+     */
+    if (
+      !kinds.includes("circled") &&
+      !kinds.includes("within") &&
+      !kinds.includes("pointed")
+    ) {
+      const aimed = aimedCard(g, scored, Math.max(tipReach, g.len * AIM_REACH));
+      // 스쳐 지나가는 중이던 카드는 겨눈 것이 아니다(몸통이 지날 뿐이다).
+      if (aimed !== null && kinds[aimed] !== "crossed") kinds[aimed] = "pointed";
+    }
+    return kinds;
+  });
+
+  /** 이 카드가 받은 가장 센 판정. */
+  const bestOf: MarkKind[] = scored.map((_, ci) =>
+    kindsOf.reduce<MarkKind>(
+      (best, kinds) => (MARK_RANK[kinds[ci]] > MARK_RANK[best] ? kinds[ci] : best),
+      "near",
+    ),
+  );
+
+  const eligible = scored
+    .map((s, ci) => ({ ...s, ci, best: bestOf[ci] }))
+    // 접촉·근접에 더해 **짚은 카드**도 후보다.
+    .filter(
+      (s) => s.touched || s.gap <= opts.nearPad || POINTING_KINDS.includes(s.best),
+    );
+  // 짚은 것 먼저, 그다음 접촉, 그다음 가까운 순. 상한을 넘으면 뒤에서 잘린다.
+  eligible.sort((a, x) => {
+    const ap = POINTING_KINDS.includes(a.best);
+    const xp = POINTING_KINDS.includes(x.best);
+    if (ap !== xp) return ap ? -1 : 1;
+    if (a.touched !== x.touched) return a.touched ? -1 : 1;
+    return a.gap - x.gap;
+  });
   const kept = eligible.slice(0, Math.max(0, opts.cardMax));
   const dropped = eligible.length - kept.length;
 
@@ -485,81 +595,15 @@ export function buildInkScene(
     });
   });
 
-  /**
-   * 획을 셋으로 가른다 — **점 / 글씨 / 표시.**
-   *
-   *   · 점   그리지도 판정하지도 않는다. 다만 상자가 커질 허용치는 정한다.
-   *   · 글씨 그리기는 한다(모델이 질문도 봐야 한다). 판정에서는 뺀다.
-   *   · 표시 그리고 판정한다.
-   *
-   * 고정 길이로는 안 된다 — 같은 15px가 좁은 그림에서는 뚜렷한 표시이고 넓은
-   * 그림에서는 티끌이다(실측 2026-08-05). 카드 위에 찍은 점은 남긴다("이거").
-   */
-  const dotMax = Math.max(DOT_MIN, diag * DOT_RATIO);
-  const drawn = infos.filter((s) => {
-    if (s.len >= dotMax) return true;
-    const p = s.pts[0];
-    return !!p && cards.some((c) => inside(p.x, p.y, c.rect));
-  });
-
-  const markMin = Math.max(dotMax * 3, diag * MARK_RATIO);
-  const joinGap = Math.max(JOIN_MIN, diag * JOIN_RATIO);
-
-  /**
-   * 표시의 **몸통**이 될 획들. 글씨는 여기서 걸러진다.
-   *
-   * 짧아도 **카드 안에 온전히 그린 것**은 몸통이다 — 한 구절 밑줄·별표·체크.
-   * 카드 크기에 비례해 잡는다(글자 획은 이 잣대를 못 넘는다).
-   */
-  const seeds = drawn.filter((s) => {
-    if (crowded(s, drawn)) return false;
-    if (s.len >= markMin) return true;
-    return kept.some((k) => {
-      const d = Math.hypot(k.card.rect.w, k.card.rect.h);
-      return contains(k.hit, s.box) && strokeSize(s) >= d * WITHIN_RATIO;
-    });
-  });
-
-  /**
-   * 몸통에 **붙은** 짧은 획은 표시의 일부다 — 대개 화살촉이다.
-   *
-   * 크기만으로 자르면 이게 통째로 사라진다. 화살촉은 짧고(몸통의 10분의 1쯤)
-   * 글씨와 크기가 비슷하다. 가르는 것은 크기가 아니라 **어디에 붙었나**다:
-   * 촉은 몸통 끝에 붙어 있고 글씨는 아무 데도 안 붙어 있다. `crowded`가 이미
-   * 글씨 줄을 걸렀으므로, 남은 짧은 획 중 몸통에 닿은 것만 주우면 된다.
-   */
-  const seedSet = new Set(seeds);
-  const marked = drawn.filter((s) => {
-    if (seedSet.has(s)) return true;
-    if (crowded(s, drawn)) return false;
-    return seeds.some((b) => strokesTouch(s, b, joinGap));
-  });
-
-  const tipReach = Math.max(TIP_MIN, diag * TIP_RATIO);
-  /**
-   * 표시가 아닌 획 = **학생이 쓴 질문 글씨.** 그 자리가 방향의 기준점이다.
-   *
-   * 버리지 않고 상자로 남긴다 — 이것이 없으면 화살표의 방향을 그리는 순서로만
-   * 정하게 되고, 카드에서 질문으로 그은 학생은 아무것도 못 짚는다.
-   */
-  const markSet = new Set(marked);
-  const textBox = union(drawn.filter((s) => !markSet.has(s)).map((s) => s.box));
-  const shapes = readGestures(marked, { joinGap }).map((g) =>
-    anchorToText(g, textBox, tipReach),
-  );
-
-  /**
-   * 표시 × 카드 관계를 **한 번** 계산하고 양쪽에서 읽는다 — 카드는 가장 센
-   * 관계를 자기 `mark`로, 표시는 카드 번호 목록을 자기 사실로 가져간다.
-   */
   const picked: PickedCard[] = kept.map((s, i) => ({
     ...s.card,
     n: i + 1,
     touched: s.touched,
-    mark: "near" as MarkKind,
+    mark: s.best,
     where: whereOf.get(s.card.id) ?? "",
   }));
 
+  /** 표시별 사실은 **뽑힌 카드의 번호로만** 적는다. */
   const gestures: SceneGesture[] = shapes.map((g, gi) => {
     const row: SceneGesture = {
       i: gi + 1,
@@ -570,19 +614,9 @@ export function buildInkScene(
       from: [],
       crosses: [],
     };
-    const kinds = kept.map((s) => relate(g, s.card.rect, s.hit, tipReach));
-    /**
-     * 아무것도 못 짚었으면 **겨눈 쪽으로 늘여** 본다. 짚은 것이 하나라도
-     * 있으면 늘이지 않는다 — 이미 답이 있는데 더 찾으면 없는 대상이 붙는다.
-     */
-    if (!kinds.includes("circled") && !kinds.includes("within") && !kinds.includes("pointed")) {
-      const aimed = aimedCard(g, kept, Math.max(tipReach, g.len * AIM_REACH));
-      // 스쳐 지나가는 중이던 카드는 겨눈 것이 아니다(몸통이 지날 뿐이다).
-      if (aimed !== null && kinds[aimed] !== "crossed") kinds[aimed] = "pointed";
-    }
-    kinds.forEach((kind, ci) => {
-      if (MARK_RANK[kind] > MARK_RANK[picked[ci].mark]) picked[ci].mark = kind;
-      const n = picked[ci].n;
+    kept.forEach((s, i) => {
+      const kind = kindsOf[gi][s.ci];
+      const n = i + 1;
       if (kind === "circled") row.encloses.push(n);
       else if (kind === "within") row.within.push(n);
       else if (kind === "pointed") row.points.push(n);
