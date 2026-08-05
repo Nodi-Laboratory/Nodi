@@ -156,6 +156,14 @@ stderr_logfile=__LOG_DIR__/backup.err.log
 ; autostart=false — 서버 코드가 저장소 밖이라 없는 인스턴스에서 크래시 루프를
 ; 돌면 안 된다. bootstrap이 server.py를 확인한 뒤 켠다(llama와 같은 방식).
 ; startsecs=60 — 가중치 4GB 적재에 시간이 걸린다.
+;
+; ⚠️ **손으로 띄운 프로세스가 남아 있으면 여기로 못 넘어온다.** 이 서버는
+; 가중치를 다 적재한 **뒤에** 포트를 잡아서, 충돌하면 매 시도가 1분씩 걸리다
+; `address already in use`로 죽고 startretries가 금방 소진돼 FATAL이 된다.
+; 넘겨받기 전에 옛 프로세스를 반드시 내린다 — 그런데
+; `pkill -f "varco_ocr_server/server.py"`는 **안 먹는다**: start.sh가 cd 후
+; `python3 server.py`로 띄워서 커맨드라인에 경로가 없다. `pkill -f
+; "server.py --host"` 또는 PID로 잡아야 한다(실측 2026-08-05).
 command=python3 __OCR_DIR__/server.py --host 0.0.0.0 --port __OCR_PORT__
 directory=__OCR_DIR__
 environment=CUDA_VISIBLE_DEVICES="__OCR_GPU__",PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION="python"
