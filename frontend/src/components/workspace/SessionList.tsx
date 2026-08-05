@@ -281,8 +281,20 @@ export function SessionList({
                       <button
                         type="button"
                         onClick={() => setMenuId(menuId === s.id ? null : s.id)}
+                        /**
+                         * **이름을 준다** (2026-08-05 플로우 점검).
+                         *
+                         * `title`만 있으면 스크린리더가 읽는 이름이 붙긴 하나
+                         * 어느 대화의 메뉴인지 알 수 없다 — 목록에 "더보기"가
+                         * 열 개면 열 개 다 같은 이름이다. 대화 제목을 실어
+                         * 구별되게 한다.
+                         *
+                         * `title`은 남긴다: 마우스 사용자의 툴팁이다.
+                         */
+                        aria-label={`${s.title?.trim() || "새 대화"} 메뉴`}
+                        aria-expanded={menuId === s.id}
                         title="더보기"
-                        className="mr-1 shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-black/5 group-hover:opacity-100"
+                        className="mr-1 shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-black/5 group-hover:opacity-100 focus-visible:opacity-100"
                       >
                         <MoreVertical size={15} />
                       </button>

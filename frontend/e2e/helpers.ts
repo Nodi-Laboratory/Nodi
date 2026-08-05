@@ -49,12 +49,25 @@ export async function openCanvas(page: Page): Promise<void> {
  * 열면 매 실행이 같은 조건에서 시작한다.
  */
 export async function openFreshSession(page: Page): Promise<void> {
+  /**
+   * **전환이 끝날 때까지 기다린다.**
+   *
+   * 예전에는 "아이템 0개 + 질문창 활성"으로 판정했는데, 그 둘은 **이전 빈
+   * 대화에서도 참**이라 아무것도 확인하지 못했다. 그 사이에 파일을 붙이면
+   * 앞 대화로 들어갔다(실측 2026-08-05). 대화 id가 실제로 바뀐 것을 본다.
+   */
+  const before = await page.locator(".canvas2").getAttribute("data-session");
   await page.getByLabel("대화 목록 열기").click();
   // 목록의 세션 행에도 "새 대화"라는 글자가 뜬다(제목 없는 세션의 기본 이름).
   // 만드는 버튼은 title 속성으로 정확히 집는다.
   await page.locator('button[title="새 대화"]').click();
   await expect(page.locator("[data-canvas-item]")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
+  await expect
+    .poll(() => page.locator(".canvas2").getAttribute("data-session"), {
+      timeout: 30_000,
+    })
+    .not.toBe(before);
   // 서랍을 닫아 캔버스를 가리지 않게 한다.
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden({ timeout: 10_000 });
