@@ -677,11 +677,27 @@ export function CanvasWorkspace({ spaceId }: Props) {
       label = "가지를 떼어냈습니다";
     }
 
-    if (entries.length === 1) {
+    /**
+     * **관계가 바뀌었으면 언제나 `patchMany`다** — 가지가 한 장이어도.
+     *
+     * `patch`는 patch 내용에서 라벨을 유추하는데, 분류가 들어 있으면 "분류를
+     * 바꿨습니다"가 된다. 학생이 한 일은 가지를 떼어낸 것이다 — 되돌리기
+     * 버튼 옆의 그 한 줄이 무슨 일이 있었는지를 말하는 유일한 자리다
+     * (실측 2026-08-06: 떼어냈는데 "분류를 바꿨습니다"가 떴다).
+     */
+    const moved = !r.attachTo && !r.detached;
+    if (moved && entries.length === 1) {
       patch(entries[0].id, entries[0].patch);
       return;
     }
-    patchMany(entries, label);
+    /**
+     * **"재배치" 배지를 달지 않는다** (D180).
+     *
+     * 학생이 방금 손으로 정한 자리다. 거기에 대고 "다시 배치할까요"를 묻는
+     * 것은 어색하고, 가지가 크면 배지가 우수수 뜬다(사용자 2026-08-06:
+     * "ui가 너무 많이 깨져").
+     */
+    patchMany(entries, label, { reflow: false });
   });
 
   /**

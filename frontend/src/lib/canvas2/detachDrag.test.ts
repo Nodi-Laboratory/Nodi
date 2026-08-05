@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ATTACH_GAP,
   BREAK_DIST,
   MAGNET_DIST,
   SNAP_DIST,
@@ -10,6 +11,7 @@ import {
   tensionPull,
   type Candidate,
 } from "./detachDrag";
+import { linkGeometry } from "./connector";
 import type { Rect } from "./rect";
 
 const card = (x: number, y: number): Rect => ({ x, y, w: 560, h: 140 });
@@ -30,13 +32,18 @@ describe("장력 — 끊기기 전에는 뒤처진다", () => {
   });
 
   /**
-   * **끝에서는 확실히 버텨야 한다** (사용자 2026-08-05: "장력이 더 쌔야하고").
-   * 처음 값(0.38)으로는 100px쯤 뒤처졌는데 저항이 거의 안 느껴진다고 했다.
+   * **양쪽에서 눌러 둔다** — 이 값은 두 번 조정됐고 방향이 반대였다:
+   *
+   *   0.38 → "저항이 거의 안 느껴진다"  (사용자 2026-08-05)
+   *   0.55 → "너무 쎄"                  (사용자 2026-08-06)
+   *
+   * 한쪽 경계만 적어 두면 다음 조정이 반대쪽으로 넘어가도 아무도 못 잡는다.
    */
-  it("끊길 무렵에는 카드 높이만큼 뒤처진다", () => {
+  it("끊길 무렵의 뒤처짐이 느껴지되 과하지 않다", () => {
     const d = BREAK_DIST * 0.98;
     const lag = d - tensionPull(d);
-    expect(lag).toBeGreaterThan(130);
+    expect(lag).toBeGreaterThan(90); // 안 느껴지면 안 된다
+    expect(lag).toBeLessThan(140); // 손에서 떨어져 나간 것처럼 보이면 안 된다
   });
 
   /**
@@ -59,7 +66,7 @@ describe("장력 — 끊기기 전에는 뒤처진다", () => {
   it("끊기는 자리에서 뒤처짐이 한 번에 0이 된다", () => {
     const before = BREAK_DIST - 0.001;
     const lagBefore = before - tensionPull(before);
-    expect(lagBefore).toBeGreaterThan(130);
+    expect(lagBefore).toBeGreaterThan(90);
     expect(BREAK_DIST - tensionPull(BREAK_DIST)).toBe(0);
   });
 
@@ -152,9 +159,14 @@ describe("자석 — 가져다 대면 붙는다", () => {
 describe("세기 — 끌려가고, 바로 붙는다", () => {
   const cands: Candidate[] = [{ id: "p", rect: card(0, 0) }];
 
-  it("카드 한 장 폭 밖에서도 자석이 걸린다", () => {
-    expect(MAGNET_DIST).toBeGreaterThanOrEqual(560);
-    const m = magnetFor(card(0, 140 + 500), cands, NONE);
+  /**
+   * 220은 "잘 안 걸린다", 560은 "너무 쎄" — 그 사이를 못 박는다.
+   * 카드 폭이 560이므로 그 절반보다는 넓고 한 장 폭보다는 좁아야 한다.
+   */
+  it("자석 반경이 카드 반쪽보다 넓고 한 장 폭보다 좁다", () => {
+    expect(MAGNET_DIST).toBeGreaterThan(280);
+    expect(MAGNET_DIST).toBeLessThan(480);
+    const m = magnetFor(card(0, 140 + MAGNET_DIST - 40), cands, NONE);
     expect(m.id).toBe("p");
   });
 
@@ -164,13 +176,33 @@ describe("세기 — 끌려가고, 바로 붙는다", () => {
     expect(Math.hypot(m.pull.x, m.pull.y)).toBeGreaterThan(20);
   });
 
-  it("붙는 거리 안에서는 남은 간격을 거의 다 메운다", () => {
-    for (const gap of [60, 120, 200]) {
+  /**
+   * **끌리되 선이 그려질 자리는 남긴다.**
+   *
+   * 연결선은 두 상자의 변에서 바깥으로 밀어낸 점을 잇는다. 간격이 좁아지면
+   * 그 두 점이 서로를 지나쳐 선이 거꾸로 흐르고 카드 뒤에서 사라진다 —
+   * 학생 눈에는 "가까이 갈수록 연결이 안 된다"로 보인다(사용자 2026-08-06).
+   */
+  it("자석이 끌고 간 자리에는 선이 들어갈 자리가 남는다", () => {
+    for (const gap of [150, 250, 350]) {
       const m = magnetFor(card(0, 140 + gap), cands, NONE);
-      // 손을 떼기 전에 이미 제자리에 가 있어야 한다.
-      expect(Math.hypot(m.pull.x, m.pull.y)).toBeGreaterThan(gap * 0.8);
-      expect(m.snapped).toBe(true);
+      const pull = Math.hypot(m.pull.x, m.pull.y);
+      // 끌리기는 한다.
+      expect(pull).toBeGreaterThan(0);
+      // 그러고도 남는 간격이 선 하나 몫은 된다.
+      expect(gap - pull).toBeGreaterThanOrEqual(ATTACH_GAP - 1e-6);
     }
+  });
+
+  /** 이미 코앞이면 더 당기지 않는다 — 손과 싸우지 않는다. */
+  it("이미 붙을 자리 안이면 안 당긴다", () => {
+    const m = magnetFor(card(0, 140 + 40), cands, NONE);
+    expect(Math.hypot(m.pull.x, m.pull.y)).toBe(0);
+    expect(m.snapped).toBe(true);
+  });
+
+  it("붙는 거리가 카드 높이만큼은 된다 — 근처로 가면 붙는다", () => {
+    expect(SNAP_DIST).toBeGreaterThanOrEqual(120);
   });
 
   it("붙는 거리가 자석 반경의 절반 아래다 — 끌리는 구간이 남는다", () => {
@@ -236,5 +268,50 @@ describe("detachStep — 한 프레임", () => {
     expect(s.strain).toBe(0);
     expect(s.breaking).toBe(false);
     expect(s.offset).toEqual({ x: 40, y: -40 });
+  });
+});
+
+/**
+ * 자석이 남기는 자리와 **연결선이 실제로 그려지는 조건**을 잇는다 (D180).
+ *
+ * 사용자 보고 2026-08-06: "오히려 가까이 갈수록 연결이 안 되고, 일정 거리
+ * 떨어져야 연결선이 생겨."
+ *
+ * 원인은 두 모듈 사이에 있었다. `connector.linkGeometry`는 두 상자의 변에서
+ * 각각 **바깥으로** 조금 밀어낸 점을 잇는데, 간격이 그 두 번의 밀어냄보다
+ * 좁아지면 끝점이 시작점을 지나쳐 **선이 거꾸로 흐른다**. 제어점도 각자
+ * 바깥을 향하므로 곡선이 카드 뒤에서 매듭이 되어 사라진다.
+ *
+ * 자석은 그 자리로 카드를 끌고 갔다. 어느 한쪽만 보면 둘 다 멀쩡해 보이므로
+ * 여기서 **함께** 못 박는다.
+ */
+describe("자석이 남긴 자리에 선이 그려진다", () => {
+  const parent: Rect = { x: 0, y: 0, w: 560, h: 200 };
+
+  /** 이 간격에서 부모→자식 선이 앞으로 흐르나(뒤집히지 않나). */
+  function flowsForward(gap: number): boolean {
+    const child: Rect = { x: 40, y: parent.h + gap, w: 380, h: 120 };
+    const g = linkGeometry(parent, child);
+    // 부모의 아래 변에서 나갔으면 자식 쪽 끝점은 **더 아래**여야 한다.
+    return g.b.y > g.a.y;
+  }
+
+  it("붙는 자리 간격에서는 선이 앞으로 흐른다", () => {
+    expect(flowsForward(ATTACH_GAP)).toBe(true);
+  });
+
+  /** 이 테스트가 상수의 하한을 잡는다 — 줄이면 바로 여기서 깨진다. */
+  it("그보다 훨씬 좁으면 뒤집힌다 — 그래서 그 자리로 끌고 가면 안 된다", () => {
+    expect(flowsForward(16)).toBe(false);
+  });
+
+  it("자석은 그 뒤집히는 자리로 카드를 끌고 가지 않는다", () => {
+    const cands: Candidate[] = [{ id: "p", rect: parent }];
+    for (let gap = ATTACH_GAP; gap <= MAGNET_DIST; gap += 20) {
+      const child: Rect = { x: 40, y: parent.h + gap, w: 380, h: 120 };
+      const m = magnetFor(child, cands, NONE);
+      const left = gap - Math.hypot(m.pull.x, m.pull.y);
+      expect(flowsForward(left)).toBe(true);
+    }
   });
 });

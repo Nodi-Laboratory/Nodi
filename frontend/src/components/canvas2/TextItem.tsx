@@ -333,6 +333,7 @@ function TextItemImpl(props: TextItemProps) {
        * 붙으려 하면 부모 쪽으로 끌린다. 계산은 전부 `detachDrag`가 하고 여기서는
        * 결과를 DOM과 통로에 흘린다 — 손맛을 컴포넌트에 흩어 놓지 않는다.
        */
+      let live: Parameters<typeof setLiveLink>[0] | null = null;
       if (d.edit) {
         const step = detachStep({
           dx: wx,
@@ -346,14 +347,29 @@ function TextItemImpl(props: TextItemProps) {
         if (step.breaking) d.broken = true;
         wx = step.offset.x;
         wy = step.offset.y;
-        setLiveLink({
+        live = {
           childId: item.id,
-          // 매여 있으면 원래 부모로, 끊긴 뒤에는 붙으려는 후보로 선이 간다.
-          parentId: d.broken ? step.magnet.id : d.edit.parentId,
+          /**
+           * 선이 어디로 향하나.
+           *
+           *   매여 있다   원래 부모 (팽팽해진다)
+           *   끊기는 순간 **여전히 원래 부모** — 여기서 번쩍이는 것이 "끊겼다"다
+           *   끊긴 뒤     붙으려는 후보 (예고선). 없으면 선을 안 그린다
+           *
+           * 가운데 줄이 빠져 있었다. 끊기는 프레임에 이미 `broken`이라 후보를
+           * 봤는데 그 프레임에는 자석이 아예 안 돌아 null이었고, 그래서 **끊김
+           * 연출이 한 번도 안 그려진 채 선이 그냥 사라졌다**(실측 2026-08-06:
+           * 프레임 12에서 display:none). 학생 눈에는 선이 툭 없어지는 것이다.
+           */
+          parentId: step.breaking
+            ? d.edit.parentId
+            : d.broken
+              ? step.magnet.id
+              : d.edit.parentId,
           strain: step.strain,
           snapped: step.magnet.snapped,
           broke: step.breaking,
-        });
+        };
       }
 
       const shift = `translate(${wx}px, ${wy}px)`;
@@ -369,6 +385,15 @@ function TextItemImpl(props: TextItemProps) {
         wx,
         wy,
       );
+      /**
+       * **이동량을 먼저 알리고 관계를 나중에 알린다** (D180).
+       *
+       * 순서를 뒤집으면 한 프레임에 선을 두 번 그리는데 **첫 번째가 틀린
+       * 좌표**다 — 관계가 바뀐 것은 아는데 카드가 어디로 갔는지는 아직 옛
+       * 값이기 때문이다. 그 한 프레임이 60fps로 반복되면 선이 두 겹으로
+       * 떨리는 것으로 보인다(사용자 보고 2026-08-06: "ui가 너무 많이 깨져").
+       */
+      if (live) setLiveLink(live);
     },
     [item.id, zoom],
   );

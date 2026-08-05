@@ -33,7 +33,7 @@ import type { Placed } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Rect } from "@/lib/canvas2/rect";
-import { linkGeometry, midpoint } from "@/lib/canvas2/connector";
+import { center, linkGeometry, midpoint } from "@/lib/canvas2/connector";
 import { treeEdges } from "@/lib/canvas2/tree";
 import { useCollapsible } from "@/lib/canvas2/useCollapsible";
 import { getDragOffsets, subscribeDrag, type DragOffset } from "@/lib/canvas2/dragBus";
@@ -125,15 +125,30 @@ function drawLive(
     return;
   }
 
-  const geo = linkGeometry(
-    shift(parent, offsets.get(live.parentId!)),
-    shift(child, offsets.get(live.childId)),
-  );
-  path.setAttribute(
-    "d",
-    `M ${geo.a.x - ox} ${geo.a.y - oy} C ${geo.c1.x - ox} ${geo.c1.y - oy}, ` +
-      `${geo.c2.x - ox} ${geo.c2.y - oy}, ${geo.b.x - ox} ${geo.b.y - oy}`,
-  );
+  const pRect = shift(parent, offsets.get(live.parentId!));
+  const cRect = shift(child, offsets.get(live.childId));
+  const geo = linkGeometry(pRect, cRect);
+
+  /**
+   * **가까우면 곡선을 쓰지 않는다** (D180).
+   *
+   * `linkGeometry`는 두 변에서 바깥으로 밀어낸 점을 잇는다. 간격이 좁아지면
+   * 그 두 점이 서로를 지나쳐 **선이 거꾸로 흐르고**, 제어점이 각자 바깥을
+   * 향하므로 곡선이 카드 뒤에서 매듭이 되어 사라진다(실측 2026-08-06: 간격
+   * 20에서 끝점이 시작점보다 위로 갔다). 학생 눈에는 "가까이 갈수록 연결이
+   * 안 된다"로 보인다 — 사용자 보고가 정확히 그것이었다.
+   *
+   * 그때는 두 상자의 **중심을 잇는 직선**으로 떨어뜨린다. 짧아도 확실히
+   * 보이고, 무엇과 무엇이 이어지는지가 그대로 읽힌다.
+   */
+  const span = Math.hypot(geo.b.x - geo.a.x, geo.b.y - geo.a.y);
+  const folded = span < 56;
+  const d = folded
+    ? `M ${center(pRect).x - ox} ${center(pRect).y - oy} ` +
+      `L ${center(cRect).x - ox} ${center(cRect).y - oy}`
+    : `M ${geo.a.x - ox} ${geo.a.y - oy} C ${geo.c1.x - ox} ${geo.c1.y - oy}, ` +
+      `${geo.c2.x - ox} ${geo.c2.y - oy}, ${geo.b.x - ox} ${geo.b.y - oy}`;
+  path.setAttribute("d", d);
 
   if (live.broke) {
     // 끊기는 순간 — 굵고 밝게 한 번. 상태가 아니라 사건이라 한 프레임이다.
@@ -162,13 +177,29 @@ function drawLive(
     path.setAttribute("stroke-dasharray", "4 7");
   }
 
-  // 붙을 자리를 점으로 짚는다 — 붙는 순간에만 보인다(예고 단계에서 점까지
-  // 찍으면 "이미 붙었다"로 읽힌다).
+  // 붙을 자리를 점으로 짚는다 — 붙는 순간에만, 그리고 곡선일 때만. 접힌
+  // 직선에서는 끝점이 카드 안쪽이라 점이 글자 위에 얹힌다.
   if (dot) {
-    dot.style.display = live.snapped ? "" : "none";
+    dot.style.display = live.snapped && !folded ? "" : "none";
     dot.setAttribute("cx", String(geo.b.x - ox));
     dot.setAttribute("cy", String(geo.b.y - oy));
     dot.setAttribute("fill", SNAP_COLOR);
+  }
+
+  /**
+   * **붙을 상대를 테두리로 짚는다** (D180).
+   *
+   * 선 하나에 기대면 가까울 때 신호가 사라진다 — 자리가 없어서 못 그리기
+   * 때문이다. 테두리는 거리와 무관하게 읽히고, 여러 카드가 몰려 있어도
+   * "이것에 붙는다"가 하나로 정해진다.
+   */
+  const ring = g.querySelector<SVGRectElement>("[data-live-ring]");
+  if (ring) {
+    ring.style.display = live.snapped ? "" : "none";
+    ring.setAttribute("x", String(pRect.x - ox - 6));
+    ring.setAttribute("y", String(pRect.y - oy - 6));
+    ring.setAttribute("width", String(pRect.w + 12));
+    ring.setAttribute("height", String(pRect.h + 12));
   }
   g.style.display = "";
 }
@@ -331,6 +362,16 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
        * 프레임과 그리는 프레임 사이에 선이 깜박인다.
        */}
       <g data-live-link style={{ display: "none" }}>
+        {/* 붙을 상대의 테두리 — 선이 그려질 자리가 없을 때도 읽히는 신호다. */}
+        <rect
+          data-live-ring
+          rx={12}
+          fill="none"
+          stroke={SNAP_COLOR}
+          strokeWidth={2.5}
+          strokeDasharray="10 7"
+          opacity={0.9}
+        />
         <path data-live-path fill="none" strokeLinecap="round" />
         <circle data-live-dot r={DOT_R + 1} />
       </g>
