@@ -30,6 +30,23 @@
 import { API_BASE, authHeaders, ensureOk } from "./_core";
 import { OcrNotReadyError } from "./ocr";
 
+/**
+ * 학생이 그린 표시 하나 — **기하가 센 사실**이지 모델의 판단이 아니다.
+ *
+ * 번호는 `InkCardRef.n`과 같은 것이다. 카드마다 낱말 하나만 보내면 "화살표가
+ * [카드 1]에서 [카드 3]으로 향한다"를 말할 수 없다 — 그 문장은 카드가 아니라
+ * 표시에 딸린 사실이라 표시 단위로 보내야 한다.
+ */
+export interface InkGestureRef {
+  i: number;
+  shape: string;
+  encloses: number[];
+  within: number[];
+  points: number[];
+  from: number[];
+  crosses: number[];
+}
+
 /** 도식에 그려진 카드 — 번호가 곧 VLM 출력의 `[카드 N]`이다. */
 export interface InkCardRef {
   n: number;
@@ -80,6 +97,7 @@ export interface InkInterpretInput {
   figure?: Blob | null;
   figureN?: number | null;
   cards?: readonly InkCardRef[];
+  gestures?: readonly InkGestureRef[];
   signal?: AbortSignal;
 }
 
@@ -89,6 +107,7 @@ export async function interpretInk({
   figure,
   figureN,
   cards,
+  gestures,
   signal,
 }: InkInterpretInput): Promise<InkInterpretResult> {
   const form = new FormData();
@@ -112,6 +131,7 @@ export async function interpretInk({
       ),
     );
   }
+  if (gestures?.length) form.append("gestures", JSON.stringify(gestures));
 
   const res = await fetch(`${API_BASE}/ink/interpret`, {
     method: "POST",

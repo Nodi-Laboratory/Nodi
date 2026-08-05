@@ -26,10 +26,12 @@ function fieldNames(req: Request): string[] {
   return [...raw.matchAll(/name="([^"]+)"/g)].map((m) => m[1]);
 }
 
-/** multipart 본문에서 `cards` 필드 값(JSON 문자열). 없으면 null. */
-function cardsField(req: Request): string | null {
+/** multipart 본문에서 텍스트 필드 값(JSON 문자열). 없으면 null. */
+function textField(req: Request, name: string): string | null {
   const raw = req.postDataBuffer()?.toString("utf8") ?? "";
-  const m = raw.match(/name="cards"\r?\n\r?\n([\s\S]*?)\r?\n--/);
+  const m = raw.match(
+    new RegExp(`name="${name}"\\r?\\n\\r?\\n([\\s\\S]*?)\\r?\\n--`),
+  );
   return m ? m[1] : null;
 }
 
@@ -127,10 +129,50 @@ test("카드 옆에서 쓰면 도식과 카드 명부가 함께 나간다", asyn
   expect(names).toContain("cards");
 
   // 명부에는 번호와 제목만 간다 — 본문은 서버가 RLS로 다시 읽는다(D104).
-  const cards = JSON.parse(cardsField(req)!) as Array<{ n: number; title: string }>;
+  const cards = JSON.parse(textField(req, "cards")!) as Array<{ n: number; title: string }>;
   expect(cards.length).toBeGreaterThanOrEqual(1);
   expect(cards[0].n).toBe(1);
   expect(JSON.stringify(cards)).not.toContain("body");
+
+  await expect(note).toBeVisible();
+});
+
+/**
+ * **표시는 카드와 따로 간다.**
+ *
+ * 카드마다 낱말 하나만 보내면 "화살표가 [카드 1]에서 [카드 3]으로 향한다"를
+ * 말할 방법이 없다 — 방향은 카드 둘 사이의 관계라 어느 한 카드에도 안 딸린다.
+ * 이 필드가 조용히 빠지면 프롬프트가 예전 수준으로 되돌아가는데, 화면에는
+ * 아무 표시도 안 난다.
+ */
+test("동그라미를 치면 표시 목록이 함께 나간다", async ({ page }) => {
+  const note = await createNote(page, "지질학 설명", { x: 420, y: 300 });
+  const got = await captureRequest(page);
+
+  await pickAskPen(page);
+  // 카드를 크게 한 바퀴 두른다 — 닫힌 고리라야 감쌈으로 읽힌다.
+  const ring: [number, number][] = [];
+  for (let i = 1; i <= 28; i++) {
+    const t = (i / 28) * Math.PI * 2;
+    ring.push([Math.cos(t) * 260 - 260, Math.sin(t) * 150]);
+  }
+  await stroke(page, 700, 340, ring);
+  await expect.poll(() => strokes(page)).toBe(1);
+
+  await page.locator('[data-testid="ink-recognize"]').click();
+  await expect(page.getByLabel("질문 입력")).toHaveValue("이거 더 설명해줘");
+
+  const req = got()!;
+  expect(fieldNames(req)).toContain("gestures");
+  const gestures = JSON.parse(textField(req, "gestures")!) as Array<{
+    shape: string;
+    encloses: number[];
+  }>;
+  expect(gestures.length).toBeGreaterThanOrEqual(1);
+  // 한 바퀴 두른 것은 **동그라미**이고, 그 안에 카드가 들어 있다.
+  expect(gestures.some((g) => g.shape === "circle" && g.encloses.length > 0)).toBe(
+    true,
+  );
 
   await expect(note).toBeVisible();
 });

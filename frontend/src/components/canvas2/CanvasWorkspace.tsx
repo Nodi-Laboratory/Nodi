@@ -1145,6 +1145,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
         figure: shot.figure,
         figureN: shot.figureN,
         cards: shot.cards,
+        gestures: shot.gestures,
       });
       const clean = text.trim();
       if (!clean) {
