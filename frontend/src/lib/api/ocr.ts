@@ -1,21 +1,16 @@
 /**
- * 필기 인식(OCR) — 펜으로 쓴 질문을 글자로 (D176).
+ * 필기 인식의 **오류 어휘** (D176 → D178).
  *
- * ## 계약
+ * ## 여기 있던 클라이언트는 사라졌다
  *
- *   POST {API_BASE}/ocr/handwriting
- *   Content-Type: multipart/form-data
- *     image  (필수) 흰 배경에 검은 획, PNG. 사방 여백 포함(`renderInkPng`)
- *     lang   (선택) BCP-47. 기본 "ko"
- *   200 → { "text": "빛의 굴절이 뭐야?", "confidence": null }
+ * `recognizeHandwriting`이 `POST /ocr/handwriting`을 부르던 곳이다. D178에서
+ * 손글씨와 펜 표시를 **한 번에** 읽는 창구(`ink.ts` → `/ink/interpret`)로
+ * 옮기면서 화면은 더 이상 이 함수를 부르지 않아, 죽은 코드를 남기지 않고
+ * 지웠다. **백엔드 `/api/ocr/handwriting`은 그대로 살아 있다** — 계약과
+ * 테스트가 붙어 있고, 손으로 확인할 때 쓸 수 있는 창구다.
  *
- * 백엔드(`routers/ocr.py`)가 자체 GPU의 VARCO-VISION-2.0-1.7B-OCR 서버로
- * 넘긴다. **모델 서버를 브라우저에서 직접 부르지 않는다** — 그쪽은 인증이
- * 없고 CORS가 모두 열려 있어, 주소가 곧 공개 GPU 창구가 된다.
- *
- * `confidence`는 자리만 있고 늘 null이다(VARCO는 점수를 주지 않는다). 있어도
- * **낮은 값으로 입력을 막지 않는다** — 인식 결과는 학생이 고칠 초안이고,
- * 막으면 다시 쓰는 수밖에 없다.
+ * 남은 것은 두 갈래를 **학생이 읽을 한국어로 옮기는 규칙**이고, 새 창구가
+ * 그대로 쓴다. 문구가 갈리면 같은 기능이 다르게 말하게 된다.
  *
  * ## 창구가 없거나 꺼져 있으면
  *
@@ -24,13 +19,10 @@
  * (`OcrNotReadyError`). 502(모델 서버가 안 받음)는 **다른 갈래다** — 그건
  * 잠시 뒤에 다시 하면 되는 상태다.
  *
- * ## 오래 걸린다
- *
- * 실측 3~8초. 모델 서버가 요청을 GPU 락으로 **직렬 처리**하므로 한 반이
- * 동시에 누르면 그만큼 줄을 선다. 타임아웃을 걸지 않고 기다린다 — 끊으면
- * 학생은 다시 써야 하고, 그 사이 GPU는 이미 그 그림을 읽고 있다.
+ * 인식 점수(`confidence`)로 입력을 막지 않는다 — 결과는 학생이 고칠 초안이고,
+ * 막으면 다시 쓰는 수밖에 없다.
  */
-import { API_BASE, ApiError, authHeaders, ensureOk } from "./_core";
+import { ApiError } from "./_core";
 
 export interface HandwritingOcrResult {
   text: string;
@@ -57,43 +49,6 @@ export class OcrNotReadyError extends Error {
  */
 export const HANDWRITING_ENABLED =
   process.env.NEXT_PUBLIC_HANDWRITING_OCR !== "off";
-
-/**
- * 손글씨 그림 → 글자.
- *
- * `signal`로 취소할 수 있다 — 인식이 도는 동안 학생이 입력판을 닫거나 화면을
- * 떠날 수 있고, 그때 온 응답을 입력창에 꽂으면 안 된다.
- */
-export async function recognizeHandwriting(
-  image: Blob,
-  opts: { lang?: string; signal?: AbortSignal } = {},
-): Promise<HandwritingOcrResult> {
-  const form = new FormData();
-  // 파일명은 서버가 확장자로 형식을 볼 수 있게 준다(Blob은 이름이 없다).
-  form.append("image", image, "handwriting.png");
-  form.append("lang", opts.lang ?? "ko");
-
-  // 네트워크 끊김·취소는 fetch가 그대로 던진다(취소는 호출부가 AbortError로 가려낸다).
-  const res = await fetch(`${API_BASE}/ocr/handwriting`, {
-    method: "POST",
-    // multipart의 boundary는 브라우저가 정한다 — Content-Type을 직접 넣으면 깨진다.
-    headers: await authHeaders(),
-    body: form,
-    signal: opts.signal,
-  });
-
-  if (res.status === 404 || res.status === 501) throw new OcrNotReadyError();
-
-  const body = (await ensureOk(res).then((r) => r.json())) as {
-    text?: unknown;
-    confidence?: unknown;
-  };
-  return {
-    text: typeof body.text === "string" ? body.text : "",
-    confidence:
-      typeof body.confidence === "number" ? body.confidence : undefined,
-  };
-}
 
 /** 인식 실패를 학생이 읽을 문구로. 취소는 호출부가 먼저 걸러 여기 오지 않는다. */
 export function ocrErrorMessage(err: unknown): string {

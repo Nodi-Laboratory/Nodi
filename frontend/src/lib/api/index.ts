@@ -58,16 +58,12 @@ export { getFigure } from "./retrieve";
 
 export { getHomeSummary } from "./home";
 
-// D176: 펜으로 쓴 질문 → 글자. 백엔드 창구는 개발 중이다(없으면 404 → 준비 중 안내).
+// D176: 펜으로 쓴 질문 → 글자. 인식 실패를 학생 문구로 옮기는 규칙이 여기 있다.
 export type { HandwritingOcrResult } from "./ocr";
-export {
-  HANDWRITING_ENABLED,
-  OcrNotReadyError,
-  ocrErrorMessage,
-  recognizeHandwriting,
-} from "./ocr";
+export { HANDWRITING_ENABLED, OcrNotReadyError, ocrErrorMessage } from "./ocr";
 
-// D178: 손글씨 + 펜 표시를 함께. 오류 문구는 위의 ocrErrorMessage를 함께 쓴다.
+// D178: 손글씨 + 펜 표시를 **한 번에** 읽는 창구. 화면이 부르는 것은 이쪽이다
+// (`/ocr/handwriting`을 부르던 recognizeHandwriting은 D178에서 지웠다).
 export type { InkCardRef, InkInterpretResult } from "./ink";
 export { fetchFigureBitmap, interpretInk } from "./ink";
 

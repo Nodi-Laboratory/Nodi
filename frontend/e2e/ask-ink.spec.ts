@@ -13,6 +13,10 @@ import { loginAndOpenCanvas, openFreshSession } from "./helpers";
  *   · OCR로 보내는 그림은 **획의 bbox만** 잘라 담는다(화면 전체가 아니라)
  *   · 창구가 없을 때(404) 학생이 무엇을 보는가 — 그리고 쓴 것을 잃지 않는가
  *
+ * **창구는 `/ink/interpret`이다** (D178). 예전에는 `/ocr/handwriting`이었는데,
+ * 표시 해석이 붙으면서 손글씨와 표시를 **한 번에** 부르는 창구로 옮겼다.
+ * 저쪽은 계약이 살아 있지만 화면은 더 이상 부르지 않는다.
+ *
  * 로컬 스택(docker + 백엔드 8000 + 프론트 3000)이 떠 있어야 한다.
  */
 test.describe.configure({ mode: "serial" });
@@ -149,7 +153,7 @@ test("한 획을 긋는 즉시 버튼이 살아난다", async ({ page }) => {
 });
 
 test("인식하면 필기가 사라지고 버튼이 둘로 갈린다", async ({ page }) => {
-  await page.route("**/ocr/handwriting", (route) =>
+  await page.route("**/ink/interpret", (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -224,7 +228,7 @@ test("보내는 그림은 획의 bbox만 잘라 담는다 — 흰 종이에 검�
    * 그대로 드러난다.
    */
   let png: Buffer | null = null;
-  await page.route("**/ocr/handwriting", async (route) => {
+  await page.route("**/ink/interpret", async (route) => {
     const raw = route.request().postDataBuffer()!;
     const start = raw.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     const end = raw.indexOf(Buffer.from("IEND"), start) + 8;
@@ -282,7 +286,7 @@ test("보내는 그림은 획의 bbox만 잘라 담는다 — 흰 종이에 검�
 });
 
 test("창구가 없으면 준비 중이라고 말하고, 쓴 것을 지우지 않는다", async ({ page }) => {
-  await page.route("**/ocr/handwriting", (route) =>
+  await page.route("**/ink/interpret", (route) =>
     route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"Not Found"}' }),
   );
 

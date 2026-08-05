@@ -273,8 +273,19 @@ Content-Type: multipart/form-data
 OCR과 VLM을 `asyncio.gather`로 동시에 돌린다. **마침 GPU가 갈라져 있어
 진짜로 병렬이다** — OCR은 GPU 1(VARCO), VLM은 GPU 0(llama.cpp EXAONE).
 
-기존 `POST /api/ocr/handwriting`은 **그대로 둔다.** 계약과 e2e가 잡혀 있고,
-카드 없이 그냥 쓴 경우의 경로이자 이 창구가 죽었을 때의 폴백이다.
+기존 `POST /api/ocr/handwriting`은 **살려 두되 화면은 안 부른다.** 계약과
+테스트가 붙어 있어 지우지 않지만, 카드가 없는 경우도 새 창구가 똑같이
+처리한다(도식이 안 오면 비전을 아예 안 부른다) — 클라이언트에 갈래를 둘
+만들 이유가 없다.
+
+그래서 프론트의 `recognizeHandwriting`은 **지웠다**(2026-08-05 구현 중 결정).
+죽은 코드를 "폴백"이라 부르며 남기면 다음 사람이 그것이 살아 있는 경로인 줄
+안다. `lib/api/ocr.ts`에는 오류 문구 규칙(`OcrNotReadyError`·
+`ocrErrorMessage`)만 남고, 새 창구가 그것을 그대로 쓴다 — 문구가 갈리면 같은
+기능이 다르게 말한다.
+
+같은 이유로 `ask-ink.spec.ts`의 라우트 세 곳을 `/ink/interpret`으로 옮겼다.
+**옮기기 전에 실제로 깨지는 것을 확인했다**(3건 통과 후 4번째에서 실패).
 
 ### 실패 정책
 
