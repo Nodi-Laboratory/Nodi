@@ -61,6 +61,19 @@ MARKS_SYSTEM = """너는 학생이 학습 화면에 그린 표시를 읽는 도�
 가리킴: <화살표가 가리키는 카드 번호 하나. 없으면 '없음'>
 설명: <빨간 표시가 무엇을 어떻게 가리키는지 한국어 2~4문장>"""
 
+# 형식 지시를 **맨 끝에 한 번 더** 둔다.
+#
+# 이게 없으면 모델이 형식을 통째로 무시한다 — 실측 2026-08-05(EXAONE-4.5-33B):
+# 앞의 지시만으로는 `가리킴:` 줄 없이 800자짜리 마크다운 에세이(머리말·목록·
+# 이모지)가 나왔고, 번호 파싱이 통째로 실패했다. **기하는 정확히 읽는데
+# 형식만 안 지킨다** — 그림을 본 직후의 마지막 지시가 이기는 것으로 보인다.
+#
+# 같은 장면 4회 + 표시 없는 장면 2회에서 6/6 두 줄로 나왔다.
+MARKS_FORMAT = """지금부터 **정확히 두 줄만** 출력한다. 머리말·목록·굵은 글씨·이모지·구분선을 쓰지 마라. 설명하거나 요약하지 마라.
+
+가리킴: <번호 하나 또는 없음>
+설명: <2~4문장>"""
+
 
 def build_marks_messages(
     cards: list[dict[str, Any]],
@@ -80,6 +93,8 @@ def build_marks_messages(
         f"{c['n']} = {(c.get('title') or '(제목 없음)')}" for c in cards
     )
     lines = [
+        MARKS_SYSTEM,
+        "",
         f"화면에 있는 카드:\n{roster or '(없음)'}",
         "",
         "첫 번째 그림이 화면 전체다.",
@@ -91,16 +106,15 @@ def build_marks_messages(
             f"두 번째 그림은 [카드 {figure_n}] 도판을 크게 본 것이다. "
             "빨간 표시의 위치는 첫 번째 그림과 같다."
         )
+    # **형식 지시가 맨 끝이다.** 이 순서가 이 프롬프트의 전부다(MARKS_FORMAT 주석).
+    lines += ["", MARKS_FORMAT]
     content.append({"type": "text", "text": "\n".join(lines)})
-    return [
-        # **system content는 문자열이다** — 파트 배열이 아니라.
-        # `figure_caption`은 system 역할을 아예 쓰지 않는 것으로 이 서버(llama.cpp
-        # + mmproj)에서 검증된 유일한 형태다. 배열 content는 서버마다 지원이
-        # 갈리고, **로컬에는 비전 모델이 없어 우리가 확인할 수 없는 경로다.**
-        # 확인할 수 없으면 넓은 쪽이 아니라 좁은 쪽을 고른다.
-        {"role": "system", "content": MARKS_SYSTEM},
-        {"role": "user", "content": content},
-    ]
+    # **메시지는 user 하나뿐이다** — system 역할을 쓰지 않는다.
+    #
+    # `figure_caption`이 이 서버에서 검증된 모양이 그것이고, 실측에서도 지시를
+    # system에 두면 **묻혔다**(2026-08-05: 형식을 통째로 무시). 그림과 지시가
+    # 한 턴에 붙어 있어야 한다.
+    return [{"role": "user", "content": content}]
 
 
 _POINT_RE = re.compile(r"^\s*가리킴\s*[::]\s*(.+?)\s*$", re.MULTILINE)

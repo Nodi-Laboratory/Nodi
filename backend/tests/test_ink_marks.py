@@ -257,7 +257,7 @@ async def test_모델_응답을_번호와_설명으로_받는다(vision_on):
     )
     assert seen["url"].endswith("/chat/completions")
     # 이미지가 data URI로 실렸나 — 경로가 아니라 바이트를 보낸다.
-    parts = seen["body"]["messages"][1]["content"]
+    parts = seen["body"]["messages"][0]["content"]
     images = [p for p in parts if p.get("type") == "image_url"]
     assert len(images) == 1
     assert images[0]["image_url"]["url"].startswith("data:image/png;base64,")
@@ -366,6 +366,35 @@ async def test_설명이_왜_비었는지를_상태로_구분한다(vision_on, m
 
         monkeypatch.setattr(ink_marks.settings, "ink_vlm_enabled", False)
         assert (await ink_marks.read_marks(CARDS, b"png", client=c)).status == "off"
+
+
+def test_형식_지시가_맨_끝에_있다():
+    """**이 순서가 이 프롬프트의 전부다.**
+
+    실측 2026-08-05(EXAONE-4.5-33B): 형식 지시를 앞에만 두면 모델이 통째로
+    무시하고 800자 마크다운 에세이를 뱉었다 — `가리킴:` 줄이 없어 번호 파싱이
+    실패했다. 그림 직후의 마지막 지시라야 이긴다.
+    """
+    msgs = ink_marks.build_marks_messages(
+        [{"n": 1, "title": "지질학"}], "data:image/png;base64,AAA", None, None
+    )
+    # 메시지는 user 하나뿐 — system에 두면 묻힌다.
+    assert len(msgs) == 1 and msgs[0]["role"] == "user"
+    text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
+    assert text.rstrip().endswith("설명: <2~4문장>")
+    # 그림이 글보다 앞이다(figure_caption과 같은 모양).
+    assert msgs[0]["content"][0]["type"] == "image_url"
+
+
+def test_도판_설명은_형식_지시보다_앞이다():
+    msgs = ink_marks.build_marks_messages(
+        [{"n": 2, "title": "지질학"}],
+        "data:image/png;base64,AAA",
+        "data:image/png;base64,BBB",
+        2,
+    )
+    text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
+    assert text.index("두 번째 그림") < text.index("정확히 두 줄만")
 
 
 def test_시스템_프롬프트가_세_지시를_담는다():
