@@ -254,23 +254,102 @@ function distToStroke(p: Pt, s: StrokeInfo, limit: number): number {
 }
 
 /**
- * 두 획이 **끝에서 닿나.**
+ * 두 획이 한 표시인가 — **닿았다는 것만으로는 모자란다.**
  *
- * "가까움"이 아니라 "끝이 닿음"이다. 가까움으로 보면 나란히 그린 별개의 표시
- * 둘이 한 덩어리가 된다. 사람이 표시를 나눠 그릴 때는 언제나 앞 획이 끝난
- * 자리에서 다음 획을 시작한다 — 화살표의 촉도, 반쪽씩 그린 원도 그렇다.
+ * "가까움"으로 보면 나란히 그린 별개의 표시 둘이 한 덩어리가 된다. 그래서
+ * 처음에는 "끝이 닿았나"로 봤는데 그것도 모자랐다 — **같은 자리에서 출발한
+ * 화살표 둘**이 한 표시로 뭉쳤고, 짧은 쪽이 긴 쪽의 화살촉으로 오인됐다
+ * (실측 2026-08-05: 두 카드를 가리켰는데 짚은 카드가 0개로 나왔다). 학생이
+ * 여러 카드를 비교해 달라고 할 때 가장 흔하게 그리는 모양이 그것이다.
+ *
+ * 잣대는 **한 붓으로 그릴 수 있었나**다:
+ *
+ *   곁가지  한쪽이 훨씬 짧고 이음매 근처를 벗어나지 않는다 — 화살촉이다.
+ *   이어짐  이음매에서 방향이 이어진다 — 반쪽씩 그린 원이 그렇다.
+ *
+ * 둘 다 아니면 남남이다. 같은 자리에서 갈라져 나가는 두 획은 이음매에서
+ * 되꺾이므로(진행 방향이 서로 등진다) 어느 쪽에도 안 걸린다.
  */
-export function strokesTouch(a: StrokeInfo, b: StrokeInfo, gap: number): boolean {
-  if (rectGap(a.box, b.box) > gap) return false;
-  return (
-    distToStroke(a.a, b, gap) <= gap ||
-    distToStroke(a.z, b, gap) <= gap ||
-    distToStroke(b.a, a, gap) <= gap ||
-    distToStroke(b.z, a, gap) <= gap
-  );
+export type JoinKind = "none" | "decoration" | "continuation";
+
+/** 이음매에서 갈라지는 각도의 상한(라디안). 넘으면 한 붓으로 못 그린다. */
+const JOIN_TURN_MAX = (100 * Math.PI) / 180;
+/** 곁가지로 볼 길이 비 — 이보다 길면 그건 또 하나의 표시다. */
+const DECOR_LEN = 0.35;
+/** 곁가지가 이음매에서 벗어날 수 있는 거리(몸통 길이 대비). */
+const DECOR_REACH = 0.2;
+
+/** 획의 양 끝에서 안쪽으로 조금 들어간 점 — 이음매의 진행 방향을 잰다. */
+function inward(s: StrokeInfo, atStart: boolean): Pt {
+  const pts = s.pts;
+  const want = Math.max(1, s.len * 0.25);
+  let walked = 0;
+  if (atStart) {
+    for (let i = 1; i < pts.length; i++) {
+      walked += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+      if (walked >= want) return { x: pts[i].x, y: pts[i].y };
+    }
+    return s.z;
+  }
+  for (let i = pts.length - 2; i >= 0; i--) {
+    walked += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+    if (walked >= want) return { x: pts[i].x, y: pts[i].y };
+  }
+  return s.a;
 }
 
-/** 끝이 서로 닿는 획들을 묶는다 (`strokesTouch` 기준). */
+export function joinKind(a: StrokeInfo, b: StrokeInfo, gap: number): JoinKind {
+  if (rectGap(a.box, b.box) > gap) return "none";
+
+  const short = a.len <= b.len ? a : b;
+  const long = short === a ? b : a;
+
+  // 1) 곁가지 — 짧고, 몸통 끝 근처를 못 벗어난다. 획 위 아무 데나 닿아도 된다
+  //    (촉을 끝이 아니라 조금 뒤에서부터 그리는 사람이 많다).
+  if (short.len < long.len * DECOR_LEN) {
+    const reach = Math.max(gap * 2, long.len * DECOR_REACH);
+    const near =
+      distToStroke(short.a, long, gap) <= gap ||
+      distToStroke(short.z, long, gap) <= gap;
+    if (near) {
+      const at = pointGap(short.a, long.box) <= pointGap(short.z, long.box)
+        ? short.a
+        : short.z;
+      const far = Math.max(
+        Math.hypot(short.a.x - at.x, short.a.y - at.y),
+        Math.hypot(short.z.x - at.x, short.z.y - at.y),
+      );
+      if (far <= reach) return "decoration";
+    }
+  }
+
+  // 2) 이어짐 — 끝과 끝이 만나고, 그 자리에서 진행 방향이 이어진다.
+  for (const [pa, sa] of [[a.a, true], [a.z, false]] as const) {
+    for (const [pb, sb] of [[b.a, true], [b.z, false]] as const) {
+      if (Math.hypot(pa.x - pb.x, pa.y - pb.y) > gap) continue;
+      // a를 이음매 **쪽으로** 흘러 들어온 방향, b를 **나가는** 방향으로 본다.
+      const ia = inward(a, sa);
+      const ib = inward(b, sb);
+      const inX = pa.x - ia.x;
+      const inY = pa.y - ia.y;
+      const outX = ib.x - pb.x;
+      const outY = ib.y - pb.y;
+      const di = Math.hypot(inX, inY);
+      const dO = Math.hypot(outX, outY);
+      if (di < 1e-6 || dO < 1e-6) continue;
+      const dot = Math.max(-1, Math.min(1, (inX * outX + inY * outY) / (di * dO)));
+      if (Math.acos(dot) <= JOIN_TURN_MAX) return "continuation";
+    }
+  }
+  return "none";
+}
+
+/** 두 획이 한 표시인가(곁가지든 이어짐이든). */
+export function strokesTouch(a: StrokeInfo, b: StrokeInfo, gap: number): boolean {
+  return joinKind(a, b, gap) !== "none";
+}
+
+/** 한 붓으로 그릴 수 있었던 획들을 묶는다 (`joinKind` 기준). */
 export function groupStrokes(
   infos: readonly StrokeInfo[],
   joinGap: number,
@@ -339,6 +418,14 @@ export interface Gesture {
   tip: Pt | null;
   /** 출발한 자리. 닫힌 고리는 null. */
   tail: Pt | null;
+  /**
+   * 끝에서 **향하던 방향**(단위 벡터). 닫힌 고리는 null.
+   *
+   * 학생은 화살표를 카드에 박지 않는다 — 한참 앞에서 멈춘다. 끝점이 어느
+   * 카드에도 안 닿으면 이 방향으로 **연장해서** 무엇을 겨눴는지 본다. 가장
+   * 가까운 카드를 집는 것과 다르다: 옆으로 비껴 있는 카드가 더 가까울 수 있다.
+   */
+  aim: Pt | null;
   len: number;
 }
 
@@ -414,7 +501,7 @@ function turning(pts: readonly Pt[]): { corners: number; total: number } {
  * 둘이면 그 둘이 서로를 상쇄한다(위 날개 + 아래 날개 = 합이 앞쪽). 실측
  * 2026-08-05: 전형적인 한 획 화살표가 그 규칙으로는 통째로 안 잡혔다.
  */
-function arrowTip(pts: readonly Pt[], len: number): Pt | null {
+function arrowTip(pts: readonly Pt[], len: number, tipMin: number): Pt | null {
   if (pts.length < 3 || len <= 0) return null;
   const a = pts[0];
   const z = pts[pts.length - 1];
@@ -432,8 +519,16 @@ function arrowTip(pts: readonly Pt[], len: number): Pt | null {
       best = p;
     }
   }
-  // 끝점의 투영은 정의상 d다 — 그보다 얼마나 더 갔었나가 촉의 크기다.
-  return bestProj - d > Math.max(4, len * 0.05) ? best : null;
+  /**
+   * 끝점의 투영은 정의상 d다 — 그보다 얼마나 더 갔었나가 **곧 촉의 크기**다.
+   *
+   * 문턱을 길이에 비례해 잡으면 안 된다. 화살촉은 몸통이 길어져도 커지지
+   * 않는다 — 사람은 800px짜리 화살표에도 30px짜리 촉을 단다. 길이의 5%로
+   * 잡았더니 그 화살표가 통째로 안 잡혔다(실측 2026-08-05: "묶음표"로
+   * 분류됐다). 그림 크기에 딸린 절대 문턱이 맞고, 길이 비는 손떨림을 막는
+   * 아주 낮은 바닥으로만 둔다.
+   */
+  return bestProj - d > Math.max(tipMin, len * 0.02) ? best : null;
 }
 
 /**
@@ -548,7 +643,7 @@ export function analyzeGesture(
       tail = toA < toZ ? main.z : main.a;
       hasArrow = true;
     } else {
-      const hook = arrowTip(main.pts, main.len);
+      const hook = arrowTip(main.pts, main.len, Math.max(6, opts.joinGap * 0.5));
       hasArrow = hook !== null;
       tip = hook ?? main.z;
       tail = main.a;
@@ -563,8 +658,45 @@ export function analyzeGesture(
     closed,
     tip,
     tail,
+    aim: tip && tail ? unit(tail, tip) : null,
     len,
   };
+}
+
+/** 꼬리→촉 단위 벡터. 겨눈 쪽을 이걸로 근사한다. */
+function unit(tail: Pt, tip: Pt): Pt | null {
+  const dx = tip.x - tail.x;
+  const dy = tip.y - tail.y;
+  const d = Math.hypot(dx, dy);
+  return d < 1e-6 ? null : { x: dx / d, y: dy / d };
+}
+
+/**
+ * 이 반직선이 사각형에 닿는 가장 가까운 거리. 안 닿으면 Infinity.
+ *
+ * 슬래브 판정(ray-AABB). 화살표를 앞으로 늘였을 때 **무엇을 겨눴나**를 푼다.
+ * 가장 가까운 카드를 집는 것과 다르다 — 옆으로 비껴 있는 카드가 더 가까울 수
+ * 있고, 그건 학생이 겨눈 것이 아니다.
+ */
+export function rayHitDist(from: Pt, dir: Pt, r: Rect, maxDist: number): number {
+  let t0 = 0;
+  let t1 = maxDist;
+  const axes: [number, number, number, number][] = [
+    [from.x, dir.x, r.x, r.x + r.w],
+    [from.y, dir.y, r.y, r.y + r.h],
+  ];
+  for (const [p, d, lo, hi] of axes) {
+    if (Math.abs(d) < 1e-9) {
+      if (p < lo || p > hi) return Infinity;
+      continue;
+    }
+    const a = (lo - p) / d;
+    const b = (hi - p) / d;
+    t0 = Math.max(t0, Math.min(a, b));
+    t1 = Math.min(t1, Math.max(a, b));
+    if (t0 > t1) return Infinity;
+  }
+  return t0;
 }
 
 function shapeOf(main: StrokeInfo, closed: boolean, hasArrow: boolean): GestureShape {
@@ -575,7 +707,9 @@ function shapeOf(main: StrokeInfo, closed: boolean, hasArrow: boolean): GestureS
   if (total > 5.5) return "scribble";
   if (corners >= 2) return "bracket";
   const straight = main.len > 0 && main.span >= main.len * 0.8;
-  if (straight && Math.abs(main.z.y - main.a.y) <= Math.abs(main.z.x - main.a.x) * 0.35) {
+  // 밑줄은 **거의 수평**이다. 0.35까지 열어 두면 카드 둘을 비스듬히 잇는 선이
+  // 밑줄이 된다(실측 2026-08-05) — 그러면 프롬프트가 그림과 다른 말을 한다.
+  if (straight && Math.abs(main.z.y - main.a.y) <= Math.abs(main.z.x - main.a.x) * 0.15) {
     return "underline";
   }
   return "line";

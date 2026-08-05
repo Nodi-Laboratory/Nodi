@@ -392,6 +392,74 @@ describe("buildInkScene — 표시 읽기", () => {
     expect(scene.marks.length).toBeGreaterThan(30);
   });
 
+  /**
+   * **실사용에서 가장 흔한 모양이다** — "이거 두개 비교해줘"라고 쓰고 그
+   * 자리에서 두 카드로 화살표를 뻗는다. 두 화살표의 꼬리가 겹치는데, 예전에는
+   * 그 둘이 **한 표시로 뭉치고** 짧은 쪽이 긴 쪽의 화살촉으로 오인됐다
+   * (사용자 보고 2026-08-05: 두 카드를 가리켰는데 왼쪽 엉뚱한 카드가 나왔다).
+   */
+  it("같은 자리에서 출발한 화살표 둘을 둘로 센다", () => {
+    const cards = [wide("지질학", 0, 0), wide("천문학", 700, 0), wide("생명공학", 1400, 0)];
+    const scene = buildInkScene(
+      [
+        ...handwriting(820, 700, 7),
+        hookArrow(880, 660, 900, 200),
+        hookArrow(900, 660, 1600, 200),
+      ],
+      cards,
+      WIDE,
+    )!;
+    expect(scene.gestures).toHaveLength(2);
+    const m = marks(scene);
+    expect(m.get("천문학")).toBe("pointed");
+    expect(m.get("생명공학")).toBe("pointed");
+    expect(m.get("지질학")).toBe("near");
+  });
+
+  /**
+   * **그리는 순서로 방향을 정하면 반이 틀린다.** 학생은 질문에서 카드로도
+   * 긋고 카드에서 질문으로도 긋는다 — 어느 쪽이든 묻는 대상은 카드다.
+   */
+  it("카드에서 질문 쪽으로 그어도 카드를 짚은 것이다", () => {
+    const cards = [wide("지질학", 0, 0), wide("천문학", 700, 0)];
+    const scene = buildInkScene(
+      [...handwriting(820, 700, 7), hookArrow(900, 200, 880, 660)],
+      cards,
+      WIDE,
+    )!;
+    expect(marks(scene).get("천문학")).toBe("pointed");
+    expect(scene.gestures[0].points).toEqual([2]);
+  });
+
+  /**
+   * **학생은 화살표를 카드에 박지 않는다** — 한참 앞에서 멈춘다. 실측
+   * 2026-08-05: 60px씩 못 미친 화살표 둘이 짚은 카드 0개로 나왔고, 그러면
+   * 프롬프트가 "아무것도 안 짚었다"고 말해 모델이 지어낸다.
+   */
+  it("못 미쳐 멈춘 화살표도 겨눈 카드를 짚는다", () => {
+    const cards = [wide("지질학", 0, 0), wide("천문학", 0, 900)];
+    // 카드 2의 위쪽 변에서 220px 못 미쳐 멈춘다.
+    const scene = buildInkScene([hookArrow(280, 200, 280, 680)], cards, WIDE)!;
+    expect(marks(scene).get("천문학")).toBe("pointed");
+  });
+
+  /**
+   * **"가장 가까운 카드"로 때우면 안 된다.** 옆으로 비껴 있는 카드가 더
+   * 가까울 수 있고, 그건 학생이 겨눈 것이 아니다.
+   */
+  it("겨누지 않았으면 더 가까워도 안 집는다", () => {
+    const cards = [
+      // 촉에서 104px — 겨눈 카드(248px)보다 **훨씬 가깝다.** 다만 화살표는
+      // 아래로 향하고 이 카드는 오른쪽 옆에 비껴 있다.
+      wide("옆에있음", 400, 620),
+      wide("겨눈카드", 0, 900),
+    ];
+    const scene = buildInkScene([hookArrow(280, 200, 280, 640)], cards, WIDE)!;
+    const m = marks(scene);
+    expect(m.get("겨눈카드")).toBe("pointed");
+    expect(m.get("옆에있음")).not.toBe("pointed");
+  });
+
   it("짚은 카드는 POINTING_KINDS로 걸러진다 — 출발점과 스침은 빠진다", () => {
     const cards = [wide("지질학", 0, 0), wide("생명공학", 0, 500)];
     const scene = buildInkScene([hookArrow(280, 100, 280, 520)], cards, WIDE)!;

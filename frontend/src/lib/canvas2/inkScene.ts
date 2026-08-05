@@ -36,6 +36,7 @@ import {
   inside,
   measureStrokes,
   pointGap,
+  rayHitDist,
   readGestures,
   rectGap,
   rectOverlap,
@@ -288,6 +289,13 @@ const JOIN_MIN = 14;
  */
 const TIP_RATIO = 0.04;
 const TIP_MIN = 24;
+/**
+ * 촉을 앞으로 늘여 볼 거리(표시 자신의 길이 대비).
+ *
+ * 표시 길이에 묶는 이유는 **짧은 표시가 멀리 우기지 못하게** 하기 위해서다.
+ * 화면 크기에 묶으면 톡 그은 5px 선이 반대편 카드를 겨눴다고 주장한다.
+ */
+const AIM_REACH = 0.8;
 /** 카드의 이 비율 이상이 고리 안에 들면 **감쌌다**고 본다. */
 const ENCLOSE_MIN = 0.5;
 /** 카드 안에 그린 표시로 볼 최소 크기(카드 대각선 대비). */
@@ -313,6 +321,69 @@ function crowded(s: StrokeInfo, all: readonly StrokeInfo[]): boolean {
     if (++n >= 3) return true;
   }
   return false;
+}
+
+/**
+ * 이 표시가 **질문 글씨에서 나왔나** — 그렇다면 반대쪽 끝이 대상이다.
+ *
+ * 그리는 순서로 방향을 정하면 반이 틀린다. 학생은 질문에서 카드로도 긋고
+ * 카드에서 질문으로도 긋는다 — 어느 쪽이든 **묻는 대상은 카드**다(실측
+ * 2026-08-05: 카드에서 질문으로 그은 경우 짚은 카드가 0개로 나왔다).
+ *
+ * 글씨는 이미 표시에서 걸러 뒀으므로 그 상자가 곧 "질문이 있는 자리"다.
+ * 촉이 글씨 쪽에 있으면 뒤집어 본다 — 촉을 어디에 그렸든 학생이 잇고 싶은
+ * 것은 자기 질문과 그 카드다.
+ */
+function anchorToText(g: Gesture, textBox: Rect | null, reach: number): Gesture {
+  if (!textBox || !g.tip || !g.tail) return g;
+  /**
+   * **문턱이 아니라 비교다.** "글씨에서 N px 안"으로 재면 학생이 글씨에서도
+   * 조금 떨어뜨려 시작할 때 안 걸린다(실측 2026-08-05: 40px 떨어져 있었다).
+   * 어느 쪽 끝이 질문에 **더 가까운가**만 보면 그 거리가 얼마든 상관없다.
+   *
+   * 차이가 뚜렷할 때만 뒤집는다 — 둘 다 글씨에서 멀면(카드끼리 이은 화살표)
+   * 손댈 이유가 없고, 그때 뒤집으면 방향을 통째로 잃는다.
+   */
+  const dTip = pointGap(g.tip, textBox);
+  const dTail = pointGap(g.tail, textBox);
+  if (dTail - dTip <= reach) return g;
+  // **겨눈 방향도 함께 뒤집는다.** 안 뒤집으면 늘여 보기(`aimedCard`)가 카드
+  // 반대쪽 허공을 훑는다 — tip만 옮겨 놓고 화살표는 여전히 반대를 겨눈 셈이다.
+  return {
+    ...g,
+    tip: g.tail,
+    tail: g.tip,
+    aim: g.aim ? { x: -g.aim.x, y: -g.aim.y } : null,
+  };
+}
+
+/**
+ * 촉이 아무 카드에도 안 닿았을 때, **겨눈 쪽으로 늘여** 맞는 카드를 찾는다.
+ *
+ * 학생은 화살표를 카드에 박지 않는다 — 한참 앞에서 멈춘다(실측 2026-08-05:
+ * 두 카드를 겨눈 화살표 둘이 60px씩 못 미쳐 **짚은 카드가 0개**로 나왔고,
+ * 그러면 프롬프트가 "아무것도 안 짚었다"고 말해 모델이 지어낸다). "가장 가까운
+ * 카드"로 때우면 안 된다 — 옆으로 비껴 있는 카드가 더 가까울 수 있다.
+ *
+ * 늘이는 거리는 **표시 자신의 길이**로 묶는다. 짧게 톡 그은 선이 화면 반대편
+ * 카드를 겨눴다고 우기지 못하게 한다.
+ */
+function aimedCard(
+  g: Gesture,
+  cards: readonly { hit: Rect }[],
+  reach: number,
+): number | null {
+  if (!g.tip || !g.aim) return null;
+  let best: number | null = null;
+  let bestD = Infinity;
+  cards.forEach((c, i) => {
+    const d = rayHitDist(g.tip!, g.aim!, c.hit, reach);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  return bestD <= reach ? best : null;
 }
 
 /** 표시 하나와 카드 하나의 관계. 센 것부터 본다. */
@@ -465,7 +536,17 @@ export function buildInkScene(
   });
 
   const tipReach = Math.max(TIP_MIN, diag * TIP_RATIO);
-  const shapes = readGestures(marked, { joinGap });
+  /**
+   * 표시가 아닌 획 = **학생이 쓴 질문 글씨.** 그 자리가 방향의 기준점이다.
+   *
+   * 버리지 않고 상자로 남긴다 — 이것이 없으면 화살표의 방향을 그리는 순서로만
+   * 정하게 되고, 카드에서 질문으로 그은 학생은 아무것도 못 짚는다.
+   */
+  const markSet = new Set(marked);
+  const textBox = union(drawn.filter((s) => !markSet.has(s)).map((s) => s.box));
+  const shapes = readGestures(marked, { joinGap }).map((g) =>
+    anchorToText(g, textBox, tipReach),
+  );
 
   /**
    * 표시 × 카드 관계를 **한 번** 계산하고 양쪽에서 읽는다 — 카드는 가장 센
@@ -489,8 +570,17 @@ export function buildInkScene(
       from: [],
       crosses: [],
     };
-    kept.forEach((s, ci) => {
-      const kind = relate(g, s.card.rect, s.hit, tipReach);
+    const kinds = kept.map((s) => relate(g, s.card.rect, s.hit, tipReach));
+    /**
+     * 아무것도 못 짚었으면 **겨눈 쪽으로 늘여** 본다. 짚은 것이 하나라도
+     * 있으면 늘이지 않는다 — 이미 답이 있는데 더 찾으면 없는 대상이 붙는다.
+     */
+    if (!kinds.includes("circled") && !kinds.includes("within") && !kinds.includes("pointed")) {
+      const aimed = aimedCard(g, kept, Math.max(tipReach, g.len * AIM_REACH));
+      // 스쳐 지나가는 중이던 카드는 겨눈 것이 아니다(몸통이 지날 뿐이다).
+      if (aimed !== null && kinds[aimed] !== "crossed") kinds[aimed] = "pointed";
+    }
+    kinds.forEach((kind, ci) => {
       if (MARK_RANK[kind] > MARK_RANK[picked[ci].mark]) picked[ci].mark = kind;
       const n = picked[ci].n;
       if (kind === "circled") row.encloses.push(n);
