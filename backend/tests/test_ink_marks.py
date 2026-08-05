@@ -4,7 +4,19 @@ VLM 호출 자체는 mock이다. 여기서 지키는 것은 **모델에 무엇�
 **모델이 뭘 뱉든 우리가 안 깨지는가** 둘이다.
 """
 
-from app.services import ink_marks
+import pytest
+
+from app.services import canvas_items, gemini, ink_marks
+
+
+class _FakeClient:
+    """`UserClient.select`만 흉내 낸다 — 행 순서를 우리가 정할 수 있어야 한다."""
+
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+
+    async def select(self, table: str, params: dict) -> list[dict]:
+        return self._rows
 
 
 def test_정상_출력을_번호와_설명으로_가른다():
@@ -91,6 +103,74 @@ def test_도판이_없으면_그림은_한_장():
         if isinstance(p, dict) and p.get("type") == "image_url"
     ]
     assert len(images) == 1
+
+
+@pytest.mark.asyncio
+async def test_카드_번호는_보낸_순서를_따른다():
+    """**이 대응이 깨지면 SOLAR가 엉뚱한 카드를 설명하고, 그 답은 그럴싸하다.**
+
+    DB는 순서를 보장하지 않는다 — 행이 거꾸로 와도 번호는 card_ids 순서다.
+    그 번호가 도식 그림의 배지이자 marks_note의 [카드 N]이기 때문이다.
+    """
+    client = _FakeClient([
+        {"id": "c-3", "title": "생명공학", "body": "셋"},
+        {"id": "c-1", "title": "천문학", "body": "하나"},
+        {"id": "c-2", "title": "지질학", "body": "둘"},
+    ])
+    out = await canvas_items.ink_cards_context(
+        client, "s-1", ["c-1", "c-2", "c-3"], 1200
+    )
+    assert out is not None
+    assert out.splitlines() == [
+        "[카드 1] 천문학: 하나",
+        "[카드 2] 지질학: 둘",
+        "[카드 3] 생명공학: 셋",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_없는_카드는_번호를_밀지_않고_빠진다():
+    """지워졌거나 남의 카드다. **번호를 당기면** 뒤 카드가 앞 번호를 물려받아
+    marks_note의 [카드 N]과 어긋난다 — 빈 번호가 그보다 안전하다."""
+    client = _FakeClient([{"id": "c-3", "title": "생명공학", "body": "셋"}])
+    out = await canvas_items.ink_cards_context(
+        client, "s-1", ["c-1", "c-2", "c-3"], 1200
+    )
+    assert out == "[카드 3] 생명공학: 셋"
+
+
+@pytest.mark.asyncio
+async def test_본문은_상한만큼_자른다():
+    client = _FakeClient([{"id": "c-1", "title": "지질학", "body": "가" * 500}])
+    out = await canvas_items.ink_cards_context(client, "s-1", ["c-1"], 10)
+    assert out == "[카드 1] 지질학: " + "가" * 10
+
+
+@pytest.mark.asyncio
+async def test_카드가_하나도_없으면_None():
+    assert await canvas_items.ink_cards_context(_FakeClient([]), "s-1", [], 1200) is None
+    assert (
+        await canvas_items.ink_cards_context(_FakeClient([]), "s-1", ["x"], 1200) is None
+    )
+
+
+def test_표시_블록은_질문에_가장_가깝게_들어간다():
+    """표시는 학생이 **지금 손으로 짚은 것**이라 다른 어떤 맥락보다 직접적이다.
+    앞에 두면 트리·자료에 묻힌다."""
+    prompt, blocks = gemini.compose_system_structured(
+        "자료 본문",
+        tree_context="트리",
+        ink_context="화살표가 [카드 2]를 가리킨다.",
+    )
+    kinds = [b["kind"] for b in blocks]
+    assert "ink_marks" in kinds
+    assert kinds.index("ink_marks") > kinds.index("tree_guide")
+    assert "화살표가 [카드 2]를 가리킨다." in prompt
+
+
+def test_표시가_없으면_블록도_없다():
+    _, blocks = gemini.compose_system_structured("자료 본문")
+    assert "ink_marks" not in [b["kind"] for b in blocks]
 
 
 def test_시스템_프롬프트가_세_지시를_담는다():

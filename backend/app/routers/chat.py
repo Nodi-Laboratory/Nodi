@@ -79,6 +79,22 @@ class RetrievedBody(BaseModel):
     figures: list[RetrievedFigureItem] = Field(default_factory=list)
 
 
+class InkContext(BaseModel):
+    """펜으로 그린 표시의 해석 (D178). 손으로 물었을 때만 온다.
+
+    **카드 본문은 받지 않는다** — id만 받고 서버가 RLS 경로로 다시 읽는다
+    (`canvas_items.ink_cards_context`). 클라이언트가 보낸 본문을 프롬프트에
+    그대로 넣는 것은 기존 신뢰 경계 규약(D104)과 결이 안 맞는다.
+
+    `card_ids`의 **순서가 곧 `[카드 N]`의 N**이다. 그 번호는 비전 모델에 보낸
+    도식 그림에 배지로 박혀 있고 `marks_note`도 그 번호를 쓴다 — 여기서 다시
+    매기면 설명과 본문이 다른 카드를 가리킨다.
+    """
+
+    marks_note: str = Field(default="", max_length=2000)
+    card_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
 class ChatStreamBody(BaseModel):
     session_id: str
     question: str = Field(min_length=1, max_length=QUESTION_MAX_CHARS)
@@ -91,6 +107,8 @@ class ChatStreamBody(BaseModel):
     # attachments.canvas에 저장. null이면 저장하지 않음(첫 질문 전 degraded
     # 케이스 등). 카드 좌표는 프론트 소유 — 서버는 저장하지 않음.
     retrieved: RetrievedBody | None = None
+    # D178: 학생이 펜으로 그린 표시. 없으면 None(자판으로 친 평범한 질문).
+    ink: InkContext | None = None
 
 
 def _sse(event: str, data: dict) -> str:
@@ -276,6 +294,30 @@ async def chat_stream(
         logger.warning("대화 트리 조회 실패 — 이번 턴은 트리 안내 없이 간다", exc_info=True)
         tree_context = None
 
+    # D178: 펜으로 그린 표시 + 그 주변 카드. 표시 설명과 카드 본문을 한 블록에
+    # 담는다 — 둘의 **[카드 N] 번호가 같아야** 모델이 짚은 것을 짚는다.
+    ink_context = None
+    if body.ink and (body.ink.card_ids or body.ink.marks_note.strip()):
+        try:
+            cards_block = await canvas_items.ink_cards_context(
+                client,
+                body.session_id,
+                body.ink.card_ids,
+                settings.ink_card_body_max_chars,
+            )
+            note = body.ink.marks_note.strip()
+            chunks = []
+            if note:
+                chunks.append(note)
+            if cards_block:
+                chunks.append("[표시 주변의 카드]\n" + cards_block)
+            ink_context = "\n\n".join(chunks) or None
+        except Exception:
+            # 다른 빌더와 같은 이유로 조용히 넘기지 않는다 — 실패가 흔적을
+            # 안 남기면 기능이 꺼진 줄 모른다(D135 주석 참조).
+            logger.warning("펜 표시 맥락 조립 실패 — 표시 없이 간다", exc_info=True)
+            ink_context = None
+
     # Turn log (D25) + structured prompt composition (D35). compose_system_structured
     # is the SINGLE source of truth for both the system prompt string AND each
     # block's char span, so the saved prompt and the admin highlight never drift.
@@ -285,6 +327,7 @@ async def chat_stream(
         session_file_sources=session_file_sources,
         tag_context=tag_context,
         tree_context=tree_context,
+        ink_context=ink_context,
         rag_sources=rag_sources,
         base_instruction=solar.CONCEPT_CARD_SYSTEM_PROMPT,
     )

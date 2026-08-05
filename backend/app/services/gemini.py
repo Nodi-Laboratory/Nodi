@@ -47,6 +47,16 @@ _WRAP_TAGS = (
 )
 
 
+_WRAP_INK = (
+    "[학생이 화면에 그린 표시]\n"
+    "학생이 이 질문을 **손으로 쓰면서 화면의 카드에 표시를 했습니다**(D178). "
+    "아래는 그 표시가 무엇을 가리키는지와, 표시 주변에 있던 카드들입니다.\n"
+    "질문에 '이거'·'여기'·'이것'처럼 가리키는 말이 있으면 **표시가 가리킨 "
+    "카드를 뜻합니다.** 표시와 닿지 않았다고 적힌 카드는 참고만 하고, 묻지 "
+    "않은 것을 설명하지 마세요.\n\n"
+)
+
+
 _WRAP_TREE = (
     "[지금까지의 대화 지도]\n"
     "아래는 이 학습 지도의 개념 카드 전부를 **분류 태그별 트리 순서**로 편 "
@@ -65,6 +75,7 @@ def compose_system_structured(
     session_file_sources: list[dict] | None = None,
     tag_context: str | None = None,
     tree_context: str | None = None,
+    ink_context: str | None = None,
     rag_sources: list[dict] | None = None,
     base_instruction: str | None = None,
 ) -> tuple[str, list[dict]]:
@@ -76,6 +87,7 @@ def compose_system_structured(
     - session_file_context: 세션에 올린 학생 파일 전문(D83, TASK 3).
     - tag_context: 이 세션에서 이미 쓰인 분류 태그 목록 문자열(D89, TASK 5).
     - tree_context: 카드 전부를 태그별 트리 순서로 편 것(D151).
+    - ink_context: 학생이 펜으로 그린 표시의 해석 + 그 주변 카드(D178).
 
     Returns ``(system_prompt, blocks)`` where each block's ``prompt_span`` is the
     ``[start, end)`` char range of that part inside ``system_prompt``.
@@ -122,6 +134,20 @@ def compose_system_structured(
                 _WRAP_TREE + tree_context,
                 "대화 트리",
                 tree_context,
+                None,
+                None,
+            )
+        )
+    # D178: 학생이 펜으로 그린 표시. **가장 뒤, 질문 바로 앞에 둔다** — 이 턴
+    # 한 번만 있는 값이고, 학생이 지금 손으로 짚은 것이라 다른 어떤 맥락보다
+    # 직접적이다. 앞에 두면 트리·자료에 묻힌다.
+    if ink_context:
+        parts.append(
+            (
+                "ink_marks",
+                _WRAP_INK + ink_context,
+                "펜으로 그린 표시",
+                ink_context,
                 None,
                 None,
             )

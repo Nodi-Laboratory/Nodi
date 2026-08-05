@@ -143,6 +143,53 @@ async def session_tags(
     return out
 
 
+async def ink_cards_context(
+    client: UserClient,
+    session_id: str,
+    card_ids: list[str],
+    body_max_chars: int,
+) -> str | None:
+    """표시 주변 카드를 프롬프트 블록으로 (D178). 없으면 None.
+
+    ## 왜 클라이언트가 보낸 본문을 안 쓰나
+
+    프론트는 카드 **id만** 보낸다. 본문을 실어 보내면 그것이 그대로 프롬프트에
+    들어가는데, 그건 기존 신뢰 경계 규약(D104)과 결이 안 맞는다 — 사용자가
+    보낸 문자열은 검증 대상이지 근거가 아니다. 여기서 RLS 경로로 다시 읽으면
+    "학생이 자기 세션의 자기 카드를 짚었다"가 DB에서 강제된다.
+
+    ## 번호는 우리가 매기지 않는다
+
+    `card_ids`의 **순서가 곧 `[카드 N]`의 N**이다. 그 번호는 이미 도식 그림에
+    배지로 박혀 있고 비전 모델의 설명도 그 번호를 쓴다. 여기서 다시 매기면
+    설명과 본문이 다른 카드를 가리키는데, **그 답은 그럴싸해서 아무도 못 잡는다.**
+
+    찾지 못한 id는 **조용히 뺀다**(지워졌거나 남의 것이다). 번호는 그대로
+    유지한다 — 빈 번호가 있는 편이 번호가 밀리는 것보다 안전하다.
+    """
+    ids = [i for i in card_ids if i]
+    if not ids:
+        return None
+    rows = await client.select(
+        "canvas_items",
+        {
+            "select": "id,title,body,tag",
+            "session_id": f"eq.{session_id}",
+            "id": f"in.({','.join(ids)})",
+        },
+    )
+    by_id = {str(r.get("id")): r for r in rows}
+    lines: list[str] = []
+    for n, cid in enumerate(ids, start=1):
+        row = by_id.get(cid)
+        if not row:
+            continue
+        title = (row.get("title") or row.get("tag") or "제목 없음").strip()
+        body = " ".join((row.get("body") or "").split())[:body_max_chars]
+        lines.append(f"[카드 {n}] {title}: {body}" if body else f"[카드 {n}] {title}")
+    return "\n".join(lines) if lines else None
+
+
 def _clean_new(session_id: str, raw: dict[str, Any]) -> dict[str, Any]:
     """생성 입력 1건 검증 + 정규화. 알 수 없는 키는 버린다."""
     kind = str(raw.get("kind") or "concept")
