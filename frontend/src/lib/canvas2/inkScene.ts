@@ -43,6 +43,15 @@ export interface SceneCard {
   rect: Rect;
   /** 도판일 때만. 원본 확대본을 받아 올 열쇠다. */
   figureId?: string;
+  /**
+   * 도판일 때, `<img>`가 실제로 놓인 월드 rect. 없으면 `rect`로 친다.
+   *
+   * **카드 rect와 다르다** — 도판 카드는 그림 아래에 캡션·쪽수가 붙어서
+   * 그림이 카드의 위쪽 일부만 차지한다. 카드 전체에 그림을 그리면 학생이
+   * 그린 동그라미가 그림 기준으로 위아래로 밀린다. 호출부가 DOM에서 재서
+   * 넣는다(레이아웃 규칙을 두 곳에서 계산하지 않는다).
+   */
+  imageBox?: Rect;
 }
 
 export interface PickedCard extends SceneCard {
