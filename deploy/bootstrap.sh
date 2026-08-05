@@ -254,9 +254,18 @@ fi
 # 손글씨 OCR 모델 서버 (D177). llama와 같은 이유로 autostart=false다 —
 # 서버 코드가 저장소 밖이라 **없는 인스턴스에서 크래시 루프를 돌면 안 된다.**
 # 있으면 매번 켠다(이미 RUNNING이면 supervisorctl이 아무 일도 하지 않는다).
+#
+# **이름이 `ocr:ocr`이다** — nodi 그룹 밖의 독립 그룹이다(2026-08-05, 템플릿
+# 참조). 옛 이름 `nodi:ocr`로 부르면 supervisorctl이 "그런 프로세스 없음"으로
+# 끝나는데, `|| true`가 그걸 삼켜 **아무 흔적 없이 안 뜬다** — 이 파일이
+# 경고하는 바로 그 실패 방식이다. 그래서 여기서는 결과를 확인한다.
 if [ -f "$OCR_DIR/server.py" ]; then
-    $SUPERVISORCTL start nodi:ocr >/dev/null 2>&1 || true
-    ok "손글씨 OCR 기동 요청 — 적재까지 1분 내외 ($LOG_DIR/ocr.log)"
+    if $SUPERVISORCTL start ocr:ocr >/dev/null 2>&1 \
+       || $SUPERVISORCTL status ocr:ocr 2>/dev/null | grep -q RUNNING; then
+        ok "손글씨 OCR 기동 요청 — 적재까지 1분 내외 ($LOG_DIR/ocr.log)"
+    else
+        warn "손글씨 OCR 기동 실패 — $SUPERVISORCTL status ocr:ocr 로 확인"
+    fi
 else
     log "손글씨 OCR 건너뜀 — $OCR_DIR/server.py 없음"
 fi

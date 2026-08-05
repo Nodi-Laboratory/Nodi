@@ -149,29 +149,23 @@ stderr_logfile=__LOG_DIR__/backup.err.log
 ; PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python — 컨테이너의 오래된 onnx
 ;   *_pb2 모듈과 protobuf가 충돌한다. 없으면 import 단계에서 죽는다.
 ;
-; 바인딩은 **0.0.0.0 그대로 둔다** — 문서의 브라우저 데모 UI(외부 :30020)가
-; 그 주소로 열린다. 우리 백엔드는 127.0.0.1로 부르므로 loopback으로 좁혀도
-; 되지만, 그러면 데모가 죽는다.
+; 바인딩은 **127.0.0.1**이다 (2026-08-05, 사용자 결정). llama와 같은 규약이다.
 ;
-; ⚠️ **인증이 전혀 없다** (실측 2026-08-05, 외부에서):
-;     GET http://proxy.tta-gpu…:30020/           → 200
+; 왜 좁혔나 — 이 서버는 **인증이 전혀 없었다** (실측, 외부에서):
+;     GET http://proxy.tta-gpu…:30020/           → 200 (드래그&드롭 데모 페이지)
 ;     GET http://proxy.tta-gpu…:30020/openapi.json → 200 (창구 목록 노출)
-;   대조군인 llama(judge)는 --api-key-file이 걸려 있어 키 없는 완성 요청이
-;   401이다. 이쪽만 무방비다 — 주소를 아는 사람은 누구나 GPU를 쓸 수 있다.
+;   대조군인 llama(judge)는 --api-key-file이 걸려 키 없는 완성 요청이 401이다.
+;   이쪽만 무방비여서, 주소를 아는 사람은 누구나 GPU를 쓸 수 있었다.
+;   실사용을 재 보니(5시간) loopback 2건 · 공개 경로 16건이었고 그 16건은
+;   그날 우리 로컬 개발 호출로 설명됐다 — 남용 흔적은 없었지만 열어 둘 이유도
+;   없었다. `GET /`의 데모 페이지는 필요 없다는 결정이 나서 함께 닫혔다.
 ;
-; **그래도 지금은 안 좁힌다.** 근거는 셋이다:
-;   1) **남의 서버다.** 코드·가중치가 저장소 밖(~/varco_ocr_server)이고 우리는
-;      띄우는 일만 맡는다. 데모 UI를 말없이 죽이는 것은 우리 몫이 아니다.
-;   2) **로컬 개발의 유일한 통로다.** 팀원과 우리 모두 `OCR_BASE_URL`을 외부
-;      :30020으로 두고 개발한다. 좁히면 다 같이 SSH 터널로 갈아타야 한다
-;      (`ssh -N -L 8083:127.0.0.1:8083 <호스트>`).
-;   3) **피해 폭이 좁다.** 1.7B OCR 모델이고 저장된 데이터도, 자격증명도,
-;      쓰기 경로도 뒤에 없다. 최악이 GPU 도용이다.
-; 실사용도 재 봤다(5시간): loopback 2건 · 공개 경로 16건이고, 16건은 그날
-; 우리 로컬 개발 호출로 설명된다 — 외부 남용의 흔적은 없었다.
-;
-; 좁히기로 하면 **소유자(팀원)와 함께** 하고, 그날 로컬 개발자들에게 터널
-; 명령을 함께 알린다.
+; ⚠️ **로컬 개발은 이제 터널을 쓴다.** 안 열면 펜 입력이 "준비 중"(501)이다:
+;     ssh -N -L 18083:127.0.0.1:8083 <호스트>
+;     OCR_BASE_URL=http://127.0.0.1:18083
+;   프로덕션은 backend.env에 `OCR_BASE_URL=http://127.0.0.1:8083`을 못 박아
+;   뒀다(비우면 JUDGE_BASE_URL 호스트에서 유도하는데, 그 값이 외부 주소로
+;   바뀌면 OCR이 따라 나가 통째로 죽는다 — D177이 그 사고였다).
 ;
 ; autostart=false — 서버 코드가 저장소 밖이라 없는 인스턴스에서 크래시 루프를
 ; 돌면 안 된다. bootstrap이 server.py를 확인한 뒤 켠다(llama와 같은 방식).
@@ -184,7 +178,7 @@ stderr_logfile=__LOG_DIR__/backup.err.log
 ; `pkill -f "varco_ocr_server/server.py"`는 **안 먹는다**: start.sh가 cd 후
 ; `python3 server.py`로 띄워서 커맨드라인에 경로가 없다. `pkill -f
 ; "server.py --host"` 또는 PID로 잡아야 한다(실측 2026-08-05).
-command=python3 __OCR_DIR__/server.py --host 0.0.0.0 --port __OCR_PORT__
+command=python3 __OCR_DIR__/server.py --host 127.0.0.1 --port __OCR_PORT__
 directory=__OCR_DIR__
 environment=CUDA_VISIBLE_DEVICES="__OCR_GPU__",PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION="python"
 priority=15
@@ -197,7 +191,21 @@ stdout_logfile=__LOG_DIR__/ocr.log
 stderr_logfile=__LOG_DIR__/ocr.err.log
 
 [group:nodi]
-programs=postgres,qdrant,llama,ocr,backend,frontend,cloudflared,backup
+programs=postgres,qdrant,llama,backend,frontend,cloudflared,backup
+
+; ---------------------------------------------------------------------------
+; 손글씨 OCR — **nodi 그룹 밖**에 둔다 (gh-runner와 같은 이유).
+;
+; supervisor의 `update`는 **그룹 단위**다(4.2.1 확인): 그룹 안의 프로그램 하나만
+; 고쳐도 그 그룹 전체가 멈췄다 다시 뜬다. ocr이 nodi 안에 있으면 이 항목을
+; 한 줄 고치는 데도 **cloudflared까지 내려가 공개 사이트가 멎는다**(실제로 그
+; 사고가 한 번 있었다). 그룹이 따로면 `supervisorctl update ocr`로 이것만 간다.
+;
+; 같은 이유로 llama도 분리 후보다 — 모델 적재가 1~2분이라 남의 재시작에 딸려
+; 죽으면 그동안 도판 캡션·펜 표시 해석이 통째로 멎는다.
+; ---------------------------------------------------------------------------
+[group:ocr]
+programs=ocr
 
 ; ---------------------------------------------------------------------------
 ; GitHub Actions self-hosted 러너
