@@ -22,12 +22,37 @@
  *
  * **선정은 원래 획 bbox 기준으로 딱 한 번 한다.** 그래서 종료가 수렴의 결과가
  * 아니라 알고리즘의 성질이다 — D123이 배치에서 택한 것과 같은 태도다.
+ *
+ * ## 모양은 여기서 읽지 않는다
+ *
+ * "무엇을 그렸나"는 `inkShapes`가 카드와 무관하게 한 번 읽는다. 이 파일은 그
+ * 결과를 카드에 **잇기만** 한다. 예전에는 한 함수가 둘을 같이 해서 카드마다
+ * 획의 성질을 다시 계산했다.
  */
 
-import { strokesBBox } from "./askInk";
-import { EXPORT_PAD, strokeLength, type PenStroke } from "./penPad";
-import { inflate, union, type Rect } from "./rect";
+import { EXPORT_PAD, type PenStroke } from "./penPad";
+import {
+  enclosureRatio,
+  inside,
+  measureStrokes,
+  pointGap,
+  readGestures,
+  rectGap,
+  rectOverlap,
+  segmentHitsRect,
+  strokeHitsRect,
+  strokeSize,
+  strokesTouch,
+  type Gesture,
+  type GestureShape,
+  type StrokeInfo,
+} from "./inkShapes";
+import { contains, inflate, union, type Rect } from "./rect";
 import type { ItemKind } from "./types";
+
+// 기하 원시 함수는 `inkShapes`가 소유한다. 여기서 다시 내보내는 것은 예전부터
+// 이 이름으로 쓰던 호출부(`inkCapture`·테스트)를 위해서다.
+export { rectGap, rectOverlap, segmentHitsRect };
 
 /**
  * 도식에 그릴 후보 카드.
@@ -73,17 +98,37 @@ export interface SceneCard {
  * 문장으로 쓰는 것. 어느 카드인지는 우리가 안다.
  */
 export type MarkKind =
-  /** 획이 카드를 **감쌌다**(동그라미). */
+  /** 표시가 카드를 **감쌌다**(동그라미). */
   | "circled"
-  /** 획의 **끝**이 카드 안에서 멈췄다(화살표 끝·밑줄·톡 찍기). */
+  /** 표시를 카드 **안에** 그렸다(한 구절 동그라미·밑줄·별표·덧칠). */
+  | "within"
+  /** 화살촉·선 끝이 이 카드에서 멈췄다 — **가리킨 것이다.** */
   | "pointed"
-  /** 획이 카드 위를 **스쳐 지나가기만** 했다 — 짚은 것이 아니다. */
+  /** 선이 이 카드에서 **출발해** 다른 데로 갔다. 대상이 아니라 출처다. */
+  | "linked"
+  /** 표시가 카드 위를 **스쳐 지나가기만** 했다 — 짚은 것이 아니다. */
   | "crossed"
   /** 닿지 않았다. 근처에 있을 뿐. */
   | "near";
 
-/** 짚은 것으로 볼 종류. `crossed`는 아니다 — 화살표 몸통이 지나간 것뿐이다. */
-export const POINTING_KINDS: readonly MarkKind[] = ["circled", "pointed"];
+/**
+ * 짚은 것으로 볼 종류.
+ *
+ * `linked`는 **뺀다** — 화살표가 카드 1에서 카드 3으로 갔다면 학생이 묻는 것은
+ * 카드 3이다. 둘 다 대상으로 치면 SOLAR가 둘 다 설명하고, 이어 묻기의 부모도
+ * 엉뚱한 쪽에 붙는다. `crossed`도 뺀다 — 화살표 몸통이 지나간 것뿐이다.
+ */
+export const POINTING_KINDS: readonly MarkKind[] = ["circled", "within", "pointed"];
+
+/** 센 정도. 카드 하나에 표시가 여럿 걸리면 가장 센 것을 남긴다. */
+const MARK_RANK: Record<MarkKind, number> = {
+  circled: 5,
+  within: 4,
+  pointed: 3,
+  linked: 2,
+  crossed: 1,
+  near: 0,
+};
 
 export interface PickedCard extends SceneCard {
   /** 1부터. 읽는 순서. VLM 출력의 `[카드 N]`이 이 번호다. */
@@ -100,6 +145,29 @@ export interface PickedCard extends SceneCard {
    * 맞히면서 번호만 틀렸다). 자리는 줄어들어도 남는 단서라, 명부에 함께 준다.
    */
   where: string;
+}
+
+/**
+ * 표시 하나가 어느 카드와 어떤 관계인가 — **프롬프트에 실을 사실.**
+ *
+ * 카드마다 낱말 하나(`mark`)만 주면 "화살표가 [카드 1]에서 [카드 3]으로
+ * 향한다"를 말할 수 없다. 그 문장은 카드가 아니라 **표시**에 딸린 사실이다.
+ * 학생이 그린 것이 몇 개고 각각 무엇을 했는지가 여기서 온다.
+ */
+export interface SceneGesture {
+  /** 1부터. "첫 번째 표시"로 부를 때 쓴다. */
+  i: number;
+  shape: GestureShape;
+  /** 감싼 카드 번호. */
+  encloses: number[];
+  /** 이 카드 **안에** 그린 표시(한 구절 밑줄·별표). */
+  within: number[];
+  /** 끝이 가리킨 카드 번호. */
+  points: number[];
+  /** 출발점이 놓인 카드 번호. */
+  from: number[];
+  /** 스쳐 지나간 카드 번호. */
+  crosses: number[];
 }
 
 /**
@@ -152,160 +220,29 @@ export interface InkScene {
   /** 획 bbox + 여백. 선정과 클램프의 **유일한** 기준이다. */
   inkBox: Rect;
   /**
-   * 실제 **표시**만 남긴 획들 — 그림에 그릴 것도 이것뿐이다.
+   * 그림에 그릴 획들 — 틀 잡기 점만 뺀 나머지다.
    *
    * 학생은 멀리 있는 카드까지 고려 대상에 넣으려고 **양 끝에 점을 톡 찍는다**.
    * 그 점은 "여기까지 봐 줘"라는 뜻이지 무언가를 가리키는 표시가 아니다.
    * 그래서 **고를 때는 세고 그릴 때는 뺀다** — 점까지 그리면 (a) 모델이 그것도
    * 표시로 보고 가장 가까운 카드에 붙이고 (b) 상자가 빈 하늘까지 늘어나
    * 정작 카드가 구석의 작은 조각이 된다(실측 2026-08-05, 둘 다).
+   *
+   * **질문 글씨는 여기 남는다.** 모델이 학생이 뭘 물었는지도 봐야 한다 —
+   * 다만 글씨는 아래 `gestures`에서 빠진다(가리키는 표시가 아니다).
    */
   marks: PenStroke[];
   /** 실제로 그릴 상자. inkBox를 온전히 품는다. */
   capture: Rect;
   cards: PickedCard[];
+  /** 학생이 그린 표시들과 그것이 카드와 맺은 관계. */
+  gestures: SceneGesture[];
   /** 상한 때문에 버린 카드 수. **조용히 자르지 않는다** — 0이 아니면 알린다. */
   dropped: number;
   /** 상자가 클램프에 걸려 잘렸나. */
   clamped: boolean;
   /** 후보 **전부**의 판정. 뽑힌 것만이 아니라 기각된 것도 남는다. */
   trace: InkTraceRow[];
-}
-
-/** 점이 사각형 안에 있나(변 포함). */
-function inside(x: number, y: number, r: Rect): boolean {
-  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-}
-
-/** 두 선분이 만나나. */
-function segCross(
-  ax: number, ay: number, bx: number, by: number,
-  cx: number, cy: number, dx: number, dy: number,
-): boolean {
-  const d = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
-  // 평행·공선은 잡지 않는다 — 변을 따라 스치는 것은 접촉이 아니다.
-  if (d === 0) return false;
-  const t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / d;
-  const u = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / d;
-  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
-}
-
-/**
- * 선분이 사각형에 닿나 — 안에서 끝나는 경우와 관통하는 경우 둘 다.
- *
- * **bbox로 재면 안 된다.** 대각선 화살표의 bbox는 커다란 직사각형이라,
- * 화살표가 지나가지도 않은 양쪽 구석의 카드가 접촉으로 잡힌다. 그러면 질문에
- * 엉뚱한 카드가 딸려 가고, SOLAR는 그것까지 설명한다.
- */
-export function segmentHitsRect(
-  ax: number, ay: number, bx: number, by: number, r: Rect,
-): boolean {
-  if (inside(ax, ay, r) || inside(bx, by, r)) return true;
-  const x1 = r.x;
-  const y1 = r.y;
-  const x2 = r.x + r.w;
-  const y2 = r.y + r.h;
-  return (
-    segCross(ax, ay, bx, by, x1, y1, x2, y1) ||
-    segCross(ax, ay, bx, by, x2, y1, x2, y2) ||
-    segCross(ax, ay, bx, by, x2, y2, x1, y2) ||
-    segCross(ax, ay, bx, by, x1, y2, x1, y1)
-  );
-}
-
-/** 획 하나가 사각형에 닿나. 점 하나짜리 획(톡 찍은 꼭지)도 센다. */
-function strokeHitsRect(stroke: PenStroke, r: Rect): boolean {
-  if (stroke.length === 0) return false;
-  if (stroke.length === 1) return inside(stroke[0].x, stroke[0].y, r);
-  for (let i = 1; i < stroke.length; i++) {
-    const a = stroke[i - 1];
-    const b = stroke[i];
-    if (segmentHitsRect(a.x, a.y, b.x, b.y, r)) return true;
-  }
-  return false;
-}
-
-/**
- * 두 사각형이 겹치는 넓이. 안 겹치면 0.
- *
- * 도판이 둘 이상 표시에 닿았을 때 **어느 것을 확대해 보낼지** 고르는 잣대다
- * (하나만 보낸다 — 전부 보내면 비용이 선형으로 늘고, 화살표는 보통 하나를
- * 가리킨다).
- */
-export function rectOverlap(a: Rect, b: Rect): number {
-  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-  return w > 0 && h > 0 ? w * h : 0;
-}
-
-/**
- * 이 획들이 카드를 **어떻게** 건드렸나.
- *
- * 판정 순서가 곧 세기 순서다: 감쌌으면 감싼 것, 끝이 안에서 멈췄으면 짚은 것,
- * 그 밖에 닿았으면 스쳐 간 것이다.
- */
-function markOf(
-  strokes: readonly PenStroke[],
-  card: Rect,
-  hit: Rect,
-  tipReach: number,
-): MarkKind {
-  let crossed = false;
-  let pointed = false;
-  for (const s of strokes) {
-    const a = s[0];
-    const z = s[s.length - 1];
-    if (!a || !z) continue;
-
-    // 1) 감쌈이 가장 센 신호다 — **먼저 본다.** 끝점 규칙을 먼저 태우면
-    //    동그라미는 시작과 끝이 맞닿아 있어서 옆 카드까지 "짚음"이 된다
-    //    (실측 2026-08-05: 카드 1을 감쌌는데 카드 2도 짚음으로 나왔다).
-    const bb = strokesBBox([s]);
-    if (bb) {
-      const r = {
-        x: bb.minX,
-        y: bb.minY,
-        w: bb.maxX - bb.minX,
-        h: bb.maxY - bb.minY,
-      };
-      if (rectOverlap(r, card) >= card.w * card.h * 0.7) return "circled";
-    }
-
-    /**
-     * 2) 짚음: 획의 **끝**이 이 카드 코앞에서 멈췄다(화살촉·밑줄·톡 찍기).
-     *
-     * "카드 **안**에서 멈췄나"로만 보면 화살표를 놓친다 — 학생은 화살촉을
-     * 카드에 닿기 직전에 멈춘다(실측: 카드 아래 26px에서 끝나 모두 '근처'로
-     * 떨어졌다). 사람이 보면 명백히 그 카드를 가리킨 것이다.
-     *
-     * **닫힌 획(동그라미)은 이 규칙에서 뺀다.** 시작과 끝이 같은 자리라
-     * 방향을 뜻하지 않는다 — 감싸지 못한 큰 원이 옆 카드를 짚은 것으로
-     * 둔갑한다.
-     */
-    const span = Math.hypot(z.x - a.x, z.y - a.y);
-    const closed = span < strokeLength(s) * 0.2;
-    if (!closed) {
-      for (const end of [a, z]) {
-        if (
-          inside(end.x, end.y, hit) ||
-          rectGap({ x: end.x, y: end.y, w: 0, h: 0 }, hit) <= tipReach
-        ) {
-          pointed = true;
-        }
-      }
-    }
-
-    if (strokeHitsRect(s, hit)) crossed = true;
-  }
-  if (pointed) return "pointed";
-  return crossed ? "crossed" : "near";
-}
-
-/** 두 사각형 사이 최단 거리. 겹치면 0. */
-export function rectGap(a: Rect, b: Rect): number {
-  const dx = Math.max(0, Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w)));
-  const dy = Math.max(0, Math.max(a.y - (b.y + b.h), b.y - (a.y + a.h)));
-  return Math.hypot(dx, dy);
 }
 
 /**
@@ -325,17 +262,91 @@ function clampBox(box: Rect, base: Rect, scale: number): Rect {
   return { x: cx - w / 2, y: cy - h / 2, w, h };
 }
 
+/** 그림 대비 이보다 짧으면 **점**이다 — 틀 잡기용이지 표시가 아니다. */
+const DOT_RATIO = 0.01;
+const DOT_MIN = 12;
+/**
+ * 그림 대비 이보다 짧으면 **글씨**로 본다 — 가리키는 표시가 아니다.
+ *
+ * 학생이 쓴 질문 글씨도 획이다. 그걸 표시로 세면 카드 옆에 질문을 쓴 것만으로
+ * 글자 획의 끝점이 그 카드를 "짚은" 것이 된다 — 화살표를 긋지 않았는데도.
+ * 한글 한 글자는 획 대여섯이고 하나하나가 짧다. 가리키는 표시(동그라미·화살표)는
+ * 카드에 가 닿아야 하므로 언제나 그림에서 큰 축을 차지한다.
+ *
+ * ⚠️ 글씨를 아주 크게 쓰면 이 잣대만으로는 못 가른다. 그래서 `crowded`가
+ * 두 번째 그물이다 — 글씨는 **비슷한 크기의 이웃이 많다.**
+ */
+const MARK_RATIO = 0.12;
+/** 획을 한 표시로 묶을 거리(그림 대각선 대비). */
+const JOIN_RATIO = 0.015;
+const JOIN_MIN = 14;
+/**
+ * 화살촉이 카드에 **닿기 직전**에 멈춰도 그 카드를 가리킨 것으로 본다.
+ *
+ * 학생은 화살표를 카드에 박지 않는다 — 코앞에서 멈춘다(실측: 카드 아래
+ * 26px에서 끝났다). 그림 크기에 비례해 잡는다.
+ */
+const TIP_RATIO = 0.04;
+const TIP_MIN = 24;
+/** 카드의 이 비율 이상이 고리 안에 들면 **감쌌다**고 본다. */
+const ENCLOSE_MIN = 0.5;
+/** 카드 안에 그린 표시로 볼 최소 크기(카드 대각선 대비). */
+const WITHIN_RATIO = 0.18;
+
+/**
+ * 이 획이 **글씨 뭉치의 일부**인가 — 비슷한 크기의 이웃이 셋 이상인가.
+ *
+ * 글씨는 같은 크기의 획이 다닥다닥 붙어 줄을 이룬다. 동그라미·화살표는 그렇지
+ * 않다 — 크기가 비슷한 이웃이 곁에 없다. 크기 잣대(`MARK_RATIO`)만으로는 글씨를
+ * 크게 쓴 학생을 못 거르므로 이 그물을 하나 더 친다.
+ */
+function crowded(s: StrokeInfo, all: readonly StrokeInfo[]): boolean {
+  const size = strokeSize(s);
+  if (size <= 0) return false;
+  let n = 0;
+  for (const o of all) {
+    if (o === s) continue;
+    const os = strokeSize(o);
+    // 크기가 2배 넘게 차이 나면 이웃이 아니라 배경이다(화살촉·글씨 옆의 동그라미).
+    if (os < size * 0.5 || os > size * 2) continue;
+    if (rectGap(s.box, o.box) > size * 1.5) continue;
+    if (++n >= 3) return true;
+  }
+  return false;
+}
+
+/** 표시 하나와 카드 하나의 관계. 센 것부터 본다. */
+function relate(g: Gesture, card: Rect, hit: Rect, tipReach: number): MarkKind {
+  // 1) 감쌈이 가장 센 신호다 — **먼저 본다.** 끝점 규칙을 먼저 태우면
+  //    동그라미는 시작과 끝이 맞닿아 있어서 옆 카드까지 "짚음"이 된다
+  //    (실측 2026-08-05: 카드 1을 감쌌는데 카드 2도 짚음으로 나왔다).
+  if (g.closed && enclosureRatio(g.poly, card) >= ENCLOSE_MIN) return "circled";
+
+  // 2) 표시가 카드 안에 온전히 들어 있다 — 본문 한 구절에 밑줄·동그라미를
+  //    쳤거나 카드 위를 덧칠한 것이다. 그 카드를 짚은 것이 맞다.
+  if (contains(hit, g.box)) return "within";
+
+  // 3) 끝이 코앞에서 멈췄다 = 가리켰다. 출발점(4)보다 세다 — 화살표가
+  //    카드 1에서 카드 3으로 갔다면 학생이 묻는 것은 카드 3이다.
+  if (g.tip && pointGap(g.tip, hit) <= tipReach) return "pointed";
+  if (g.tail && pointGap(g.tail, hit) <= tipReach) return "linked";
+
+  if (g.strokes.some((s) => strokeHitsRect(s, hit))) return "crossed";
+  return "near";
+}
+
 export function buildInkScene(
   strokes: readonly PenStroke[],
   cards: readonly SceneCard[],
   opts: InkSceneOpts,
 ): InkScene | null {
-  const b = strokesBBox(strokes);
-  if (!b) return null;
-  const inkBox = inflate(
-    { x: b.minX, y: b.minY, w: b.maxX - b.minX, h: b.maxY - b.minY },
-    EXPORT_PAD,
-  );
+  // **획은 한 번만 잰다.** 아래 전부가 이 값을 쓴다 — 카드마다 다시 재면
+  // 카드 수만큼 곱해진다.
+  const infos = measureStrokes(strokes);
+  const raw = union(infos.map((s) => s.box));
+  if (!raw) return null;
+  const inkBox = inflate(raw, EXPORT_PAD);
+  const diag = Math.hypot(inkBox.w, inkBox.h);
 
   /**
    * 1단 접촉 · 2단 근접.
@@ -348,7 +359,8 @@ export function buildInkScene(
     const hit = hitBox(c.rect);
     return {
       card: c,
-      touched: strokes.some((s) => strokeHitsRect(s, hit)),
+      hit,
+      touched: infos.some((s) => strokeHitsRect(s, hit)),
       gap: rectGap(inkBox, hit),
     };
   });
@@ -403,49 +415,99 @@ export function buildInkScene(
   });
 
   /**
-   * 표시로 볼 획만 고른다 — 그림 대비 무시할 만큼 짧으면 **점**이다.
+   * 획을 셋으로 가른다 — **점 / 글씨 / 표시.**
    *
-   * 학생은 멀리 있는 카드까지 고려 대상에 넣으려고 양 끝에 점을 톡 찍는다.
-   * 그건 "여기까지 봐 줘"지 무언가를 가리키는 표시가 아니다. **고를 때는
-   * 세고**(위에서 이미 썼다) **그릴 때와 판정할 때는 뺀다.**
+   *   · 점   그리지도 판정하지도 않는다. 다만 상자가 커질 허용치는 정한다.
+   *   · 글씨 그리기는 한다(모델이 질문도 봐야 한다). 판정에서는 뺀다.
+   *   · 표시 그리고 판정한다.
    *
    * 고정 길이로는 안 된다 — 같은 15px가 좁은 그림에서는 뚜렷한 표시이고 넓은
    * 그림에서는 티끌이다(실측 2026-08-05). 카드 위에 찍은 점은 남긴다("이거").
    */
-  const dotMax = Math.max(12, Math.hypot(inkBox.w, inkBox.h) * 0.01);
-  const marks = strokes.filter((s) => {
-    if (strokeLength(s) >= dotMax) return true;
-    const p = s[0];
+  const dotMax = Math.max(DOT_MIN, diag * DOT_RATIO);
+  const drawn = infos.filter((s) => {
+    if (s.len >= dotMax) return true;
+    const p = s.pts[0];
     return !!p && cards.some((c) => inside(p.x, p.y, c.rect));
   });
 
-  /**
-   * 화살촉이 카드에 **닿기 직전**에 멈춰도 그 카드를 가리킨 것으로 본다.
-   *
-   * 학생은 화살표를 카드에 박지 않는다 — 코앞에서 멈춘다. 그림 크기에 비례해
-   * 잡는다(넓은 화면에서는 "코앞"도 그만큼 멀다).
-   */
-  const tipReach = Math.max(24, Math.hypot(inkBox.w, inkBox.h) * 0.04);
+  const markMin = Math.max(dotMax * 3, diag * MARK_RATIO);
+  const joinGap = Math.max(JOIN_MIN, diag * JOIN_RATIO);
 
+  /**
+   * 표시의 **몸통**이 될 획들. 글씨는 여기서 걸러진다.
+   *
+   * 짧아도 **카드 안에 온전히 그린 것**은 몸통이다 — 한 구절 밑줄·별표·체크.
+   * 카드 크기에 비례해 잡는다(글자 획은 이 잣대를 못 넘는다).
+   */
+  const seeds = drawn.filter((s) => {
+    if (crowded(s, drawn)) return false;
+    if (s.len >= markMin) return true;
+    return kept.some((k) => {
+      const d = Math.hypot(k.card.rect.w, k.card.rect.h);
+      return contains(k.hit, s.box) && strokeSize(s) >= d * WITHIN_RATIO;
+    });
+  });
+
+  /**
+   * 몸통에 **붙은** 짧은 획은 표시의 일부다 — 대개 화살촉이다.
+   *
+   * 크기만으로 자르면 이게 통째로 사라진다. 화살촉은 짧고(몸통의 10분의 1쯤)
+   * 글씨와 크기가 비슷하다. 가르는 것은 크기가 아니라 **어디에 붙었나**다:
+   * 촉은 몸통 끝에 붙어 있고 글씨는 아무 데도 안 붙어 있다. `crowded`가 이미
+   * 글씨 줄을 걸렀으므로, 남은 짧은 획 중 몸통에 닿은 것만 주우면 된다.
+   */
+  const seedSet = new Set(seeds);
+  const marked = drawn.filter((s) => {
+    if (seedSet.has(s)) return true;
+    if (crowded(s, drawn)) return false;
+    return seeds.some((b) => strokesTouch(s, b, joinGap));
+  });
+
+  const tipReach = Math.max(TIP_MIN, diag * TIP_RATIO);
+  const shapes = readGestures(marked, { joinGap });
+
+  /**
+   * 표시 × 카드 관계를 **한 번** 계산하고 양쪽에서 읽는다 — 카드는 가장 센
+   * 관계를 자기 `mark`로, 표시는 카드 번호 목록을 자기 사실로 가져간다.
+   */
   const picked: PickedCard[] = kept.map((s, i) => ({
     ...s.card,
     n: i + 1,
     touched: s.touched,
-    mark: markOf(marks, s.card.rect, hitBox(s.card.rect), tipReach),
+    mark: "near" as MarkKind,
     where: whereOf.get(s.card.id) ?? "",
   }));
 
+  const gestures: SceneGesture[] = shapes.map((g, gi) => {
+    const row: SceneGesture = {
+      i: gi + 1,
+      shape: g.shape,
+      encloses: [],
+      within: [],
+      points: [],
+      from: [],
+      crosses: [],
+    };
+    kept.forEach((s, ci) => {
+      const kind = relate(g, s.card.rect, s.hit, tipReach);
+      if (MARK_RANK[kind] > MARK_RANK[picked[ci].mark]) picked[ci].mark = kind;
+      const n = picked[ci].n;
+      if (kind === "circled") row.encloses.push(n);
+      else if (kind === "within") row.within.push(n);
+      else if (kind === "pointed") row.points.push(n);
+      else if (kind === "linked") row.from.push(n);
+      else if (kind === "crossed") row.crosses.push(n);
+    });
+    return row;
+  });
+
   /**
-   * 그릴 상자는 **표시**와 카드만 감싼다 — 틀 잡기 점까지 감싸면 그림의
+   * 그릴 상자는 **그릴 획**과 카드만 감싼다 — 틀 잡기 점까지 감싸면 그림의
    * 대부분이 빈 하늘이 되고, 모델이 볼 것은 구석에 몰린다.
    */
-  const markBox = strokesBBox(marks);
-  const drawInk = markBox
-    ? inflate(
-        { x: markBox.minX, y: markBox.minY, w: markBox.maxX - markBox.minX, h: markBox.maxY - markBox.minY },
-        EXPORT_PAD,
-      )
-    : inkBox;
+  const drawnBox = union(drawn.map((s) => s.box));
+  const drawInk = drawnBox ? inflate(drawnBox, EXPORT_PAD) : inkBox;
   /**
    * **내용은 좁게, 허용치는 넓게.**
    *
@@ -462,8 +524,8 @@ export function buildInkScene(
   const keptIds = new Set(kept.map((s) => s.card.id));
   const trace: InkTraceRow[] = scored.map((s) => {
     const got = byId.get(s.card.id);
-    const eligible = s.touched || s.gap <= opts.nearPad;
-    const verdict: InkVerdict = !eligible
+    const ok = s.touched || s.gap <= opts.nearPad;
+    const verdict: InkVerdict = !ok
       ? "too_far"
       : !keptIds.has(s.card.id)
         ? "over_cap"
@@ -482,9 +544,10 @@ export function buildInkScene(
 
   return {
     inkBox,
-    marks,
+    marks: drawn.map((s) => s.pts),
     capture,
     cards: picked,
+    gestures,
     dropped,
     clamped: capture.w < merged.w - 0.01 || capture.h < merged.h - 0.01,
     trace,

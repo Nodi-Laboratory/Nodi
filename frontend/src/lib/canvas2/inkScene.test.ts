@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildInkScene,
+  POINTING_KINDS,
   rectGap,
   rectOverlap,
   segmentHitsRect,
   type SceneCard,
 } from "./inkScene";
+import { handwriting, hookArrow, oval, pieceArrow } from "./inkStrokes.fixture";
 import type { PenStroke } from "./penPad";
 
 const OPTS = { cardMax: 5, nearPad: 120, boxMaxScale: 2.5 };
@@ -248,5 +250,154 @@ describe("buildInkScene", () => {
     const later = card("나중", 420, 0); // 원래 bbox에서는 멀다
     const scene = buildInkScene([ink], [anchor, later], OPTS)!;
     expect(scene.cards.map((c) => c.id)).toEqual(["근접"]);
+  });
+});
+
+/**
+ * 학생이 실제로 그리는 장면들.
+ *
+ * 여기 있는 것이 이 기능의 계약이다 — 위의 테스트가 "상자를 어떻게 자르나"라면
+ * 이쪽은 **"무엇을 짚었다고 볼 것인가"**다. 넓은 카드(560×120)를 쓰는 이유는
+ * 그것이 실제 캔버스 아이템 크기이고, 표시의 크기 잣대가 그림 대각선에 비례하기
+ * 때문이다(작은 모형으로 재면 통과하는 규칙이 실물에서 무너진다).
+ */
+describe("buildInkScene — 표시 읽기", () => {
+  const WIDE = { ...OPTS, cardMax: 8, nearPad: 400 };
+  const wide = (id: string, x: number, y: number): SceneCard =>
+    card(id, x, y, 560, 120);
+
+  /** 카드 번호 → 판정. 읽기 좋게 뒤집는다. */
+  const marks = (s: ReturnType<typeof buildInkScene>) =>
+    new Map(s!.cards.map((c) => [c.id, c.mark]));
+
+  it("카드를 감싼 동그라미는 감쌈이다", () => {
+    const cards = [wide("지질학", 0, 0), wide("천문학", 0, 300)];
+    const scene = buildInkScene([oval(280, 60, 330, 100)], cards, WIDE)!;
+    expect(marks(scene).get("지질학")).toBe("circled");
+    expect(marks(scene).get("천문학")).toBe("near");
+    expect(scene.gestures[0].shape).toBe("circle");
+    expect(scene.gestures[0].encloses).toEqual([1]);
+  });
+
+  /**
+   * **예전 규칙이 여기서 틀렸다.** 대각선 획의 bbox는 커다란 직사각형이라
+   * "bbox가 카드 넓이의 70%를 덮으면 감쌈"으로는 직선 하나가 두 카드를
+   * 동그라미 친 것이 됐다.
+   */
+  it("비스듬히 지나간 선은 감쌈이 아니다", () => {
+    const cards = [wide("지질학", 0, 0), wide("천문학", 600, 400)];
+    const scene = buildInkScene([line(0, 0, 1160, 520)], cards, WIDE)!;
+    const m = marks(scene);
+    expect(m.get("지질학")).not.toBe("circled");
+    expect(m.get("천문학")).not.toBe("circled");
+  });
+
+  it("큰 동그라미 하나가 카드 둘을 함께 감쌀 수 있다", () => {
+    const cards = [wide("지질학", 0, 0), wide("천문학", 0, 200)];
+    const scene = buildInkScene([oval(280, 160, 380, 260)], cards, WIDE)!;
+    expect(scene.gestures[0].encloses).toEqual([1, 2]);
+    expect([...marks(scene).values()]).toEqual(["circled", "circled"]);
+  });
+
+  /**
+   * **화살표에는 방향이 있다.** 카드 1에서 카드 3으로 그은 화살표에서 학생이
+   * 묻는 것은 카드 3이다 — 둘 다 대상으로 치면 SOLAR가 둘 다 설명하고,
+   * 이어 묻기의 부모도 엉뚱한 쪽에 붙는다.
+   */
+  it("화살표는 출발한 카드와 가리킨 카드를 가른다", () => {
+    const cards = [wide("지질학", 0, 0), wide("생명공학", 0, 500)];
+    const scene = buildInkScene(
+      [hookArrow(280, 100, 280, 520)],
+      cards,
+      WIDE,
+    )!;
+    const m = marks(scene);
+    expect(m.get("지질학")).toBe("linked");
+    expect(m.get("생명공학")).toBe("pointed");
+    const [g] = scene.gestures;
+    expect(g.shape).toBe("arrow");
+    expect(g.from).toEqual([1]);
+    expect(g.points).toEqual([2]);
+  });
+
+  it("몸통과 촉을 따로 그려도 같은 방향으로 읽는다", () => {
+    const cards = [wide("지질학", 0, 0), wide("생명공학", 0, 500)];
+    const scene = buildInkScene(pieceArrow(280, 100, 280, 520), cards, WIDE)!;
+    const m = marks(scene);
+    expect(m.get("지질학")).toBe("linked");
+    expect(m.get("생명공학")).toBe("pointed");
+  });
+
+  it("서로 다른 카드를 가리킨 화살표 둘을 둘로 센다", () => {
+    const cards = [
+      wide("지질학", 0, 0),
+      wide("천문학", 0, 250),
+      wide("생명공학", 0, 500),
+    ];
+    const scene = buildInkScene(
+      [hookArrow(900, 300, 600, 60), hookArrow(900, 340, 600, 560)],
+      cards,
+      WIDE,
+    )!;
+    expect(scene.gestures).toHaveLength(2);
+    const m = marks(scene);
+    expect(m.get("지질학")).toBe("pointed");
+    expect(m.get("생명공학")).toBe("pointed");
+    expect(m.get("천문학")).not.toBe("pointed");
+  });
+
+  it("카드 안 한 구절에 그은 밑줄은 그 카드를 짚은 것이다", () => {
+    const cards = [wide("지질학", 0, 0), wide("천문학", 0, 300)];
+    const scene = buildInkScene([line(60, 70, 380, 72)], cards, WIDE)!;
+    expect(marks(scene).get("지질학")).toBe("within");
+    expect(scene.gestures[0].within).toEqual([1]);
+  });
+
+  /**
+   * **화살표 몸통이 지나간 것은 짚은 것이 아니다.** 이 구분이 없으면 카드
+   * 사이를 가로질러 간 화살표가 지나친 카드까지 전부 딸려 간다.
+   */
+  it("스쳐 지나간 카드는 짚은 것이 아니다", () => {
+    const cards = [
+      wide("지질학", 0, 0),
+      wide("천문학", 0, 250),
+      wide("생명공학", 0, 500),
+    ];
+    const scene = buildInkScene([hookArrow(280, -60, 280, 560)], cards, WIDE)!;
+    const m = marks(scene);
+    expect(m.get("천문학")).toBe("crossed");
+    expect(m.get("생명공학")).toBe("pointed");
+    expect(scene.gestures[0].crosses).toContain(2);
+  });
+
+  /**
+   * **이것이 가장 중요한 테스트다.** 학생이 쓴 질문 글씨도 획이다. 그걸 표시로
+   * 세면 **화살표를 긋지 않았는데도** 카드 옆에 질문을 쓴 것만으로 그 카드를
+   * 짚은 것이 된다 — 그리고 그 오답은 그럴싸해서 아무도 못 잡는다.
+   */
+  it("질문 글씨는 카드를 짚지 않는다", () => {
+    const cards = [wide("지질학", 0, 0), wide("천문학", 0, 400)];
+    const scene = buildInkScene(
+      // 카드 1 바로 아래에 질문을 쓰고, 카드 2를 동그라미 쳤다.
+      [...handwriting(20, 150, 7), oval(280, 460, 330, 100)],
+      cards,
+      WIDE,
+    )!;
+    const m = marks(scene);
+    expect(m.get("천문학")).toBe("circled");
+    expect(m.get("지질학")).toBe("near");
+    // 표시는 동그라미 하나뿐 — 글자 35획이 표시로 세어지면 안 된다.
+    expect(scene.gestures).toHaveLength(1);
+    // 그래도 **그려지기는 한다** — 모델이 학생이 뭘 물었는지도 봐야 한다.
+    expect(scene.marks.length).toBeGreaterThan(30);
+  });
+
+  it("짚은 카드는 POINTING_KINDS로 걸러진다 — 출발점과 스침은 빠진다", () => {
+    const cards = [wide("지질학", 0, 0), wide("생명공학", 0, 500)];
+    const scene = buildInkScene([hookArrow(280, 100, 280, 520)], cards, WIDE)!;
+    const pointed = scene.cards
+      .filter((c) => POINTING_KINDS.includes(c.mark))
+      .map((c) => c.n);
+    expect(pointed).toEqual([2]);
   });
 });

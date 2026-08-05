@@ -24,6 +24,7 @@ import {
   type InkTraceRow,
   type PickedCard,
   type SceneCard,
+  type SceneGesture,
 } from "./inkScene";
 import { renderFigurePng, renderScenePng } from "./inkRender";
 import type { PenStroke } from "./penPad";
@@ -64,6 +65,13 @@ export interface InkCapture {
   figure: Blob | null;
   figureN: number | null;
   cards: InkCardRef[];
+  /**
+   * 학생이 그린 표시들 — **프롬프트에 실을 사실.**
+   *
+   * 카드마다 낱말 하나만 주면 "화살표가 [카드 1]에서 [카드 3]으로 향한다"를
+   * 말할 수 없다. 그 문장은 카드가 아니라 표시에 딸린 사실이다.
+   */
+  gestures: SceneGesture[];
   /** 기하로 계산한 **짚은 카드** 번호들. 모델 답이 아니다. */
   pointed: number[];
   /** 상한으로 버린 카드 수. 0이 아니면 알린다 — 조용히 자르지 않는다. */
@@ -89,6 +97,7 @@ export const EMPTY_CAPTURE: InkCapture = {
   figure: null,
   figureN: null,
   cards: [],
+  gestures: [],
   pointed: [],
   dropped: 0,
   trace: EMPTY_TRACE,
@@ -246,7 +255,7 @@ export async function captureInk(
   const tFetch = performance.now() - t1;
 
   const t2 = performance.now();
-  const scenePng = await renderScenePng(scene, strokes, bitmaps, opts.sceneMaxSide);
+  const scenePng = await renderScenePng(scene, bitmaps, opts.sceneMaxSide);
   const tScene = performance.now() - t2;
 
   let figurePng: Blob | null = null;
@@ -257,7 +266,7 @@ export async function captureInk(
     const target = zoomTarget(scene.cards, scene.inkBox);
     const bmp = target?.figureId ? bitmaps.get(target.figureId) : undefined;
     if (target && bmp) {
-      figurePng = await renderFigurePng(target, bmp, strokes, opts.sceneMaxSide);
+      figurePng = await renderFigurePng(target, bmp, scene.marks, opts.sceneMaxSide);
       if (figurePng) {
         figureN = target.n;
         figureSize = { w: bmp.width, h: bmp.height };
@@ -281,6 +290,7 @@ export async function captureInk(
       where: c.where,
       mark: c.mark,
     })),
+    gestures: scene.gestures,
     /**
      * **우리가 센 답이다.** 어느 카드를 짚었는지는 기하로 정확히 계산된다 —
      * 모델에게 물으면 불확실할 때 늘 1번을 답한다(실측 2026-08-05).
