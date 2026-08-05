@@ -130,6 +130,19 @@ function strokeHitsRect(stroke: PenStroke, r: Rect): boolean {
   return false;
 }
 
+/**
+ * 두 사각형이 겹치는 넓이. 안 겹치면 0.
+ *
+ * 도판이 둘 이상 표시에 닿았을 때 **어느 것을 확대해 보낼지** 고르는 잣대다
+ * (하나만 보낸다 — 전부 보내면 비용이 선형으로 늘고, 화살표는 보통 하나를
+ * 가리킨다).
+ */
+export function rectOverlap(a: Rect, b: Rect): number {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
 /** 두 사각형 사이 최단 거리. 겹치면 0. */
 export function rectGap(a: Rect, b: Rect): number {
   const dx = Math.max(0, Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w)));

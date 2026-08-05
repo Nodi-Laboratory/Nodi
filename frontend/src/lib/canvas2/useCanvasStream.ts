@@ -47,6 +47,21 @@ const TOOL_LABELS: Record<string, string> = {
   think: "생각을 정리하고 있어요…",
 };
 
+/** 펜으로 그린 표시의 해석 (D178). 손으로 물었을 때만 실린다. */
+export interface InkSendContext {
+  /** "화살표가 [카드 2]를 가리킨다. [카드 1]은 닿지 않는다." */
+  marksNote: string;
+  /** 도식에 그려진 순서 그대로. **이 순서가 곧 `[카드 N]`의 N이다.** */
+  cardIds: string[];
+  /** 화살표가 가리킨 번호. 지금은 서버에 안 보낸다(설명에 이미 들어 있다). */
+  pointed: number | null;
+}
+
+export interface SendOpts {
+  pickedId?: string | null;
+  ink?: InkSendContext | null;
+}
+
 export interface CanvasStreamApi {
   /** 말풍선 문구(스트리밍 중 진행 상황 포함). */
   reply: string;
@@ -61,7 +76,7 @@ export interface CanvasStreamApi {
    */
   send: (
     question: string,
-    opts?: { pickedId?: string | null },
+    opts?: SendOpts,
   ) => Promise<{ id: string; tag: string | null }[]>;
   /** 마지막 오류. */
   error: string | null;
@@ -184,7 +199,7 @@ export function useCanvasStream({
   const abortRef = useRef<AbortController | null>(null);
 
   const send = useCallback(
-    async (question: string, opts?: { pickedId?: string | null }) => {
+    async (question: string, opts?: SendOpts) => {
       const q = question.trim();
       if (!q || !sessionId || busy) return [];
 
@@ -385,6 +400,14 @@ export function useCanvasStream({
             focus_tag: picked
               ? (getItems().find((i) => i.id === picked)?.tag ?? null)
               : null,
+            // D178: 펜으로 물었을 때만. 표시 설명이 비었으면 보낼 것이 없다.
+            ink:
+              opts?.ink && opts.ink.cardIds.length
+                ? {
+                    marks_note: opts.ink.marksNote,
+                    card_ids: opts.ink.cardIds,
+                  }
+                : null,
           },
           {
             onToken: (delta) => parser.push(delta),

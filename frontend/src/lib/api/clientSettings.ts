@@ -23,6 +23,16 @@ export interface ClientSettings {
   colGap: number;
   rowGap: number;
   sibGap: number;
+  /** 펜 표시와 함께 읽을 카드 상한 (D178). */
+  inkCardMax: number;
+  /** 획에 닿지 않아도 함께 읽을 거리(월드 px). */
+  inkNearPad: number;
+  /** 도식 상자가 획 bbox의 몇 배까지 커질 수 있나. */
+  inkBoxMaxScale: number;
+  /** 도식 PNG 긴 변 상한. */
+  inkSceneMaxSide: number;
+  /** 표시가 도판에 닿으면 확대본을 한 장 더 보낼지. */
+  inkFigureZoomEnabled: boolean;
 }
 
 export const CLIENT_SETTINGS_FALLBACK: ClientSettings = {
@@ -34,6 +44,11 @@ export const CLIENT_SETTINGS_FALLBACK: ClientSettings = {
   colGap: 760,
   rowGap: 240,
   sibGap: 200,
+  inkCardMax: 5,
+  inkNearPad: 120,
+  inkBoxMaxScale: 2.5,
+  inkSceneMaxSide: 1280,
+  inkFigureZoomEnabled: true,
 };
 
 interface Row {
@@ -45,6 +60,11 @@ interface Row {
   canvas_col_gap?: number;
   canvas_row_gap?: number;
   canvas_sib_gap?: number;
+  ink_card_max?: number;
+  ink_near_pad?: number;
+  ink_box_max_scale?: number;
+  ink_scene_max_side?: number;
+  ink_figure_zoom_enabled?: boolean;
 }
 
 /** snake_case 경계를 여기 한 곳에만 둔다(다른 api 모듈과 같은 규약). */
@@ -60,6 +80,12 @@ function toSettings(row: Row): ClientSettings {
     colGap: row.canvas_col_gap ?? f.colGap,
     rowGap: row.canvas_row_gap ?? f.rowGap,
     sibGap: row.canvas_sib_gap ?? f.sibGap,
+    inkCardMax: row.ink_card_max ?? f.inkCardMax,
+    inkNearPad: row.ink_near_pad ?? f.inkNearPad,
+    inkBoxMaxScale: row.ink_box_max_scale ?? f.inkBoxMaxScale,
+    inkSceneMaxSide: row.ink_scene_max_side ?? f.inkSceneMaxSide,
+    inkFigureZoomEnabled:
+      row.ink_figure_zoom_enabled ?? f.inkFigureZoomEnabled,
   };
 }
 

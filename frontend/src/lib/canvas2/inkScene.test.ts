@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildInkScene, rectGap, segmentHitsRect, type SceneCard } from "./inkScene";
+import {
+  buildInkScene,
+  rectGap,
+  rectOverlap,
+  segmentHitsRect,
+  type SceneCard,
+} from "./inkScene";
 import type { PenStroke } from "./penPad";
 
 const OPTS = { cardMax: 5, nearPad: 120, boxMaxScale: 2.5 };
@@ -37,6 +43,26 @@ describe("rectGap", () => {
 
   it("가로로 떨어진 만큼", () => {
     expect(rectGap({ x: 0, y: 0, w: 100, h: 100 }, { x: 150, y: 0, w: 100, h: 100 })).toBe(50);
+  });
+});
+
+describe("rectOverlap", () => {
+  it("겹치는 넓이", () => {
+    expect(
+      rectOverlap({ x: 0, y: 0, w: 100, h: 100 }, { x: 50, y: 50, w: 100, h: 100 }),
+    ).toBe(2500);
+  });
+
+  it("안 겹치면 0", () => {
+    expect(
+      rectOverlap({ x: 0, y: 0, w: 100, h: 100 }, { x: 200, y: 0, w: 100, h: 100 }),
+    ).toBe(0);
+  });
+
+  it("변이 닿기만 한 것은 0", () => {
+    expect(
+      rectOverlap({ x: 0, y: 0, w: 100, h: 100 }, { x: 100, y: 0, w: 100, h: 100 }),
+    ).toBe(0);
   });
 });
 

@@ -37,6 +37,19 @@ export interface ChatStreamBody {
       score: number;
     }>;
   } | null;
+  /**
+   * 펜으로 그린 표시의 해석 (D178). 손으로 물었을 때만 실린다.
+   *
+   * **카드 본문은 안 보낸다** — id만 보내고 서버가 RLS 경로로 다시 읽는다
+   * (D104). 클라이언트가 보낸 본문을 프롬프트에 그대로 넣는 것은 기존 신뢰
+   * 경계 규약과 결이 안 맞는다.
+   */
+  ink?: {
+    /** "화살표가 [카드 2]를 가리킨다. [카드 1]은 닿지 않는다." */
+    marks_note: string;
+    /** 도식에 그려진 순서대로. **이 순서가 곧 [카드 N]의 N이다.** */
+    card_ids: string[];
+  } | null;
 }
 
 export interface ChatStreamHandlers {

@@ -59,7 +59,12 @@ import {
   withoutStrokes,
 } from "@/lib/canvas2/askInk";
 import { renderInkPng } from "@/lib/canvas2/penPad";
-import { ocrErrorMessage, recognizeHandwriting } from "@/lib/api";
+import {
+  captureInk,
+  EMPTY_CAPTURE,
+  type InkCapture,
+} from "@/lib/canvas2/inkCapture";
+import { interpretInk, ocrErrorMessage } from "@/lib/api";
 import { AskBar, type AskBarHandle } from "./AskBar";
 import { CanvasTopBar } from "./CanvasTopBar";
 import { Minimap } from "./Minimap";
@@ -210,6 +215,18 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [inkRecognized, setInkRecognized] = useState(false);
   const [inkCount, setInkCount] = useState(0);
   const [inkBusy, setInkBusy] = useState(false);
+  /**
+   * 방금 읽은 펜 표시 (D178) — **다음에 보낼 질문 한 번에만** 실린다.
+   *
+   * 입력창의 글자와 따로 두는 이유: 저장되는 질문은 학생이 쓴 것 그대로여야
+   * 툴팁(`askedQuestion`)과 기록이 맞는다. 표시 설명을 거기 이어 붙이면
+   * 저장된 질문이 벽이 된다.
+   */
+  const [inkContext, setInkContext] = useState<{
+    marksNote: string;
+    cardIds: string[];
+    pointed: number | null;
+  } | null>(null);
   /**
    * 질문하는 펜을 **켠 순간** 캔버스에 있던 획들.
    *
@@ -1017,6 +1034,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
     (tool: ToolName) => {
       setInkRecognized(false);
       setInkCount(0);
+      // 도구를 바꾸면 방금 읽은 표시도 버린다 — 그 표시는 지워진 획의 것이고,
+      // 남겨 두면 **다음에 자판으로 친 질문에 엉뚱한 카드가 딸려 간다.**
+      setInkContext(null);
       // 질문하는 펜을 떠나기 전에 방금 쓴 것을 표시해 둔다 — 그래야 다시
       // 돌아왔을 때 앞서 쓴 질문 획이 계속 질문 획이다.
       if (bridge.activeTool === "askpen" && tool !== "askpen") markPending();
@@ -1054,17 +1074,62 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [bridge.activeTool],
   );
 
+  /**
+   * 손글씨를 읽고, **표시가 무엇을 가리키는지도 함께 읽는다** (D178).
+   *
+   * D176은 획을 글자로만 바꿨다. 그런데 학생이 하는 일은 그것만이 아니다 —
+   * 카드를 동그라미 치고, 화살표를 긋고, 그 끝에 질문을 쓴다. 글자만 보내면
+   * **"이거"가 사라진다.**
+   *
+   * 그림 두 장이 나간다. OCR로는 **획만**(카드가 섞이면 카드 본문까지 읽어
+   * 와 질문과 가르는 일이 새로 생긴다), 비전으로는 **획 + 카드**(가리킨
+   * 대상이 그림에 없으면 무엇을 가리키는지 물을 수 없다).
+   */
   const recognizeInk = useCallback(async () => {
     if (inkBusy) return;
     // 획이 끝난 뒤의 순간이다 — 여기서 표시를 찍어 둔다(그리는 중이 아니라).
     markPending();
     const els = askStrokes();
     if (!els.length) return;
-    const png = await renderInkPng(toStrokes(els), window.devicePixelRatio || 1);
+    const strokes = toStrokes(els);
+    const png = await renderInkPng(strokes, window.devicePixelRatio || 1);
     if (!png) return;
     setInkBusy(true);
     try {
-      const { text } = await recognizeHandwriting(png);
+      /**
+       * 도식 만들기는 **질문을 막지 않는다**. 실패하면 표시 없이 글자만
+       * 읽는다 — 카드가 근처에 없을 때와 같은 상태이고, 그건 정상이다.
+       */
+      let shot: InkCapture = EMPTY_CAPTURE;
+      try {
+        shot = await captureInk(
+          strokes,
+          {
+            items,
+            positions: layout.positions,
+            sizes: layout.sizes,
+            zoom: bridge.cameraRef.current.zoom,
+          },
+          {
+            cardMax: clientSettings.inkCardMax,
+            nearPad: clientSettings.inkNearPad,
+            boxMaxScale: clientSettings.inkBoxMaxScale,
+            sceneMaxSide: clientSettings.inkSceneMaxSide,
+            figureZoomEnabled: clientSettings.inkFigureZoomEnabled,
+          },
+        );
+      } catch (err) {
+        // 조용히 넘기지 않는다 — 실패가 흔적을 안 남기면 기능이 꺼진 줄 모른다.
+        console.warn("[ink] 도식을 만들지 못했다 — 표시 없이 보낸다", err);
+      }
+
+      const { text, marksNote, pointed } = await interpretInk({
+        ink: png,
+        scene: shot.scene,
+        figure: shot.figure,
+        figureN: shot.figureN,
+        cards: shot.cards,
+      });
       const clean = text.trim();
       if (!clean) {
         setDrawError("글씨를 알아보지 못했어요. 조금 크게 다시 써 볼까요?");
@@ -1076,6 +1141,16 @@ export function CanvasWorkspace({ spaceId }: Props) {
       bridge.api?.updateScene({ elements: rest });
       setInkCount(0);
       askBarRef.current?.appendText(clean);
+      /**
+       * 표시 해석은 **다음에 보낼 질문에 실린다.** 입력창에 붙이지 않는다 —
+       * 저장되는 질문은 학생이 쓴 것 그대로여야 툴팁·기록이 맞는다.
+       * 가리킨 번호는 설명 안에 `[카드 N]`으로 이미 들어 있다.
+       */
+      setInkContext(
+        shot.cards.length
+          ? { marksNote, cardIds: shot.cards.map((c) => c.itemId), pointed }
+          : null,
+      );
       setInkRecognized(true);
       setDrawError(null);
     } catch (err) {
@@ -1083,7 +1158,17 @@ export function CanvasWorkspace({ spaceId }: Props) {
     } finally {
       setInkBusy(false);
     }
-  }, [askStrokes, bridge.api, inkBusy, markPending]);
+  }, [
+    askStrokes,
+    bridge.api,
+    bridge.cameraRef,
+    clientSettings,
+    inkBusy,
+    items,
+    layout.positions,
+    layout.sizes,
+    markPending,
+  ]);
 
   /** 다시 쓰기 — 빈 화면에서 새로 (인식 때 이미 지워졌다). */
   const writeInkAgain = useCallback(() => {
@@ -1094,17 +1179,24 @@ export function CanvasWorkspace({ spaceId }: Props) {
     }
     setInkCount(0);
     setInkRecognized(false);
+    setInkContext(null);
   }, [askStrokes, bridge.api]);
 
   const handleSend = useCallback(
     (question: string) => {
       const from = pickedId;
       const tag = pickedItem?.tag ?? null;
-      void stream.send(question, { pickedId: from }).then((created) => {
+      /**
+       * 표시는 **이 턴에만** 실린다 (D178). 비워 두지 않으면 다음 질문에도
+       * 같은 카드가 딸려 가서, 학생이 이미 지운 화살표가 계속 답을 끌어당긴다.
+       */
+      const ink = inkContext;
+      setInkContext(null);
+      void stream.send(question, { pickedId: from, ink }).then((created) => {
         setPickedId(nextFocus(from, tag, created));
       });
     },
-    [pickedId, pickedItem, stream],
+    [inkContext, pickedId, pickedItem, stream],
   );
 
   /**

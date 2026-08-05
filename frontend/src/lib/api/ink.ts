@@ -1,0 +1,128 @@
+/**
+ * 손글씨 + 펜 표시 인식 (D178).
+ *
+ * ## 계약
+ *
+ *   POST {API_BASE}/ink/interpret
+ *   Content-Type: multipart/form-data
+ *     ink_png    (필수) 획만 그린 흰 종이 PNG — OCR로 간다
+ *     scene_png  (선택) 카드까지 그린 도식 PNG — 비전 모델로 간다
+ *     figure_png (선택) 도판 확대본
+ *     figure_n   (선택) 그 도판이 몇 번 카드인가
+ *     cards      (선택) [{"n":1,"title":"천문학"}, …] JSON
+ *   200 → { text, marks_note, pointed, confidence }
+ *
+ * `ocr.ts`와 나란한 창구다. 저쪽은 **카드 없이 그냥 쓴 경우**의 경로이자
+ * 이쪽이 죽었을 때의 폴백이라 그대로 둔다 — 오류 문구도 저쪽 것을 함께 쓴다
+ * (`ocrErrorMessage`). 학생에게는 같은 기능이라 문구가 갈리면 안 된다.
+ *
+ * ## 표시 해석이 실패해도 이 호출은 성공한다
+ *
+ * `marks_note`가 빈 문자열로 올 뿐이다. 표시는 **곁들이**고 질문 자체는
+ * 손글씨다 — RAG가 채팅을 막지 않는 것과 같은 성질이다.
+ *
+ * ## 오래 걸린다
+ *
+ * OCR 3~8초 + 비전 5~20초가 **동시에** 돈다(GPU가 갈라져 있다). 타임아웃을
+ * 걸지 않고 기다린다 — 끊으면 학생은 다시 써야 하고, 그 사이 GPU는 이미
+ * 그 그림을 읽고 있다.
+ */
+import { API_BASE, authHeaders, ensureOk } from "./_core";
+import { OcrNotReadyError } from "./ocr";
+
+/** 도식에 그려진 카드 — 번호가 곧 VLM 출력의 `[카드 N]`이다. */
+export interface InkCardRef {
+  n: number;
+  itemId: string;
+  title: string;
+}
+
+export interface InkInterpretResult {
+  /** 손글씨를 읽은 글자. 못 읽었으면 빈 문자열(오류가 아니다). */
+  text: string;
+  /** 표시가 무엇을 가리키는지. 해석이 실패했으면 빈 문자열. */
+  marksNote: string;
+  /** 화살표가 가리킨 카드 번호. 없거나 못 읽었으면 null. */
+  pointed: number | null;
+}
+
+export interface InkInterpretInput {
+  ink: Blob;
+  scene?: Blob | null;
+  figure?: Blob | null;
+  figureN?: number | null;
+  cards?: readonly InkCardRef[];
+  signal?: AbortSignal;
+}
+
+export async function interpretInk({
+  ink,
+  scene,
+  figure,
+  figureN,
+  cards,
+  signal,
+}: InkInterpretInput): Promise<InkInterpretResult> {
+  const form = new FormData();
+  // 파일명은 서버가 확장자로 형식을 볼 수 있게 준다(Blob은 이름이 없다).
+  form.append("ink_png", ink, "handwriting.png");
+  if (scene) form.append("scene_png", scene, "scene.png");
+  if (figure) form.append("figure_png", figure, "figure.png");
+  if (figureN) form.append("figure_n", String(figureN));
+  if (cards?.length) {
+    // itemId는 보내지 않는다 — 서버는 번호와 제목만 있으면 프롬프트를 만들고,
+    // 카드 본문은 채팅 턴에서 id로 다시 읽는다(D104 신뢰 경계).
+    form.append(
+      "cards",
+      JSON.stringify(cards.map((c) => ({ n: c.n, title: c.title }))),
+    );
+  }
+
+  const res = await fetch(`${API_BASE}/ink/interpret`, {
+    method: "POST",
+    // multipart의 boundary는 브라우저가 정한다 — Content-Type을 직접 넣으면 깨진다.
+    headers: await authHeaders(),
+    body: form,
+    signal,
+  });
+
+  // 창구가 없거나(404) 모델 서버가 미설정(501)이면 ocr.ts와 같은 갈래다.
+  if (res.status === 404 || res.status === 501) throw new OcrNotReadyError();
+
+  const body = (await ensureOk(res).then((r) => r.json())) as {
+    text?: unknown;
+    marks_note?: unknown;
+    pointed?: unknown;
+  };
+  return {
+    text: typeof body.text === "string" ? body.text : "",
+    marksNote: typeof body.marks_note === "string" ? body.marks_note : "",
+    pointed: typeof body.pointed === "number" ? body.pointed : null,
+  };
+}
+
+/**
+ * 도판 원본 바이트 → 비트맵.
+ *
+ * **`<img>`로 받지 않는다.** 다른 출처의 이미지를 그린 캔버스는 오염돼
+ * `toBlob`이 `SecurityError`를 던진다 — 도식 내보내기가 통째로 실패한다.
+ * `fetch`는 `<img>`와 달리 Authorization을 실을 수 있어서, 우리가 바이트를
+ * 직접 들고 그리면 오염이 성립하지 않는다.
+ *
+ * 실패는 null이다 — 도판 하나 때문에 질문이 막히면 안 된다(라벨 상자로 그린다).
+ */
+export async function fetchFigureBitmap(
+  figureId: string,
+  signal?: AbortSignal,
+): Promise<ImageBitmap | null> {
+  try {
+    const res = await fetch(`${API_BASE}/files/figures/${figureId}/raw`, {
+      headers: await authHeaders(),
+      signal,
+    });
+    if (!res.ok) return null;
+    return await createImageBitmap(await res.blob());
+  } catch {
+    return null;
+  }
+}

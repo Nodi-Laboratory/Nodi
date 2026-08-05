@@ -67,6 +67,10 @@ export {
   recognizeHandwriting,
 } from "./ocr";
 
+// D178: 손글씨 + 펜 표시를 함께. 오류 문구는 위의 ocrErrorMessage를 함께 쓴다.
+export type { InkCardRef, InkInterpretResult } from "./ink";
+export { fetchFigureBitmap, interpretInk } from "./ink";
+
 export {
   listAdminUsers,
   setUserRole,
