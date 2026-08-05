@@ -21,6 +21,7 @@ from .routers import (
     files,
     health,
     home,
+    ink,
     me,
     ocr,
     sessions,
@@ -88,6 +89,9 @@ for _router in (
     teacher.router,
     # D176: 손글씨 인식(펜 입력판) — 모델 서버 미설정이면 501을 준다.
     ocr.router,
+    # D178: 손글씨 + 펜 표시를 함께 읽는다. ocr.router와 **나란히** 둔다 —
+    # 저쪽은 카드 없이 쓴 경우의 경로이자 이쪽이 죽었을 때의 폴백이다.
+    ink.router,
 ):
     app.include_router(_router, prefix="/api")
 
