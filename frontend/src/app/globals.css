@@ -285,6 +285,48 @@ input[type="search"]:focus-visible {
 .canvas2 .ui {
   font-family: var(--font-ui), var(--font-sans);
 }
+
+/**
+ * 길게 눌러도 **글자가 잡히지 않는다** (D171, 사용자 지시 2026-08-04).
+ *
+ * 태블릿에서 길게 누르면 "복사 · 선택 영역 찾기 · 공유" 막대가 뜬다. 손으로
+ * 쓰는 화면에서는 이게 사고다 — 획을 긋는 중에 뜨면 그 획이 버려지고, 학생
+ * 눈에는 글씨가 씹힌 것으로 보인다. 탭 하이라이트는 손이 스칠 때마다 버튼을
+ * 번쩍이게 한다.
+ *
+ * **범위가 `body`인 이유** — 처음엔 `.canvas2`만 걸었는데 사용자 보고
+ * 2026-08-04: "태블릿에서 계속 다른 컴포넌트가 선택된다". 캔버스 화면이라도
+ * 왼쪽 레일·대화 서랍·상단 바는 `.canvas2` **밖**이고(앱 껍데기는
+ * `(app)/layout.tsx`), 길게 누른 손가락은 그 경계를 모른다. 화면 하나만
+ * 예외로 두는 것도 답이 아니다 — 학생은 홈·프로필도 같은 손가락으로 만진다.
+ *
+ * **긁어 갈 것을 못 긁게 되지 않는다**: 학급 코드처럼 실제로 복사하는 것에는
+ * 복사 버튼이 있다(`teacher/ClassDetail.tsx`). 글을 **치는** 자리는 아래에서
+ * 되돌린다.
+ */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 글을 **치는** 자리는 예외다 — 입력칸에서 글자를 못 고르면 오타 하나를
+   지우려고 전부 지워야 한다. iOS는 `-webkit-` 접두사를 따로 본다. */
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* 더블탭 확대 대기(300ms)를 없앤다 — 누른 느낌이 늦으면 학생은 또 누른다. */
+button,
+[role="button"],
+a {
+  touch-action: manipulation;
+}
 /* 태그 · 단축키 · 수치 — 고정폭이 "계측"의 감각을 준다 */
 .canvas2 .label {
   font-family: var(--font-label), ui-monospace, monospace;
