@@ -145,11 +145,17 @@ async def read_marks(
     scene_png: bytes,
     figure_png: bytes | None = None,
     figure_n: int | None = None,
+    *,
+    client: httpx.AsyncClient | None = None,
 ) -> tuple[int | None, str]:
     """표시를 읽는다. **어떤 실패든 `(None, "")`으로 강등한다.**
 
     질문을 막지 않는 것이 이 함수의 계약이다 — 표시 해석은 곁들이고, 질문
     자체는 손글씨(OCR)가 나른다.
+
+    `client`를 주면 그것을 쓴다(`figure_caption.caption_one`과 같은 규약) —
+    테스트가 `httpx.MockTransport`로 요청을 가로챌 수 있어야 한다. 안 주면
+    타임아웃이 걸린 클라이언트를 하나 만들어 쓰고 닫는다.
     """
     if not is_configured() or not scene_png:
         return None, ""
@@ -171,15 +177,23 @@ async def read_marks(
         "presence_penalty": 1.5,
         "chat_template_kwargs": {"enable_thinking": False},
     }
+    async def _call(c: httpx.AsyncClient) -> str:
+        resp = await c.post(
+            f"{settings.judge_base_url.rstrip('/')}/chat/completions",
+            json=payload,
+            headers={"Authorization": f"Bearer {settings.judge_api_key}"},
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"].get("content") or ""
+
     try:
-        async with httpx.AsyncClient(timeout=settings.ink_vlm_timeout_seconds) as client:
-            resp = await client.post(
-                f"{settings.judge_base_url.rstrip('/')}/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {settings.judge_api_key}"},
-            )
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"].get("content") or ""
+        if client is not None:
+            content = await _call(client)
+        else:
+            async with httpx.AsyncClient(
+                timeout=settings.ink_vlm_timeout_seconds
+            ) as owned:
+                content = await _call(owned)
     except Exception:  # noqa: BLE001 - 표시 해석 실패는 질문을 막지 않는다
         logger.warning("펜 표시 해석 실패 — 표시 없이 질문을 보낸다", exc_info=True)
         return None, ""

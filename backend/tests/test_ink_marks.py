@@ -4,6 +4,9 @@ VLM 호출 자체는 mock이다. 여기서 지키는 것은 **모델에 무엇�
 **모델이 뭘 뱉든 우리가 안 깨지는가** 둘이다.
 """
 
+import json
+
+import httpx
 import pytest
 
 from app.services import canvas_items, gemini, ink_marks
@@ -171,6 +174,107 @@ def test_표시_블록은_질문에_가장_가깝게_들어간다():
 def test_표시가_없으면_블록도_없다():
     _, blocks = gemini.compose_system_structured("자료 본문")
     assert "ink_marks" not in [b["kind"] for b in blocks]
+
+
+# --- read_marks (httpx MockTransport, 외부 호출 없음) ------------------------
+
+CARDS = [{"n": 1, "title": "천문학"}, {"n": 2, "title": "지질학"}]
+
+
+def _reply(content: str) -> httpx.Response:
+    return httpx.Response(
+        200, json={"choices": [{"message": {"content": content}}]}
+    )
+
+
+@pytest.fixture
+def vision_on(monkeypatch):
+    """비전 창구가 설정된 것으로 친다 — 로컬 .env는 비어 있다."""
+    monkeypatch.setattr(ink_marks.settings, "judge_base_url", "http://vision.test/v1")
+    monkeypatch.setattr(ink_marks.settings, "judge_api_key", "k")
+    monkeypatch.setattr(ink_marks.settings, "ink_vlm_enabled", True)
+
+
+@pytest.mark.asyncio
+async def test_모델_응답을_번호와_설명으로_받는다(vision_on):
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return _reply("가리킴: 2\n설명: 화살표가 [카드 2]를 가리킨다.")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        pointed, note = await ink_marks.read_marks(CARDS, b"png", client=c)
+
+    assert (pointed, note) == (2, "화살표가 [카드 2]를 가리킨다.")
+    assert seen["url"].endswith("/chat/completions")
+    # 이미지가 data URI로 실렸나 — 경로가 아니라 바이트를 보낸다.
+    parts = seen["body"]["messages"][1]["content"]
+    images = [p for p in parts if p.get("type") == "image_url"]
+    assert len(images) == 1
+    assert images[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+async def test_모델이_5xx면_질문을_막지_않는다(vision_on):
+    """**이것이 이 기능의 계약이다** — 표시는 곁들이고 질문은 손글씨가 나른다."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        assert await ink_marks.read_marks(CARDS, b"png", client=c) == (None, "")
+
+
+@pytest.mark.asyncio
+async def test_모델이_끊겨도_질문을_막지_않는다(vision_on):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("연결 실패")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        assert await ink_marks.read_marks(CARDS, b"png", client=c) == (None, "")
+
+
+@pytest.mark.asyncio
+async def test_비전_미설정이면_부르지도_않는다(monkeypatch):
+    monkeypatch.setattr(ink_marks.settings, "judge_base_url", "")
+    called = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return _reply("가리킴: 1\n설명: 뭔가.")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        assert await ink_marks.read_marks(CARDS, b"png", client=c) == (None, "")
+    assert not called
+
+
+@pytest.mark.asyncio
+async def test_킬_스위치를_내리면_안_부른다(vision_on, monkeypatch):
+    monkeypatch.setattr(ink_marks.settings, "ink_vlm_enabled", False)
+    called = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return _reply("가리킴: 1\n설명: 뭔가.")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        assert await ink_marks.read_marks(CARDS, b"png", client=c) == (None, "")
+    assert not called
+
+
+@pytest.mark.asyncio
+async def test_명부_밖_번호는_버리되_설명은_남긴다(vision_on):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _reply("가리킴: 7\n설명: 화살표가 [카드 7]을 가리킨다.")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        pointed, note = await ink_marks.read_marks(CARDS, b"png", client=c)
+    assert pointed is None
+    assert note  # 설명은 살아 있다
 
 
 def test_시스템_프롬프트가_세_지시를_담는다():
