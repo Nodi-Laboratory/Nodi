@@ -24,3 +24,41 @@ export async function anyFigureForLab(): Promise<LabFigure> {
   );
   return (await res.json()) as LabFigure;
 }
+
+/** 실험실이 SOLAR까지 태워 보기 위한 입력. */
+export interface LabAnswerInput {
+  question: string;
+  marksNote: string;
+  cards: Array<{ n: number; title: string; body: string }>;
+}
+
+export interface LabAnswer {
+  ok: boolean;
+  error: string;
+  ms: number;
+  answer: string;
+  /** SOLAR가 실제로 받은 표시 블록 — 무엇을 보고 답했는지가 요점이다. */
+  ink_block: string;
+  system_prompt: string;
+}
+
+/**
+ * 표시 맥락을 얹어 SOLAR에게 한 번 물어본다 (D178, 실험실 전용).
+ *
+ * 실험실 카드는 붙박이라 DB에 없어서 채팅 창구를 그대로 쓸 수 없다. 대신
+ * **프롬프트 조립은 채팅과 같은 함수**를 태운다(`compose_system_structured`).
+ */
+export async function askLabSolar(input: LabAnswerInput): Promise<LabAnswer> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/ink-lab/answer`, {
+      method: "POST",
+      headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question: input.question,
+        marks_note: input.marksNote,
+        cards: input.cards,
+      }),
+    }),
+  );
+  return (await res.json()) as LabAnswer;
+}

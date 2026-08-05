@@ -42,7 +42,11 @@ import {
   type InkCapture,
 } from "@/lib/canvas2/inkCapture";
 import { interpretInk, listAdminSettings, ocrErrorMessage } from "@/lib/api";
-import { anyFigureForLab, type LabFigure } from "@/lib/api/adminInkLab";
+import {
+  anyFigureForLab,
+  askLabSolar,
+  type LabFigure,
+} from "@/lib/api/adminInkLab";
 import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import type { AdminSettingsView } from "@/lib/types";
@@ -61,6 +65,8 @@ export function InkLabTab() {
   const markBase = useRef<Set<string>>(new Set());
   const [inkCount, setInkCount] = useState(0);
   const [busy, setBusy] = useState(false);
+  /** SOLAR 답변을 기다리는 중 — 인식과 따로 돈다. */
+  const [answering, setAnswering] = useState(false);
   const [runs, setRuns] = useState<InkRun[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -215,17 +221,66 @@ export function InkLabTab() {
       setBusy(false);
     }
 
+    const at = new Date().toLocaleTimeString("ko-KR");
     setRuns((prev) => [
       {
-        at: new Date().toLocaleTimeString("ko-KR"),
+        at,
         totalMs: performance.now() - started,
         capture: shot,
         inkPng,
         reply,
         cards: items,
+        answer: null,
       },
       ...prev,
     ]);
+
+    /**
+     * **SOLAR까지 이어 부른다** (사용자 요청 2026-08-05: "결과적으로 SOLAR가
+     * 응답한 결과까지 보이게").
+     *
+     * 앞 단계를 먼저 화면에 올려 두고 따로 부른다 — 여기서 기다리면 판정
+     * 근거(그림·표)를 보는 데도 답변 생성 시간만큼 더 기다려야 한다.
+     */
+    const q = reply?.text?.trim();
+    if (q) {
+      setAnswering(true);
+      const byId = new Map(items.map((i) => [i.id, i]));
+      void askLabSolar({
+        question: q,
+        marksNote: reply?.marksNote ?? "",
+        cards: shot.cards.map((c) => ({
+          n: c.n,
+          title: c.title,
+          body: byId.get(c.itemId)?.body ?? "",
+        })),
+      })
+        .then((ans) => {
+          setRuns((prev) =>
+            prev.map((r) => (r.at === at ? { ...r, answer: ans } : r)),
+          );
+        })
+        .catch((err: unknown) => {
+          setRuns((prev) =>
+            prev.map((r) =>
+              r.at === at
+                ? {
+                    ...r,
+                    answer: {
+                      ok: false,
+                      error: String(err),
+                      ms: 0,
+                      answer: "",
+                      ink_block: "",
+                      system_prompt: "",
+                    },
+                  }
+                : r,
+            ),
+          );
+        })
+        .finally(() => setAnswering(false));
+    }
 
     // 실제 화면과 같게 — 글자가 된 획은 캔버스에서 사라진다.
     const gone = new Set(els.map((e) => e.id));
@@ -357,6 +412,7 @@ export function InkLabTab() {
           runs={runs}
           error={error}
           busy={busy}
+          answering={answering}
           onClear={() => setRuns([])}
         />
       </div>

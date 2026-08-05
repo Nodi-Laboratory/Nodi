@@ -124,7 +124,9 @@ test("읽기가 진짜 창구를 부르고 흐름 로그가 펼쳐진다", async
   await expect(page.getByText("카드 선정")).toBeVisible();
   await expect(page.getByText("도식 렌더")).toBeVisible();
   await expect(page.getByText("두 모델 (동시)")).toBeVisible();
-  await expect(page.getByText("SOLAR에 갈 블록")).toBeVisible();
+  await expect(page.getByText("SOLAR에 간 블록")).toBeVisible();
+  // SOLAR 단계까지 붙어 있어야 한다 — 실험실의 마지막 칸이다.
+  await expect(page.getByText("SOLAR 답변")).toBeVisible();
 
   // 모델이 본 그림이 실제로 그려진다 — 표만으로는 못 잡는 것이 여기 있다.
   await expect(page.getByAltText("OCR로 가는 그림 (획만)")).toBeVisible();

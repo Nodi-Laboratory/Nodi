@@ -20,6 +20,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Eraser } from "lucide-react";
 import type { InkMarksStatus } from "@/lib/api/ink";
+import type { LabAnswer } from "@/lib/api/adminInkLab";
 import type { InkCapture } from "@/lib/canvas2/inkCapture";
 import type { InkTraceRow, InkVerdict } from "@/lib/canvas2/inkScene";
 import type { CanvasItem } from "@/lib/canvas2/types";
@@ -40,6 +41,8 @@ export interface InkRun {
       }
     | null;
   cards: readonly CanvasItem[];
+  /** SOLAR 답변. 아직 안 왔으면 null. */
+  answer: LabAnswer | null;
 }
 
 /**
@@ -111,12 +114,15 @@ export function InkLabLog({
   runs,
   error,
   busy,
+  answering,
   onClear,
 }: {
   runs: readonly InkRun[];
   error: string | null;
   /** 지금 읽는 중인가 — 누르고 응답까지 3~20초라 빈 화면이면 멎은 줄 안다. */
   busy: boolean;
+  /** SOLAR 답변을 기다리는 중인가. */
+  answering: boolean;
   onClear: () => void;
 }) {
   return (
@@ -152,6 +158,15 @@ export function InkLabLog({
           style={{ borderColor: C.line, background: "#1b1813", color: C.dim }}
         >
           읽는 중… OCR 3~8초 · 비전 5~20초 (동시에 돕니다)
+        </div>
+      )}
+
+      {answering && !busy && (
+        <div
+          className="rounded-lg border px-3 py-2 text-[12px]"
+          style={{ borderColor: C.line, background: "#1b1813", color: C.dim }}
+        >
+          SOLAR가 답하는 중…
         </div>
       )}
 
@@ -284,10 +299,32 @@ function RunCard({ run, open }: { run: InkRun; open: boolean }) {
 
           <Step
             n={run.capture.figure ? 7 : 6}
-            title="SOLAR에 갈 블록"
+            title="SOLAR에 간 블록"
             detail={`카드 ${run.capture.cards.length}장`}
           >
-            <Pre>{solarPreview(run)}</Pre>
+            <Pre>{run.answer?.ink_block || solarPreview(run)}</Pre>
+          </Step>
+
+          <Step
+            n={run.capture.figure ? 8 : 7}
+            title="SOLAR 답변"
+            detail={
+              run.answer
+                ? run.answer.ok
+                  ? ms(run.answer.ms)
+                  : "실패"
+                : "기다리는 중…"
+            }
+          >
+            {!run.answer && (
+              <Note>표시를 다 읽은 뒤 이어서 물어봅니다 — 보통 5~20초.</Note>
+            )}
+            {run.answer && !run.answer.ok && (
+              <div className="text-[12px]" style={{ color: "#e0a0a0" }}>
+                {run.answer.error || "답변을 받지 못했습니다."}
+              </div>
+            )}
+            {run.answer?.ok && <Pre>{run.answer.answer || "(빈 응답)"}</Pre>}
           </Step>
         </div>
       )}

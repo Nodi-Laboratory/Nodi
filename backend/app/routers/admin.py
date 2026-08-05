@@ -11,6 +11,7 @@ D113에서 이 콘솔이 서비스 전체를 관측하는 창구가 됐다:
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,7 +32,7 @@ from .. import ai
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
 from ..config import get_settings
 from ..db.client import UserClient, get_service_client
-from ..services import admin_backup, admin_console, app_settings
+from ..services import admin_backup, admin_console, app_settings, gemini, solar
 from ..services import figures as figures_svc
 from . import health
 
@@ -1069,4 +1070,88 @@ async def ink_lab_figure(
         "figure_id": row["id"],
         "caption": figures_svc.display_caption(row),
         "page": row.get("page"),
+    }
+
+
+class InkAnswerBody(BaseModel):
+    """실험실이 SOLAR까지 태워 보기 위한 입력 (D178).
+
+    **왜 채팅 창구를 안 쓰나**: 실험실 카드는 붙박이라 DB에 없다(매번 같은
+    조건에서 재려면 그래야 한다). 그래서 `card_ids`로 본문을 다시 읽는 실제
+    경로를 그대로 쓸 수 없고, 카드 본문을 그대로 받는다.
+
+    **그 대신 프롬프트 조립은 실제와 같은 것을 태운다** —
+    `gemini.compose_system_structured(ink_context=…)`. 사본을 만들면 사본만
+    맞고 실제 경로는 다른 상황이 된다(RagLabTab과 같은 태도).
+    """
+
+    question: str = Field(min_length=1, max_length=2000)
+    marks_note: str = Field(default="", max_length=2000)
+    cards: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+
+
+@router.post("/ink-lab/answer")
+async def ink_lab_answer(
+    body: InkAnswerBody,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """표시 맥락을 얹어 SOLAR에게 한 번 물어본다 — 실험실 전용.
+
+    스트리밍하지 않는다. 여기서 볼 것은 "어떻게 써지는가"가 아니라 **무엇을
+    답하는가**이고, 실험실은 그 결과 한 장이면 된다.
+    """
+    settings_ = get_settings()
+    lines = []
+    note = body.marks_note.strip()
+    if note:
+        lines.append(note)
+    elif body.cards:
+        lines.append(
+            "표시가 무엇을 가리키는지는 읽지 못했습니다. "
+            "아래 카드들이 학생이 표시한 자리 주변에 있었습니다."
+        )
+    rows = []
+    for c in body.cards:
+        try:
+            n = int(c.get("n"))
+        except (TypeError, ValueError):
+            continue
+        title = str(c.get("title") or "제목 없음")[:120]
+        text = " ".join(str(c.get("body") or "").split())[
+            : settings_.ink_card_body_max_chars
+        ]
+        rows.append(f"[카드 {n}] {title}: {text}" if text else f"[카드 {n}] {title}")
+    if rows:
+        lines.append("[표시 주변의 카드]\n" + "\n".join(rows))
+    ink_context = "\n\n".join(lines) or None
+
+    system_prompt, blocks = gemini.compose_system_structured(
+        None,
+        ink_context=ink_context,
+        base_instruction=solar.CONCEPT_CARD_SYSTEM_PROMPT,
+    )
+    started = time.monotonic()
+    try:
+        done = await solar.complete(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": body.question},
+            ]
+        )
+    except Exception as exc:  # noqa: BLE001 - 실험실은 실패도 보여 준다
+        logger.warning("실험실 SOLAR 호출 실패", exc_info=True)
+        return {"ok": False, "error": str(exc)[:300], "ms": 0, "answer": "",
+                "system_prompt": system_prompt, "ink_block": ink_context or ""}
+
+    return {
+        "ok": True,
+        "error": "",
+        "ms": int((time.monotonic() - started) * 1000),
+        "answer": done.message.get("content") or "",
+        "usage": solar.usage_of(getattr(done, "usage", None)),
+        # 실험실의 요점은 **무엇을 보고 답했나**다 — 프롬프트도 함께 낸다.
+        "system_prompt": system_prompt,
+        "ink_block": ink_context or "",
+        "blocks": [b.get("kind") for b in blocks],
     }
