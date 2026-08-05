@@ -225,6 +225,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [inkContext, setInkContext] = useState<{
     marksNote: string;
     cardIds: string[];
+    /** 기하가 센 짚은 카드 번호. 서버 프롬프트가 단정문으로 쓴다. */
+    pointed: number[];
     /**
      * 학생이 짚은 카드의 **아이템 id** — 이 턴의 답이 그 카드의 자식이 된다.
      *
@@ -1181,7 +1183,12 @@ export function CanvasWorkspace({ spaceId }: Props) {
           : null;
       setInkContext(
         shot.cards.length
-          ? { marksNote, cardIds: shot.cards.map((c) => c.itemId), parentId }
+          ? {
+              marksNote,
+              cardIds: shot.cards.map((c) => c.itemId),
+              pointed: shot.pointed,
+              parentId,
+            }
           : null,
       );
       setInkRecognized(true);
@@ -1545,7 +1552,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
         items={store.items}
         positions={layout.positions}
         sizes={layout.sizes}
-        columnX={layout.columnX}
         tagOrder={layout.tagOrder}
         tagOptions={store.tagOptions}
         zoom={bridge.camera.zoom}

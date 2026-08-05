@@ -54,6 +54,13 @@ export interface InkSendContext {
   /** 도식에 그려진 순서 그대로. **이 순서가 곧 `[카드 N]`의 N이다.** */
   cardIds: string[];
   /**
+   * 기하가 센 **짚은 카드 번호**(1부터). 서버 프롬프트가 이걸 단정문으로 쓴다.
+   *
+   * 설명 산문만 보내고 SOLAR가 거기서 대상을 읽어 내기를 기대하면 자주 다른
+   * 카드를 설명한다(사용자 보고 2026-08-05) — 우리가 아는 답은 우리 말로 준다.
+   */
+  pointed: number[];
+  /**
    * 짚은 카드의 아이템 id — 이 턴의 트리 부모다(D178).
    *
    * 서버에는 안 보낸다. 부모 결정은 화면의 일이고(D151 `assignParents`),
@@ -411,6 +418,7 @@ export function useCanvasStream({
                 ? {
                     marks_note: opts.ink.marksNote,
                     card_ids: opts.ink.cardIds,
+                    pointed: opts.ink.pointed,
                   }
                 : null,
           },

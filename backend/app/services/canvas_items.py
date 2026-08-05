@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi import HTTPException, status
 
@@ -150,12 +150,32 @@ async def session_tags(
     return out
 
 
+class InkCards(NamedTuple):
+    """표시 주변 카드 블록 + **어느 것이 대상인지.**
+
+    대상을 따로 내는 이유는, 그것이 프롬프트에 **우리 말로** 들어가야 하기
+    때문이다. 예전에는 비전 모델이 쓴 산문("화살표가 [카드 2]를 가리킨다")만
+    넣고 SOLAR가 거기서 대상을 읽어 내기를 기대했다 — 그런데 그 산문은 트리
+    지도·자료 블록 사이에 끼여 있고, SOLAR는 자주 고른 노드(`pickedId`)나
+    지도의 흐름을 따라갔다(사용자 보고 2026-08-05: "vlm이 카드 2를 가리킨다고
+    말해도 SOLAR는 다른 카드를 설명한다").
+
+    **어느 카드를 짚었는지는 기하가 이미 정확히 안다.** 모델에게 추론시킬
+    일이 아니다 — VLM에서 배운 것과 같은 교훈이다.
+    """
+
+    block: str
+    #: "[카드 2] 천문학" 꼴. 비어 있으면 확실히 짚은 것이 없다는 뜻이다.
+    targets: list[str]
+
+
 async def ink_cards_context(
     client: UserClient,
     session_id: str,
     card_ids: list[str],
     body_max_chars: int,
-) -> str | None:
+    pointed: list[int] | None = None,
+) -> InkCards | None:
     """표시 주변 카드를 프롬프트 블록으로 (D178). 없으면 None.
 
     ## 왜 클라이언트가 보낸 본문을 안 쓰나
@@ -201,14 +221,25 @@ async def ink_cards_context(
     )
     by_id = {str(r.get("id")): r for r in rows}
     lines: list[str] = []
+    targets: list[str] = []
+    want = set(pointed or ())
     for n, cid in enumerate(ids, start=1):
         row = by_id.get(cid)
         if not row:
             continue
         title = (row.get("title") or row.get("tag") or "제목 없음").strip()
         body = " ".join((row.get("body") or "").split())[:body_max_chars]
-        lines.append(f"[카드 {n}] {title}: {body}" if body else f"[카드 {n}] {title}")
-    return "\n".join(lines) if lines else None
+        # **짚은 카드에는 표를 단다.** 이 줄과 위의 결론 줄이 같은 말을 두 번
+        # 하는 셈인데, 프롬프트가 길어질수록 결론 줄 하나는 묻힌다.
+        head = f"[카드 {n}] {title}"
+        if n in want:
+            head += " ← 학생이 짚은 카드"
+            targets.append(f"[카드 {n}] {title}")
+        lines.append(f"{head}: {body}" if body else head)
+    if not lines:
+        return None
+    return InkCards("\n".join(lines), targets)
+
 
 
 def _clean_new(session_id: str, raw: dict[str, Any]) -> dict[str, Any]:

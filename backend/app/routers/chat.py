@@ -93,6 +93,10 @@ class InkContext(BaseModel):
 
     marks_note: str = Field(default="", max_length=2000)
     card_ids: list[str] = Field(default_factory=list, max_length=8)
+    #: 기하가 센 **짚은 카드 번호**(1부터). 프롬프트에 우리 말로 못 박는다 —
+    #: 비전 모델의 산문에서 SOLAR가 읽어 내기를 기대하면 자주 다른 카드를
+    #: 설명한다(사용자 보고 2026-08-05).
+    pointed: list[int] = Field(default_factory=list, max_length=8)
 
 
 class ChatStreamBody(BaseModel):
@@ -299,14 +303,25 @@ async def chat_stream(
     ink_context = None
     if body.ink and (body.ink.card_ids or body.ink.marks_note.strip()):
         try:
-            cards_block = await canvas_items.ink_cards_context(
+            cards = await canvas_items.ink_cards_context(
                 client,
                 body.session_id,
                 body.ink.card_ids,
                 settings.ink_card_body_max_chars,
+                body.ink.pointed,
             )
+            cards_block = cards.block if cards else None
             note = body.ink.marks_note.strip()
             chunks = []
+            # **결론이 맨 앞이다.** 뒤에 두면 카드 본문에 묻힌다. 이 값은 기하가
+            # 센 것이지 모델이 고른 것이 아니다 — 그래서 단정해서 쓴다.
+            if cards and cards.targets:
+                chunks.append(
+                    "학생이 표시로 짚은 카드: "
+                    + ", ".join(cards.targets)
+                    + "\n질문의 '이거'·'여기'는 **이 카드**를 뜻합니다. "
+                    "다른 카드는 배경이니 묻지 않은 것을 설명하지 마세요."
+                )
             if note:
                 chunks.append(note)
             elif cards_block:

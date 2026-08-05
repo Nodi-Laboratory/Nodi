@@ -49,6 +49,13 @@ export interface ChatStreamBody {
     marks_note: string;
     /** 도식에 그려진 순서대로. **이 순서가 곧 [카드 N]의 N이다.** */
     card_ids: string[];
+    /**
+     * 기하가 센 **짚은 카드 번호**(1부터).
+     *
+     * 설명 산문만 보내고 SOLAR가 거기서 대상을 읽어 내기를 기대하면 자주
+     * 다른 카드를 설명한다 — 우리가 아는 답은 우리 말로 못 박는다.
+     */
+    pointed: number[];
   } | null;
 }
 

@@ -80,7 +80,7 @@ async def test_카드_번호는_보낸_순서를_따른다():
         client, "s-1", [U1, U2, U3], 1200
     )
     assert out is not None
-    assert out.splitlines() == [
+    assert out.block.splitlines() == [
         "[카드 1] 천문학: 하나",
         "[카드 2] 지질학: 둘",
         "[카드 3] 생명공학: 셋",
@@ -95,14 +95,14 @@ async def test_없는_카드는_번호를_밀지_않고_빠진다():
     out = await canvas_items.ink_cards_context(
         client, "s-1", [U1, U2, U3], 1200
     )
-    assert out == "[카드 3] 생명공학: 셋"
+    assert out.block == "[카드 3] 생명공학: 셋"
 
 
 @pytest.mark.asyncio
 async def test_본문은_상한만큼_자른다():
     client = _FakeClient([{"id": U1, "title": "지질학", "body": "가" * 500}])
     out = await canvas_items.ink_cards_context(client, "s-1", [U1], 10)
-    assert out == "[카드 1] 지질학: " + "가" * 10
+    assert out.block == "[카드 1] 지질학: " + "가" * 10
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_임시_id가_섞여도_나머지_카드는_산다():
         client, "s-1", ["tmp-4", U2, "local-note-9"], 1200
     )
     # 번호는 보낸 자리 그대로 — 임시 id 자리를 당기지 않는다.
-    assert out == "[카드 2] 지질학: 둘"
+    assert out.block == "[카드 2] 지질학: 둘"
     # 조회에 임시 id를 넣지 않았다(넣으면 DB가 던진다).
     assert "tmp-4" not in client.params["id"]
     assert "local-note-9" not in client.params["id"]
@@ -440,3 +440,47 @@ def test_모양_이름에도_조사를_맞춘다():
     assert line("underline").startswith("밑줄이 ")
     assert line("circle").startswith("동그라미가 ")
     assert line("line").startswith("선이 ")
+
+
+# ───────────── 짚은 카드를 SOLAR에게 단정해서 준다 (2026-08-05) ─────────────
+#
+# 사용자 보고: "vlm에서 카드 2를 가리킨다고 말해도 solar는 다른 카드에 대해서
+# 설명하는데?" — 대상이 **비전 모델이 쓴 산문 안에만** 있었기 때문이다. 그
+# 산문은 트리 지도·자료 블록 사이에 끼여 있고, SOLAR는 자주 다른 흐름을 따라갔다.
+# 어느 카드를 짚었는지는 기하가 이미 정확히 안다 — 추론시킬 일이 아니다.
+
+
+@pytest.mark.asyncio
+async def test_짚은_카드에_표를_달고_따로_뽑아_준다():
+    client = _FakeClient([
+        {"id": U1, "title": "지질학", "body": "하나", "tag": None},
+        {"id": U2, "title": "천문학", "body": "둘", "tag": None},
+    ])
+    out = await canvas_items.ink_cards_context(
+        client, "s-1", [U1, U2], 1200, [2]
+    )
+    assert out.targets == ["[카드 2] 천문학"]
+    lines = out.block.splitlines()
+    assert lines[0] == "[카드 1] 지질학: 하나"
+    # 결론 줄 하나는 긴 프롬프트에서 묻힌다 — 카드 줄에도 표를 단다.
+    assert lines[1] == "[카드 2] 천문학 ← 학생이 짚은 카드: 둘"
+
+
+@pytest.mark.asyncio
+async def test_짚은_것이_없으면_대상도_비운다():
+    """지어내지 않는다 — 비어 있으면 "확실히 짚은 것이 없다"가 사실이다."""
+    client = _FakeClient([{"id": U1, "title": "지질학", "body": "하나", "tag": None}])
+    out = await canvas_items.ink_cards_context(client, "s-1", [U1], 1200, [])
+    assert out.targets == []
+    assert "짚은 카드" not in out.block
+
+
+@pytest.mark.asyncio
+async def test_없는_카드는_대상이_될_수_없다():
+    """번호는 맞는데 그 카드가 지워졌다면 대상에서도 빠져야 한다 — 안 빼면
+    프롬프트가 본문 없는 카드를 가리키라고 시킨다."""
+    client = _FakeClient([{"id": U2, "title": "천문학", "body": "둘", "tag": None}])
+    out = await canvas_items.ink_cards_context(
+        client, "s-1", [U1, U2], 1200, [1, 2]
+    )
+    assert out.targets == ["[카드 2] 천문학"]
