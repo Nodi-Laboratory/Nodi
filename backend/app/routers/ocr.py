@@ -69,6 +69,14 @@ async def recognize_handwriting(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="필기 인식이 아직 준비되지 않았습니다.",
         ) from None
+    except svc.OcrBusy:
+        # **502가 아니다** (D177). 모델 서버는 GPU 락으로 요청을 직렬 처리해서
+        # 한 반이 동시에 누르면 뒤쪽이 밀린다 — 고장이 아니라 붐비는 것이고,
+        # 학생이 할 일도 다르다(다시 누르면 된다).
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="지금 인식 요청이 몰려 있어요. 잠시 후 다시 눌러 주세요.",
+        ) from None
     except svc.OcrUpstreamError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

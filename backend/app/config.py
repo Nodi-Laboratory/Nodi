@@ -166,13 +166,28 @@ class Settings(BaseSettings):
     # OCR_BASE_URL로 덮는다(services/ocr.py resolve_base_url).
     ocr_enabled: bool = True                       # 킬 스위치(모델 서버 점검 등)
     ocr_base_url: str = ""                         # env OCR_BASE_URL. 비면 judge 호스트 유도
-    ocr_port: int = 30020                          # 유도 시 붙일 포트(문서 기준 8083→30020)
-    # 문서 권장 2048. 프롬프트 한 줄 질문은 수십 토큰이면 끝나고, 상한이 크면
-    # 오작동 시 GPU를 오래 문다(요청은 GPU 락으로 직렬 처리된다).
-    ocr_max_new_tokens: int = 512
+    # 유도 시 붙일 포트. **내부 포트(8083)다** (D177).
+    #
+    # 문서 표의 30020은 **외부 포워딩**용이다(8083 → 30020). 백엔드는 모델
+    # 서버와 **같은 기계**에서 부르므로(유도의 전제가 그것이다) 포워딩을 거칠
+    # 이유가 없고, 실제로 30020은 기계 안에서 열려 있지도 않다 —
+    # 실측 2026-08-05: `All connection attempts failed`로 프로덕션에서 손글씨
+    # 인식이 통째로 죽어 있었다. 밖에서 부를 일이 생기면 OCR_BASE_URL로 덮는다.
+    ocr_port: int = 8083
+    # 문서 권장 2048. 한 줄 질문은 수십 토큰이면 끝나지만 **부족하면 출력이
+    # 중간에 잘린다**(문서 경고). 여러 줄을 살리게 되면서(D177) 길어질 여지가
+    # 커져 관리자 노브로 뺐다 — 잘리는 것이 GPU를 조금 더 무는 것보다 나쁘다.
+    ocr_max_new_tokens: int = 1024
     ocr_max_image_bytes: int = 8 * 1024 * 1024     # 입력판 PNG는 보통 수십 KB
-    # 문서 실측 6~8초 + 직렬 대기. 학생이 기다리는 경로라 무한정 잡지 않는다.
-    ocr_timeout_seconds: int = 90
+    # 문서 실측 6~8초. 자리를 잡은 **뒤**의 한 건 상한이다(대기는 아래 큐 몫).
+    ocr_timeout_seconds: int = 45
+    # 모델 서버는 **GPU 락으로 요청을 직렬 처리한다**(문서). 그래서 우리가 더
+    # 많이 밀어 넣어도 처리량은 안 늘고 모두의 대기만 길어진다 — 들어가는 수를
+    # 우리 쪽에서 막고, 자리를 못 잡으면 **빨리 포기하고 안내한다**(D177).
+    ocr_max_concurrent: int = 2
+    # 자리를 기다리는 상한. 넘으면 "지금 붐빈다"고 알린다 — 학생을 90초 세워
+    # 놓고 결국 실패시키는 것보다 낫다.
+    ocr_queue_timeout_seconds: int = 15
 
     # --- 강의 클립 추천 (D149) ---
     lecture_pipeline_enabled: bool = True          # 인제스트 킬 스위치

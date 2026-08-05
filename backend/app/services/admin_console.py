@@ -588,11 +588,74 @@ _SPECS: list[dict[str, Any]] = [
         "description": "같은 부모에서 갈라진 가지들을 좌우로 얼마나 벌릴지.",
         "effect": "분기 가독성",
     },
+    # ── 손글씨 인식 (D176·D177) ──────────────────────────────────────
+    #
+    # 모델 서버는 **GPU 락으로 요청을 직렬 처리한다**. 그래서 동시성·대기
+    # 상한이 실제로 학생 체감을 정한다.
+    {
+        "key": "ocr_enabled",
+        "label": "손글씨 인식",
+        "group": "손글씨 인식",
+        "widget": "toggle",
+        "scope": "live",
+        "description": "질문하는 펜의 글자 인식 킬 스위치(모델 서버 점검 등).",
+        "effect": "손글씨 인식 on/off",
+    },
+    {
+        "key": "ocr_max_new_tokens",
+        "label": "인식 최대 길이",
+        "group": "손글씨 인식",
+        "widget": "number",
+        "min": 128, "max": 4096, "step": 128, "unit": "토큰",
+        "scope": "live",
+        "description": (
+            "**부족하면 인식 결과가 중간에 잘린다.** 여러 줄로 길게 쓰면 그만큼 "
+            "필요하다. 올리면 오작동 시 GPU를 더 오래 문다."
+        ),
+        "effect": "긴 필기 인식 ↔ GPU 점유",
+    },
+    {
+        "key": "ocr_max_concurrent",
+        "label": "동시 인식 요청 수",
+        "group": "손글씨 인식",
+        "widget": "number",
+        "min": 1, "max": 8, "step": 1, "unit": "건",
+        "scope": "live",
+        "description": (
+            "모델 서버가 GPU 락으로 직렬 처리하므로 **많이 넣어도 처리량은 안 "
+            "는다** — 모두의 대기만 길어진다. 넘치는 요청은 붐빈다고 안내한다."
+        ),
+        "effect": "대기 길이 ↔ 거절 빈도",
+    },
+    {
+        "key": "ocr_queue_timeout_seconds",
+        "label": "인식 대기 상한",
+        "group": "손글씨 인식",
+        "widget": "number",
+        "min": 3, "max": 120, "step": 1, "unit": "초",
+        "scope": "live",
+        "description": (
+            "자리를 기다리는 시간. 넘으면 '지금 붐빈다'고 알린다 — 학생을 오래 "
+            "세워 두고 결국 실패시키는 것보다 낫다."
+        ),
+        "effect": "포기 시점",
+    },
+    {
+        "key": "ocr_timeout_seconds",
+        "label": "인식 응답 상한",
+        "group": "손글씨 인식",
+        "widget": "number",
+        "min": 10, "max": 300, "step": 5, "unit": "초",
+        "scope": "live",
+        "description": "자리를 잡은 뒤 한 건의 상한(문서 실측 6~8초).",
+        "effect": "느린 인식 허용 범위",
+    },
 ]
 
 _SPEC_BY_KEY = {s["key"]: s for s in _SPECS}
 _GROUP_ORDER = [
     "답변 생성",
+    "손글씨 인식",
     "캔버스 화면",
     "AI 흐름",
     "RAG 검색",

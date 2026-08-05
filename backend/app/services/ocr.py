@@ -9,22 +9,27 @@ OCR 서버는 **인증이 없고 CORS가 모두 열려 있다**. 브라우저에
 주소가 곧 공개 GPU 창구가 된다(학생 브라우저 = 인터넷 아무나). 백엔드를 거치면
 로그인 검사가 앞에 서고, 주소도 서버 안에만 남는다.
 
-## 좌표는 버린다
+## 줄은 좌표로 되살린다 (D177)
 
-서버는 어절마다 `<char>…</char><bbox>…</bbox>`를 주고 `/ocr`가 그걸 파싱해
-`text`·`boxes`로 돌려준다. 우리가 쓰는 것은 `text` 하나다 — 입력판의 결과는
-**입력창에 들어갈 질문 한 줄**이고, 박스를 얹을 화면이 없다. 나중에 "쓴 자리에
-그대로 글자를 보여 주는" 화면을 만들면 그때 `boxes`를 열면 된다(계약에 이미 있다).
+서버의 `text`는 조각을 **공백으로 이어 붙인** 결과라 여러 줄로 쓴 글씨가 한 줄로
+뭉갠다. 캔버스 전체가 종이가 되면서(D176) 학생은 여러 줄로 쓴다 — 그걸 한 줄로
+합치면 문장이 뒤엉킨다.
 
-## 줄바꿈이 없는 것은 알고 있다
+그래서 `boxes`의 y로 줄을 갈라 복원한다(`lines_from_boxes`). 박스가 없거나
+해석이 안 되면 `text`로 떨어진다 — 줄이 뭉개질지언정 글자는 살린다.
 
-`text`는 조각을 공백으로 이어 붙인 결과라 여러 줄로 쓴 글씨도 한 줄이 된다.
-질문 한 줄이 목적이라 지금은 이게 맞다 — 줄을 살리려면 `boxes`의 y로 갈라야
-하고, 그건 화면이 생길 때 할 일이다.
+## 혼잡은 우리 쪽에서 막는다 (D177)
+
+모델 서버는 **GPU 락으로 요청을 직렬 처리한다**(문서). 더 밀어 넣어도 처리량은
+안 늘고 모두의 대기만 길어진다. 그래서 들어가는 수를 세마포어로 막고, 자리를
+못 잡으면 **빨리 포기하고 "붐빈다"고 알린다** — 학생을 한참 세워 두고 결국
+실패시키는 것보다 낫다.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -41,6 +46,25 @@ class OcrUnavailable(RuntimeError):
 
 class OcrUpstreamError(RuntimeError):
     """모델 서버가 응답하지 않거나 오류를 냈다."""
+
+
+class OcrBusy(RuntimeError):
+    """지금 GPU 앞이 붐빈다 — 고장이 아니라 **잠깐 기다려야 함**이다."""
+
+
+# 동시에 들어가는 요청 수를 우리 쪽에서 막는다. 설정이 바뀌면 다시 만든다
+# (부팅 시 한 번 읽고 마는 값이 아니라 admin 노브다).
+_gate: asyncio.Semaphore | None = None
+_gate_size = 0
+
+
+def _acquire_gate() -> asyncio.Semaphore:
+    global _gate, _gate_size
+    size = max(1, settings.ocr_max_concurrent)
+    if _gate is None or _gate_size != size:
+        _gate = asyncio.Semaphore(size)
+        _gate_size = size
+    return _gate
 
 
 def resolve_base_url() -> str:
@@ -94,6 +118,91 @@ def clean_text(raw: str) -> str:
     return " ".join((raw or "").split())
 
 
+def lines_from_boxes(boxes: Any) -> str:
+    """문자 박스들 → **줄이 살아 있는** 텍스트 (D177).
+
+    서버는 어절마다 `bbox = [x1, y1, x2, y2]`(0~1 정규화)를 준다. 같은 줄에
+    쓴 글씨는 y 구간이 서로 겹치므로, **겹치면 같은 줄**로 묶고 줄 안에서는
+    x로 정렬한다.
+
+    임계를 "y 중심 차이 < 상수"로 두지 않는 이유: 글씨 크기가 제각각이라
+    고정 상수는 큰 글씨를 쪼개고 작은 글씨를 합친다. 대신 **겹친 높이가 더
+    낮은 쪽 높이의 절반을 넘는가**로 본다 — 크기에 따라 저절로 조정된다.
+
+    박스가 없거나 형태가 다르면 빈 문자열을 준다 — 호출부가 `text`로 떨어진다.
+    """
+    if not isinstance(boxes, list) or not boxes:
+        return ""
+
+    items: list[tuple[float, float, float, str]] = []  # (y1, y2, x1, text)
+    for b in boxes:
+        if not isinstance(b, dict):
+            continue
+        bbox = b.get("bbox")
+        text = b.get("text")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+            continue
+        if not isinstance(text, str) or not text.strip():
+            continue
+        try:
+            x1, y1, _x2, y2 = (float(bbox[0]), float(bbox[1]),
+                               float(bbox[2]), float(bbox[3]))
+        except (TypeError, ValueError):
+            continue
+        if y2 < y1:
+            y1, y2 = y2, y1
+        items.append((y1, y2, x1, text.strip()))
+
+    if not items:
+        return ""
+
+    items.sort(key=lambda it: (it[0], it[2]))
+    rows: list[list[tuple[float, float, float, str]]] = [[items[0]]]
+    for it in items[1:]:
+        row = rows[-1]
+        # 줄의 세로 구간은 지금까지 담은 것들의 합집합이다 — 첫 글자만 보면
+        # 줄 중간에 큰 글자가 오는 순간 줄이 갈라진다.
+        top = min(r[0] for r in row)
+        bottom = max(r[1] for r in row)
+        overlap = min(bottom, it[1]) - max(top, it[0])
+        shorter = min(bottom - top, it[1] - it[0])
+        if shorter > 0 and overlap > shorter * 0.5:
+            row.append(it)
+        else:
+            rows.append([it])
+
+    out: list[str] = []
+    for row in rows:
+        row.sort(key=lambda it: it[2])
+        line = " ".join(r[3] for r in row).strip()
+        if line:
+            out.append(line)
+    return "\n".join(out)
+
+
+def merge_layout(text: str, boxes: Any) -> str:
+    """서버의 한 줄 `text`에 좌표로 복원한 **줄바꿈만** 얹는다 (D177).
+
+    줄을 살리는 것이 목적이지 글자를 바꾸는 것이 아니다. 그래서 박스로 만든
+    결과가 `text`와 **글자 구성이 정확히 같을 때만** 채택한다.
+
+    왜 이 검사가 필요한가: `text`는 서버가 박스들을 이어 붙인 값이라 보통은
+    같지만, 둘이 어긋나면(파싱이 일부만 되거나 계약이 바뀌면) 박스 쪽이 **짧다**.
+    그대로 쓰면 학생이 쓴 글의 일부가 조용히 사라진다 — 줄이 뭉개지는 것보다
+    글자를 잃는 것이 훨씬 나쁘다.
+
+    비교는 공백을 뺀 글자의 다중집합으로 한다(순서는 줄 나눔으로 바뀌니까).
+    """
+    flat = clean_text(text)
+    laid_out = lines_from_boxes(boxes)
+    if not laid_out:
+        return flat
+    if sorted(laid_out.split()) != sorted(flat.split()):
+        logger.info("ocr 좌표 복원과 text가 불일치 — text를 쓴다")
+        return flat
+    return laid_out
+
+
 async def recognize(
     image: bytes,
     *,
@@ -110,6 +219,16 @@ async def recognize(
     if not base or not settings.ocr_enabled:
         raise OcrUnavailable("OCR 서버가 설정되지 않았습니다.")
 
+    # GPU 앞 줄서기 (D177). 자리를 못 잡으면 **기다리지 않고** 붐빈다고 알린다.
+    gate = _acquire_gate()
+    try:
+        await asyncio.wait_for(
+            gate.acquire(), timeout=float(settings.ocr_queue_timeout_seconds)
+        )
+    except TimeoutError as exc:
+        logger.info("ocr 대기 포기 — 앞이 붐빔")
+        raise OcrBusy("지금 인식 요청이 몰려 있습니다.") from exc
+
     timeout = httpx.Timeout(float(settings.ocr_timeout_seconds), connect=10.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -121,6 +240,8 @@ async def recognize(
     except httpx.HTTPError as exc:  # 연결 실패·타임아웃
         logger.warning("ocr 요청 실패: %s", exc)
         raise OcrUpstreamError(str(exc)) from exc
+    finally:
+        gate.release()
 
     if res.status_code >= 400:
         # 모델 서버의 400(이미지 디코딩 실패)까지 502로 뭉개지 않는다 — 무엇이
@@ -138,4 +259,5 @@ async def recognize(
         # 계약이 바뀌었거나 다른 서비스를 가리키고 있다. 조용히 빈 값을 주면
         # 화면에는 "알아보지 못했어요"로만 보여 원인을 못 찾는다.
         raise OcrUpstreamError("응답에 text가 없습니다.")
-    return clean_text(text)
+
+    return merge_layout(text, body.get("boxes"))

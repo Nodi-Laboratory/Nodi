@@ -101,6 +101,15 @@ export function ocrErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 413) return "글씨가 너무 커요. 조금 나눠서 써 주세요.";
     if (err.status === 429) return "잠시 뒤에 다시 시도해 주세요.";
+    /**
+     * 503은 **고장이 아니라 붐비는 것**이다 (D177). 인식 서버는 GPU 락으로
+     * 요청을 한 건씩 처리해서, 한 반이 동시에 누르면 뒤쪽이 밀린다. 학생이
+     * 할 일도 다르다 — 잠깐 뒤 다시 누르면 된다. "안 돼요"로 뭉개면 기능이
+     * 망가진 줄 알고 자판으로 돌아간다.
+     */
+    if (err.status === 503) {
+      return "지금 친구들이 많이 쓰고 있어요. 잠시 후 다시 눌러 주세요.";
+    }
     if (err.status >= 500) return "인식이 잠시 안 돼요. 다시 시도해 주세요.";
     if (err.message && !err.message.startsWith("HTTP ")) return err.message;
   }
