@@ -212,6 +212,7 @@ export function InkLabTab() {
         figure: shot.figure,
         figureN: shot.figureN,
         cards: shot.cards,
+        gestures: shot.gestures,
       });
       reply = { ...got, ms: performance.now() - askedAt };
     } catch (err) {

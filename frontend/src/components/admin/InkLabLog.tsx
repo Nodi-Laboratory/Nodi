@@ -52,10 +52,22 @@ export interface InkRun {
  */
 /** 기하가 센 표시 종류 → 화면 말. */
 const MARK_LABEL: Record<string, string> = {
-  circled: "동그라미",
-  pointed: "화살표·밑줄",
+  circled: "감쌈",
+  within: "카드 안에 그림",
+  pointed: "끝이 가리킴",
+  linked: "여기서 출발",
   crossed: "스쳐 지나감",
   near: "근처",
+};
+
+/** 표시 모양 → 화면 말. `inkShapes.GestureShape`와 같은 열쇠다. */
+const SHAPE_LABEL: Record<string, string> = {
+  circle: "동그라미",
+  arrow: "화살표",
+  underline: "밑줄",
+  line: "선",
+  bracket: "묶음표",
+  scribble: "덧칠",
 };
 
 const MARKS_REASON: Record<InkMarksStatus, string> = {
@@ -417,6 +429,43 @@ function Result({ run }: { run: InkRun }) {
           </span>
         )}
       </div>
+
+      {/**
+       * **표시가 몇 개고 각각 무엇을 했나.** 카드별 낱말만 보면 "화살표가
+       * 1에서 3으로 갔다"를 못 읽는다 — 방향은 카드 둘 사이의 관계라 어느
+       * 한 카드에도 안 딸린다. 비전 모델이 받는 사실이 정확히 이것이다.
+       */}
+      {run.capture.gestures.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wide" style={{ color: C.dim }}>
+            그린 표시 (기하)
+          </div>
+          <div className="flex flex-col gap-0.5">
+            {run.capture.gestures.map((g) => (
+              <div key={g.i} className="text-[12px]" style={{ color: C.text }}>
+                <span style={{ color: C.dim }}>{g.i}.</span>{" "}
+                <b>{SHAPE_LABEL[g.shape] ?? g.shape}</b>
+                {(
+                  [
+                    ["감쌈", g.encloses],
+                    ["안쪽", g.within],
+                    ["가리킴", g.points],
+                    ["출발", g.from],
+                    ["스침", g.crosses],
+                  ] as const
+                )
+                  .filter(([, ns]) => ns.length)
+                  .map(([label, ns]) => (
+                    <span key={label} style={{ color: C.dim }}>
+                      {" · "}
+                      {label} {ns.map((n) => `[${n}]`).join("")}
+                    </span>
+                  ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <div className="text-[10px] uppercase tracking-wide" style={{ color: C.dim }}>
