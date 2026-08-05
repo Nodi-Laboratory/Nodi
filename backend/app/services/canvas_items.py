@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -37,6 +38,12 @@ from fastapi import HTTPException, status
 from ..db.client import UserClient, get_service_client
 
 logger = logging.getLogger("nodi.canvas_items")
+
+# 표준 UUID. 프론트의 `ids.ts` `isRealId`와 같은 판정이다 — 임시 id
+# (`tmp-…`·`local-note-…`)를 uuid 열에 넘기면 asyncpg가 DataError를 던진다.
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
+)
 
 ITEM_SELECT = (
     "id,session_id,node_id,parent_item_id,kind,source,title,body,tag,"
@@ -166,16 +173,30 @@ async def ink_cards_context(
 
     찾지 못한 id는 **조용히 뺀다**(지워졌거나 남의 것이다). 번호는 그대로
     유지한다 — 빈 번호가 있는 편이 번호가 밀리는 것보다 안전하다.
+
+    ## uuid가 아닌 id를 반드시 걸러야 한다
+
+    캔버스에는 **아직 저장되지 않은 아이템이 있다** — 이번 턴에 막 생긴 카드나
+    학생이 방금 쓴 메모는 `tmp-4`·`local-note-…` 같은 임시 id를 단다(`ids.ts`
+    `isRealId`가 가려내는 그것). 그런 id가 섞이면 `canvas_items.id`(uuid)에
+    캐스팅하다 asyncpg가 `DataError`를 던지고, 호출부의 `except`가 그것을 삼켜
+    **표시 맥락이 통째로 사라진다**(실측 2026-08-05: `invalid UUID 'tmp-4'`).
+    학생 눈에는 "동그라미를 쳤는데 AI가 못 알아본다"인데 로그에는 이유가 안
+    남는다. 하나가 성치 않다고 나머지를 버리지 않는다 — **번호 자리만 비운다.**
     """
     ids = [i for i in card_ids if i]
     if not ids:
+        return None
+    # 조회는 uuid만. 임시 id는 아직 서버에 없으므로 찾을 수도 없다.
+    real = [i for i in ids if _UUID_RE.fullmatch(i)]
+    if not real:
         return None
     rows = await client.select(
         "canvas_items",
         {
             "select": "id,title,body,tag",
             "session_id": f"eq.{session_id}",
-            "id": f"in.({','.join(ids)})",
+            "id": f"in.({','.join(real)})",
         },
     )
     by_id = {str(r.get("id")): r for r in rows}

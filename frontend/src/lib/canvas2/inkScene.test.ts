@@ -154,6 +154,25 @@ describe("buildInkScene", () => {
    * **종료가 알고리즘의 성질이다.** 상자를 키운 결과로 카드를 다시 주우면
    * 조밀한 캔버스에서 전체를 삼킨다.
    */
+  /**
+   * **판정 여백을 그림에 얹으면 안 된다.** 얹으면 도식의 상자가 실제 카드보다
+   * 사방으로 커져서 닿지 않은 획이 닿은 것처럼 그려지고, 그 그림으로 판정하는
+   * 것이 VLM이라 그 차이가 그대로 답이 된다.
+   */
+  it("고른 카드의 rect는 준 그대로다 — 판정 여백이 안 묻는다", () => {
+    const ink = line(0, 50, 400, 50);
+    const c = card("맞음", 200, 0);
+    const scene = buildInkScene([ink], [c], OPTS)!;
+    expect(scene.cards[0].rect).toEqual(c.rect);
+  });
+
+  it("여백 덕에 살짝 빗나간 획도 접촉으로 본다", () => {
+    // 카드 왼쪽 변에서 8px 떨어진 세로획 — 눈으로는 닿아 보이는 거리다.
+    const ink = line(192, 0, 192, 100);
+    const scene = buildInkScene([ink], [card("옆", 200, 0)], OPTS)!;
+    expect(scene.cards[0].touched).toBe(true);
+  });
+
   it("키운 상자 안에 들어온 카드를 다시 줍지 않는다", () => {
     const ink = line(0, 0, 100, 100);
     const anchor = card("근접", 150, 0); // 근접으로 잡힌다 → 상자가 커진다

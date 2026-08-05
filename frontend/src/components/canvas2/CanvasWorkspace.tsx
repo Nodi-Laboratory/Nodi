@@ -1122,6 +1122,16 @@ export function CanvasWorkspace({ spaceId }: Props) {
         // 조용히 넘기지 않는다 — 실패가 흔적을 안 남기면 기능이 꺼진 줄 모른다.
         console.warn("[ink] 도식을 만들지 못했다 — 표시 없이 보낸다", err);
       }
+      /**
+       * **자른 것은 자랐다고 말한다.** 상한(`ink_card_max`)에 걸려 버린 카드가
+       * 있으면 남긴다 — 조용한 절단은 "다 봤다"로 읽히고, 나중에 "왜 저 카드는
+       * 안 봤지"를 쫓을 실마리가 어디에도 없게 된다.
+       */
+      if (shot.dropped > 0) {
+        console.warn(
+          `[ink] 표시 주변 카드 ${shot.dropped}개를 상한(${clientSettings.inkCardMax})으로 버렸다`,
+        );
+      }
 
       const { text, marksNote, pointed } = await interpretInk({
         ink: png,

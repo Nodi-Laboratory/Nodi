@@ -309,6 +309,16 @@ async def chat_stream(
             chunks = []
             if note:
                 chunks.append(note)
+            elif cards_block:
+                # **표시를 못 읽었다는 사실을 숨기지 않는다.** 비전 모델이
+                # 실패하면 note가 비는데, 그대로 카드만 넣으면 프롬프트 머리말
+                # ("표시가 무엇을 가리키는지")이 거짓이 되고 모델은 없는 지시를
+                # 찾는다. 화살표는 못 읽었어도 "이 카드들 근처에서 물었다"는
+                # 여전히 참이다 — 그것만 말한다.
+                chunks.append(
+                    "표시가 무엇을 가리키는지는 읽지 못했습니다. "
+                    "아래 카드들이 학생이 표시한 자리 주변에 있었습니다."
+                )
             if cards_block:
                 chunks.append("[표시 주변의 카드]\n" + cards_block)
             ink_context = "\n\n".join(chunks) or None

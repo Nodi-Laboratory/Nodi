@@ -23,10 +23,6 @@ import type { PenStroke } from "./penPad";
 import type { Rect } from "./rect";
 import type { CanvasItem } from "./types";
 
-/** 카드 접촉 판정에 쓰는 여백 — hover 박스와 같은 크기(D126의 `padded`). */
-const PAD_X = 16;
-const PAD_Y = 12;
-
 export interface InkCaptureOpts {
   cardMax: number;
   nearPad: number;
@@ -102,9 +98,10 @@ export function toSceneCards(src: SceneSource): SceneCard[] {
       kind: it.kind,
       title: it.title,
       body: it.body,
-      // 접촉 판정은 학생이 화면에서 보는 경계와 같아야 한다 —
-      // "닿았는데 안 잡혔다"가 안 생기게.
-      rect: { x: at.x - PAD_X, y: at.y - PAD_Y, w: at.w + PAD_X * 2, h: at.h + PAD_Y * 2 },
+      // **화면에서 보이는 그대로.** 접촉 판정용 여백은 `buildInkScene`이
+      // 얹는다 — 여기서 얹으면 도식의 상자가 실제 카드보다 커져서 닿지
+      // 않은 획이 닿은 것처럼 그려진다.
+      rect: at,
       figureId,
       imageBox: figureId ? imageBoxOf(it.id, at, src.zoom) : undefined,
     });
@@ -112,13 +109,20 @@ export function toSceneCards(src: SceneSource): SceneCard[] {
   return out;
 }
 
-/** 표시가 닿은 도판 중 겹침이 가장 큰 하나. 없으면 null. */
+/**
+ * 표시가 닿은 도판 중 겹침이 가장 큰 하나. 없으면 null.
+ *
+ * **`imageBox`가 없으면 후보에서 뺀다.** 그 값이 그림 안에서의 좌표 변환
+ * 기준인데, 없으면 카드 상자로 대신 매핑하게 되고 그러면 캡션 높이만큼
+ * 표시가 밀린 그림을 보낸다 — **틀린 그림은 안 보내는 것만 못하다**(모델은
+ * 그것을 사실로 읽는다). 도식(그림 1)에는 여전히 나오므로 맥락은 안 잃는다.
+ */
 function zoomTarget(cards: readonly PickedCard[], inkBox: Rect): PickedCard | null {
   let best: PickedCard | null = null;
   let bestArea = 0;
   for (const c of cards) {
-    if (!c.touched || !c.figureId) continue;
-    const area = rectOverlap(inkBox, c.imageBox ?? c.rect);
+    if (!c.touched || !c.figureId || !c.imageBox) continue;
+    const area = rectOverlap(inkBox, c.imageBox);
     if (area > bestArea) {
       best = c;
       bestArea = area;
@@ -168,6 +172,10 @@ export async function captureInk(
       if (figurePng) figureN = target.n;
     }
   }
+
+  // 비트맵은 GC가 아니라 우리가 놓는다 — 교과서 도판은 장당 수 MB고, 한 시간
+  // 수업이면 같은 학생이 수십 번 인식을 누른다.
+  for (const bmp of bitmaps.values()) bmp.close();
 
   return {
     scene: scenePng,

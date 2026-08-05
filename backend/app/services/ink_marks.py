@@ -93,7 +93,12 @@ def build_marks_messages(
         )
     content.append({"type": "text", "text": "\n".join(lines)})
     return [
-        {"role": "system", "content": [{"type": "text", "text": MARKS_SYSTEM}]},
+        # **system content는 문자열이다** — 파트 배열이 아니라.
+        # `figure_caption`은 system 역할을 아예 쓰지 않는 것으로 이 서버(llama.cpp
+        # + mmproj)에서 검증된 유일한 형태다. 배열 content는 서버마다 지원이
+        # 갈리고, **로컬에는 비전 모델이 없어 우리가 확인할 수 없는 경로다.**
+        # 확인할 수 없으면 넓은 쪽이 아니라 좁은 쪽을 고른다.
+        {"role": "system", "content": MARKS_SYSTEM},
         {"role": "user", "content": content},
     ]
 

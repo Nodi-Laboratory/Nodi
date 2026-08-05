@@ -17,9 +17,16 @@ class _FakeClient:
 
     def __init__(self, rows: list[dict]):
         self._rows = rows
+        self.params: dict | None = None
 
     async def select(self, table: str, params: dict) -> list[dict]:
+        self.params = params
         return self._rows
+
+
+U1 = "11111111-1111-4111-8111-111111111111"
+U2 = "22222222-2222-4222-8222-222222222222"
+U3 = "33333333-3333-4333-8333-333333333333"
 
 
 def test_정상_출력을_번호와_설명으로_가른다():
@@ -76,6 +83,7 @@ def test_프롬프트에_카드_명부가_텍스트로_들어간다():
     text = "".join(
         p["text"]
         for m in msgs
+        if isinstance(m["content"], list)
         for p in m["content"]
         if isinstance(p, dict) and p.get("type") == "text"
     )
@@ -88,7 +96,13 @@ def test_도판_확대본이_있으면_두_번째_그림을_설명한다():
     msgs = ink_marks.build_marks_messages(
         cards, "data:image/png;base64,AAA", "data:image/png;base64,BBB", 1
     )
-    parts = [p for m in msgs for p in m["content"] if isinstance(p, dict)]
+    parts = [
+        p
+        for m in msgs
+        if isinstance(m["content"], list)
+        for p in m["content"]
+        if isinstance(p, dict)
+    ]
     images = [p for p in parts if p.get("type") == "image_url"]
     text = "".join(p["text"] for p in parts if p.get("type") == "text")
     assert len(images) == 2
@@ -102,6 +116,7 @@ def test_도판이_없으면_그림은_한_장():
     images = [
         p
         for m in msgs
+        if isinstance(m["content"], list)
         for p in m["content"]
         if isinstance(p, dict) and p.get("type") == "image_url"
     ]
@@ -116,12 +131,12 @@ async def test_카드_번호는_보낸_순서를_따른다():
     그 번호가 도식 그림의 배지이자 marks_note의 [카드 N]이기 때문이다.
     """
     client = _FakeClient([
-        {"id": "c-3", "title": "생명공학", "body": "셋"},
-        {"id": "c-1", "title": "천문학", "body": "하나"},
-        {"id": "c-2", "title": "지질학", "body": "둘"},
+        {"id": U3, "title": "생명공학", "body": "셋"},
+        {"id": U1, "title": "천문학", "body": "하나"},
+        {"id": U2, "title": "지질학", "body": "둘"},
     ])
     out = await canvas_items.ink_cards_context(
-        client, "s-1", ["c-1", "c-2", "c-3"], 1200
+        client, "s-1", [U1, U2, U3], 1200
     )
     assert out is not None
     assert out.splitlines() == [
@@ -135,17 +150,17 @@ async def test_카드_번호는_보낸_순서를_따른다():
 async def test_없는_카드는_번호를_밀지_않고_빠진다():
     """지워졌거나 남의 카드다. **번호를 당기면** 뒤 카드가 앞 번호를 물려받아
     marks_note의 [카드 N]과 어긋난다 — 빈 번호가 그보다 안전하다."""
-    client = _FakeClient([{"id": "c-3", "title": "생명공학", "body": "셋"}])
+    client = _FakeClient([{"id": U3, "title": "생명공학", "body": "셋"}])
     out = await canvas_items.ink_cards_context(
-        client, "s-1", ["c-1", "c-2", "c-3"], 1200
+        client, "s-1", [U1, U2, U3], 1200
     )
     assert out == "[카드 3] 생명공학: 셋"
 
 
 @pytest.mark.asyncio
 async def test_본문은_상한만큼_자른다():
-    client = _FakeClient([{"id": "c-1", "title": "지질학", "body": "가" * 500}])
-    out = await canvas_items.ink_cards_context(client, "s-1", ["c-1"], 10)
+    client = _FakeClient([{"id": U1, "title": "지질학", "body": "가" * 500}])
+    out = await canvas_items.ink_cards_context(client, "s-1", [U1], 10)
     assert out == "[카드 1] 지질학: " + "가" * 10
 
 
@@ -155,6 +170,36 @@ async def test_카드가_하나도_없으면_None():
     assert (
         await canvas_items.ink_cards_context(_FakeClient([]), "s-1", ["x"], 1200) is None
     )
+
+
+@pytest.mark.asyncio
+async def test_임시_id가_섞여도_나머지_카드는_산다():
+    """**실측 2026-08-05**: `tmp-4`를 uuid 열에 넘기면 asyncpg가 DataError를
+    던지고, 호출부의 except가 그것을 삼켜 **표시 맥락이 통째로 사라진다.**
+
+    캔버스에는 아직 저장 안 된 아이템이 늘 있다(이번 턴에 막 생긴 카드, 방금
+    쓴 메모). 학생이 그걸 동그라미 치면 임시 id가 섞인다 — 흔한 일이지
+    예외가 아니다. 하나가 성치 않다고 나머지를 버리지 않는다.
+    """
+    client = _FakeClient([{"id": U2, "title": "지질학", "body": "둘"}])
+    out = await canvas_items.ink_cards_context(
+        client, "s-1", ["tmp-4", U2, "local-note-9"], 1200
+    )
+    # 번호는 보낸 자리 그대로 — 임시 id 자리를 당기지 않는다.
+    assert out == "[카드 2] 지질학: 둘"
+    # 조회에 임시 id를 넣지 않았다(넣으면 DB가 던진다).
+    assert "tmp-4" not in client.params["id"]
+    assert "local-note-9" not in client.params["id"]
+
+
+@pytest.mark.asyncio
+async def test_전부_임시_id면_조회하지_않는다():
+    client = _FakeClient([])
+    assert (
+        await canvas_items.ink_cards_context(client, "s-1", ["tmp-1", "tmp-2"], 1200)
+        is None
+    )
+    assert client.params is None
 
 
 def test_표시_블록은_질문에_가장_가깝게_들어간다():

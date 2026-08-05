@@ -102,6 +102,16 @@ export async function interpretInk({
 }
 
 /**
+ * 도판 받기 시한(ms).
+ *
+ * **이 값이 없으면 질문이 영영 안 나간다.** 도판 바이트는 학생이 [글자 인식]을
+ * 누른 **뒤, OCR을 부르기 전에** 받는다 — 스토리지가 멎으면 그 자리에서 멈추고
+ * 화면은 "인식 중"인 채로 남는다. 도판은 **곁들이**이므로 늦으면 버리고 간다
+ * (라벨 상자로 그려진다).
+ */
+const FIGURE_TIMEOUT_MS = 6000;
+
+/**
  * 도판 원본 바이트 → 비트맵.
  *
  * **`<img>`로 받지 않는다.** 다른 출처의 이미지를 그린 캔버스는 오염돼
@@ -115,10 +125,13 @@ export async function fetchFigureBitmap(
   figureId: string,
   signal?: AbortSignal,
 ): Promise<ImageBitmap | null> {
+  // 호출부의 취소와 우리 시한을 함께 건다. 어느 쪽이든 먼저 끊으면 끝난다.
+  const bell = AbortSignal.timeout(FIGURE_TIMEOUT_MS);
+  const stop = signal ? AbortSignal.any([signal, bell]) : bell;
   try {
     const res = await fetch(`${API_BASE}/files/figures/${figureId}/raw`, {
       headers: await authHeaders(),
-      signal,
+      signal: stop,
     });
     if (!res.ok) return null;
     return await createImageBitmap(await res.blob());

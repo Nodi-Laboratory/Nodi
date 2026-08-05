@@ -32,8 +32,13 @@ import type { ItemKind } from "./types";
 /**
  * 도식에 그릴 후보 카드.
  *
- * `rect`는 hover 패딩 상자다(연결선이 끝점을 앉히는 그것, D126) — 학생이
- * 화면에서 보는 경계와 접촉 판정이 같아야 "닿았는데 안 잡혔다"가 안 생긴다.
+ * `rect`는 **학생이 화면에서 보는 그대로의 상자**다. 접촉 판정에 쓰는 여백
+ * (hover 박스, D126)은 이 값에 얹지 않고 `HIT_PAD_X/Y`로 **판정할 때만**
+ * 부풀린다.
+ *
+ * 왜 나누나: `rect`는 그림에도 쓰인다. 여백을 얹은 채로 그리면 도식의 상자가
+ * 실제 카드보다 사방으로 커져서, **닿지 않은 획이 닿은 것처럼 보인다.**
+ * 그 그림으로 판정하는 것이 VLM이므로 그 차이가 그대로 답이 된다.
  */
 export interface SceneCard {
   id: string;
@@ -59,6 +64,25 @@ export interface PickedCard extends SceneCard {
   n: number;
   /** 획이 실제로 닿았나(1단). false면 근처에 있을 뿐(2단). */
   touched: boolean;
+}
+
+/**
+ * 접촉 판정에만 얹는 여백 — hover 박스와 같은 크기(`connector.ts`의 `padded`).
+ *
+ * 학생이 화면에서 보는 경계와 판정이 같아야 "닿았는데 안 잡혔다"가 안 생긴다.
+ * **그림에는 안 얹는다**(SceneCard.rect 주석 참조).
+ */
+export const HIT_PAD_X = 16;
+export const HIT_PAD_Y = 12;
+
+/** 판정용으로 부풀린 상자. */
+function hitBox(r: Rect): Rect {
+  return {
+    x: r.x - HIT_PAD_X,
+    y: r.y - HIT_PAD_Y,
+    w: r.w + HIT_PAD_X * 2,
+    h: r.h + HIT_PAD_Y * 2,
+  };
 }
 
 export interface InkSceneOpts {
@@ -185,11 +209,15 @@ export function buildInkScene(
    * **판정 기준은 언제나 inkBox다** — 뒤에서 상자를 키우더라도 그 결과를
    * 여기로 되먹이지 않는다. 그것이 폭주를 막는 유일한 장치다.
    */
-  const scored = cards.map((c) => ({
-    card: c,
-    touched: strokes.some((s) => strokeHitsRect(s, c.rect)),
-    gap: rectGap(inkBox, c.rect),
-  }));
+  const scored = cards.map((c) => {
+    // 판정에만 여백을 얹는다 — `c.rect`(그림에 쓰이는 값)는 안 건드린다.
+    const hit = hitBox(c.rect);
+    return {
+      card: c,
+      touched: strokes.some((s) => strokeHitsRect(s, hit)),
+      gap: rectGap(inkBox, hit),
+    };
+  });
 
   const eligible = scored.filter((s) => s.touched || s.gap <= opts.nearPad);
   // 접촉 먼저, 그다음 가까운 순. 상한을 넘으면 뒤에서 잘린다.

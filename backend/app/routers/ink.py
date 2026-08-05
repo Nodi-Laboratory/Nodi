@@ -47,6 +47,9 @@ settings = get_settings()
 
 # 명부 상한 — 프론트가 ink_card_max로 이미 자르지만, 창구는 자기 입력을 믿지 않는다.
 _CARDS_MAX = 8
+# 제목 한 줄 상한. 명부는 프롬프트에 그대로 들어가므로 길이를 우리가 정한다 —
+# 안 자르면 카드 하나가 지시문을 밀어낼 수 있다.
+_TITLE_MAX = 120
 
 
 def _parse_cards(raw: str) -> list[dict]:
@@ -65,6 +68,7 @@ def _parse_cards(raw: str) -> list[dict]:
     if not isinstance(data, list):
         return []
     out: list[dict] = []
+    seen: set[int] = set()
     for item in data[:_CARDS_MAX]:
         if not isinstance(item, dict):
             continue
@@ -72,10 +76,16 @@ def _parse_cards(raw: str) -> list[dict]:
             n = int(item.get("n"))
         except (TypeError, ValueError):
             continue
-        if n < 1:
+        # 번호가 겹치면 명부가 "1 = A / 1 = B"가 되어 모델이 무엇을 가리키는지
+        # 말할 수 없다. 먼저 온 것을 남긴다.
+        if n < 1 or n in seen:
             continue
+        seen.add(n)
         title = item.get("title")
-        out.append({"n": n, "title": title if isinstance(title, str) else ""})
+        # 줄바꿈을 지운다 — 명부는 한 줄에 하나라 개행이 섞이면 형식이 깨지고,
+        # 거기에 지시문 흉내를 넣을 여지가 생긴다.
+        clean = " ".join(title.split())[:_TITLE_MAX] if isinstance(title, str) else ""
+        out.append({"n": n, "title": clean})
     return out
 
 
