@@ -22,6 +22,7 @@ import {
   PenLine,
   Pencil,
   Square,
+  Sparkles,
   Type,
   X,
 } from "lucide-react";
@@ -44,6 +45,17 @@ const GROUPS: ToolDef[][] = [
     { tool: "hand", icon: Hand, label: "화면 이동", key: "h" },
   ],
   [
+    /**
+     * 카드 수정 (D180) — **관계를 손으로 다시 엮는다.**
+     *
+     * 질문하는 펜 **위**에 둔다(사용자 지시 2026-08-05). 둘 다 캔버스에 이미
+     * 있는 것을 다루는 도구이고, 아래 그룹의 그리기 도구(자국을 남기는 것)와
+     * 성격이 다르다.
+     *
+     * `s`는 star. Excalidraw가 안 쓰는 키다 — 손에 익은 키를 다른 뜻으로
+     * 쓰지 않는다는 이 레일의 규칙(파일 머리말) 그대로다.
+     */
+    { tool: "cardedit", icon: Sparkles, label: "카드 수정", key: "s" },
     /**
      * 질문하는 펜 (D176) — 캔버스에 손으로 질문을 쓴다. 쓰고 나면 하단
      * 입력창의 버튼이 "글자 인식"으로 바뀐다.

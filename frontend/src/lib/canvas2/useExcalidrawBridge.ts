@@ -167,6 +167,12 @@ export function useExcalidrawBridge(): Bridge {
    */
   const [rawTool, setRawTool] = useState<string>("selection");
   const [noteMode, setNoteMode] = useState(false);
+  /**
+   * 카드 수정 도구 (D180). `noteMode`와 같은 처지 — Excalidraw는 선택 도구를
+   * 물고 있고 우리 오버레이가 포인터를 가져간다. 저쪽 appState만 봐서는
+   * 구분할 수 없으므로 우리가 따로 기억한다.
+   */
+  const [editMode, setEditMode] = useState(false);
   /** 질문하는 펜(D176). note와 같은 처지 — appState만 봐서는 구별할 수 없다. */
   const [askMode, setAskMode] = useState(false);
   /**
@@ -252,7 +258,10 @@ export function useExcalidrawBridge(): Bridge {
       if (t) {
         setRawTool((prevTool) => (prevTool === t ? prevTool : t));
         // selection으로 돌아갔으면 note 모드도 끝난 것이다.
-        if (t !== "selection") setNoteMode(false);
+        if (t !== "selection") {
+          setNoteMode(false);
+          setEditMode(false);
+        }
         // 질문하는 펜은 **자유선**을 물려 쓴다(D176) — 기존 펜이 자연스럽게
         // 써지기 때문이다. 그래서 자유선을 벗어났을 때만 끝난 것으로 본다.
         if (t !== "freedraw") setAskMode(false);
@@ -269,13 +278,14 @@ export function useExcalidrawBridge(): Bridge {
   const setTool = useCallback(
     (tool: ToolName) => {
       setNoteMode(tool === "note");
+      setEditMode(tool === "cardedit");
       setAskMode(tool === "askpen");
       setHighlighting(tool === "highlighter");
       // 우리 도구 둘은 Excalidraw의 다른 도구를 물려 쓴다.
       //   note        선택 도구 — 캔버스 클릭을 오버레이가 가로챈다
       //   highlighter 자유선   — 스타일만 반투명·굵게 바꾼다
       const type =
-        tool === "note"
+        tool === "note" || tool === "cardedit"
           ? "selection"
           : tool === "highlighter" || tool === "askpen"
             ? "freedraw"
@@ -308,15 +318,18 @@ export function useExcalidrawBridge(): Bridge {
    * (image·frame·laser 등 우리 레일에 없는 것)은 selection으로 떨어뜨린다 —
    * 레일에 아무것도 눌리지 않은 상태로 두면 학생이 무엇이 켜졌는지 모른다.
    */
-  const activeTool: ToolName = askMode && rawTool === "freedraw"
-    ? "askpen"
-    : noteMode
-      ? "note"
-      : highlighting && rawTool === "freedraw"
-        ? "highlighter"
-        : KNOWN_TOOLS.has(rawTool)
-          ? (rawTool as ToolName)
-          : "selection";
+  const activeTool: ToolName =
+    askMode && rawTool === "freedraw"
+      ? "askpen"
+      : editMode
+        ? "cardedit"
+        : noteMode
+          ? "note"
+          : highlighting && rawTool === "freedraw"
+            ? "highlighter"
+            : KNOWN_TOOLS.has(rawTool)
+              ? (rawTool as ToolName)
+              : "selection";
 
   const getObstacles = useCallback((): Rect[] => {
     if (!api) return [];

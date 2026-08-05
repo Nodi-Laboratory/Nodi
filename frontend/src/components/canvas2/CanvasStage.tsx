@@ -101,6 +101,35 @@ interface Props {
   children: React.ReactNode;
 }
 
+/**
+ * 카드 수정 도구의 **별 포인터** (D180).
+ *
+ * 도구가 켜졌다는 것이 포인터에서 바로 읽혀야 한다 — 이 도구는 끌면 관계가
+ * 끊기므로, 학생이 "지금 어느 도구지?"를 레일에서 확인해야 한다면 이미 늦다.
+ *
+ * SVG를 data URI로 박는다. 파일로 두면 첫 사용에서 한 프레임 기본 커서가
+ * 보이고(네트워크 왕복), 커서는 그 한 프레임이 그대로 눈에 띈다. 흰 테두리를
+ * 두른 이유는 캔버스가 밝은 종이색이라 검은 별만으로는 카드 위에서 묻히기
+ * 때문이다.
+ *
+ * 마지막 `auto`는 폴백이다 — 커서 이미지를 못 읽는 환경에서 포인터가 아예
+ * 사라지면 안 된다.
+ */
+const STAR_SVG = encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">' +
+    '<path d="M13 2.6 15.7 9.3 22.4 12 15.7 14.7 13 21.4 10.3 14.7 3.6 12 10.3 9.3Z" ' +
+    'fill="#e0a32e" stroke="#ffffff" stroke-width="1.6" stroke-linejoin="round"/>' +
+    "</svg>",
+);
+/** 별의 **가운데**가 포인터다 — 꼭짓점을 기준으로 삼으면 어디를 집었는지 안 맞는다. */
+const STAR_CURSOR = `url("data:image/svg+xml,${STAR_SVG}") 13 13, auto`;
+
+function cursorFor(tool: ToolName): string | undefined {
+  if (tool === "note") return "text";
+  if (tool === "cardedit") return STAR_CURSOR;
+  return undefined;
+}
+
 export function CanvasStage({
   bridge,
   initialScene,
@@ -292,7 +321,7 @@ export function CanvasStage({
        * 아무 표시도 없었다). 전환이 끝났는지 밖에서 알 수 있어야 한다.
        */
       data-session={sessionId ?? ""}
-      style={{ cursor: activeTool === "note" ? "text" : undefined }}
+      style={{ cursor: cursorFor(activeTool) }}
     >
       {/* 격자는 변환 평면 **밖**에 두고 background-position으로 흉내 낸다 —
           평면 안에 두면 scale(z)에 따라 점 자체가 커져 줌아웃에서 뭉개진다.
