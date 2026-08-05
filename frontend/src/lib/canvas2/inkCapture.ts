@@ -17,7 +17,13 @@
  */
 
 import { fetchFigureBitmap, type InkCardRef } from "@/lib/api/ink";
-import { buildInkScene, rectOverlap, type PickedCard, type SceneCard } from "./inkScene";
+import {
+  buildInkScene,
+  rectOverlap,
+  type InkTraceRow,
+  type PickedCard,
+  type SceneCard,
+} from "./inkScene";
 import { renderFigurePng, renderScenePng } from "./inkRender";
 import type { PenStroke } from "./penPad";
 import type { Rect } from "./rect";
@@ -31,6 +37,27 @@ export interface InkCaptureOpts {
   figureZoomEnabled: boolean;
 }
 
+/**
+ * 무슨 일이 있었는지 — **관리자 실험실이 그리는 흐름**이다.
+ *
+ * 평소 화면은 이 값을 안 본다(로그 하나만 본다). 그런데 이 기능의 결과는
+ * 화면에 안 보이므로, 볼 수 있는 자리를 따로 두지 않으면 틀렸을 때 쫓을
+ * 방법이 없다 — 개념 연결(D172)이 판정 로그를 붙인 것과 같은 이유다.
+ */
+export interface InkCaptureTrace {
+  strokeCount: number;
+  inkBox: Rect | null;
+  capture: Rect | null;
+  clamped: boolean;
+  rows: InkTraceRow[];
+  /** 도판 id → 받았나. 못 받은 것은 라벨 상자로 그려진다. */
+  figures: Array<{ id: string; ok: boolean; w: number; h: number }>;
+  /** 단계별 소요(ms). */
+  timings: { pick: number; fetch: number; scene: number; figure: number };
+  sceneSize: { w: number; h: number } | null;
+  figureSize: { w: number; h: number } | null;
+}
+
 export interface InkCapture {
   scene: Blob | null;
   figure: Blob | null;
@@ -38,7 +65,20 @@ export interface InkCapture {
   cards: InkCardRef[];
   /** 상한으로 버린 카드 수. 0이 아니면 알린다 — 조용히 자르지 않는다. */
   dropped: number;
+  trace: InkCaptureTrace;
 }
+
+const EMPTY_TRACE: InkCaptureTrace = {
+  strokeCount: 0,
+  inkBox: null,
+  capture: null,
+  clamped: false,
+  rows: [],
+  figures: [],
+  timings: { pick: 0, fetch: 0, scene: 0, figure: 0 },
+  sceneSize: null,
+  figureSize: null,
+};
 
 /** 표시를 못 만들었을 때의 결과. 호출부가 "글자만 보낸다"로 읽는다. */
 export const EMPTY_CAPTURE: InkCapture = {
@@ -47,6 +87,7 @@ export const EMPTY_CAPTURE: InkCapture = {
   figureN: null,
   cards: [],
   dropped: 0,
+  trace: EMPTY_TRACE,
 };
 
 /**
@@ -145,33 +186,58 @@ export async function captureInk(
   src: SceneSource,
   opts: InkCaptureOpts,
 ): Promise<InkCapture> {
+  const t0 = performance.now();
   const scene = buildInkScene(strokes, toSceneCards(src), opts);
-  if (!scene || !scene.cards.length) return EMPTY_CAPTURE;
+  const tPick = performance.now() - t0;
+  if (!scene) return EMPTY_CAPTURE;
+
+  const base: InkCaptureTrace = {
+    ...EMPTY_TRACE,
+    strokeCount: strokes.length,
+    inkBox: scene.inkBox,
+    capture: scene.capture,
+    clamped: scene.clamped,
+    rows: scene.trace,
+    timings: { pick: tPick, fetch: 0, scene: 0, figure: 0 },
+  };
+  // 가리킬 후보가 없으면 도식을 보낼 이유가 없다 — 그래도 판정 기록은 남긴다.
+  if (!scene.cards.length) return { ...EMPTY_CAPTURE, trace: base };
 
   // 도식에 그릴 도판들을 먼저 받는다. 실패는 null로 남고 라벨 상자가 된다.
   const figureIds = scene.cards
     .map((c) => c.figureId)
     .filter((v): v is string => !!v);
   const bitmaps = new Map<string, ImageBitmap>();
-  await Promise.all(
+  const t1 = performance.now();
+  const figures = await Promise.all(
     figureIds.map(async (id) => {
       const bmp = await fetchFigureBitmap(id);
       if (bmp) bitmaps.set(id, bmp);
+      return { id, ok: !!bmp, w: bmp?.width ?? 0, h: bmp?.height ?? 0 };
     }),
   );
+  const tFetch = performance.now() - t1;
 
+  const t2 = performance.now();
   const scenePng = await renderScenePng(scene, strokes, bitmaps, opts.sceneMaxSide);
+  const tScene = performance.now() - t2;
 
   let figurePng: Blob | null = null;
   let figureN: number | null = null;
+  let figureSize: { w: number; h: number } | null = null;
+  const t3 = performance.now();
   if (opts.figureZoomEnabled) {
     const target = zoomTarget(scene.cards, scene.inkBox);
     const bmp = target?.figureId ? bitmaps.get(target.figureId) : undefined;
     if (target && bmp) {
       figurePng = await renderFigurePng(target, bmp, strokes, opts.sceneMaxSide);
-      if (figurePng) figureN = target.n;
+      if (figurePng) {
+        figureN = target.n;
+        figureSize = { w: bmp.width, h: bmp.height };
+      }
     }
   }
+  const tFigure = performance.now() - t3;
 
   // 비트맵은 GC가 아니라 우리가 놓는다 — 교과서 도판은 장당 수 MB고, 한 시간
   // 수업이면 같은 학생이 수십 번 인식을 누른다.
@@ -187,5 +253,18 @@ export async function captureInk(
       title: c.title ?? "",
     })),
     dropped: scene.dropped,
+    trace: {
+      ...base,
+      figures,
+      timings: { pick: tPick, fetch: tFetch, scene: tScene, figure: tFigure },
+      sceneSize: sizeOf(scene.capture, opts.sceneMaxSide),
+      figureSize,
+    },
   };
+}
+
+/** 내보낸 PNG의 픽셀 크기 — `renderScenePng`과 같은 배율 규칙으로 계산한다. */
+function sizeOf(box: Rect, maxSide: number): { w: number; h: number } {
+  const s = Math.max(0.25, Math.min(1, maxSide / Math.max(box.w, box.h, 1)));
+  return { w: Math.round(box.w * s), h: Math.round(box.h * s) };
 }

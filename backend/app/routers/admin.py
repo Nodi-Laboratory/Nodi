@@ -1032,3 +1032,41 @@ async def crosslink_runs_summary(
         out[name] = await client.count("crosslink_runs", {"outcome": f"eq.{name}"})
     out["total"] = sum(out.values())
     return out
+
+
+# ---------------------------------------------------------------------------
+# 펜 표시 실험실 (D178)
+# ---------------------------------------------------------------------------
+@router.get("/ink-lab/figure")
+async def ink_lab_figure(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """실험실 캔버스에 얹을 **실제 도판** 하나.
+
+    붙박이 그림을 쓰지 않는 이유: 실험실의 요점은 **실제 경로를 태우는 것**이다.
+    진짜 도판이라야 `/files/figures/{id}/raw`(캔버스 오염 회피 창구)와
+    `object-contain` 레터박스 좌표 변환까지 함께 검증된다.
+
+    이 기계에 도판이 없으면 `figure_id: null`을 준다 — 그때 실험실은 **주소
+    없는 도판**(D167) 상태를 그대로 시험한다. 오류가 아니다.
+    """
+    client = UserClient.from_user(user)
+    rows = await client.select(
+        "textbook_figures",
+        {
+            # 색인이 끝난 것만 — 실패한 행은 이미지가 없을 수 있다.
+            "status": "eq.embedded",
+            "select": "id,page,caption,alt,candidates,selected_index,embed_text",
+            "order": "created_at.desc",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        return {"figure_id": None, "caption": "", "page": None}
+    row = rows[0]
+    return {
+        "figure_id": row["id"],
+        "caption": figures_svc.display_caption(row),
+        "page": row.get("page"),
+    }

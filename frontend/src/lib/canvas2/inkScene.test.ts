@@ -173,6 +173,36 @@ describe("buildInkScene", () => {
     expect(scene.cards[0].touched).toBe(true);
   });
 
+  it("기각된 후보도 판정 기록에 남는다", () => {
+    // 뽑힌 것만 남기면 "왜 저 카드는 안 들어갔지"에 답할 근거가 없다.
+    const ink = line(0, 50, 400, 50);
+    const cards = [
+      card("접촉", 200, 0),
+      card("근접", 0, 150),
+      card("멀다", 5000, 5000),
+    ];
+    const scene = buildInkScene([ink], cards, { ...OPTS, cardMax: 1 })!;
+    const by = new Map(scene.trace.map((t) => [t.id, t]));
+    expect(scene.trace).toHaveLength(3);
+    expect(by.get("접촉")!.verdict).toBe("touched");
+    expect(by.get("접촉")!.n).toBe(1);
+    expect(by.get("근접")!.verdict).toBe("over_cap");
+    expect(by.get("근접")!.n).toBeNull();
+    expect(by.get("멀다")!.verdict).toBe("too_far");
+  });
+
+  it("상자가 잘렸는지 알려 준다", () => {
+    const ink = line(0, 0, 100, 100);
+    // 획 상자는 여백 포함 136×136 → 상한은 340×340.
+    // 작은 카드를 품어도 168×136이라 안 잘린다.
+    expect(buildInkScene([ink], [card("옆", 100, 0, 50, 50)], OPTS)!.clamped).toBe(
+      false,
+    );
+    expect(
+      buildInkScene([ink], [card("큰카드", 150, 0, 4000, 4000)], OPTS)!.clamped,
+    ).toBe(true);
+  });
+
   it("키운 상자 안에 들어온 카드를 다시 줍지 않는다", () => {
     const ink = line(0, 0, 100, 100);
     const anchor = card("근접", 150, 0); // 근접으로 잡힌다 → 상자가 커진다

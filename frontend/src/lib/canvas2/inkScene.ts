@@ -91,6 +91,27 @@ export interface InkSceneOpts {
   boxMaxScale: number;
 }
 
+/** 카드 하나가 왜 뽑혔는지 · 왜 안 뽑혔는지. */
+export type InkVerdict = "touched" | "near" | "over_cap" | "too_far";
+
+/**
+ * 후보 한 장의 판정 기록.
+ *
+ * **왜 남기나**: 이 알고리즘의 결과는 화면에 안 보인다. "왜 저 카드는 안
+ * 들어갔지"를 나중에 물으면 답할 근거가 어디에도 없다 — 개념 연결(D172)이
+ * 판정 로그를 붙인 것과 같은 이유다. 관리자 실험실이 이걸 그대로 표로 낸다.
+ */
+export interface InkTraceRow {
+  id: string;
+  title: string | null;
+  kind: ItemKind;
+  verdict: InkVerdict;
+  /** 획 상자와의 최단 거리(월드 px). 접촉이면 0. */
+  gap: number;
+  /** 뽑혔으면 그 번호. 아니면 null. */
+  n: number | null;
+}
+
 export interface InkScene {
   /** 획 bbox + 여백. 선정과 클램프의 **유일한** 기준이다. */
   inkBox: Rect;
@@ -99,6 +120,10 @@ export interface InkScene {
   cards: PickedCard[];
   /** 상한 때문에 버린 카드 수. **조용히 자르지 않는다** — 0이 아니면 알린다. */
   dropped: number;
+  /** 상자가 클램프에 걸려 잘렸나. */
+  clamped: boolean;
+  /** 후보 **전부**의 판정. 뽑힌 것만이 아니라 기각된 것도 남는다. */
+  trace: InkTraceRow[];
 }
 
 /** 점이 사각형 안에 있나(변 포함). */
@@ -247,10 +272,37 @@ export function buildInkScene(
   }));
 
   const merged = union([inkBox, ...picked.map((c) => c.rect)]) ?? inkBox;
+  const capture = clampBox(merged, inkBox, opts.boxMaxScale);
+
+  // 후보 **전부**의 판정을 남긴다 — 기각된 것이 더 궁금할 때가 많다.
+  const byId = new Map(picked.map((c) => [c.id, c]));
+  const keptIds = new Set(kept.map((s) => s.card.id));
+  const trace: InkTraceRow[] = scored.map((s) => {
+    const got = byId.get(s.card.id);
+    const eligible = s.touched || s.gap <= opts.nearPad;
+    const verdict: InkVerdict = !eligible
+      ? "too_far"
+      : !keptIds.has(s.card.id)
+        ? "over_cap"
+        : s.touched
+          ? "touched"
+          : "near";
+    return {
+      id: s.card.id,
+      title: s.card.title,
+      kind: s.card.kind,
+      verdict,
+      gap: s.touched ? 0 : s.gap,
+      n: got?.n ?? null,
+    };
+  });
+
   return {
     inkBox,
-    capture: clampBox(merged, inkBox, opts.boxMaxScale),
+    capture,
     cards: picked,
     dropped,
+    clamped: capture.w < merged.w - 0.01 || capture.h < merged.h - 0.01,
+    trace,
   };
 }

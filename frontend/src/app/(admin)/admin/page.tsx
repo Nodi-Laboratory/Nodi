@@ -9,6 +9,7 @@ import {
   GitBranch,
   LayoutDashboard,
   MessagesSquare,
+  PenLine,
   ScrollText,
   Shield,
   Sliders,
@@ -31,6 +32,7 @@ import { RagLabTab } from "@/components/admin/RagLabTab";
 import { DataTab } from "@/components/admin/DataTab";
 import { LecturePackagesTab } from "@/components/admin/LecturePackagesTab";
 import { CrossLinksTab } from "@/components/admin/CrossLinksTab";
+import { InkLabTab } from "@/components/admin/InkLabTab";
 
 /**
  * 관리자 운영 콘솔 (Stage 4c → D113).
@@ -53,6 +55,7 @@ type Tab =
   | "data"
   | "lectures"
   | "crosslinks"
+  | "inklab"
   | "users";
 
 const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
@@ -68,6 +71,9 @@ const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: "lectures", label: "강의 패키지", icon: Clapperboard },
   // D172: 교차 연결이 왜 떴는지/왜 안 떴는지를 보는 자리.
   { id: "crosslinks", label: "개념 연결", icon: Link2 },
+  // D178: 펜 표시가 어느 카드를 가리키는지 — 결과가 화면에 안 보이는
+  // 기능이라 경로를 보는 자리를 따로 둔다.
+  { id: "inklab", label: "펜 표시", icon: PenLine },
   { id: "users", label: "권한", icon: Users },
 ];
 
@@ -130,6 +136,7 @@ function AdminConsole() {
         {tab === "data" && <DataTab />}
         {tab === "lectures" && <LecturePackagesTab />}
         {tab === "crosslinks" && <CrossLinksTab />}
+        {tab === "inklab" && <InkLabTab />}
         {tab === "users" && <UsersTab currentUserId={profile?.id ?? ""} />}
       </main>
     </div>
