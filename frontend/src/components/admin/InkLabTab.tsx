@@ -353,7 +353,12 @@ export function InkLabTab() {
         </div>
 
         {/* 오른쪽: 흐름 로그 */}
-        <InkLabLog runs={runs} error={error} onClear={() => setRuns([])} />
+        <InkLabLog
+          runs={runs}
+          error={error}
+          busy={busy}
+          onClear={() => setRuns([])}
+        />
       </div>
     </div>
   );

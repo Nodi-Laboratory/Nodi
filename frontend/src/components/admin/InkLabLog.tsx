@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Eraser } from "lucide-react";
+import type { InkMarksStatus } from "@/lib/api/ink";
 import type { InkCapture } from "@/lib/canvas2/inkCapture";
 import type { InkTraceRow, InkVerdict } from "@/lib/canvas2/inkScene";
 import type { CanvasItem } from "@/lib/canvas2/types";
@@ -29,9 +30,32 @@ export interface InkRun {
   totalMs: number;
   capture: InkCapture;
   inkPng: Blob;
-  reply: { text: string; marksNote: string; pointed: number | null; ms: number } | null;
+  reply:
+    | {
+        text: string;
+        marksNote: string;
+        pointed: number | null;
+        marksStatus: InkMarksStatus;
+        ms: number;
+      }
+    | null;
   cards: readonly CanvasItem[];
 }
+
+/**
+ * 표시가 왜 안 읽혔는지를 사람 말로.
+ *
+ * 빈 설명만 보여 주면 "고장인가 꺼진 건가"를 알 수 없다. 관리자가 다음에 할
+ * 일이 갈래마다 다르다 — 노브를 켜거나, 주소를 채우거나, 서버를 살리거나.
+ */
+const MARKS_REASON: Record<InkMarksStatus, string> = {
+  ok: "",
+  off: "설정에서 [펜 표시 해석]이 꺼져 있습니다.",
+  unconfigured: "비전 모델 주소·키가 비어 있습니다(JUDGE_BASE_URL / JUDGE_API_KEY).",
+  no_scene: "도식을 만들지 못해 비전 모델을 부르지 않았습니다.",
+  no_cards: "표시 주변에 카드가 없어 비전 모델을 부르지 않았습니다.",
+  error: "비전 모델 서버가 응답하지 않았습니다(주소·포트·기동 상태를 확인하세요).",
+};
 
 const VERDICT: Record<InkVerdict, { label: string; fg: string; bg: string }> = {
   touched: { label: "접촉", fg: "#8ee6a8", bg: "#16301f" },
@@ -86,10 +110,13 @@ function useDataUrl(blob: Blob | null): string | null {
 export function InkLabLog({
   runs,
   error,
+  busy,
   onClear,
 }: {
   runs: readonly InkRun[];
   error: string | null;
+  /** 지금 읽는 중인가 — 누르고 응답까지 3~20초라 빈 화면이면 멎은 줄 안다. */
+  busy: boolean;
   onClear: () => void;
 }) {
   return (
@@ -119,7 +146,16 @@ export function InkLabLog({
         </div>
       )}
 
-      {runs.length === 0 && !error && (
+      {busy && (
+        <div
+          className="rounded-lg border px-3 py-2 text-[12px]"
+          style={{ borderColor: C.line, background: "#1b1813", color: C.dim }}
+        >
+          읽는 중… OCR 3~8초 · 비전 5~20초 (동시에 돕니다)
+        </div>
+      )}
+
+      {runs.length === 0 && !error && !busy && (
         <Empty>
           질문하는 펜으로 카드를 동그라미 치거나 화살표를 그은 뒤 [읽기]를
           누르면 여기에 단계가 쌓입니다.
@@ -159,6 +195,16 @@ function RunCard({ run, open }: { run: InkRun; open: boolean }) {
           획 {t.strokeCount} · 카드 {run.capture.cards.length} · {ms(run.totalMs)}
         </span>
       </button>
+
+      {/**
+       * **결과를 맨 위에 둔다.**
+       *
+       * 처음에는 단계 순서대로 5번째에 놓았는데, 앞선 그림 두 장에 밀려
+       * 스크롤을 내려야만 보였다(사용자 지적 2026-08-05: "응답 결과가 안
+       * 보이는 거 같은데?"). 흐름은 근거고, 사람이 먼저 찾는 것은 답이다.
+       * 접었을 때도 보이게 펼침 밖에 둔다.
+       */}
+      <Result run={run} />
 
       {shown && (
         <div className="flex flex-col gap-3 px-3 pb-3">
@@ -229,36 +275,12 @@ function RunCard({ run, open }: { run: InkRun; open: boolean }) {
           <Step
             n={run.capture.figure ? 6 : 5}
             title="두 모델 (동시)"
-            detail={run.reply ? `${ms(run.reply.ms)}` : "실패"}
-          >
-            {run.reply ? (
-              <div className="flex flex-col gap-2">
-                <Field label="OCR — 손글씨">
-                  {run.reply.text || <i style={{ color: C.dim }}>못 읽음</i>}
-                </Field>
-                <Field label="비전 — 가리킴">
-                  {run.reply.pointed !== null ? (
-                    <b style={{ color: "#8ee6a8" }}>
-                      [카드 {run.reply.pointed}]{" "}
-                      {run.capture.cards.find((c) => c.n === run.reply!.pointed)?.title ?? ""}
-                    </b>
-                  ) : (
-                    <i style={{ color: C.dim }}>없음</i>
-                  )}
-                </Field>
-                <Field label="비전 — 설명">
-                  {run.reply.marksNote || (
-                    <i style={{ color: C.dim }}>
-                      비어 있음 — 비전 모델이 꺼져 있거나 응답하지 않았습니다
-                      (질문은 막히지 않습니다)
-                    </i>
-                  )}
-                </Field>
-              </div>
-            ) : (
-              <Note>창구가 응답하지 않았습니다.</Note>
-            )}
-          </Step>
+            detail={
+              run.reply
+                ? `${ms(run.reply.ms)} · 표시 ${run.reply.marksStatus}`
+                : "창구가 응답하지 않음"
+            }
+          />
 
           <Step
             n={run.capture.figure ? 7 : 6}
@@ -289,6 +311,84 @@ function solarPreview(run: InkRun): string {
     return `[카드 ${c.n}] ${c.title || "제목 없음"}: ${body}${body.length >= 120 ? "…" : ""}`;
   });
   return `[화면에 그린 표시]\n${note}\n\n[표시 주변의 카드]\n${lines.join("\n")}`;
+}
+
+/**
+ * 사람이 먼저 찾는 것 — **무엇을 읽었나.**
+ *
+ * 손글씨와 가리킨 카드, 그리고 표시 설명. 비었으면 **왜 비었는지**까지
+ * 말한다(빈 칸만 보여 주면 고장인지 꺼진 건지 알 수 없다).
+ */
+function Result({ run }: { run: InkRun }) {
+  const r = run.reply;
+  if (!r) {
+    return (
+      <div
+        className="mx-3 mb-3 rounded-lg border px-3 py-2 text-[12px]"
+        style={{ borderColor: "#7a3030", background: "#241414", color: "#e8a0a0" }}
+      >
+        창구가 응답하지 않았습니다 — 손글씨도 못 읽었습니다.
+      </div>
+    );
+  }
+  const pointedTitle =
+    r.pointed !== null
+      ? (run.capture.cards.find((c) => c.n === r.pointed)?.title ?? "")
+      : "";
+  const reason = MARKS_REASON[r.marksStatus];
+
+  return (
+    <div
+      className="mx-3 mb-3 flex flex-col gap-2 rounded-lg border px-3 py-2.5"
+      style={{ borderColor: C.line, background: "#1b1813" }}
+    >
+      <div>
+        <div className="text-[10px] uppercase tracking-wide" style={{ color: C.dim }}>
+          손글씨 (OCR)
+        </div>
+        <div className="text-[14px] font-semibold" style={{ color: C.text }}>
+          {r.text || <i style={{ color: C.dim, fontWeight: 400 }}>못 읽음</i>}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wide" style={{ color: C.dim }}>
+          가리킨 카드 (비전)
+        </div>
+        {r.pointed !== null ? (
+          <span
+            className="inline-block rounded px-1.5 py-0.5 text-[12px] font-semibold"
+            style={{ background: "#16301f", color: "#8ee6a8" }}
+          >
+            [카드 {r.pointed}] {pointedTitle}
+          </span>
+        ) : (
+          <span className="text-[12px]" style={{ color: C.dim }}>
+            없음
+          </span>
+        )}
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wide" style={{ color: C.dim }}>
+          표시 설명 (비전)
+        </div>
+        {r.marksNote ? (
+          <div className="text-[12px] leading-relaxed" style={{ color: C.text }}>
+            {r.marksNote}
+          </div>
+        ) : (
+          <div className="text-[12px]" style={{ color: "#e0a86a" }}>
+            {reason || "비어 있음"}
+            <span className="block text-[11px]" style={{ color: C.dim }}>
+              표시는 곁들이라 이래도 질문은 막히지 않습니다 — 손글씨와 주변
+              카드만으로 나갑니다.
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function Step({
@@ -392,18 +492,6 @@ function Shot({ src, label }: { src: string; label: string }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wide" style={{ color: C.dim }}>
-        {label}
-      </div>
-      <div className="text-[12px]" style={{ color: C.text }}>
-        {children}
-      </div>
-    </div>
-  );
-}
 
 function Note({ children }: { children: React.ReactNode }) {
   return (

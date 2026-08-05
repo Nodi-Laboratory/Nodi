@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 
@@ -136,6 +136,24 @@ def parse_marks(content: str, card_count: int | None = None) -> tuple[int | None
     return pointed, " ".join(note.split())[:NOTE_LIMIT] if note else ""
 
 
+class MarksResult(NamedTuple):
+    """표시 해석 결과 + **왜 그렇게 됐는지.**
+
+    설명이 비는 갈래가 여럿인데(꺼짐·미설정·도식 없음·서버 오류) 결과만 보면
+    구분이 안 된다. 관리자 실험실이 "표시가 왜 안 읽혔나"에 답하려면 그
+    이유가 결과와 함께 와야 한다 — 개념 연결(D172)이 기각 사유를 남긴 것과
+    같은 이유다.
+
+    NamedTuple이라 `pointed, note, status = result`로 그냥 풀린다.
+    """
+
+    pointed: int | None
+    note: str
+    #: ok · off(킬 스위치) · unconfigured(주소·키 없음) · no_scene(도식 안 옴)
+    #: · error(서버가 안 받음)
+    status: str
+
+
 def is_configured() -> bool:
     """비전 창구가 설정돼 있나. 안 돼 있으면 부르지 않는다(오류가 아니다)."""
     return bool(
@@ -152,8 +170,8 @@ async def read_marks(
     figure_n: int | None = None,
     *,
     client: httpx.AsyncClient | None = None,
-) -> tuple[int | None, str]:
-    """표시를 읽는다. **어떤 실패든 `(None, "")`으로 강등한다.**
+) -> MarksResult:
+    """표시를 읽는다. **어떤 실패든 빈 설명으로 강등한다**(status가 이유를 준다).
 
     질문을 막지 않는 것이 이 함수의 계약이다 — 표시 해석은 곁들이고, 질문
     자체는 손글씨(OCR)가 나른다.
@@ -162,8 +180,12 @@ async def read_marks(
     테스트가 `httpx.MockTransport`로 요청을 가로챌 수 있어야 한다. 안 주면
     타임아웃이 걸린 클라이언트를 하나 만들어 쓰고 닫는다.
     """
-    if not is_configured() or not scene_png:
-        return None, ""
+    if not settings.ink_vlm_enabled:
+        return MarksResult(None, "", "off")
+    if not (settings.judge_base_url.strip() and settings.judge_api_key.strip()):
+        return MarksResult(None, "", "unconfigured")
+    if not scene_png:
+        return MarksResult(None, "", "no_scene")
 
     messages = build_marks_messages(
         cards,
@@ -202,10 +224,11 @@ async def read_marks(
                 content = await _call(owned)
     except Exception:  # noqa: BLE001 - 표시 해석 실패는 질문을 막지 않는다
         logger.warning("펜 표시 해석 실패 — 표시 없이 질문을 보낸다", exc_info=True)
-        return None, ""
+        return MarksResult(None, "", "error")
 
     # **개수가 아니라 가장 큰 번호로 잰다.** 명부에 빈 번호가 있으면(자리를
     # 비운 카드) 개수가 최대 번호보다 작아서, 멀쩡한 답을 "명부 밖"이라며
     # 버리게 된다.
     ceiling = max((int(c.get("n", 0)) for c in cards), default=0)
-    return parse_marks(content, card_count=ceiling or None)
+    pointed, note = parse_marks(content, card_count=ceiling or None)
+    return MarksResult(pointed, note, "ok")

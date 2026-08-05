@@ -140,11 +140,13 @@ async def interpret_ink(
             content_type=ink_png.content_type or "image/png",
         )
 
-    async def _marks() -> tuple[int | None, str]:
+    async def _marks() -> ink_marks.MarksResult:
         # 도식이 없으면 볼 것이 없다. 카드가 하나도 없어도 마찬가지 —
         # "무엇을 가리키나"에 후보가 없다.
-        if not scene_bytes or not roster:
-            return None, ""
+        if not scene_bytes:
+            return ink_marks.MarksResult(None, "", "no_scene")
+        if not roster:
+            return ink_marks.MarksResult(None, "", "no_cards")
         return await ink_marks.read_marks(
             roster,
             scene_bytes,
@@ -162,10 +164,11 @@ async def interpret_ink(
     # 예외(취소 등)도 질문을 막아서는 안 된다.
     pointed: int | None = None
     marks_note = ""
+    marks_status = "error"
     if isinstance(marks_res, BaseException):
         logger.warning("표시 해석 실패 — 표시 없이 진행", exc_info=marks_res)
     else:
-        pointed, marks_note = marks_res
+        pointed, marks_note, marks_status = marks_res
 
     # OCR 실패는 다르다 — 질문 자체를 못 얻은 것이라 대체할 것이 없다.
     # 갈래는 /ocr/handwriting과 **같아야 한다**(프론트가 한 문구 표로 읽는다).
@@ -193,5 +196,8 @@ async def interpret_ink(
         "text": text_res,
         "marks_note": marks_note,
         "pointed": pointed,
+        # **왜 비었는지**를 함께 준다 — 빈 설명만으로는 꺼짐·미설정·오류를
+        # 구분할 수 없고, 그러면 관리자 실험실이 "왜 안 읽혔나"에 답을 못 한다.
+        "marks_status": marks_status,
         "confidence": None,
     }

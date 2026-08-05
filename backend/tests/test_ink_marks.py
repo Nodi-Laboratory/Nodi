@@ -250,9 +250,11 @@ async def test_모델_응답을_번호와_설명으로_받는다(vision_on):
         return _reply("가리킴: 2\n설명: 화살표가 [카드 2]를 가리킨다.")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        pointed, note = await ink_marks.read_marks(CARDS, b"png", client=c)
+        got = await ink_marks.read_marks(CARDS, b"png", client=c)
 
-    assert (pointed, note) == (2, "화살표가 [카드 2]를 가리킨다.")
+    assert (got.pointed, got.note, got.status) == (
+        2, "화살표가 [카드 2]를 가리킨다.", "ok"
+    )
     assert seen["url"].endswith("/chat/completions")
     # 이미지가 data URI로 실렸나 — 경로가 아니라 바이트를 보낸다.
     parts = seen["body"]["messages"][1]["content"]
@@ -269,7 +271,8 @@ async def test_모델이_5xx면_질문을_막지_않는다(vision_on):
         return httpx.Response(500, text="boom")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        assert await ink_marks.read_marks(CARDS, b"png", client=c) == (None, "")
+        got = await ink_marks.read_marks(CARDS, b"png", client=c)
+        assert (got.pointed, got.note) == (None, "")
 
 
 @pytest.mark.asyncio
@@ -278,7 +281,8 @@ async def test_모델이_끊겨도_질문을_막지_않는다(vision_on):
         raise httpx.ConnectError("연결 실패")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        assert await ink_marks.read_marks(CARDS, b"png", client=c) == (None, "")
+        got = await ink_marks.read_marks(CARDS, b"png", client=c)
+        assert (got.pointed, got.note) == (None, "")
 
 
 @pytest.mark.asyncio
@@ -292,7 +296,8 @@ async def test_비전_미설정이면_부르지도_않는다(monkeypatch):
         return _reply("가리킴: 1\n설명: 뭔가.")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        assert await ink_marks.read_marks(CARDS, b"png", client=c) == (None, "")
+        got = await ink_marks.read_marks(CARDS, b"png", client=c)
+        assert (got.pointed, got.note) == (None, "")
     assert not called
 
 
@@ -307,7 +312,8 @@ async def test_킬_스위치를_내리면_안_부른다(vision_on, monkeypatch):
         return _reply("가리킴: 1\n설명: 뭔가.")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        assert await ink_marks.read_marks(CARDS, b"png", client=c) == (None, "")
+        got = await ink_marks.read_marks(CARDS, b"png", client=c)
+        assert (got.pointed, got.note) == (None, "")
     assert not called
 
 
@@ -321,8 +327,8 @@ async def test_명부에_빈_번호가_있어도_큰_번호를_안_버린다(vis
 
     roster = [{"n": 1, "title": "천문학"}, {"n": 3, "title": "지질학"}]
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        pointed, _ = await ink_marks.read_marks(roster, b"png", client=c)
-    assert pointed == 3
+        got = await ink_marks.read_marks(roster, b"png", client=c)
+    assert got.pointed == 3
 
 
 @pytest.mark.asyncio
@@ -331,9 +337,35 @@ async def test_명부_밖_번호는_버리되_설명은_남긴다(vision_on):
         return _reply("가리킴: 7\n설명: 화살표가 [카드 7]을 가리킨다.")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        pointed, note = await ink_marks.read_marks(CARDS, b"png", client=c)
-    assert pointed is None
-    assert note  # 설명은 살아 있다
+        got = await ink_marks.read_marks(CARDS, b"png", client=c)
+    assert got.pointed is None
+    assert got.note  # 설명은 살아 있다
+
+
+@pytest.mark.asyncio
+async def test_설명이_왜_비었는지를_상태로_구분한다(vision_on, monkeypatch):
+    """빈 설명만으로는 꺼짐·미설정·오류를 구분할 수 없다.
+
+    실험실이 "표시가 왜 안 읽혔나"에 답하려면 이유가 결과와 함께 와야 한다.
+    실제로 이게 필요해진 계기가 있다 — 판정 서버가 TCP만 받고 0바이트로 끊는
+    상태(실측 2026-08-05)에서 화면에는 "비어 있음"만 보였다.
+    """
+
+    def dead(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("끊김")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(dead)) as c:
+        assert (await ink_marks.read_marks(CARDS, b"png", client=c)).status == "error"
+        # 도식이 없으면 부를 것도 없다.
+        assert (await ink_marks.read_marks(CARDS, b"", client=c)).status == "no_scene"
+
+        monkeypatch.setattr(ink_marks.settings, "judge_base_url", "")
+        assert (
+            await ink_marks.read_marks(CARDS, b"png", client=c)
+        ).status == "unconfigured"
+
+        monkeypatch.setattr(ink_marks.settings, "ink_vlm_enabled", False)
+        assert (await ink_marks.read_marks(CARDS, b"png", client=c)).status == "off"
 
 
 def test_시스템_프롬프트가_세_지시를_담는다():

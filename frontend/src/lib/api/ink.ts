@@ -37,6 +37,21 @@ export interface InkCardRef {
   title: string;
 }
 
+/**
+ * 표시 해석이 어떻게 끝났나.
+ *
+ * `marksNote`가 비는 갈래가 여럿이라(꺼짐·미설정·도식 없음·서버 오류) 결과만
+ * 보면 구분이 안 된다. 관리자 실험실이 "왜 안 읽혔나"에 답하려면 이유가 결과와
+ * 함께 와야 한다.
+ */
+export type InkMarksStatus =
+  | "ok"
+  | "off"
+  | "unconfigured"
+  | "no_scene"
+  | "no_cards"
+  | "error";
+
 export interface InkInterpretResult {
   /** 손글씨를 읽은 글자. 못 읽었으면 빈 문자열(오류가 아니다). */
   text: string;
@@ -44,7 +59,18 @@ export interface InkInterpretResult {
   marksNote: string;
   /** 화살표가 가리킨 카드 번호. 없거나 못 읽었으면 null. */
   pointed: number | null;
+  /** 위가 비었을 때 **왜** 비었는지. */
+  marksStatus: InkMarksStatus;
 }
+
+const STATUSES: ReadonlySet<string> = new Set([
+  "ok",
+  "off",
+  "unconfigured",
+  "no_scene",
+  "no_cards",
+  "error",
+]);
 
 export interface InkInterpretInput {
   ink: Blob;
@@ -93,11 +119,17 @@ export async function interpretInk({
     text?: unknown;
     marks_note?: unknown;
     pointed?: unknown;
+    marks_status?: unknown;
   };
   return {
     text: typeof body.text === "string" ? body.text : "",
     marksNote: typeof body.marks_note === "string" ? body.marks_note : "",
     pointed: typeof body.pointed === "number" ? body.pointed : null,
+    // 옛 서버(이 필드가 없던 시절)와 붙어도 화면이 깨지지 않게.
+    marksStatus:
+      typeof body.marks_status === "string" && STATUSES.has(body.marks_status)
+        ? (body.marks_status as InkMarksStatus)
+        : "ok",
   };
 }
 
