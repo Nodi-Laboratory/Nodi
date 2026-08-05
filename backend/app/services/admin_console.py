@@ -650,6 +650,97 @@ _SPECS: list[dict[str, Any]] = [
         "description": "자리를 잡은 뒤 한 건의 상한(문서 실측 6~8초).",
         "effect": "느린 인식 허용 범위",
     },
+    # ── 펜 표시 해석 (D178) ──────────────────────────────────────────
+    #
+    # 손글씨만 읽던 것을 **표시까지** 읽게 한다 — 동그라미·화살표가 어느 카드를
+    # 가리키는지. 비전 모델(judge_* 계열)이 도판 캡션과 같은 창구를 쓴다.
+    {
+        "key": "ink_vlm_enabled",
+        "label": "펜 표시 해석",
+        "group": "손글씨 인식",
+        "widget": "toggle",
+        "scope": "live",
+        "description": "동그라미·화살표가 어느 카드를 가리키는지 비전 모델로 읽는다.",
+        "effect": "표시 해석 on/off",
+    },
+    {
+        "key": "ink_card_max",
+        "label": "함께 읽을 카드 수",
+        "group": "손글씨 인식",
+        "widget": "number",
+        "min": 1, "max": 8, "step": 1, "unit": "개",
+        "scope": "live",
+        "description": "표시 주변에서 끌어올 카드 상한. 많으면 화살표의 의미가 묻힌다.",
+        "effect": "질문에 딸려 가는 카드 수",
+    },
+    {
+        "key": "ink_near_pad",
+        "label": "근접 판정 반경",
+        "group": "손글씨 인식",
+        "widget": "number",
+        "min": 0, "max": 600, "step": 20, "unit": "px",
+        "scope": "live",
+        "description": (
+            "획에 닿지 않아도 이 거리 안의 카드는 함께 읽는다. 화살표 없이 "
+            "카드 옆에 질문만 쓰는 것이 가장 흔한 사용법이다."
+        ),
+        "effect": "옆에 쓴 질문이 카드를 잡는 범위",
+    },
+    {
+        "key": "ink_box_max_scale",
+        "label": "상자 확대 상한",
+        "group": "손글씨 인식",
+        "widget": "number",
+        "min": 1.0, "max": 6.0, "step": 0.5, "unit": "배",
+        "scope": "live",
+        "description": (
+            "카드를 끌어오며 상자가 커질 수 있는 한계(획 bbox 대비). 크게 두면 "
+            "그림 안에서 획이 작아져 표시를 못 알아본다."
+        ),
+        "effect": "도식에서 획이 뭉개지는 정도",
+    },
+    {
+        "key": "ink_figure_zoom_enabled",
+        "label": "도판 확대본 전송",
+        "group": "손글씨 인식",
+        "widget": "toggle",
+        "scope": "live",
+        "description": (
+            "표시가 교과서 도판에 닿으면 그 도판을 원본 해상도로 한 장 더 "
+            "보낸다. 도판 위에 그린 표시를 정확히 읽는 대신 느려진다."
+        ),
+        "effect": "도판 위 표시의 정확도 / 응답 시간",
+    },
+    {
+        "key": "ink_vlm_timeout_seconds",
+        "label": "표시 해석 상한",
+        "group": "손글씨 인식",
+        "widget": "number",
+        "min": 5, "max": 120, "step": 5, "unit": "초",
+        "scope": "live",
+        "description": "넘으면 표시 해석 없이 질문을 보낸다(질문 자체는 막지 않는다).",
+        "effect": "느릴 때 기다리는 시간",
+    },
+    {
+        "key": "ink_card_body_max_chars",
+        "label": "카드 본문 길이",
+        "group": "손글씨 인식",
+        "widget": "number",
+        "min": 200, "max": 4000, "step": 100, "unit": "자",
+        "scope": "live",
+        "description": "표시 주변 카드에서 프롬프트에 넣을 본문 길이(카드당).",
+        "effect": "질문 프롬프트 크기",
+    },
+    {
+        "key": "ink_scene_max_side",
+        "label": "도식 그림 한 변",
+        "group": "손글씨 인식",
+        "widget": "number",
+        "min": 512, "max": 2048, "step": 128, "unit": "px",
+        "scope": "live",
+        "description": "비전 모델에 보내는 도식 PNG의 긴 변 상한.",
+        "effect": "업로드 크기 / 표시 식별력",
+    },
 ]
 
 _SPEC_BY_KEY = {s["key"]: s for s in _SPECS}

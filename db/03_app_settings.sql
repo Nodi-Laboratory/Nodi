@@ -56,5 +56,18 @@ insert into public.app_settings (key, value) values
     ('crosslink_top_k',                 '8'),
     -- 상시 켜기 (D172). 켜면 **거리 띠를 무시하고** 가장 가까운 후보를 무조건
     -- 잇는다. 테스트용이다 — 이걸 켜 두면 "드물게"라는 성질이 사라진다.
-    ('crosslink_always_on',             'false')
+    ('crosslink_always_on',             'false'),
+    -- 펜 표시 해석 (D178)
+    --
+    -- 질문 획 주변의 카드를 함께 읽어 화살표의 지시대상을 살린다. 선정은
+    -- **원래 획 bbox 기준 한 번만** 하고(키운 상자로 재선정하면 조밀한
+    -- 캔버스에서 전체를 삼킨다), 상자는 원본의 max_scale배로 자른다.
+    ('ink_vlm_enabled',                 'true'),
+    ('ink_card_max',                    '5'),
+    ('ink_near_pad',                    '120'),
+    ('ink_box_max_scale',               '2.5'),
+    ('ink_figure_zoom_enabled',         'true'),
+    ('ink_vlm_timeout_seconds',         '30'),
+    ('ink_card_body_max_chars',         '1200'),
+    ('ink_scene_max_side',              '1280')
 on conflict (key) do nothing;

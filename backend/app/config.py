@@ -189,6 +189,28 @@ class Settings(BaseSettings):
     # 놓고 결국 실패시키는 것보다 낫다.
     ocr_queue_timeout_seconds: int = 15
 
+    # --- 펜 표시 해석 (D178) ---
+    # D176은 손글씨를 글자로 바꿨지만 학생이 그은 **화살표는 아무 데도 가지
+    # 않았다** — "이거에 대해서 설명해줘"만 도착하고 "이거"가 사라진다. 질문 획
+    # 주변의 카드를 함께 읽어 그 지시대상을 살린다.
+    #
+    # 비전 모델은 judge_* 계열을 그대로 재사용한다(같은 기계 GPU 0, llama.cpp).
+    # OCR은 GPU 1이라 둘이 **실제로 병렬로** 돈다.
+    ink_vlm_enabled: bool = True
+    # 끌어올 카드 상한. 많아지면 SOLAR가 받는 본문이 부풀고 화살표의 의미가 묻힌다.
+    ink_card_max: int = 5
+    # 근접 판정 반경(월드 px). 화살표 없이 카드 옆에 질문만 쓰는 것이 **가장
+    # 흔한 사용법**이라, 이 단이 없으면 그 경우가 통째로 빈손이 된다.
+    ink_near_pad: int = 120
+    # 상자가 원본 획 bbox의 몇 배까지 커질 수 있나. **클램프가 없으면** 카드를
+    # 끌어온 만큼 상자가 커지고, 한 변 상한 때문에 배율이 줄어 **정작 화살표가
+    # 몇 픽셀로 뭉개진다** — 기능이 안 되는 게 아니라 그럴싸하게 틀린다.
+    ink_box_max_scale: float = 2.5
+    ink_figure_zoom_enabled: bool = True
+    ink_vlm_timeout_seconds: int = 30
+    ink_card_body_max_chars: int = 1200
+    ink_scene_max_side: int = 1280
+
     # --- 강의 클립 추천 (D149) ---
     lecture_pipeline_enabled: bool = True          # 인제스트 킬 스위치
     # 직접(본문) 거리 게이트. 0.55였는데 실측에서 정직하게 관련 있는 클립이
