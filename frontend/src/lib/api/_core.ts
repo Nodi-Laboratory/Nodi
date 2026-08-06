@@ -22,6 +22,17 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
  */
 export function clearTokenCache(): void {
   clearToken();
+  // 사람이 바뀌면 **그 사람 것으로 기억해 둔 것도** 버린다. 코치 노브는
+  // 사용자별 값은 아니지만, 로그아웃은 "이 브라우저의 상태를 비운다"는 뜻이라
+  // 여기서 함께 지우는 편이 다음 사람에게 예측 가능하다.
+  onClearCaches.forEach((fn) => fn());
+}
+
+/** 로그아웃 때 함께 비울 캐시들. 모듈이 자기 것을 등록한다(순환 임포트 회피). */
+const onClearCaches: Array<() => void> = [];
+
+export function registerCacheClear(fn: () => void): void {
+  onClearCaches.push(fn);
 }
 
 /** 저장된 액세스 토큰을 Authorization 헤더로. */
