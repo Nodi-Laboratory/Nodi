@@ -237,6 +237,11 @@ class Settings(BaseSettings):
     #   중복(같은 주제 다른 표현) 0.347 · 융합(다른 과목, 축 공유) 0.567~0.686 ·
     #   남남 0.880~0.904. 처음 눈대중으로 잡았던 0.20~0.38은 **중복만 걸리고
     #   융합은 전부 놓치는** 값이었다 — 재 보지 않았으면 기능이 한 번도 안 떴다.
+    # D181: 전용 OCR GPU가 내려갔을 때 비전 모델로 손글씨를 읽는 예비 경로.
+    # **예비이지 대체가 아니다** — 언제나 VARCO를 먼저 부르고, 그쪽이 못 받을
+    # 때만 쓴다(범용 비전은 안 쓴 글자를 지어낼 여지가 더 크다).
+    ocr_vision_fallback_enabled: bool = True
+
     crosslink_enabled: bool = True
     crosslink_min_distance: float = 0.45   # 이보다 가까우면 같은 얘기 — 버린다
     crosslink_max_distance: float = 0.72   # 이보다 멀면 남남

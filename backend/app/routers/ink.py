@@ -43,7 +43,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 
 from ..auth.deps import CurrentUser, get_current_user
 from ..config import get_settings
-from ..services import ink_marks
+from ..services import handwriting_vision, ink_marks
 from ..services import ocr as svc
 
 logger = logging.getLogger("nodi.ink")
@@ -208,11 +208,30 @@ async def interpret_ink(
     shots = _parse_gestures(gestures, {c["n"] for c in roster})
 
     async def _ocr() -> str:
-        return await svc.recognize(
-            ink_bytes,
-            filename=ink_png.filename or "handwriting.png",
-            content_type=ink_png.content_type or "image/png",
-        )
+        """손글씨를 읽는다. **전용 OCR을 먼저, 안 되면 비전 모델로** (D181).
+
+        VARCO는 OCR 전용이라 손글씨를 더 정확히 읽는다. 그 GPU 하나가
+        내려갔다고 질문 펜 전체가 멈추면 학생은 방금 손으로 쓴 질문을 자판으로
+        다시 쳐야 한다 — 실측 2026-08-06: 터널이 끊긴 채였고 아무것도 못 읽었다.
+        그런데 같은 화면의 표시 해석은 멀쩡히 돌고 있었다(다른 GPU).
+
+        **순서를 바꾸지 않는다.** 예비 경로가 먼저 돌면 품질이 조용히 내려간다.
+        """
+        try:
+            return await svc.recognize(
+                ink_bytes,
+                filename=ink_png.filename or "handwriting.png",
+                content_type=ink_png.content_type or "image/png",
+            )
+        except (svc.OcrUnavailable, svc.OcrUpstreamError, svc.OcrBusy):
+            if not handwriting_vision.is_configured():
+                raise
+            text = await handwriting_vision.recognize(ink_bytes)
+            if text:
+                return text
+            # 예비 경로도 못 읽었으면 **원래 실패를 그대로 올린다** — 학생이
+            # 보는 문구가 "서버가 안 된다"와 "글씨를 못 읽었다"로 갈려야 한다.
+            raise
 
     async def _marks() -> ink_marks.MarksResult:
         # 도식이 없으면 볼 것이 없다. 카드가 하나도 없어도 마찬가지 —
