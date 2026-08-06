@@ -193,7 +193,7 @@ test.describe("캔버스 부드러움", () => {
     await page.mouse.up();
 
     for (const [name, s] of [["팬", pan], ["줌", zoom], ["드래그", drag]] as const) {
-      // eslint-disable-next-line no-console -- 이 스위트의 산출물이 곧 이 숫자다
+      // 이 스위트의 산출물이 곧 이 숫자다 — 통과/실패만으로는 알 수 없다.
       console.log(
         `  ${name}: 프레임 ${s.frames}개 · 중앙값 ${s.p50.toFixed(1)}ms` +
           ` · p95 ${s.p95.toFixed(1)}ms · 끊김 ${(s.longRatio * 100).toFixed(1)}%`,
