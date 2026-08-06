@@ -19,6 +19,7 @@ from .routers import (
     canvas,
     chat,
     clip_thumbnails,
+    coach,
     files,
     health,
     home,
@@ -90,6 +91,8 @@ for _router in (
     # D190: 클립 썸네일 읽기. **files.router와 겹칠 수 없는 자리**에 둔다 —
     # `/files/{file_id}`가 정적 형제 경로를 삼킨다(그 라우터 docstring 참조).
     clip_thumbnails.router,
+    # D194: 질문 방향성 코치 — 언제 말할지는 화면이, 무슨 말을 할지는 여기가.
+    coach.router,
     teacher.router,
     # D176: 손글씨 인식(펜 입력판) — 모델 서버 미설정이면 501을 준다.
     ocr.router,

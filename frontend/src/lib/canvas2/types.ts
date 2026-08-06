@@ -11,6 +11,28 @@ export type ItemSource = "ai" | "user";
 
 /** 아이템 부가 정보. 스키마를 늘리기 애매한 렌더 힌트만 담는다. */
 export interface ItemData {
+  /**
+   * 질문 방향성 코치 결과 (D194) — 이 카드 옆 말풍선.
+   *
+   * **카드에 싣는 이유**: 새로고침해도 남아야 하고(권유는 한 번 뜨고 마는 것이
+   * 아니다), 이미 말을 건 브랜치를 되짚는 근거이기도 하다. `data`는 이미 렌더
+   * 부가 정보를 담는 자리이고 백업에도 들어간다(D193).
+   *
+   * `advice`가 null이면 **중단**이다 — 모델이 할 말이 없다고 했거나 형식을
+   * 어겼다. 그래도 "이 브랜치는 봤다"로 쳐서 바로 다시 묻지 않는다.
+   */
+  coach?: {
+    advice: {
+      topic: string;
+      covered: string[];
+      suggest: string[];
+      bubble: string;
+      hint: string;
+    } | null;
+    /** 학생이 ×로 닫았나. 닫으면 입력창 위 문구도 사라진다. */
+    dismissed?: boolean;
+  };
+
   /** 교과서 도판(kind='figure') 메타. url은 signed라 만료된다 — 영속 금지(D87). */
   figure?: {
     figureId: string;

@@ -76,6 +76,28 @@ export function SettingsTab() {
   );
 }
 
+/**
+ * 설명의 `**굵게**`만 실제 굵기로 그린다.
+ *
+ * 스펙 설명은 서버가 소유하고(D113) 이미 여러 노브가 `**`로 강조를 쓰고 있었다 —
+ * 그런데 화면이 그걸 안 그려서 관리자에게는 **별표 두 개가 그대로** 보였다
+ * (실측 2026-08-07, 콘솔 화면). 마크다운 라이브러리를 들이지 않는 이유는 이
+ * 자리가 한 줄짜리 설명이기 때문이다. 문자열을 쪼개 넣으므로 HTML 주입 경로가
+ * 없다 — `dangerouslySetInnerHTML`을 쓰면 서버 문자열이 곧 마크업이 된다.
+ */
+function bold(text: string) {
+  return text.split(/\*\*(.+?)\*\*/g).map((part, i) =>
+    // 정규식 캡처가 낀 자리(홀수 색인)만 강조다.
+    i % 2 === 1 ? (
+      <b key={i} className="font-semibold text-[#e7e3d8]">
+        {part}
+      </b>
+    ) : (
+      part
+    ),
+  );
+}
+
 function SettingRow({ item }: { item: AdminSettingItem }) {
   const qc = useQueryClient();
   const spec = item.spec;
@@ -183,7 +205,7 @@ function SettingRow({ item }: { item: AdminSettingItem }) {
       }
     >
       <p className="text-xs leading-relaxed text-[#cfc5a6]">
-        {spec.description}
+        {bold(spec.description)}
         {spec.effect && <span className="text-[#9a948a]"> → {spec.effect}</span>}
       </p>
 
@@ -259,6 +281,20 @@ function SettingRow({ item }: { item: AdminSettingItem }) {
             {spec.min != null && spec.max != null && (
               <span className="text-[10px] text-[#6f6a62]">
                 허용 {spec.min}–{spec.max}
+              </span>
+            )}
+            {/*
+              파생값은 **초안**을 따라간다 (D194). 저장된 값을 따라가면 숫자를
+              고치는 동안 옆의 "재발동까지"가 옛 수를 가리켜, 지금 무엇을 정하고
+              있는지가 오히려 헷갈린다.
+            */}
+            {spec.derived && (
+              <span className="text-[10px] text-[#9a948a]">
+                {spec.derived.label}{" "}
+                <span className="font-mono text-[#cfc5a6]">
+                  {Number(draft ?? spec.min ?? 0) + spec.derived.add}
+                </span>
+                {spec.derived.unit ?? spec.unit}
               </span>
             )}
           </div>

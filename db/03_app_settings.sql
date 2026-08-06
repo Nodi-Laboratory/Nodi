@@ -85,3 +85,11 @@ insert into public.app_settings (key, value) values
     ('ink_card_body_max_chars',         '1200'),
     ('ink_scene_max_side',              '1280')
 on conflict (key) do nothing;
+
+-- 질문 방향성 코치 (D194) — 예시 질문을 주지 않고 **방향만** 권한다.
+-- 시드가 없으면 콘솔이 "DB 행 없음"으로 띄우고 관리자가 못 만진다.
+INSERT INTO public.app_settings (key, value) VALUES
+    ('question_coach_enabled', 'true'::jsonb),
+    ('question_coach_min_cards', '3'::jsonb),
+    ('question_coach_model', '"solar-pro2"'::jsonb)
+ON CONFLICT (key) DO NOTHING;

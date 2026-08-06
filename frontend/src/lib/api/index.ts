@@ -109,3 +109,6 @@ export * from "./crosslink";
 
 // D189: 개념 지도 — 홈 대시보드가 지금까지의 개념 전부를 한 장에 펼친다.
 export * from "./conceptMap";
+
+// D194: 질문 방향성 코치 — 예시 질문을 주지 않고 방향만 권한다.
+export * from "./coach";

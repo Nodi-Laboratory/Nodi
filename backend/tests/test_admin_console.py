@@ -84,6 +84,17 @@ def test_모든_스펙_키에_코드_기본값이_있다():
         assert admin_console.default_for(spec["key"]) is not None, spec["key"]
 
 
+def test_모든_그룹이_정렬_목록에_있다():
+    """빠진 그룹은 **안 보이지 않고 맨 뒤로 간다** — 그래서 눈으로 안 잡힌다.
+
+    화면은 `_GROUP_ORDER`의 색인으로 정렬하고 없는 이름은 999로 민다(기타와
+    같은 자리). 새 노브 묶음을 넣고 여기 이름을 안 더하면 관리자가 그 묶음을
+    "기타" 아래 낯선 자리에서 찾게 된다.
+    """
+    for spec in admin_console._SPECS:
+        assert spec["group"] in admin_console._GROUP_ORDER, spec["key"]
+
+
 # ── 2) AI 흐름 ────────────────────────────────────────────────────────
 def test_흐름은_활성_경로를_반영한다():
     on = admin_console.flow_spec(react_on=True, react_steps=3, skills=[])

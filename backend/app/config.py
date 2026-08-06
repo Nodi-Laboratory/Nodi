@@ -246,6 +246,16 @@ class Settings(BaseSettings):
     # D190: **개념 카드 하나에 영상 하나**(사용자 지시 2026-08-06). 카드가
     # 정사각형 썸네일 카드가 되면서 여러 개가 붙으면 답보다 곁다리가 커진다.
     lecture_retrieve_top_k: int = 1                # 카드당 추천 개수
+    # --- D194 질문 방향성 코치 ---------------------------------------------
+    # 사용자 인터뷰의 공통 문제("스스로 질문하기가 안 된다")에 대한 장치.
+    # 예시 질문을 주지 않고 **방향만** 말한다 — 베낀 질문은 자기 질문이 아니다.
+    question_coach_enabled: bool = True
+    # n — 이 수만큼 쌓인 브랜치에 하나 더 이어지면(n+1) 말을 건다.
+    # 재발동 간격(n+3)은 여기서 파생된다(따로 만지게 하지 않는다).
+    question_coach_min_cards: int = 3
+    # 판정 모델. 방향 낱말 몇 개를 고르는 일이라 가벼운 모델로 충분하다(D182 동형).
+    question_coach_model: str = "solar-pro2"
+
     lecture_batch_size: int = 16                   # 임베딩/원자 잡 팬아웃 단위
     # 자동 전사(개정 R2) — 업로드 자막이 없으면 EBS 오디오를 Whisper로 전사.
     lecture_whisper_enabled: bool = True           # 자막 없을 때 자동 전사(오버레이 폴백 가능)

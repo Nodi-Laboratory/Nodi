@@ -22,7 +22,14 @@ from typing import Any
 
 from ..config import get_settings
 from ..db.client import UserClient, get_service_client
-from . import app_settings, embedding, figure_search, qdrant_store, rag
+from . import (
+    app_settings,
+    embedding,
+    figure_search,
+    qdrant_store,
+    question_coach,
+    rag,
+)
 
 logger = logging.getLogger("nodi.admin_console")
 settings = get_settings()
@@ -340,6 +347,57 @@ _SPECS: list[dict[str, Any]] = [
             "이 글자 수를 넘는 문서는 의미 청킹 없이 정규식 청킹만 쓴다(비용 폭주 가드)."
         ),
         "effect": "적용 범위 ↔ 대형 문서 인제스트 비용",
+    },
+    # 질문 방향성 코치 (D194)
+    {
+        "key": "question_coach_enabled",
+        "label": "질문 방향성 코치",
+        "group": "질문 코치",
+        "widget": "toggle",
+        "scope": "live",
+        "description": (
+            "한 브랜치를 이어 물어 온 학생에게 **안 물어본 방향**을 말풍선으로 "
+            "권한다. 질문 문장은 주지 않는다 — 베낀 질문은 자기 질문이 아니라서 "
+            "'스스로 질문하기'를 하나도 안 푼다."
+        ),
+        "effect": "권유 노출 ↔ 방해",
+    },
+    {
+        "key": "question_coach_min_cards",
+        "label": "코치 발동 카드 수 (n)",
+        "group": "질문 코치",
+        "widget": "number",
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "unit": "장",
+        "scope": "live",
+        "description": (
+            "한 줄기(브랜치)에 n장이 쌓인 뒤 **하나 더 이어지면**(n+1번째 카드) "
+            "말을 건다. 브랜치마다 한 번이고, 그 뒤로 n+3장이 더 이어지면 다시 "
+            "걸 수 있다."
+        ),
+        "effect": "권유 시점 ↔ 잔소리",
+        # 재발동 시점(n+3)을 화면이 함께 보여 준다 (사용자 지시 2026-08-06) —
+        # 이 값 하나만 놓으면 관리자가 암산해야 한다. 노브를 둘로 쪼개지 않는
+        # 이유는 question_coach.read_knobs 주석에 있다.
+        "derived": {
+            "label": "재발동까지",
+            "add": question_coach.REARM_GAP,
+            "unit": "장",
+        },
+    },
+    {
+        "key": "question_coach_model",
+        "label": "코치 판정 모델",
+        "group": "질문 코치",
+        "widget": "text",
+        "scope": "live",
+        "description": (
+            "카드들을 읽고 물은 방향·안 물은 방향을 고르는 모델. 낱말 몇 개를 "
+            "고르는 일이라 가벼운 것으로 충분하다. 비우면 전역 채팅 모델을 쓴다."
+        ),
+        "effect": "판정 품질 ↔ 비용·지연",
     },
     # 강의 클립 추천 (D149)
     {
@@ -797,6 +855,7 @@ _GROUP_ORDER = [
     "답변 생성",
     "손글씨 인식",
     "캔버스 화면",
+    "질문 코치",
     "AI 흐름",
     "RAG 검색",
     "청킹·임베딩",

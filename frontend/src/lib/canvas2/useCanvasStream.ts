@@ -86,10 +86,16 @@ export interface CanvasStreamApi {
    * 실제 부모는 **태그가 정한다** — 고른 노드와 답의 분류가 다르면 답은
    * 자기 태그의 트리로 간다(tree.ts `assignParents`).
    */
-  send: (
-    question: string,
-    opts?: SendOpts,
-  ) => Promise<{ id: string; tag: string | null }[]>;
+  /**
+   * 질문을 보내고 **만들어진 아이템들**을 돌려준다.
+   *
+   * id·tag만 돌려주던 것을 아이템 전체로 넓혔다(D194). 호출부가 이 턴의
+   * 카드로 **판단**을 해야 하는데(코치의 사슬 깊이), store는 아직 이 카드들을
+   * 커밋하지 않았을 수 있다 — id만 받으면 store에서 되찾아야 하고 그 조회가
+   * 빈손이면 **아무 일도 안 일어난 것처럼** 보인다(실측 2026-08-07: 말풍선이
+   * 한 번도 안 떴다). 부모까지 이어진 실체를 그대로 넘긴다.
+   */
+  send: (question: string, opts?: SendOpts) => Promise<CanvasItem[]>;
   /** 마지막 오류. */
   error: string | null;
   /**
@@ -577,7 +583,7 @@ export function useCanvasStream({
       if (attachHost) setFocusId(attachHost);
 
       // 만들어진 카드를 돌려준다 — 호출부가 초점을 어디로 옮길지 정한다(D151).
-      const created = () => made.map((m) => ({ id: m.id, tag: m.tag }));
+      const created = () => made;
       if (!made.length) return [];
 
       // 완료 시 한 번에 저장한다(스트리밍 중 매 토큰 PATCH는 수백 왕복이 된다).
@@ -657,9 +663,10 @@ export function useCanvasStream({
           const at = tempIds.indexOf(cur);
           return at >= 0 && saved[at] ? saved[at].id : cur;
         });
-        // 저장된 뒤에는 **서버 id**를 돌려준다. 임시 id를 넘기면 호출부가
-        // 곧 사라질 id를 초점으로 잡는다.
-        return made.map((m, i) => ({ id: saved[i]?.id ?? m.id, tag: m.tag }));
+        // 저장된 뒤에는 **서버 행**을 돌려준다. 임시 id를 넘기면 호출부가
+        // 곧 사라질 id를 초점으로 잡는다. `linked`는 같은 턴의 부모까지 진짜
+        // id로 이어 놓은 것이라, 받는 쪽이 사슬을 그대로 탈 수 있다(D194).
+        return made.map((m, i) => linked[i] ?? { ...m, id: saved[i]?.id ?? m.id });
       } catch (e) {
         // 저장 실패가 학습을 막지 않는다. 화면의 아이템은 그대로 두고 알린다.
         setError(`저장하지 못했습니다 — ${(e as Error).message}`);

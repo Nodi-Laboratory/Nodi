@@ -413,6 +413,15 @@ export interface AdminSettingSpec {
   step?: number;
   unit?: string;
   options?: { value: string | number; label: string }[];
+  /**
+   * 이 값에서 파생되는 두 번째 수를 함께 보여 준다 (D194).
+   *
+   * 코치의 재발동 시점이 n+3이라 값 하나만 놓으면 관리자가 암산해야 한다
+   * (사용자 지시 2026-08-06: "관리자 콘솔이 n+3이 몇인지 보여줘야 한다").
+   * 노브를 둘로 쪼개지 않는 이유는 D194 `read_knobs` 주석에 있다 — 따로 두면
+   * "3인데 왜 7에서 뜨지" 같은 조합이 생긴다.
+   */
+  derived?: { label: string; add: number; unit?: string };
 }
 
 export interface AdminSettingItem {

@@ -8,7 +8,16 @@
  * 무엇에 대해 묻는지 보이지 않으면 답이 어디에 붙을지도 모른다(D149).
  */
 
-import { ArrowUp, Check, Loader2, Paperclip, Pencil, Quote, X } from "lucide-react";
+import {
+  ArrowUp,
+  Check,
+  Lightbulb,
+  Loader2,
+  Paperclip,
+  Pencil,
+  Quote,
+  X,
+} from "lucide-react";
 import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import { UPLOAD_ACCEPT } from "@/lib/uploadLimits";
 
@@ -18,6 +27,14 @@ interface Props {
   reply: string;
   /** 지금 고른 트리 노드 — 다음 답이 여기에 붙는다 (D151). */
   quote: { id: string; text: string; tag?: string | null } | null;
+  /**
+   * 질문 방향 안내 한 줄 (D194) — 고른 카드에 코치 판정이 있을 때만.
+   *
+   * **베낄 질문이 아니다.** 방향을 풀어 쓴 문장이라 학생이 그대로 붙여넣을 수
+   * 없다 — 그게 이 기능의 핵심 제약이다(베낀 질문은 자기 질문이 아니다).
+   * 말풍선을 끄면 이 줄도 사라진다(권유이지 강요가 아니다).
+   */
+  coachHint?: string | null;
   onClearQuote: () => void;
   /**
    * 입력창에 포커스를 달라는 신호 — 올라갈 때마다 커서를 여기로 옮긴다 (D157).
@@ -64,6 +81,7 @@ export function AskBar({
   busy,
   reply,
   quote,
+  coachHint,
   onClearQuote,
   onSend,
   disabled,
@@ -164,6 +182,20 @@ export function AskBar({
             ))}
           </span>
           {statusText}
+        </div>
+      )}
+
+      {coachHint && (
+        <div
+          className="mb-1.5 flex items-start gap-1.5 rounded-lg px-3 py-2 text-[12.5px]"
+          style={{
+            background: "var(--c-live-wash, transparent)",
+            border: "1px solid var(--c-live)",
+            color: "var(--c-ink)",
+          }}
+        >
+          <Lightbulb size={13} style={{ color: "var(--c-live-deep)", marginTop: 2, flexShrink: 0 }} />
+          <span>{coachHint}</span>
         </div>
       )}
 
