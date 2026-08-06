@@ -220,6 +220,14 @@ export interface FileRow {
   status: FileStatus;
   chunk_total: number | null;
   chunk_done: number | null;
+  /**
+   * 교과서 도판 진척 (D186). 교과서 행에만 있다.
+   *
+   * 청크만 세면 화면이 **0%에 붙어 있는다** — 도판 잡이 텍스트 잡과 같은 순간에
+   * 만들어져 큐 앞을 차지하기 때문이다(실측: 도판 336/708장을 처리하는 동안 계속 0%).
+   */
+  figure_total?: number | null;
+  figure_done?: number | null;
   error?: string | null;
   /** D83: 세션 컨텍스트로 연결된 세션(user_upload 전용). */
   session_id?: string | null;

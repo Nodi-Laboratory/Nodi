@@ -11,6 +11,7 @@ is_class_teacher (data scope, enforced in the RPCs / RLS).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -19,6 +20,8 @@ from pydantic import BaseModel, Field
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_role
 from ..db.client import UserClient
 from ..services import files as files_svc
+
+logger = logging.getLogger("nodi.teacher")
 
 router = APIRouter(prefix="/teacher", tags=["teacher"])
 
@@ -143,7 +146,7 @@ async def list_materials(
     """
     client = UserClient.from_user(user)
     await _assert_teaches(client, class_id)
-    return await client.select(
+    rows = await client.select(
         "files",
         {
             "space_kind": "eq.class",
@@ -153,6 +156,62 @@ async def list_materials(
             "order": "created_at.desc",
         },
     )
+    await _attach_figure_progress(client, rows)
+    return rows
+
+
+async def _attach_figure_progress(
+    client: UserClient, rows: list[dict[str, Any]]
+) -> None:
+    """교과서 행에 도판 진척(`figure_done`/`figure_total`)을 붙인다 (D186).
+
+    ## 왜 필요한가
+
+    교사 화면의 진행률은 **텍스트 청크만** 셌다. 그런데 교과서는 도판 파이프라인
+    (크롭 → 비전 캡션 → 임베딩)이 훨씬 길고, 그 잡들이 텍스트 잡과 **같은 순간에**
+    만들어져 큐에서 앞을 차지한다(`_claim_jobs`는 created_at 오름차순인데 동점이다).
+    그래서 도판이 다 끝날 때까지 화면은 **0%에 붙어 있는다.**
+
+    실측 2026-08-06(173p 교과서): 도판 336/708장을 처리하는 동안 화면은 계속 0%
+    였다. 사용자 보고가 "진행도가 0에서 안 움직이는데 왜이래?"였다 — 멎은 것과
+    구분할 방법이 화면에 없다. **일을 절반 해 놓고 아무것도 안 한 척하는 표시는
+    고장난 표시보다 나쁘다**(교사가 재시도를 누르거나 포기하게 만든다).
+
+    ## 왕복 한 번
+
+    파일마다 세면 N+1이다. 교과서 id를 모아 한 번에 읽고 파이썬에서 센다 —
+    행이 (file_id, status) 둘뿐이라 도판 수백 개도 가볍다.
+
+    실패는 삼킨다. 진척 표시는 **있으면 좋은 것**이지 목록을 막을 이유가 아니다
+    (D88이 도판 실패를 텍스트 인덱싱과 격리한 것과 같은 정신).
+    """
+    ids = [str(r["id"]) for r in rows if r.get("kind") == "textbook"]
+    if not ids:
+        return
+    try:
+        figures = await client.select(
+            "textbook_figures",
+            {"select": "file_id,status", "file_id": f"in.({','.join(ids)})"},
+        )
+    except Exception:  # noqa: BLE001 - 진척 표시가 목록을 막지 않는다
+        logger.warning("도판 진척 조회 실패 (교과서 %d건)", len(ids), exc_info=True)
+        return
+    done: dict[str, int] = dict.fromkeys(ids, 0)
+    total: dict[str, int] = dict.fromkeys(ids, 0)
+    for f in figures:
+        fid = str(f.get("file_id"))
+        if fid not in total:
+            continue
+        total[fid] += 1
+        # 'pending'만 남은 일이다 — embedded는 끝났고, failed는 더 안 는다
+        # (D88: 도판 실패는 파일 상태를 바꾸지 않는다). 둘 다 "처리됨"으로 센다.
+        if f.get("status") != "pending":
+            done[fid] += 1
+    for r in rows:
+        rid = str(r["id"])
+        if rid in total:
+            r["figure_total"] = total[rid]
+            r["figure_done"] = done[rid]
 
 
 class ToggleLecturePackageBody(BaseModel):

@@ -209,9 +209,18 @@ export function MaterialsTab({ classId }: { classId: string }) {
 function MaterialItem({ file, classId }: { file: FileRow; classId: string }) {
   const queryClient = useQueryClient();
   const meta = STATUS_META[file.status];
-  const total = file.chunk_total ?? 0;
-  const done = file.chunk_done ?? 0;
+  /**
+   * 진행률은 **텍스트 청크 + 교과서 도판**이다 (D186).
+   *
+   * 청크만 세면 교과서가 0%에 붙어 있는다 — 도판 잡이 텍스트 잡과 같은 순간에
+   * 만들어져 큐 앞을 차지해서, 도판이 다 끝나야 청크가 돈다(실측 2026-08-06:
+   * 도판 336/708장을 처리하는 동안 화면은 계속 0%였고, 사용자는 멎은 줄 알았다).
+   * 절반을 해 놓고 아무것도 안 한 척하는 표시는 없는 것보다 나쁘다.
+   */
+  const total = (file.chunk_total ?? 0) + (file.figure_total ?? 0);
+  const done = (file.chunk_done ?? 0) + (file.figure_done ?? 0);
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  const figureTotal = file.figure_total ?? 0;
   // G3: 재시도/삭제 요청 중 표시(둘 다 disabled) + 행 단위 오류 안내.
   const [pendingAction, setPendingAction] = useState<"retry" | "delete" | null>(
     null,
@@ -308,6 +317,13 @@ function MaterialItem({ file, classId }: { file: FileRow; classId: string }) {
           {total > 0 && (
             <span className="shrink-0 text-[11px] tabular-nums text-fg-muted">
               {done}/{total}
+              {/* 교과서는 도판이 대부분이라, 무엇을 기다리는지 말해 준다.
+                  숫자만 있으면 왜 이렇게 오래 걸리는지 알 길이 없다. */}
+              {figureTotal > 0 && (
+                <span className="ml-1">
+                  (도판 {file.figure_done ?? 0}/{figureTotal})
+                </span>
+              )}
             </span>
           )}
         </div>
