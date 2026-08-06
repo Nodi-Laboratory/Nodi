@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { loginAndOpenCanvas } from "./helpers";
+import { loginAndOpenCanvas, openSeededFigureSession } from "./helpers";
 
 /**
  * 교과서 도판 이미지 로딩 E2E (D147 후속 버그).
@@ -15,6 +15,7 @@ import { loginAndOpenCanvas } from "./helpers";
  */
 test("재수화된 교과서 도판이 signed URL을 받아 이미지를 불러온다", async ({ page }) => {
   await loginAndOpenCanvas(page);
+  await openSeededFigureSession(page);
 
   // 시드 도판이 없는 환경에서는 건너뛴다(계정처럼 이 테스트도 seed가 전제다).
   // 스켈레톤("도판 불러오는 중…")이든 <img>든, 도판 카드가 있어야 검증한다.
@@ -38,6 +39,7 @@ test("재수화된 교과서 도판이 signed URL을 받아 이미지를 불러�
 
 test("도판을 좌우 손잡이로 리사이즈해도 이미지만 커지고 캡션은 그대로다", async ({ page }) => {
   await loginAndOpenCanvas(page);
+  await openSeededFigureSession(page);
 
   const card = page.locator('[data-canvas-item]').filter({ hasText: "E2E도판" });
   if ((await card.count()) === 0) {

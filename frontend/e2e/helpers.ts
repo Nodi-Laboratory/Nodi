@@ -132,3 +132,24 @@ export async function dragBy(page: Page, note: Locator, dx: number, dy: number):
   await page.mouse.move(cx + dx, cy + dy, { steps: 5 });
   await page.mouse.up();
 }
+
+/**
+ * 시드가 심어 둔 **도판 세션**을 이름으로 골라 연다 (D200).
+ *
+ * `/space/personal`은 가장 최근 대화를 여는데, 앞선 스펙들이 새 대화를 만들면
+ * 그 세션이 더 최신이 된다 — 그러면 도판 스펙이 시드 카드를 못 보고 조용히
+ * 건너뛴다. **혼자 돌릴 때는 되고 전체로 돌리면 안 되는** 종류의 흔들림이라,
+ * 순서에 기대지 않고 목록에서 직접 고른다.
+ */
+export async function openSeededFigureSession(page: Page): Promise<void> {
+  await page.goto("/space/personal");
+  await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
+  await page.getByLabel("대화 목록 열기").click();
+  const row = page.getByRole("dialog").getByText("E2E 도판 세션").first();
+  await row.waitFor({ timeout: 15_000 });
+  await row.click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-canvas-item]")).not.toHaveCount(0, {
+    timeout: 20_000,
+  });
+}
