@@ -92,6 +92,22 @@ def in_band(distance: float, lo: float, hi: float) -> bool:
 
     상한 하나만 두면 목적과 어긋난다 — **너무 가까운 히트는 융합이 아니라
     중복**이다("어제도 광합성, 오늘도 광합성"). 바닥 아래는 같은 얘기라 버린다.
+
+    ## 띠와 모델은 서로 다른 것을 막는다 (D182, 실측 2026-08-06)
+
+    둘 중 하나로 퉁칠 수 없다는 것이 실측으로 드러났다:
+
+      **중복은 띠만 막는다.** "광합성" ↔ "광합성의 원리"를 모델에게 물으면
+      "동일한 과정을 다른 표현으로 설명한 것으로 서로 직접 이어진다"며
+      **관련있음**이라고 답한다. 모델 말이 틀린 것도 아니다 — 정말 이어져
+      있다. 다만 그건 학생에게 보여 줄 만한 발견이 아니다. 거리 0.223은
+      바닥(0.42) 아래라 여기서 걸린다.
+
+      **애매한 남남은 모델이 막는다.** 띠는 숫자 하나라 "둘 다 과학이다"
+      수준의 헐거운 유사도를 구분하지 못한다.
+
+    그래서 순서가 띠 → 모델이고, 어느 한쪽을 빼면 다른 쪽이 그 구멍을 메우지
+    못한다.
     """
     return lo <= distance <= hi
 
@@ -112,13 +128,19 @@ def build_explain_messages(
             "role": "system",
             "content": (
                 "너는 중·고등학생의 학습을 돕는 교사다. 학생이 서로 다른 시기에 "
-                "공부한 두 개념이 어떻게 이어지는지 짚어 준다.\n"
-                "규칙:\n"
+                "공부한 두 개념을 보고 **실제로 이어지는지 먼저 판단**한 뒤, "
+                "이어질 때만 어떻게 이어지는지 짚어 준다.\n"
+                "\n"
+                "다음이면 관련이 **없다**:\n"
+                "- 같은 내용을 말만 바꿔 쓴 것 — 그건 연결이 아니라 중복이다\n"
+                "- 주제가 다를 뿐 공통된 원리나 인과가 없는 것\n"
+                "- '둘 다 과학이다' 같은 헐거운 공통점밖에 없는 것\n"
+                "\n"
+                "설명 규칙:\n"
                 "- 한국어로, 2~3문장으로 짧게 쓴다.\n"
                 "- **왜** 관련이 있는지와 **어떻게** 이어지는지를 함께 말한다.\n"
                 "- 두 내용을 요약하지 마라. 학생은 이미 읽었다. 연결만 말한다.\n"
-                "- 억지로 잇지 마라. 실제로 관련이 없으면 정확히 "
-                'NO_LINK 라고만 답한다.'
+                "- 억지로 잇지 마라. **애매하면 관련 없음으로 판단한다.**"
             ),
         },
         {
@@ -130,18 +152,60 @@ def build_explain_messages(
                 f"[예전에 공부한 것 — 분류: {past_tag}]\n"
                 f"{(past.get('title') or '').strip()}\n"
                 f"{(past.get('body') or '')[:_MAX_PROMPT_CHARS].strip()}\n\n"
-                "이 둘이 어떻게 이어지는지 설명해라."
+                "두 줄로 답한다. 머리말·목록·굵은 글씨를 쓰지 마라.\n"
+                "판정: 관련있음 또는 관련없음\n"
+                "설명: <이어지는 경우에만. 관련없음이면 이 줄을 쓰지 마라>"
             ),
         },
     ]
 
 
 def parse_explanation(content: str) -> str:
-    """모델 답에서 설명을 꺼낸다. 연결이 없다고 하면 빈 문자열."""
+    """모델 답에서 설명을 꺼낸다. **관련 없다고 하면 빈 문자열.**
+
+    ## 왜 판정을 따로 시키나 (D182)
+
+    예전에는 "관련 없으면 NO_LINK라고만 답하라"였다. 그런데 같은 호출에 **설명을
+    쓰라는 압박**이 함께 걸려 있어서, 모델은 애매할 때 거절하기보다 그럴싸한
+    연결을 지어내는 쪽으로 기울었다 — 억지로 이은 설명은 학생에게 잘못된 개념을
+    심는다("연결이 없는 것보다 나쁘다").
+
+    지금은 판정을 **먼저 한 낱말로** 시킨다. 거절이 한 낱말이면 거절이 쉬워진다.
+
+    형식을 어겨도 버리지 않는다 — `판정:` 줄이 없으면 본문 전체를 설명으로 본다.
+    다만 거절을 뜻하는 말이 앞머리에 있으면 링크를 만들지 않는다.
+    """
     text = (content or "").strip()
-    if not text or "NO_LINK" in text.upper():
+    if not text:
         return ""
-    return text[:800]
+    # 옛 형식도 계속 받는다 — 프롬프트를 바꿔도 모델은 가끔 옛 답을 한다.
+    if "NO_LINK" in text.upper():
+        return ""
+
+    verdict = ""
+    body: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip().lstrip("-*# ").strip()
+        if not stripped:
+            continue
+        flat = stripped.replace(" ", "")
+        if flat.startswith(("판정:", "판정：")):
+            verdict = flat[3:]
+            continue
+        if flat.startswith(("설명:", "설명：")):
+            rest = stripped.split(":", 1)[-1].split("：", 1)[-1].strip()
+            if rest:
+                body.append(rest)
+            continue
+        body.append(stripped)
+
+    if "관련없음" in verdict:
+        return ""
+    joined = " ".join(body).strip()
+    # 판정 줄이 없어도 앞머리가 거절이면 만들지 않는다.
+    if not joined or "관련없음" in joined.replace(" ", "")[:24]:
+        return ""
+    return joined[:800]
 
 
 async def read_knobs() -> dict[str, Any]:
@@ -209,10 +273,16 @@ async def index_item(item: dict[str, Any], session: dict[str, Any]) -> bool:
 
 
 async def explain(cur: dict[str, Any], past: dict[str, Any]) -> str:
-    """두 카드의 연결 설명. 실패·무연결이면 빈 문자열."""
+    """두 카드의 연결 설명. 실패·무연결이면 빈 문자열.
+
+    **가벼운 모델로 부른다** (D182, 사용자 지시 2026-08-06). 배지 하나에 대화
+    생성과 같은 모델을 쓸 이유가 없다 — 하는 일은 "이 둘이 실제로 이어지나"라는
+    판단과 두어 문장이다. 노브가 비어 있으면 전역 채팅 모델을 쓴다(옛 동작).
+    """
+    model = (settings.crosslink_model or "").strip() or None
     try:
         comp = await solar.complete(
-            build_explain_messages(cur, past), max_tokens=400
+            build_explain_messages(cur, past), max_tokens=400, model=model
         )
         return parse_explanation((comp.message or {}).get("content") or "")
     except Exception:  # noqa: BLE001 - 설명 실패는 링크를 안 만드는 것으로 끝난다

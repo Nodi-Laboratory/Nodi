@@ -243,8 +243,17 @@ class Settings(BaseSettings):
     ocr_vision_fallback_enabled: bool = True
 
     crosslink_enabled: bool = True
-    crosslink_min_distance: float = 0.45   # 이보다 가까우면 같은 얘기 — 버린다
-    crosslink_max_distance: float = 0.72   # 이보다 멀면 남남
+    # 거리 띠는 **실측으로 그었다** (2026-08-06, embedding-passage 실물 호출).
+    # 세 갈래를 각각 여러 쌍 재 보니 깨끗하게 갈렸다:
+    #
+    #   중복(같은 주제를 다르게 쓴 것)  0.223 ~ 0.347
+    #   연결(과목은 다른데 이어지는 것)  0.500 ~ 0.618   ← 배지가 떠야 하는 구간
+    #   남남(아무 상관 없는 것)          0.693 ~ 0.765
+    #
+    # 옛 천장 0.72는 **남남을 통과시켰다**("광합성 ↔ 시의 운율" 0.693,
+    # "판 구조론 ↔ 현재완료" 0.719). 지금은 각 구간 사이 빈 곳의 가운데다.
+    crosslink_min_distance: float = 0.42   # 이보다 가까우면 같은 얘기 — 버린다
+    crosslink_max_distance: float = 0.66   # 이보다 멀면 남남
     crosslink_top_k: int = 8               # 검색 폭(링크는 통과한 첫 1개만)
 
     # ── 캔버스 화면 동작 (D174) ───────────────────────────────────
@@ -261,6 +270,11 @@ class Settings(BaseSettings):
     # 상시 켜기 (D172) — 거리 띠를 무시하고 가장 가까운 후보를 무조건 잇는다.
     # **테스트용이다.** 켜 두면 "드물게"라는 성질이 사라진다.
     crosslink_always_on: bool = False
+    # D182: 관련성 판정은 **가벼운 모델**로 (사용자 지시 2026-08-06).
+    # 배지 하나에 대화 생성과 같은 모델을 쓸 이유가 없다 — 하는 일은 "이 둘이
+    # 실제로 이어지나"라는 예/아니오 판단과 두어 문장이다. 빈 문자열이면 전역
+    # 채팅 모델을 그대로 쓴다(옛 동작).
+    crosslink_model: str = "solar-pro2"
 
     # ── PIKE-RAG (TASK 6, D129~D132) ─────────────────────────────
     # A. 지식 원자화 (D129) — 킬스위치 off 출하, 캘리브레이션 후 on

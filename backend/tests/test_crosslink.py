@@ -127,8 +127,12 @@ def test_explain_prompt_carries_both_tags():
     )
     user = msgs[-1]["content"]
     assert "지구과학" in user and "생명과학" in user
+    # **판정을 먼저, 한 낱말로** 시킨다 (D182). 설명을 쓰라는 압박과 섞어 두면
+    # 모델이 애매할 때 거절 대신 그럴싸한 연결을 지어낸다.
+    assert "판정:" in user
+    assert "관련없음" in user
     # 억지 연결 금지 지시가 프롬프트에 남아 있어야 한다.
-    assert "NO_LINK" in msgs[0]["content"]
+    assert "애매하면 관련 없음" in msgs[0]["content"]
 
 
 def test_explain_prompt_handles_missing_tag():
@@ -180,3 +184,58 @@ def test_verdict_agrees_with_in_band():
     for d in (0.0, 0.44, 0.45, 0.60, 0.72, 0.73, 1.0):
         accepted = crosslink.band_verdict(d, 0.45, 0.72)[0] == "accepted"
         assert accepted == crosslink.in_band(d, 0.45, 0.72), d
+
+
+# ── 관련성 판정을 따로 시킨다 (D182, 2026-08-06) ────────────────────────────
+
+
+def test_관련없음_판정이면_링크를_안_만든다():
+    assert crosslink.parse_explanation("판정: 관련없음") == ""
+    assert crosslink.parse_explanation("판정: 관련 없음\n설명: 굳이 따지면…") == ""
+
+
+def test_관련있음이면_설명만_남는다():
+    got = crosslink.parse_explanation(
+        "판정: 관련있음\n설명: 둘 다 에너지 전환을 다룬다."
+    )
+    assert got == "둘 다 에너지 전환을 다룬다."
+    assert "판정" not in got
+
+
+def test_판정만_하고_설명이_없으면_안_만든다():
+    """설명 없이 배지만 뜨면 학생이 펼쳤을 때 빈칸을 본다."""
+    assert crosslink.parse_explanation("판정: 관련있음") == ""
+
+
+def test_옛_형식도_계속_받는다():
+    """프롬프트를 바꿔도 모델은 가끔 옛 답을 한다."""
+    assert crosslink.parse_explanation("NO_LINK") == ""
+
+
+def test_형식을_어겨도_설명은_안_버린다():
+    assert crosslink.parse_explanation("둘 다 전자의 이동을 다룬다.") == (
+        "둘 다 전자의 이동을 다룬다."
+    )
+
+
+def test_거리_띠는_실측으로_그은_값이다():
+    """2026-08-06 실측(embedding-passage 실물):
+
+        중복 0.223~0.347 · 연결 0.500~0.618 · 남남 0.693~0.765
+
+    옛 천장 0.72는 **남남을 통과시켰다**. 값을 되돌리면 여기서 걸린다.
+    """
+    from app.config import get_settings
+
+    s = get_settings()
+    # 중복 최대(0.347)보다 위, 연결 최소(0.500)보다 아래.
+    assert 0.35 < s.crosslink_min_distance < 0.50
+    # 연결 최대(0.618)보다 위, 남남 최소(0.693)보다 아래.
+    assert 0.62 < s.crosslink_max_distance < 0.69
+
+
+def test_배지_판정은_가벼운_모델로():
+    """대화 생성과 같은 모델을 쓸 이유가 없다 (사용자 지시 2026-08-06)."""
+    from app.config import get_settings
+
+    assert get_settings().crosslink_model == "solar-pro2"
