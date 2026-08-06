@@ -33,6 +33,7 @@ from typing import Any
 import httpx
 
 from ..config import get_settings
+from . import ink_marks
 from .figure_judge import image_data_uri
 
 logger = logging.getLogger("nodi.handwriting_vision")
@@ -139,8 +140,10 @@ async def recognize(
         if client is not None:
             content = await _call(client)
         else:
+            # 상한도 admin 노브다 — config에서 직접 읽으면 콘솔에서 바꿔도
+            # 예비 경로만 옛 값으로 돈다(D62 점검 2026-08-06).
             async with httpx.AsyncClient(
-                timeout=settings.ink_vlm_timeout_seconds
+                timeout=(await ink_marks.read_knobs())["timeout"]
             ) as owned:
                 content = await _call(owned)
     except Exception:  # noqa: BLE001 - 예비 경로의 실패는 그냥 못 읽은 것이다

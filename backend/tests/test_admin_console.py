@@ -224,7 +224,8 @@ def test_환경_진단은_관리자_인증을_요구한다():
     assert require_admin in guards, "admin/env에 require_admin이 없다"
 
 
-def test_환경_진단은_health와_같은_내용이다():
+@pytest.mark.asyncio
+async def test_환경_진단은_health와_같은_내용이다():
     """둘이 갈라지면 서버에서 친 진단과 콘솔 화면이 달라진다.
 
     관리자용 엔드포인트를 따로 만들면서 페이로드를 복사해 두면, 한쪽만
@@ -232,8 +233,9 @@ def test_환경_진단은_health와_같은_내용이다():
     """
     from app.routers import admin, health
 
+    # `config_report`는 async가 됐다 (킬 스위치가 오버레이를 타면서).
     assert admin.health.config_report is health.config_report
 
-    report = health.config_report()
+    report = await health.config_report()
     for key in ("ready", "blocking", "environment", "database", "auth", "judge"):
         assert key in report

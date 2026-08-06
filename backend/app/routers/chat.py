@@ -42,6 +42,7 @@ from ..services import (
     canvas_items,
     figure_search,
     gemini,
+    ink_marks,
     rag,
     session_context,
     solar,
@@ -307,7 +308,7 @@ async def chat_stream(
                 client,
                 body.session_id,
                 body.ink.card_ids,
-                settings.ink_card_body_max_chars,
+                (await ink_marks.read_card_body_max()),
                 body.ink.pointed,
             )
             cards_block = cards.block if cards else None

@@ -178,7 +178,13 @@ def vision_on(monkeypatch):
     """비전 창구가 설정된 것으로 친다 — 로컬 .env는 비어 있다."""
     monkeypatch.setattr(ink_marks.settings, "judge_base_url", "http://vision.test/v1")
     monkeypatch.setattr(ink_marks.settings, "judge_api_key", "k")
-    monkeypatch.setattr(ink_marks.settings, "ink_vlm_enabled", True)
+
+    # 킬 스위치는 **오버레이**가 정한다 (D62) — `settings`만 patch하면 실제
+    # 콘솔 동작과 갈린다(점검 2026-08-06: 그래서 안 꺼지는 것을 못 잡았다).
+    async def overlay():
+        return {"ink_vlm_enabled": True}
+
+    monkeypatch.setattr(ink_marks.app_settings, "get_overlay", overlay)
 
 
 @pytest.mark.asyncio
@@ -244,7 +250,10 @@ async def test_비전_미설정이면_부르지도_않는다(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_킬_스위치를_내리면_안_부른다(vision_on, monkeypatch):
-    monkeypatch.setattr(ink_marks.settings, "ink_vlm_enabled", False)
+    async def off():
+        return {"ink_vlm_enabled": False}
+
+    monkeypatch.setattr(ink_marks.app_settings, "get_overlay", off)
     called = False
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -280,7 +289,11 @@ async def test_설명이_왜_비었는지를_상태로_구분한다(vision_on, m
             await ink_marks.read_marks(CARDS, b"png", client=c)
         ).status == "unconfigured"
 
-        monkeypatch.setattr(ink_marks.settings, "ink_vlm_enabled", False)
+        # 킬 스위치는 오버레이가 정한다 (D62).
+        async def off():
+            return {"ink_vlm_enabled": False}
+
+        monkeypatch.setattr(ink_marks.app_settings, "get_overlay", off)
         assert (await ink_marks.read_marks(CARDS, b"png", client=c)).status == "off"
 
 

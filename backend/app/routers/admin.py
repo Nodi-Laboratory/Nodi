@@ -32,7 +32,15 @@ from .. import ai
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
 from ..config import get_settings
 from ..db.client import UserClient, get_service_client
-from ..services import admin_backup, admin_console, app_settings, clip_thumbnails, gemini, solar
+from ..services import (
+    admin_backup,
+    admin_console,
+    app_settings,
+    clip_thumbnails,
+    gemini,
+    ink_marks,
+    solar,
+)
 from ..services import figures as figures_svc
 from . import health
 
@@ -263,7 +271,7 @@ async def env(
     내용은 `/health/config`와 **같은 함수**가 만든다. 둘이 갈라지면 서버에서
     친 진단과 콘솔 화면이 달라져 원인을 찾기 어려워진다.
     """
-    return health.config_report()
+    return await health.config_report()
 
 
 # ---------------------------------------------------------------------------
@@ -1101,7 +1109,6 @@ async def ink_lab_answer(
     스트리밍하지 않는다. 여기서 볼 것은 "어떻게 써지는가"가 아니라 **무엇을
     답하는가**이고, 실험실은 그 결과 한 장이면 된다.
     """
-    settings_ = get_settings()
     lines = []
     note = body.marks_note.strip()
     if note:
@@ -1111,6 +1118,7 @@ async def ink_lab_answer(
             "표시가 무엇을 가리키는지는 읽지 못했습니다. "
             "아래 카드들이 학생이 표시한 자리 주변에 있었습니다."
         )
+    body_max = await ink_marks.read_card_body_max()
     rows = []
     for c in body.cards:
         try:
@@ -1118,9 +1126,9 @@ async def ink_lab_answer(
         except (TypeError, ValueError):
             continue
         title = str(c.get("title") or "제목 없음")[:120]
-        text = " ".join(str(c.get("body") or "").split())[
-            : settings_.ink_card_body_max_chars
-        ]
+        # 실험실은 **실제와 같은 것을 태운다** — 채팅 턴과 같은 노브를 읽는다.
+        # 각자 config에서 읽던 시절에는 콘솔에서 바꿔도 한쪽만 따라갔다.
+        text = " ".join(str(c.get("body") or "").split())[:body_max]
         rows.append(f"[카드 {n}] {title}: {text}" if text else f"[카드 {n}] {title}")
     if rows:
         lines.append("[표시 주변의 카드]\n" + "\n".join(rows))

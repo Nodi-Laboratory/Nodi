@@ -43,7 +43,11 @@ async def health() -> dict:
     }
 
 
-def config_report() -> dict:
+async def config_report() -> dict:
+    # async가 된 이유: 킬 스위치(`ocr_enabled`)가 admin 노브라 오버레이를 읽어야
+    # 하고, 그 읽기가 비동기다. 호출부는 둘 다 async 핸들러다(admin·health) —
+    # 부팅 로그는 이 함수를 안 쓴다(logging_setup은 figure_judge를 직접 본다).
+
     """설정 자가진단 페이로드.
 
     D116: 라우트에서 떼어 함수로 뺐다. 같은 내용을 운영 콘솔이 **관리자 인증을
@@ -105,13 +109,18 @@ def config_report() -> dict:
 
     # D176: 손글씨 OCR. base_url이 비면 judge 호스트에서 유도하므로, 진단에는
     # **실제로 부를 주소**를 싣는다(유도값인지 명시값인지가 여기서 갈린다).
+    # 킬 스위치는 **오버레이**가 정한다 — config만 보면 관리자가 끈 것을
+    # 진단이 모른다(점검 2026-08-06).
     ocr_missing = ocr.missing_config()
+    ocr_enabled = (await ocr.read_knobs())["enabled"]
+    if not ocr_enabled:
+        ocr_missing = [*ocr_missing, "OCR_ENABLED(관리자가 껐음)"]
     ocr_block = {
         "configured": not ocr_missing,
         "missing": ocr_missing,
         "base_url": ocr.resolve_base_url() or None,
         "derived_from_judge": not settings.ocr_base_url.strip(),
-        "enabled": settings.ocr_enabled,
+        "enabled": ocr_enabled,
         "role": "optional",
         "note": (
             "미설정이어도 채팅은 정상이다. 프롬프트창의 펜 입력만 '준비 중'으로 "
@@ -157,4 +166,4 @@ async def health_config() -> dict:
     **외부에 공개되지 않는다** — 배포에서 프론트가 `/health`(liveness)만
     프록시한다. 서버에서 `curl localhost:8000/health/config`로 본다.
     """
-    return config_report()
+    return await config_report()

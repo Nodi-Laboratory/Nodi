@@ -34,6 +34,7 @@ from typing import Any, NamedTuple
 import httpx
 
 from ..config import get_settings
+from . import app_settings
 from .figure_judge import image_data_uri
 
 logger = logging.getLogger("nodi.ink_marks")
@@ -293,13 +294,58 @@ class MarksResult(NamedTuple):
 
 
 
-def is_configured() -> bool:
-    """비전 창구가 설정돼 있나. 안 돼 있으면 부르지 않는다(오류가 아니다)."""
-    return bool(
-        settings.ink_vlm_enabled
-        and settings.judge_base_url.strip()
-        and settings.judge_api_key.strip()
+async def read_knobs() -> dict[str, Any]:
+    """튜너블 읽기 (D62: admin 오버레이 > config 기본값).
+
+    ## 왜 생겼나
+
+    예전에는 `settings.ink_vlm_enabled`를 **직접** 읽었다. 그런데 이 키는
+    `db/03_app_settings.sql`에 시드돼 있어 콘솔에 정상 노브로 뜬다 — 관리자가
+    끄면 DB 행은 바뀌고 "기본값에서 변경됨" 배지까지 뜨는데 **서버는 계속
+    돌았다**(점검 2026-08-06). 껐다고 믿은 기능이 도는 것이 화면에도 로그에도
+    안 드러난다. 타임아웃도 같은 상태였다.
+
+    D62가 말하는 것은 오버레이가 config를 이긴다는 것이고, 그러려면 여기서
+    **읽어야** 한다. 안 읽으면 노브가 아니라 장식이다.
+    """
+    overlay = await app_settings.get_overlay()
+    return {
+        "enabled": app_settings.as_bool(
+            overlay, "ink_vlm_enabled", settings.ink_vlm_enabled
+        ),
+        "timeout": app_settings.as_int(
+            overlay, "ink_vlm_timeout_seconds", settings.ink_vlm_timeout_seconds, 5, 180
+        ),
+    }
+
+
+async def read_card_body_max() -> int:
+    """표시 맥락에 실을 카드 본문 길이 (D62 오버레이).
+
+    채팅 턴과 펜 실험실 **두 곳**이 이 값을 쓴다. 각자 `settings`에서 읽던 것을
+    한 곳으로 모은 이유는, 관리자가 콘솔에서 바꿨을 때 한쪽만 따라가면 실험실
+    결과와 실제 답이 갈리기 때문이다 — 실험실은 "실제와 같은 것을 태운다"가
+    존재 이유다(InkLabTab docstring).
+    """
+    overlay = await app_settings.get_overlay()
+    return app_settings.as_int(
+        overlay,
+        "ink_card_body_max_chars",
+        settings.ink_card_body_max_chars,
+        100,
+        8000,
     )
+
+
+def is_configured() -> bool:
+    """비전 창구의 **주소·키**가 있나. 안 돼 있으면 부르지 않는다(오류가 아니다).
+
+    ⚠️ 킬 스위치(`ink_vlm_enabled`)는 여기서 안 본다 — 그건 admin 노브라
+    오버레이를 타야 하고(`read_knobs`), 이 함수는 동기라 못 읽는다. 주소·키는
+    env라 config가 유일한 출처다. **둘은 성질이 다르다:** 하나는 배포가 정하고
+    하나는 관리자가 지금 바꾼다.
+    """
+    return bool(settings.judge_base_url.strip() and settings.judge_api_key.strip())
 
 
 async def read_marks(
@@ -320,9 +366,10 @@ async def read_marks(
     테스트가 `httpx.MockTransport`로 요청을 가로챌 수 있어야 한다. 안 주면
     타임아웃이 걸린 클라이언트를 하나 만들어 쓰고 닫는다.
     """
-    if not settings.ink_vlm_enabled:
+    knobs = await read_knobs()
+    if not knobs["enabled"]:
         return MarksResult("", "off")
-    if not (settings.judge_base_url.strip() and settings.judge_api_key.strip()):
+    if not is_configured():
         return MarksResult("", "unconfigured")
     if not scene_png:
         return MarksResult("", "no_scene")
@@ -360,7 +407,7 @@ async def read_marks(
             content = await _call(client)
         else:
             async with httpx.AsyncClient(
-                timeout=settings.ink_vlm_timeout_seconds
+                timeout=knobs["timeout"]
             ) as owned:
                 content = await _call(owned)
     except Exception:  # noqa: BLE001 - 표시 해석 실패는 질문을 막지 않는다

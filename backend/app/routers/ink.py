@@ -189,7 +189,9 @@ async def interpret_ink(
 
     **로그인을 요구한다.** 모델 서버들은 인증이 없어 이 창구가 GPU 앞의 문이다.
     """
-    if not svc.is_configured():
+    # 주소만이 아니라 **킬 스위치까지** 본다 (D62 점검 2026-08-06).
+    # `is_configured()`는 env만 보므로, 관리자가 꺼도 통과했다.
+    if not await svc.is_available():
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="필기 인식이 아직 준비되지 않았습니다.",

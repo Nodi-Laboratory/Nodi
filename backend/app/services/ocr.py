@@ -35,6 +35,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from ..config import get_settings
+from . import app_settings
 
 logger = logging.getLogger("nodi.ocr")
 settings = get_settings()
@@ -58,9 +59,10 @@ _gate: asyncio.Semaphore | None = None
 _gate_size = 0
 
 
-def _acquire_gate() -> asyncio.Semaphore:
+def _acquire_gate(size: int) -> asyncio.Semaphore:
+    """동시 요청 문. **크기는 호출부가 준다** — 노브를 읽으려면 async여야 한다."""
     global _gate, _gate_size
-    size = max(1, settings.ocr_max_concurrent)
+    size = max(1, size)
     if _gate is None or _gate_size != size:
         _gate = asyncio.Semaphore(size)
         _gate_size = size
@@ -93,14 +95,64 @@ def resolve_base_url() -> str:
     return urlunsplit((parts.scheme, f"{parts.hostname}:{settings.ocr_port}", "", "", ""))
 
 
+async def read_knobs() -> dict[str, Any]:
+    """튜너블 읽기 (D62: admin 오버레이 > config 기본값).
+
+    ## 왜 생겼나
+
+    예전에는 `settings.*`를 **직접** 읽었다. 이 키들은 콘솔 스펙에 있고
+    `ocr_enabled`는 **모델 서버 점검 중에 끄라고 만든 킬 스위치**인데, 관리자가
+    꺼도 서버는 계속 불렀다(점검 2026-08-06). 장애 때 쓰려고 만든 손잡이가
+    정작 그때 안 먹는 상태였다.
+
+    D62가 말하는 것은 오버레이가 config를 이긴다는 것이고, 그러려면 여기서
+    **읽어야** 한다. 안 읽으면 노브가 아니라 장식이다.
+    """
+    overlay = await app_settings.get_overlay()
+    return {
+        "enabled": app_settings.as_bool(overlay, "ocr_enabled", settings.ocr_enabled),
+        "timeout": app_settings.as_int(
+            overlay, "ocr_timeout_seconds", settings.ocr_timeout_seconds, 5, 300
+        ),
+        "max_concurrent": app_settings.as_int(
+            overlay, "ocr_max_concurrent", settings.ocr_max_concurrent, 1, 16
+        ),
+        "queue_timeout": app_settings.as_int(
+            overlay,
+            "ocr_queue_timeout_seconds",
+            settings.ocr_queue_timeout_seconds,
+            1,
+            120,
+        ),
+        "max_new_tokens": app_settings.as_int(
+            overlay, "ocr_max_new_tokens", settings.ocr_max_new_tokens, 16, 2048
+        ),
+    }
+
+
 def missing_config() -> list[str]:
-    """호출에 필요한데 비어 있는 것 (없으면 빈 리스트). /health/config가 읽는다."""
+    """호출에 필요한데 비어 있는 **env** (없으면 빈 리스트).
+
+    ⚠️ 킬 스위치(`ocr_enabled`)는 여기서 안 본다 — 그건 admin 노브라 오버레이를
+    타야 하고(`read_knobs`), 이 함수는 동기라 못 읽는다. **둘은 성질이 다르다:**
+    주소는 배포가 정하고 킬 스위치는 관리자가 지금 끈다. 껐다고 "설정이 빠졌다"고
+    말하면 관리자가 env를 뒤지게 된다.
+    """
     missing: list[str] = []
-    if not settings.ocr_enabled:
-        missing.append("OCR_ENABLED")
     if not resolve_base_url():
         missing.append("OCR_BASE_URL")  # 또는 유도의 출처인 JUDGE_BASE_URL
     return missing
+
+
+async def is_available() -> bool:
+    """지금 부를 수 있나 — 주소가 있고 **꺼져 있지 않은가.**
+
+    `is_configured()`(주소만)와 나눈 이유는 위 docstring과 같다. 화면이 501을
+    낼지 말지는 이쪽이 정한다.
+    """
+    if not resolve_base_url():
+        return False
+    return (await read_knobs())["enabled"]
 
 
 def is_configured() -> bool:
@@ -216,26 +268,25 @@ async def recognize(
     명시한다.
     """
     base = resolve_base_url()
-    if not base or not settings.ocr_enabled:
+    knobs = await read_knobs()
+    if not base or not knobs["enabled"]:
         raise OcrUnavailable("OCR 서버가 설정되지 않았습니다.")
 
     # GPU 앞 줄서기 (D177). 자리를 못 잡으면 **기다리지 않고** 붐빈다고 알린다.
-    gate = _acquire_gate()
+    gate = _acquire_gate(knobs["max_concurrent"])
     try:
-        await asyncio.wait_for(
-            gate.acquire(), timeout=float(settings.ocr_queue_timeout_seconds)
-        )
+        await asyncio.wait_for(gate.acquire(), timeout=float(knobs["queue_timeout"]))
     except TimeoutError as exc:
         logger.info("ocr 대기 포기 — 앞이 붐빔")
         raise OcrBusy("지금 인식 요청이 몰려 있습니다.") from exc
 
-    timeout = httpx.Timeout(float(settings.ocr_timeout_seconds), connect=10.0)
+    timeout = httpx.Timeout(float(knobs["timeout"]), connect=10.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             res = await client.post(
                 f"{base}/ocr",
                 files={"file": (filename, image, content_type)},
-                data={"max_new_tokens": str(settings.ocr_max_new_tokens)},
+                data={"max_new_tokens": str(knobs["max_new_tokens"])},
             )
     except httpx.HTTPError as exc:  # 연결 실패·타임아웃
         logger.warning("ocr 요청 실패: %s", exc)

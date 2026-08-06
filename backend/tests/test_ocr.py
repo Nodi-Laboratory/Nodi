@@ -78,9 +78,26 @@ def test_judge도_비면_추측하지_않는다(monkeypatch):
     assert not S.is_configured()
 
 
-def test_꺼두면_미설정으로_본다(monkeypatch):
-    monkeypatch.setattr(S.settings, "ocr_enabled", False)
-    assert "OCR_ENABLED" in S.missing_config()
+@pytest.mark.asyncio
+async def test_꺼두면_못_부른다(monkeypatch):
+    """킬 스위치는 **admin 오버레이**가 정한다 (D62).
+
+    예전에는 `settings.ocr_enabled`를 patch하고 `missing_config()`을 봤다. 코드도
+    거기서 읽었으니 초록이었는데, **실제 콘솔에서 끄면 안 꺼졌다** — 관리자가
+    바꾸는 것은 DB 행이고 코드는 config를 봤다(점검 2026-08-06). 테스트가
+    config를 시험하느라 노브를 시험하지 않았다.
+
+    `missing_config()`은 이제 **env만** 본다 — 껐다고 "설정이 빠졌다"고 하면
+    관리자가 env를 뒤진다.
+    """
+
+    async def overlay():
+        return {"ocr_enabled": False}
+
+    monkeypatch.setattr(S.app_settings, "get_overlay", overlay)
+    monkeypatch.setattr(S, "resolve_base_url", lambda: "http://x")
+    assert await S.is_available() is False
+    assert S.missing_config() == []
 
 
 # --- 호출 ------------------------------------------------------------------
