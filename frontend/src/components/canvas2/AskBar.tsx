@@ -10,6 +10,7 @@
 
 import { ArrowUp, Check, Loader2, Paperclip, Pencil, Quote, X } from "lucide-react";
 import { useEffect, useImperativeHandle, useRef, useState } from "react";
+import { UPLOAD_ACCEPT } from "@/lib/uploadLimits";
 
 interface Props {
   busy: boolean;
@@ -231,6 +232,9 @@ export function AskBar({
             <input
               type="file"
               className="hidden"
+              // D196: 고르는 창에서부터 못 올릴 형식을 안 보여 준다. 크기는
+              // accept로 못 거르므로 onAttach 쪽(checkUploadFile)이 판정한다.
+              accept={UPLOAD_ACCEPT}
               disabled={disabled}
               onChange={(e) => {
                 const f = e.target.files?.[0];

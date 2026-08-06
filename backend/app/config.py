@@ -93,8 +93,15 @@ class Settings(BaseSettings):
 
     # 임베딩은 Upstage embedding-passage/query + Qdrant로 완전 이전됨
     # (D80: 구 Gemini 임베딩 모델·차원 설정 키 제거).
-    # Chunks per embedding_batch child job; sub-batched per embed request.
-    embedding_batch_size: int = 64
+    # D195: 잡 하나가 맡는 청크 수. 이 안에서 요청 크기(Upstage 상한 100)로
+    # 다시 쪼개 **동시에** 보내므로, 잡을 잘게 나눌 이유가 사라졌다. 64였을 때는
+    # 잡 하나 = 요청 하나였고, 잡은 폴 주기(5초)·워커 동시성(3)에 묶여 있어
+    # 청크 5,000개짜리 교과서가 79잡 = 최소 27폴 = 큐에서만 135초였다.
+    # 300 = 요청 3건(100×3)이라 아래 동시성 4 안에 한 번에 들어간다.
+    embedding_batch_size: int = 300
+    # D195: 잡 하나가 동시에 띄우는 임베딩 요청 수. 실제 동시 요청은
+    # 워커 동시성(3) × 이 값이다 — Upstage 429가 잦으면 낮춘다.
+    embedding_request_concurrency: int = 4
     embedding_worker_concurrency: int = 3  # parallel jobs claimed per poll
     embedding_worker_poll_seconds: int = 5
     embedding_max_attempts: int = 3
@@ -126,10 +133,24 @@ class Settings(BaseSettings):
     class_material_rag_max_distance: float = 0.60
 
     # --- D84: 학생 세션 파일 전문 주입 예산 (TASK 3) ---
-    # 한 세션에 주입 가능한 파일 전문의 합산 문자 상한. 모델 컨텍스트
-    # 윈도우에 무트리밍 히스토리·RAG·답변 여유를 남기는 보수 기본값
-    # (150K자 ≈ 한국어 75K~150K 토큰). 판정은 워커 저장 시점(초과 거부) +
-    # 주입 시점 이중 방어. clamp 10_000~300_000 (as_int 호출부와 동기).
+    # 한 세션에 주입 가능한 파일 전문의 합산 문자 상한. 판정은 워커 저장 시점
+    # (초과 거부) + 주입 시점 이중 방어. clamp 10_000~180_000 (as_int 호출부와 동기).
+    #
+    # D195: **문자를 세는 이유는 토큰을 셀 수 없어서다.** 어림이 필요한데,
+    # 옛 주석의 어림("150K자 ≈ 75K~150K 토큰")은 실측과 두 배 어긋났다.
+    # solar-pro3 실물 호출로 usage.prompt_tokens를 재서 다시 잡았다
+    # (2026-08-06, 각 1만 자):
+    #
+    #     한국어 교과서 문어체  2.31자/토큰   (가장 빽빽하다)
+    #     한국어 학생 구어체    3.10자/토큰
+    #     영어·수식 섞임        3.98자/토큰
+    #
+    # 최악(2.31)으로 150K자 = 약 65K 토큰이고, solar-pro3 컨텍스트는
+    # **131,072 토큰**이다 — 딱 절반이다. 나머지 절반이 무트리밍 히스토리 ·
+    # 학급 자료 RAG · 시스템 프롬프트 · 추론 토큰 · 답변의 몫이라 기본값은
+    # 그대로 둔다. 바꾼 것은 **상한**이다: 옛 clamp 300_000은 최악 입력에서
+    # 130K 토큰 ≈ 윈도 전부라, 운영자가 노브를 끝까지 올리면 파일만으로
+    # 컨텍스트가 차서 히스토리도 답변도 들어갈 자리가 없었다.
     session_context_max_chars: int = 150_000
 
     # --- 교과서 figure 파이프라인 (TASK 4, D86~D88) ---

@@ -136,13 +136,15 @@ _SPECS: list[dict[str, Any]] = [
         "group": "세션 파일",
         "widget": "number",
         "min": 10000,
-        "max": 300000,
+        "max": 180000,
         "step": 10000,
         "unit": "자",
         "scope": "new-only",
         "description": (
             "학생이 세션에 올린 파일 전문을 주입할 때 세션당 합산 문자 상한. "
-            "업로드 시점에 초과 파일이 거부되므로 이미 저장된 파일에는 소급되지 않는다."
+            "업로드 시점에 초과 파일이 거부되므로 이미 저장된 파일에는 소급되지 않는다. "
+            "한국어 교과서 문어체는 2.31자/토큰(실측)이라 150000자 ≈ 65K 토큰 — "
+            "solar-pro3 컨텍스트(131072토큰)의 절반이다."
         ),
         "effect": "세션 파일 근거량 ↔ 컨텍스트 길이",
     },
@@ -171,6 +173,38 @@ _SPECS: list[dict[str, Any]] = [
         "scope": "live",
         "description": "교사 학급 자료 한 파일의 최대 바이트. 524288000 = 500MB.",
         "effect": "교사 자료 업로드 크기",
+    },
+    {
+        "key": "embedding_batch_size",
+        "label": "임베딩 잡 크기",
+        "group": "청킹·임베딩",
+        "widget": "number",
+        "min": 50,
+        "max": 2000,
+        "step": 50,
+        "unit": "청크",
+        "scope": "new-only",
+        "description": (
+            "embedding_batch 잡 하나가 맡는 청크 수. 잡 안에서 100개 단위 요청으로 "
+            "쪼개 동시에 보내므로(D195), 이 값은 '요청 몇 건을 한 잡에 묶는가'다. "
+            "신규 잡부터 적용된다."
+        ),
+        "effect": "큐 대기 감소 ↔ 잡 하나의 실패 반경",
+    },
+    {
+        "key": "embedding_request_concurrency",
+        "label": "임베딩 요청 동시성",
+        "group": "청킹·임베딩",
+        "widget": "number",
+        "min": 1,
+        "max": 16,
+        "step": 1,
+        "scope": "new-only",
+        "description": (
+            "잡 하나가 동시에 띄우는 임베딩 요청 수(D195). 실제 동시 요청은 "
+            "워커 동시성(3) × 이 값이다 — Upstage 429가 잦으면 낮춘다."
+        ),
+        "effect": "인제스트 속도 ↔ 레이트리밋·부하",
     },
     {
         "key": "chunk_size_chars",

@@ -46,7 +46,9 @@ async def _store_session_chunks(
         overlay = await app_settings.get_overlay()
         budget = app_settings.as_int(
             overlay, "session_context_max_chars",
-            settings.session_context_max_chars, 10_000, 300_000,
+            # D195: 상한 180K자 ≈ 78K 토큰(한국어 최악 2.31자/토큰) — solar-pro3
+            # 윈도(131,072)의 60%. 옛 300K는 윈도를 통째로 먹었다.
+            settings.session_context_max_chars, 10_000, 180_000,
         )
         # 진행 중인 이 파일은 위에서 status='splitting'으로 세팅됐고 아래
         # status='eq.indexed' 필터가 자기 자신을 이미 배제하므로, 별도 id!=self
@@ -381,7 +383,11 @@ async def _handle_split(svc: ServiceClient, job: dict[str, Any]) -> None:
     )
 
     # Fan out embedding_batch child jobs over seq ranges.
-    bsize = max(1, settings.embedding_batch_size)
+    # D195: 잡 하나가 맡는 청크 수는 운영 노브다 — 잡 안에서 요청 100개 단위로
+    # 다시 쪼개 동시에 보내므로, 이 값은 "요청 몇 건을 한 잡에 묶는가"에 가깝다.
+    bsize = app_settings.as_int(
+        overlay, "embedding_batch_size", settings.embedding_batch_size, 50, 2000
+    )
     child_jobs = [
         {
             "owner_id": f.get("owner_id"),

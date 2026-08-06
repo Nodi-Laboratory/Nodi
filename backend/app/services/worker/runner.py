@@ -15,6 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ...config import get_settings
 from ...db.client import ServiceClient, get_service_client
+from .. import app_settings
 from . import atoms, batch, common, crosslinks, figures, jobs, lectures, split
 
 logger = logging.getLogger("nodi.worker.runner")
@@ -80,7 +81,12 @@ async def requeue_file(svc: ServiceClient, file_id: str) -> str:
         await svc.update(
             "files", {"id": f"eq.{file_id}"}, {"status": "embedding", "error": None}
         )
-        bsize = max(1, settings.embedding_batch_size)
+        # D195: 팬아웃 단위는 split의 최초 팬아웃과 같은 노브를 읽는다 —
+        # 여기만 config 기본값을 쓰면 재처리한 파일만 옛 크기로 쪼개진다.
+        overlay = await app_settings.get_overlay()
+        bsize = app_settings.as_int(
+            overlay, "embedding_batch_size", settings.embedding_batch_size, 50, 2000
+        )
         child_jobs = [
             {
                 "owner_id": f.get("owner_id"),

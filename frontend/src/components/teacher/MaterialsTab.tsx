@@ -14,6 +14,12 @@ import {
 } from "lucide-react";
 import { ApiError, deleteFile, retryFile, uploadFile } from "@/lib/api";
 import { classMaterialsKey, useClassMaterials } from "@/lib/queries";
+import {
+  checkUploadFile,
+  MAX_CLASS_MATERIAL_BYTES,
+  UNSUPPORTED_TYPE_MSG,
+  UPLOAD_ACCEPT,
+} from "@/lib/uploadLimits";
 import type { FileRow, FileStatus } from "@/lib/types";
 import { LecturePackagesSection } from "./LecturePackagesSection";
 
@@ -37,14 +43,6 @@ function fileName(f: FileRow): string {
     f.id
   );
 }
-
-// D75: 서버 화이트리스트(services/files.py ALLOWED_UPLOAD_EXTENSIONS)와 동일
-// 목록 — 선택 직후 사전 검증해 서버 왕복 없이 같은 사유를 보여준다.
-const ALLOWED_EXTENSIONS = new Set([
-  "pdf", "png", "jpg", "jpeg", "webp", "gif", "txt", "md",
-]);
-const UNSUPPORTED_TYPE_MSG =
-  "지원 형식: PDF, 이미지(PNG/JPG/WEBP/GIF), 텍스트(TXT/MD)";
 
 const STATUS_META: Record<
   FileStatus,
@@ -75,8 +73,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
     pendingKindRef.current = kind;
     const input = inputRef.current;
     if (!input) return;
-    input.accept =
-      kind === "textbook" ? ".pdf" : ".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md";
+    input.accept = kind === "textbook" ? ".pdf" : UPLOAD_ACCEPT;
     input.click();
   };
 
@@ -86,20 +83,15 @@ export function MaterialsTab({ classId }: { classId: string }) {
     const kind = pendingKindRef.current;
     setError(null);
     setNotice(null);
-    // 형식 사전 검증 — 서버와 같은 사유(왕복 없이 즉시 안내).
-    const ext = file.name.includes(".")
-      ? file.name.split(".").pop()!.toLowerCase()
-      : "";
-    if (kind === "textbook") {
-      // 교과서는 PDF 전용(백엔드 계약).
-      if (ext !== "pdf") {
-        setError("교과서는 PDF 파일만 업로드할 수 있습니다.");
-        if (inputRef.current) inputRef.current.value = "";
-        return;
-      }
-    } else if (!ALLOWED_EXTENSIONS.has(ext)) {
-      // D75: 자료는 서버 화이트리스트(ALLOWED_UPLOAD_EXTENSIONS)와 같은 목록.
-      setError(UNSUPPORTED_TYPE_MSG);
+    // 형식·크기 사전 검증 — 서버와 같은 사유(왕복 없이 즉시 안내).
+    // D196: 크기 검사가 여기까지 온 이유는 학생 쪽과 같다 — 500MB 교과서를
+    // 다 올린 뒤 413을 받으면 그 시간이 통째로 버려진다.
+    const reason = checkUploadFile(file, {
+      maxBytes: MAX_CLASS_MATERIAL_BYTES,
+      pdfOnly: kind === "textbook",
+    });
+    if (reason) {
+      setError(reason);
       if (inputRef.current) inputRef.current.value = "";
       return;
     }
@@ -153,7 +145,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md"
+          accept={UPLOAD_ACCEPT}
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />
@@ -163,7 +155,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
         <Info size={14} className="mt-0.5 shrink-0" />
         <span>
           업로드한 자료는 임베딩된 뒤 학생들이 자기 학급 공간의 대화에서 RAG로
-          참고할 수 있습니다. ({UNSUPPORTED_TYPE_MSG})
+          참고할 수 있습니다. ({UNSUPPORTED_TYPE_MSG} · 한 파일 500MB 이하)
         </span>
       </div>
 
