@@ -87,7 +87,7 @@ async def upload(
     if service is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="File uploads are disabled (service-role key not configured).",
+            detail="파일 업로드가 아직 활성화되지 않았습니다(관리자 설정 필요).",
         )
     # Early reject on declared size (avoid buffering an oversized body). D62:
     # the limit is admin-tunable via the overlay (upload_file re-checks it too).
@@ -95,9 +95,11 @@ async def upload(
     # D77: kind별 상한 — class_material은 대용량 허용(서비스가 재검증).
     max_bytes = svc.resolve_upload_max_bytes(overlay, kind)
     if file.size is not None and file.size > max_bytes:
+        # 문구는 서비스와 **같은 함수**가 만든다 — 둘이 갈리면 어느 쪽이 먼저
+        # 거절하느냐에 따라 교사가 보는 말이 달라진다(D188).
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds {max_bytes} bytes.",
+            detail=svc.too_large_detail(file.size, max_bytes),
         )
     data = await file.read()
     return await svc.upload_file(

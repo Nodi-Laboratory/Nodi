@@ -20,29 +20,57 @@ settings = get_settings()
 # ---------------------------------------------------------------------------
 # Job claiming
 # ---------------------------------------------------------------------------
+_JOB_SELECT = "id,kind,target_id,batch_range,owner_id,attempts,space_ref"
+
+URGENT_KINDS = ("embedding_split", "embedding_batch")
+"""**자료를 쓸 수 있게 만드는** 잡. 곁들이보다 먼저 뽑는다 (D188).
+
+## 왜 순서를 정해야 하나
+
+교과서 하나를 올리면 `embedding_split`이 텍스트 잡 5개와 도판 잡 86개를 **같은
+순간에** 만든다. 예전에는 `created_at` 오름차순으로만 뽑았는데, 그 순간이
+동점이라 순서가 사실상 임의였고 86대5라 도판이 계속 이겼다 — 도판 캡션이 전부
+끝날 때까지 **본문이 한 글자도 검색되지 않았다**(실측 2026-08-06: 20분).
+
+교사에게는 "올렸는데 한참 못 쓴다"이고, 학생에게는 "선생님이 올린 자료를
+물어봤는데 모른다고 한다"이다. 도판은 곁들이다 — 실패해도 텍스트 인덱싱과
+무관하다는 것이 이미 규약이고(D88), 순서에서도 같은 태도를 지킨다.
+
+## 왜 정렬이 아니라 두 번 뽑나
+
+한 번에 넉넉히 읽어 파이썬에서 정렬하는 방법은 **창 밖을 못 본다** — 도판 잡이
+수백 개면 텍스트 잡이 창에 아예 안 들어온다. 종류로 좁혀 한 번 더 묻는 편이
+큐가 얼마나 길든 성립한다.
+"""
+
+
 async def _claim_jobs(svc: ServiceClient, limit: int) -> list[dict[str, Any]]:
-    queued = await svc.select(
-        "jobs",
-        {
-            "status": "eq.queued",
-            "select": "id,kind,target_id,batch_range,owner_id,attempts,space_ref",
-            "order": "created_at.asc",
-            "limit": str(limit),
-        },
-    )
     claimed: list[dict[str, Any]] = []
-    for job in queued:
-        rows = await svc.update(
-            "jobs",
-            {"id": f"eq.{job['id']}", "status": "eq.queued"},
-            {
-                "status": "running",
-                "attempts": (job.get("attempts") or 0) + 1,
-                "updated_at": common._now_iso(),
-            },
-        )
-        if rows:  # we won the claim
-            claimed.append(rows[0])
+    # 1차: 급한 종류만. 2차: 남은 자리를 나머지로 채운다(급한 것이 남아 있으면
+    # 2차에도 다시 걸리는데, 그건 여전히 먼저 뽑혀야 할 것이라 문제가 없다).
+    for kinds in (URGENT_KINDS, None):
+        if len(claimed) >= limit:
+            break
+        params: dict[str, Any] = {
+            "status": "eq.queued",
+            "select": _JOB_SELECT,
+            "order": "created_at.asc",
+            "limit": str(limit - len(claimed)),
+        }
+        if kinds:
+            params["kind"] = f"in.({','.join(kinds)})"
+        for job in await svc.select("jobs", params):
+            rows = await svc.update(
+                "jobs",
+                {"id": f"eq.{job['id']}", "status": "eq.queued"},
+                {
+                    "status": "running",
+                    "attempts": (job.get("attempts") or 0) + 1,
+                    "updated_at": common._now_iso(),
+                },
+            )
+            if rows:  # we won the claim
+                claimed.append(rows[0])
     return claimed
 
 

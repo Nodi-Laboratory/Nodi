@@ -119,11 +119,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
           : `"${file.name}" 업로드 완료 — 인덱싱이 시작됩니다.`,
       );
     } catch (e) {
-      if (e instanceof ApiError && e.status === 503) {
-        setError("파일 임베딩이 아직 활성화되지 않았습니다(관리자 설정 필요).");
-      } else {
-        setError(`업로드 실패: ${(e as Error).message}`);
-      }
+      setError(uploadErrorMessage(e));
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -204,6 +200,43 @@ export function MaterialsTab({ classId }: { classId: string }) {
       </div>
     </div>
   );
+}
+
+/**
+ * 업로드 실패를 교사가 **무엇을 해야 하는지 아는 말**로 바꾼다 (D188).
+ *
+ * 예전에는 `업로드 실패: ${e.message}`가 기본이었다. 서버가 준 한국어 사유가
+ * 있을 때는 괜찮지만, 파일이 **서버에 닿기도 전에** 잘리면 그 자리에
+ * `HTTP 413`이나 `Failed to fetch`가 그대로 뜬다 — 교사는 무엇이 잘못됐는지도,
+ * 무엇을 해야 하는지도 알 수 없다.
+ *
+ * 서버까지 온 413은 사유가 한국어로 들어 있으므로(`services/files.py`) 그대로
+ * 쓴다. 사유가 없는 413은 **중간 구간(프록시·CDN)이 거절한 것**이다.
+ */
+export function uploadErrorMessage(e: unknown): string {
+  if (e instanceof ApiError) {
+    if (e.status === 503) {
+      return "파일 임베딩이 아직 활성화되지 않았습니다(관리자 설정 필요).";
+    }
+    // 서버가 사유를 못 실어 보낸 413 — 본문이 HTML이라 `HTTP 413`만 남는다.
+    if (e.status === 413 && /^HTTP\s/.test(e.message)) {
+      return (
+        "파일이 너무 커서 전송 중에 거절됐습니다. 네트워크 구간(CDN·프록시)에 " +
+        "서버보다 낮은 용량 제한이 걸려 있습니다 — 더 작게 나눠 올리거나 " +
+        "관리자에게 문의해 주세요."
+      );
+    }
+    return `업로드 실패: ${e.message}`;
+  }
+  // 전송 도중 연결이 끊기면 fetch가 TypeError를 던진다. "Failed to fetch"를
+  // 그대로 보여 주면 교사는 자기 인터넷을 의심한다.
+  if (e instanceof TypeError) {
+    return (
+      "업로드가 중간에 끊겼습니다. 파일이 너무 크거나 연결이 불안정할 수 " +
+      "있습니다 — 다시 시도해 주세요."
+    );
+  }
+  return `업로드 실패: ${(e as Error).message}`;
 }
 
 function MaterialItem({ file, classId }: { file: FileRow; classId: string }) {

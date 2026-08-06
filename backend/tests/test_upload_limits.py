@@ -107,3 +107,40 @@ async def test_oversized_image_rejected_422(monkeypatch):
     assert ei.value.status_code == 422
     assert "이미지" in ei.value.detail
     assert svc.storage == []
+
+
+# --- D188: 거절 문구가 교사에게 쓸모 있어야 한다 ----------------------------
+#
+# 같은 판정이 **두 곳**에 있다 — 라우터가 선언 크기로 먼저 자르고(본문 버퍼링
+# 회피), 서비스가 실제 바이트로 다시 확인한다. 실제로 서비스만 고쳤다가
+# 라우터가 먼저 거절해 **아무것도 안 바뀐 것처럼 보였다**(실측 2026-08-06).
+
+
+def test_거절_문구는_MB로_말한다():
+    """`File exceeds 52428800 bytes.`를 보고 자기 파일 크기를 가늠할 수 없다."""
+    msg = F.too_large_detail(60 * MB, 50 * MB)
+    assert "60MB" in msg
+    assert "50MB" in msg
+    assert "bytes" not in msg
+
+
+def test_라우터와_서비스가_같은_문구를_쓴다():
+    """둘이 갈리면 어느 쪽이 먼저 거절하느냐에 따라 학생이 보는 말이 달라진다."""
+    from app.routers import files as R
+
+    assert R.svc.too_large_detail is F.too_large_detail
+
+
+@pytest.mark.asyncio
+async def test_서비스가_거절할_때도_한국어다(monkeypatch):
+    """라우터가 선언 크기를 못 봤을 때(멀티파트에 길이가 없으면) 여기가 잡는다."""
+    monkeypatch.setattr(F.app_settings, "get_overlay", _overlay)
+    monkeypatch.setattr(F.settings, "file_max_bytes", MB)
+    with pytest.raises(HTTPException) as exc:
+        await F.upload_file(
+            _FakeService(), _FakeUserClient(), "u1", "personal", None,
+            "큰파일.pdf", None, b"\0" * (MB + 1),
+        )
+    assert exc.value.status_code == 413
+    assert "MB까지 올릴 수 있습니다" in exc.value.detail
+    assert "bytes" not in exc.value.detail

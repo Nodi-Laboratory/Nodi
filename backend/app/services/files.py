@@ -71,6 +71,26 @@ OVERSIZED_IMAGE_DETAIL = "이미지 파일은 50MB 이하만 업로드할 수 �
 TEXTBOOK_PDF_ONLY_DETAIL = "교과서는 PDF만 업로드할 수 있습니다."
 
 
+def too_large_detail(size: int, max_bytes: int) -> str:
+    """"파일이 너무 크다"를 교사가 쓸 수 있는 말로 (D188).
+
+    바이트로 말하면 무엇을 해야 할지 알 수 없다 — "File exceeds 52428800 bytes."를
+    보고 자기 파일이 얼마나 큰지 가늠하는 사람은 없다(실측 2026-08-06: 교사
+    화면에 이 영어 문장이 그대로 떴다).
+
+    ## 왜 함수인가
+
+    같은 판정이 **두 곳**에 있다. 라우터는 선언된 크기로 본문을 버퍼링하기 전에
+    먼저 자르고(`routers/files.py`), 서비스는 실제 바이트로 다시 확인한다. 문구를
+    각자 적어 두면 **어느 쪽이 나올지에 따라 말이 달라진다** — 실제로 서비스만
+    고쳤다가 라우터가 먼저 거절해 아무것도 안 바뀐 것처럼 보였다.
+    """
+    return (
+        f"파일이 너무 큽니다({size / 1024 / 1024:.0f}MB). "
+        f"{max_bytes // 1024 // 1024}MB까지 올릴 수 있습니다."
+    )
+
+
 def resolve_upload_max_bytes(overlay: dict[str, Any], kind: str) -> int:
     """D77: kind별 업로드 상한 — class_material(교사 자료)만 대용량 허용.
 
@@ -106,7 +126,7 @@ async def _assert_class_member(
     if not rows:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not a member of this class.",
+            detail="이 학급의 구성원이 아닙니다.",
         )
 
 
@@ -116,7 +136,7 @@ async def _assert_class_teacher(user_client: UserClient, class_id: str) -> None:
     if not is_teacher:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not a teacher of this class.",
+            detail="이 학급의 담당 교사가 아닙니다.",
         )
 
 
@@ -135,18 +155,18 @@ async def upload_file(
     if space_kind not in ("personal", "class"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="space_kind must be 'personal' or 'class'.",
+            detail="공간 종류는 personal 또는 class여야 합니다.",
         )
     # D86: textbook(교과서)는 class_material과 동형 — class 공간·교사 전용.
     if kind not in ("user_upload", "class_material", "textbook"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="kind must be 'user_upload', 'class_material', or 'textbook'.",
+            detail="파일 종류는 user_upload, class_material, textbook 중 하나여야 합니다.",
         )
     if kind in ("class_material", "textbook") and space_kind != "class":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="class_material/textbook requires space_kind='class'.",
+            detail="학급 자료와 교과서는 학급 공간에만 올릴 수 있습니다.",
         )
     # D134: 비전(judge_*) 미설정이어도 업로드는 막지 않는다 — 텍스트 RAG는
     # 어느 경우에도 정상 동작하므로 교과서 업로드를 막을 이유가 없다(D103에서
@@ -168,7 +188,7 @@ async def upload_file(
     if space_kind == "class" and not ref:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="class files require space_ref (class id).",
+            detail="학급 파일에는 학급 id가 필요합니다.",
         )
     # Defense: class_material/textbook require teacher of that class (D86);
     # other class uploads only require membership.
@@ -192,7 +212,7 @@ async def upload_file(
         if not srows:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Session not found or not accessible.",
+                detail="대화를 찾을 수 없거나 접근할 수 없습니다.",
             )
         sess = srows[0]
         if sess.get("owner_id") != owner_id:
@@ -223,14 +243,14 @@ async def upload_file(
     if not data:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Empty file.",
+            detail="빈 파일입니다.",
         )
     overlay = await app_settings.get_overlay()
     max_bytes = resolve_upload_max_bytes(overlay, kind)
     if len(data) > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds {max_bytes} bytes.",
+            detail=too_large_detail(len(data), max_bytes),
         )
     # D77: 이미지는 분할 파싱(D78) 불가 — 파서 하드 리밋 초과 시 사전 거절.
     if ext in IMAGE_UPLOAD_EXTENSIONS and len(data) > UPSTAGE_PARSE_MAX_BYTES:
@@ -310,7 +330,7 @@ async def _assert_file_owner(
     if file_row.get("owner_id") != owner_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the file owner can do this.",
+            detail="파일을 올린 사람만 할 수 있습니다.",
         )
     return file_row
 
@@ -419,7 +439,7 @@ async def get_file(client: UserClient, file_id: str) -> dict[str, Any]:
     if not rows:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found.",
+            detail="파일을 찾을 수 없습니다.",
         )
     return rows[0]
 
