@@ -49,12 +49,16 @@ def test_small_pdf_single_segment():
 
 @pytest.mark.asyncio
 async def test_parse_document_dispatches_large_pdf(monkeypatch):
-    """⑦ 50MB 초과 PDF → 분할 경로, 조각 결과가 페이지 순으로 연결."""
+    """⑦ 조각 상한 초과 PDF → 분할 경로, 조각 결과가 페이지 순으로 연결.
+
+    D185: 기준이 문서값(50MB)에서 **실측 조각 상한**으로 바뀌었다. 15MB짜리
+    학급 자료가 분할 없이 나가면 Upstage가 500을 준다.
+    """
     data = _make_pdf(6)
     # 하드 리밋을 원본보다 1B 작게 → 디스패치 강제. 타깃도 동일값 →
     # 페이지당 평균 기준 5페이지 1차 그룹 → 2조각(5p+1p), 각각 리밋 이하.
-    monkeypatch.setattr(U, "UPSTAGE_PARSE_MAX_BYTES", len(data) - 1)
-    monkeypatch.setattr(U, "_SEGMENT_TARGET_BYTES", len(data) - 1)
+    monkeypatch.setattr(U, "_PARSE_SEGMENT_MAX_BYTES", len(data) - 1)
+    monkeypatch.setattr(U, "_PARSE_SEGMENT_TARGET_BYTES", len(data) - 1)
 
     calls: list[str] = []
 

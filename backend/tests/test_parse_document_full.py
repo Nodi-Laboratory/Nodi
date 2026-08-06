@@ -160,9 +160,14 @@ async def test_full_pdf_enforces_100_page_cap(monkeypatch):
     markdown, elements = await U.parse_document_full(b"pdfbytes", "book.pdf")
 
     assert captured["max_pages"] == 100
-    assert captured["hard"] == U.UPSTAGE_PARSE_MAX_BYTES
-    assert captured["target"] == U._SEGMENT_TARGET_BYTES
+    assert captured["hard"] == U._PARSE_SEGMENT_MAX_BYTES
+    assert captured["target"] == U._PARSE_SEGMENT_TARGET_BYTES
     assert (markdown, elements) == ("", [])
+    # D185: 조각 상한은 **문서값(50MB)이 아니라 실측값**이어야 한다. 문서값으로
+    # 되돌리면 32.6MB 교과서가 다시 500을 받는다 — 저쪽은 일반 오류만 주므로
+    # 원인을 처음부터 다시 찾게 된다.
+    assert captured["hard"] < U.UPSTAGE_PARSE_MAX_BYTES
+    assert captured["target"] <= captured["hard"]
 
 
 async def test_full_non_pdf_single_request_no_offset(monkeypatch):

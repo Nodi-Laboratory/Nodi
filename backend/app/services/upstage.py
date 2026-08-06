@@ -57,7 +57,26 @@ _POLL_MAX_SECONDS = 900.0  # async 파싱 전체 대기 상한(무한 루프 방
 # D78: Document Parse 요청당 파일 크기 하드 리밋(공식 문서 50MB). 초과 PDF는
 # 페이지 분할 후 조각별 파싱(이미지는 분할 불가 — 업로드 단계 D77이 거절).
 UPSTAGE_PARSE_MAX_BYTES = 50 * 1024 * 1024
-_SEGMENT_TARGET_BYTES = 48 * 1024 * 1024  # 직렬화 오버헤드 마진
+
+# D185: **문서가 말하는 50MB는 실제로 받아 주는 크기가 아니다.**
+#
+# 32.6MB·173p 교과서가 계속 500이었다(사용자 보고 2026-08-06). 저쪽 응답은
+# "temporary system issue"라는 일반 오류지만 **크기 경계에서 정확히 재현된다** —
+# 일시적인 것이 아니다. 같은 문서를 잘라 가며 실측했다:
+#
+#     앞 50p  8.9MB  성공        무거운 78p 17.0MB  실패
+#     앞 60p 10.8MB  성공        가벼운 95p 15.7MB  실패
+#     앞 75p 13.6MB  성공        앞    90p 16.3MB  실패
+#
+# 페이지 수가 아니라 **바이트**다(78p와 95p가 같이 실패했다). `figures` 옵션과도
+# 무관하다(끄고도 같은 자리에서 500). 그래서 조각 상한을 문서값이 아니라
+# 실측값으로 잡는다 — 목표 10MB, 이 이상이면 이분해 13MB.
+#
+# `UPSTAGE_PARSE_MAX_BYTES`는 남겨 둔다: 업로드 단계에서 "이미지는 분할이 불가능
+# 하니 애초에 거절"(D77·files.py)의 기준이고, 그건 여전히 문서 계약이다.
+_PARSE_SEGMENT_TARGET_BYTES = 10 * 1024 * 1024
+_PARSE_SEGMENT_MAX_BYTES = 13 * 1024 * 1024
+_SEGMENT_TARGET_BYTES = _PARSE_SEGMENT_TARGET_BYTES  # 옛 이름(호출부 보존)
 _SEGMENT_CONCURRENCY = 3  # 조각 파싱 동시성(요청 폭주 방지)
 # D86: 교과서 구조화 파싱은 조각당 sync 페이지 상한(<=100p) 이하로 사전 분할해
 # async(>100p) 경로를 원천 회피한다 — 페이지 오프셋을 결정론적으로 소유(D78 확장).
@@ -250,11 +269,16 @@ def _parse_form(figures: bool = False) -> dict:
 async def parse_document(data: bytes, filename: str) -> str:
     """PDF/이미지 바이트 -> markdown 텍스트.
 
-    D78: 50MB 초과 PDF는 페이지-range 조각으로 분할해 조각별로 파싱한 뒤
-    페이지 순으로 연결한다(Upstage 요청당 하드 리밋 우회). 그 외는 단일
-    요청 경로. 파싱 실패는 raise — 호출부(워커)가 잡 실패로 처리한다.
+    D78: 큰 PDF는 페이지-range 조각으로 분할해 조각별로 파싱한 뒤 페이지 순으로
+    연결한다(Upstage 요청당 실질 상한 우회). 그 외는 단일 요청 경로. 파싱
+    실패는 raise — 호출부(워커)가 잡 실패로 처리한다.
+
+    D185: 기준을 문서값(50MB)에서 **실측값**으로 내렸다. 50MB로 두면 15MB짜리
+    학급 자료가 분할 없이 한 번에 나가 500을 받는다 — 교과서에서 잡힌 것과
+    같은 벽이고, 이 경로도 예외가 아니다(그동안 안 드러난 이유는 프록시가
+    10MB에서 잘라 큰 파일이 애초에 못 올라왔기 때문이다, D184).
     """
-    if filename.lower().endswith(".pdf") and len(data) > UPSTAGE_PARSE_MAX_BYTES:
+    if filename.lower().endswith(".pdf") and len(data) > _PARSE_SEGMENT_MAX_BYTES:
         return await _parse_large_pdf(data, filename)
     return await _parse_single(data, filename)
 
@@ -262,7 +286,7 @@ async def parse_document(data: bytes, filename: str) -> str:
 def _pdf_segment_ranges(
     data: bytes,
     target: int = _SEGMENT_TARGET_BYTES,
-    hard: int = UPSTAGE_PARSE_MAX_BYTES,
+    hard: int = _PARSE_SEGMENT_MAX_BYTES,
     max_pages: int | None = None,
 ) -> list[tuple[int, bytes]]:
     """PDF를 페이지-range 조각으로 나눠 (시작 페이지 0-base, 직렬화 bytes) 목록 반환.
@@ -303,8 +327,13 @@ def _pdf_segment_ranges(
             out.append((start, seg))
             return
         if end - start <= 1:
+            # 더 쪼갤 수 없다. 이대로 보내면 Upstage가 일반 500을 주고
+            # (D185) 교사는 "일시적 오류"로 읽는데, 실제로는 다시 해도 안 된다.
             raise RuntimeError(
-                f"PDF 페이지 {start + 1}이 단독으로 {hard}B 초과 — 분할 불가"
+                f"PDF {start + 1}쪽이 한 장만으로 "
+                f"{len(seg) / 1024 / 1024:.1f}MB라 파싱할 수 없습니다"
+                f"(쪽당 {hard / 1024 / 1024:.0f}MB까지). 그 쪽의 이미지 해상도를"
+                f" 낮춰 다시 올려 주세요."
             )
         mid = (start + end) // 2
         emit(start, mid)
@@ -322,7 +351,7 @@ def _pdf_segment_ranges(
 def _pdf_segments(
     data: bytes,
     target: int = _SEGMENT_TARGET_BYTES,
-    hard: int = UPSTAGE_PARSE_MAX_BYTES,
+    hard: int = _PARSE_SEGMENT_MAX_BYTES,
 ) -> list[bytes]:
     """`_pdf_segment_ranges`의 bytes-only 얇은 래퍼(기존 호출부·계약 보존)."""
     return [seg for _, seg in _pdf_segment_ranges(data, target, hard)]
@@ -331,7 +360,7 @@ def _pdf_segments(
 async def _parse_large_pdf(data: bytes, filename: str) -> str:
     """D78: 대용량 PDF — 분할(스레드) 후 조각별 병렬 파싱, 페이지 순 연결."""
     segments = await asyncio.to_thread(
-        _pdf_segments, data, _SEGMENT_TARGET_BYTES, UPSTAGE_PARSE_MAX_BYTES
+        _pdf_segments, data, _PARSE_SEGMENT_TARGET_BYTES, _PARSE_SEGMENT_MAX_BYTES
     )
     logger.info(
         "D78 분할 파싱: %s %dB -> %d조각", filename, len(data), len(segments)
@@ -458,7 +487,7 @@ async def parse_document_full(data: bytes, filename: str) -> tuple[str, list[dic
             _pdf_segment_ranges,
             data,
             _SEGMENT_TARGET_BYTES,
-            UPSTAGE_PARSE_MAX_BYTES,
+            _PARSE_SEGMENT_MAX_BYTES,
             _FULL_MAX_PAGES,
         )
     else:
