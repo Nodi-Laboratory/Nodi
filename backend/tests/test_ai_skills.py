@@ -187,7 +187,7 @@ def _patch_llm(monkeypatch, *, tool_calls_sequence, stream_text="답변"):
             usage={"prompt": 10, "completion": 5, "total": 15, "cached": 0},
         )
 
-    async def fake_stream(history, question, system, *, usage_sink=None):
+    async def fake_stream(history, question, system, *, usage_sink=None, **_):
         calls["stream"] += 1
         calls["system"] = system
         for ch in stream_text:
@@ -290,7 +290,7 @@ async def test_판단_호출이_실패해도_답변은_나온다(monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("upstream 503")
 
-    async def fake_stream(history, question, system, *, usage_sink=None):
+    async def fake_stream(history, question, system, *, usage_sink=None, **_):
         yield "그래도 답한다"
 
     monkeypatch.setattr(O.solar, "complete", boom)

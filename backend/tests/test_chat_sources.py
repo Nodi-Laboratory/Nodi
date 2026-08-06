@@ -22,7 +22,7 @@ class _FakeClient:
         return []
 
 
-async def _fake_stream_answer(history, question, system_prompt, *, usage_sink=None):
+async def _fake_stream_answer(history, question, system_prompt, *, usage_sink=None, **_):
     yield "@concept: 개념\n"
     yield "- 본문\n"
     yield "@end\n"

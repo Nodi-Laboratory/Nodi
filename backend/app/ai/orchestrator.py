@@ -157,6 +157,7 @@ class Orchestrator:
         tool_names: list[str],
         answer_system_prompt: str,
         max_steps: int,
+        tag_hint: str | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """`(kind, payload)`를 yield.
 
@@ -304,7 +305,7 @@ class Orchestrator:
         answer_usage: dict[str, int] = {}
         answer_parts: list[str] = []
         async for delta in solar.stream_answer(
-            history, question, system, usage_sink=answer_usage
+            history, question, system, usage_sink=answer_usage, tag_hint=tag_hint
         ):
             answer_parts.append(delta)
             yield ("token", delta)

@@ -407,6 +407,11 @@ async def chat_stream(
                         history=history,
                         tool_names=tool_names,
                         answer_system_prompt=system_prompt,
+                        # 히스토리에 봉투를 씌울 때 쓸 분류 (D197). 지금 보고
+                        # 있는 트리가 가장 그럴듯하고, 없으면 이 세션에서 가장
+                        # 먼저 쓰인 분류를 쓴다.
+                        tag_hint=(body.focus_tag or "").strip()
+                        or (used_tags[0] if used_tags else None),
                         max_steps=react_steps,
                     ):
                         if kind == "sse":
@@ -435,6 +440,8 @@ async def chat_stream(
                         body.question,
                         system_prompt,
                         usage_sink=answer_usage,
+                        tag_hint=(body.focus_tag or "").strip()
+                        or (used_tags[0] if used_tags else None),
                     ):
                         answer_parts.append(delta)
                         yield _sse("token", {"delta": delta})
@@ -458,6 +465,20 @@ async def chat_stream(
                 tlog.add_error("empty_answer")
                 yield _sse("error", {"detail": "응답을 생성하지 못했습니다."})
                 return
+
+            # 형식을 어긴 답을 **셀 수 있게** 남긴다 (D197).
+            #
+            # 모델은 `@concept:` 봉투를 심심찮게 빠뜨린다(실측 2026-08-07: 18턴
+            # 중 4~6턴). 프론트가 되살려 주므로 학생 화면은 멀쩡하지만, 그래서
+            # **아무도 모른 채 나빠질 수 있다.** 되살리기는 그물이고 이 로그는
+            # 계기판이다 — 비율이 오르면 프롬프트나 모델을 손봐야 한다는 신호다.
+            if "@concept:" not in answer:
+                logger.warning(
+                    "개념 카드 형식 누락 session=%s len=%d — 프론트 되살리기에 기댄다",
+                    body.session_id,
+                    len(answer),
+                )
+                tlog.add_error("missing_concept_envelope")
 
             try:
                 # Labels + concept tags are REMOVED (design decision): persist

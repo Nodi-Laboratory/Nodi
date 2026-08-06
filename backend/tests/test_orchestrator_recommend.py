@@ -96,7 +96,7 @@ def _patch(monkeypatch, tool_calls_sequence, answer: str = CARD):
             usage={"prompt": 10, "completion": 5, "total": 15, "cached": 0},
         )
 
-    async def fake_stream(history, question, system, *, usage_sink=None):
+    async def fake_stream(history, question, system, *, usage_sink=None, **_):
         yield answer
 
     monkeypatch.setattr(O.solar, "complete", fake_complete)

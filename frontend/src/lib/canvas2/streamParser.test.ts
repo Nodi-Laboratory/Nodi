@@ -165,3 +165,54 @@ describe("경계", () => {
     expect(events.at(-1)).toEqual({ t: "done" });
   });
 });
+
+describe("머리표를 빠뜨린 답 되살리기 (2026-08-07 실측)", () => {
+  /**
+   * 모델은 `@concept:`를 **가끔 통째로 빠뜨린다** — 실측 18턴 중 4턴(22%),
+   * 특히 이어 묻는 턴에서 몰려 났다. 그때 답이 통째로 사라졌다: 토큰은 다
+   * 왔는데 화면에는 아무것도 안 뜨고 오류도 로그도 없었다.
+   */
+  const 실제_누락_답 =
+    "광합성은 식물이 **에너지**를 만들기 위해 꼭 필요한 과정이에요. " +
+    "==광합성==이 없으면 식물은 스스로 영양분을 만들 수 없어요.\n\n" +
+    "햇빛을 받아 **이산화탄소**와 **물**을 **포도당**으로 바꾸는 이 작용은 " +
+    "==생명 유지==의 기본이 됩니다.\n@end";
+
+  it("머리표가 없어도 카드가 생긴다", () => {
+    const { concepts } = run(실제_누락_답);
+    expect(concepts).toHaveLength(1);
+    expect(concepts[0].body).toContain("광합성은 식물이");
+    expect(concepts[0].body).toContain("생명 유지");
+  });
+
+  it("제목은 첫 굵은 낱말에서 빌린다", () => {
+    const { concepts } = run(실제_누락_답);
+    expect(concepts[0].title).toBe("에너지");
+  });
+
+  it("종료 토큰은 본문에 남지 않는다", () => {
+    const { concepts } = run(실제_누락_답);
+    expect(concepts[0].body).not.toContain("@end");
+  });
+
+  it("CHAT 한 줄짜리 인사 턴은 그대로 카드가 없다", () => {
+    // 되살리기가 인사까지 카드로 만들면 캔버스가 지저분해진다.
+    const { reply, concepts } = run("CHAT: 안녕하세요! 무엇이 궁금한가요?");
+    expect(reply).toBe("안녕하세요! 무엇이 궁금한가요?");
+    expect(concepts).toEqual([]);
+  });
+
+  it("짧은 군더더기는 살리지 않는다", () => {
+    expect(run("네, 알겠어요.").concepts).toEqual([]);
+  });
+
+  it("카드가 이미 있으면 그 사이 잡담은 그대로 버린다", () => {
+    // 살리면 한 턴에 카드가 둘 생겨 "한 턴 한 노드"(D162)가 깨진다.
+    const { concepts } = run(
+      "@concept: 가 | 나\n본문\n@end\n" +
+        "여기부터는 개념 밖의 긴 잡담입니다. 마흔 자를 넘기려고 일부러 길게 씁니다.",
+    );
+    expect(concepts).toHaveLength(1);
+    expect(concepts[0].body).toBe("본문");
+  });
+});

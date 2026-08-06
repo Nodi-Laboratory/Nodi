@@ -138,7 +138,7 @@ def _patch(monkeypatch, tool_calls_sequence):
             usage={"prompt": 10, "completion": 5, "total": 15, "cached": 0},
         )
 
-    async def fake_stream(history, question, system, *, usage_sink=None):
+    async def fake_stream(history, question, system, *, usage_sink=None, **_):
         yield "답"
         if usage_sink is not None:
             usage_sink.update(

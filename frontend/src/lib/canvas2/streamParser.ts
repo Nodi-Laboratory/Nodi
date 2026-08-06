@@ -55,11 +55,26 @@ export interface StreamParser {
   end(): void;
 }
 
+/**
+ * 머리표 없이 온 글을 카드로 살릴 최소 길이(자).
+ *
+ * 짧은 군더더기("네, 알겠어요")까지 카드로 만들면 캔버스가 지저분해진다.
+ * 실측한 누락 답들은 전부 200자를 넘었다 — 40자는 넉넉한 하한이다.
+ */
+const RECOVER_MIN_CHARS = 40;
+
+/** 되살린 카드의 제목으로 쓸 첫 **굵은** 낱말. 없으면 제목 없이 둔다. */
+const FIRST_BOLD_RE = /\*\*(.+?)\*\*/;
+
 export function createStreamParser(emit: (ev: StreamEvent) => void): StreamParser {
   let line = "";
   let inConcept = false;
   /** 개념 안에서 아직 본문이 하나도 없는가. 앞쪽 빈 줄을 버리는 데 쓴다. */
   let bodyEmpty = true;
+  /** 이 턴에 개념이 한 번이라도 열렸나 (되살리기 판정용). */
+  let sawConcept = false;
+  /** 개념 밖에서 흘러나온 줄들 — 버리지 않고 모아 둔다. */
+  const orphan: string[] = [];
 
   function closeConcept(): void {
     if (!inConcept) return;
@@ -94,6 +109,7 @@ export function createStreamParser(emit: (ev: StreamEvent) => void): StreamParse
       const parts = cm[1].split("|").map((s) => s.trim());
       emit({ t: "cstart", title: parts[0] ?? "", tag: parts[1] ?? "" });
       inConcept = true;
+      sawConcept = true;
       bodyEmpty = true;
       return;
     }
@@ -113,8 +129,22 @@ export function createStreamParser(emit: (ev: StreamEvent) => void): StreamParse
       return;
     }
 
-    // 개념이 열리기 전의 줄은 조용히 버린다(모델의 군더더기).
-    if (!inConcept) return;
+    /**
+     * ⚠️ **개념 밖의 줄을 버리지 않는다** (2026-08-07 실측).
+     *
+     * 예전에는 "모델의 군더더기"로 보고 조용히 버렸다. 그런데 모델은
+     * `@concept:` 머리표를 **가끔 통째로 빠뜨린다** — 실측 18턴 중 4턴(22%)이
+     * 그랬고, 특히 이어 묻는 턴에서 몰려 났다. 그때 답 전체가 이 줄에서
+     * 사라졌다: 생성은 됐고 토큰도 다 왔는데 **학생 화면에는 아무것도 안 뜨고**
+     * 오류도 로그도 없다. 학생 눈에는 "보냈는데 아무 일도 안 일어남"이다.
+     *
+     * 모아 뒀다가 `end()`에서 되살린다 — 형식이 깨졌다고 학생의 답을 버리는
+     * 것보다, 제목이 없는 카드라도 보여 주는 편이 낫다.
+     */
+    if (!inConcept) {
+      orphan.push(trimmed.replace(END_TAIL_RE, ""));
+      return;
+    }
 
     // 꼬리에 붙은 종료 토큰을 떼고, 떼였다면 그 자리가 개념의 끝이다.
     const cleaned = trimmed.replace(END_TAIL_RE, "");
@@ -135,6 +165,24 @@ export function createStreamParser(emit: (ev: StreamEvent) => void): StreamParse
     },
     end(): void {
       flushLine();
+      /**
+       * 머리표 없이 온 답을 카드로 되살린다.
+       *
+       * **개념이 한 번도 안 열렸을 때만** 한다. 카드 사이의 잡담까지 살리면
+       * 한 턴에 카드가 둘 생기고, 그건 "한 턴 한 노드"(D162)를 깬다.
+       */
+      if (!sawConcept) {
+        const text = orphan.join("\n").trim();
+        if (text.length >= RECOVER_MIN_CHARS) {
+          // 제목은 첫 굵은 낱말에서 빌린다 — 모델이 개념 이름을 거기 쓴다.
+          // 없으면 제목 없이 둔다(메모 카드와 같은 모양이라 화면은 멀쩡하다).
+          const title = (text.match(FIRST_BOLD_RE)?.[1] ?? "").trim().slice(0, 40);
+          emit({ t: "cstart", title, tag: "" });
+          inConcept = true;
+          bodyEmpty = true;
+          for (const l of orphan) appendBody(l);
+        }
+      }
       closeConcept();
       emit({ t: "done" });
     },

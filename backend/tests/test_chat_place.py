@@ -24,7 +24,7 @@ class _FakeClient:
         return []
 
 
-async def _fake_stream_answer(history, question, system_prompt, *, usage_sink=None):
+async def _fake_stream_answer(history, question, system_prompt, *, usage_sink=None, **_):
     for line in (
         "@concept: 첫째\n",
         "- 본문1\n",

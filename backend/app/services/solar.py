@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -137,16 +138,76 @@ def _require_config() -> tuple[str, str, str]:
     return f"{base}/chat/completions", settings.upstage_chat_model, settings.upstage_api_key
 
 
+# ---------------------------------------------------------------------------
+# 히스토리 위생 (2026-08-07 실측)
+#
+# ## 형식이 깨진 답은 **나쁜 few-shot 예시**가 된다
+#
+# 모델이 `@concept:` 봉투를 빠뜨린 답을 한 번 내면, 그 답이 다음 턴의
+# assistant 메시지로 들어가 **모델이 자기를 따라 한다.** 한 번 깨지면 그
+# 세션은 계속 깨진 채로 간다. 실측(질문 하나를 6회씩, solar-pro3):
+#
+#     히스토리 없음           @concept 있음  5/6
+#     형식 지킨 답 1개                       3/6
+#     형식 깨진 답 1개                       0/6   ← 되돌아오지 않는다
+#     형식 깨진 답 2개                       0/6
+#
+# 그 결과가 학생에게 어떻게 보이는지가 문제의 핵심이다: 답은 멀쩡히 생성되고
+# 토큰도 다 오는데 **캔버스에는 아무것도 안 뜬다**(파서가 카드를 못 만든다).
+# 오류도 로그도 없다. 프론트에도 되살리기 그물을 뒀지만(streamParser),
+# 그건 이미 깨진 답을 살리는 것이고 여기서는 **깨지지 않게** 한다.
+# ---------------------------------------------------------------------------
+
+#: 첫 **굵은** 낱말 — 봉투를 씌울 때 제목으로 빌린다.
+_FIRST_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+
+#: 마지막에 한 번 더 못 박는 형식 지시. 히스토리가 길어질수록 시스템 프롬프트가
+#: 멀어지므로, 질문 **직전**에 짧게 되풀이한다.
+FORMAT_REMINDER = (
+    "형식을 지켜라: 첫 줄 `CHAT: 한 문장`, 이어서 개념마다 "
+    "`@concept: 제목 | 분류` → 본문 → `@end`. 개념 카드 없이 본문만 쓰지 마라."
+)
+
+
+def canonical_answer(answer: str, tag: str | None = None) -> str:
+    """저장된 답을 **카드 형식으로 되돌려** 히스토리에 넣는다.
+
+    이미 봉투가 있으면 그대로 둔다. 없으면 제목을 첫 굵은 낱말에서 빌려 씌운다
+    (프론트 되살리기와 같은 규칙 — 두 곳이 같은 답을 같은 제목으로 부른다).
+
+    ⚠️ **저장된 원문은 안 건드린다.** 이건 모델에게 보여 줄 사본이다 —
+    `canvas_items.body`는 원문 그대로여야 한다(불변식: 파싱은 프론트가 소유).
+    """
+    text = (answer or "").strip()
+    if not text or "@concept:" in text:
+        return answer
+    m = _FIRST_BOLD_RE.search(text)
+    title = (m.group(1) if m else "").strip()[:40]
+    # **분류까지 채운 예시가 낫다** — 실측(각 8회): 제목만 4/8 · 제목+분류 6/8 ·
+    # 봉투 없음 3/8. 반쪽짜리 예시는 오히려 모델을 헷갈리게 한다.
+    parts = [p for p in (title, (tag or "").strip()) if p]
+    head = "@concept: " + " | ".join(parts) if parts else "@concept:"
+    return f"{head}\n{text}\n@end"
+
+
 def _build_messages(
-    system_prompt: str, history: list[tuple[str, str]], question: str
+    system_prompt: str,
+    history: list[tuple[str, str]],
+    question: str,
+    tag_hint: str | None = None,
 ) -> list[dict[str, str]]:
-    """OpenAI chat `messages`: system + 히스토리 교대 + 마지막 질문."""
+    """OpenAI chat `messages`: system + 히스토리 교대 + 형식 되새김 + 질문."""
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     for q, a in history:
         if q:
             messages.append({"role": "user", "content": q})
         if a:
-            messages.append({"role": "assistant", "content": a})
+            messages.append(
+                {"role": "assistant", "content": canonical_answer(a, tag_hint)}
+            )
+    # 히스토리가 있을 때만 되새긴다 — 첫 턴은 시스템 프롬프트가 바로 위에 있다.
+    if history:
+        messages.append({"role": "system", "content": FORMAT_REMINDER})
     messages.append({"role": "user", "content": question})
     return messages
 
@@ -219,6 +280,7 @@ async def stream_answer(
     system_prompt: str,
     *,
     usage_sink: dict[str, int] | None = None,
+    tag_hint: str | None = None,
 ) -> AsyncIterator[str]:
     """SSE `token` 이벤트용 답변 텍스트 델타를 yield.
 
@@ -234,7 +296,7 @@ async def stream_answer(
     temperature, max_out = await _gen_params()
     payload = {
         "model": model,
-        "messages": _build_messages(system_prompt, history, question),
+        "messages": _build_messages(system_prompt, history, question, tag_hint),
         "stream": True,
         "temperature": temperature,
         "max_tokens": max_out,
