@@ -46,6 +46,7 @@ import type { Size } from "@/lib/canvas2/useItemLayout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
 import { descendants, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
+import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
 import { navigate, type NavDir } from "@/lib/canvas2/navigate";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
@@ -377,6 +378,34 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const onPersisted = useCallback(
     (tempIds: string[], saved: CanvasItem[]) => {
       replaceTemp(tempIds, saved);
+      /**
+       * **id를 가리키는 상태도 함께 옮긴다** (D187).
+       *
+       * `replaceTemp`는 아이템 배열과 부모 참조만 옮긴다. 그런데 초점·선택·
+       * 편집은 여기(워크스페이스) state라 그대로 남고, 임시 id를 가리킨 채
+       * **허공을 가리키게 된다.**
+       *
+       *   초점(pickedId)   인용 칩이 파생값이라(D151) **칩이 사라진다.**
+       *                    학생이 이어 묻던 자리를 잃고, 그대로 보내면 답이
+       *                    엉뚱한 가지에 붙는다.
+       *   선택(selectedIds) 끌기·지우기가 조용히 아무것도 안 한다.
+       *   편집(editingId)  쓰던 입력창이 닫힌다.
+       *
+       * 실측 2026-08-06: 답이 뜨자마자 카드를 누르면 초점은 `tmp-1`인데 저장
+       * 뒤 화면에는 UUID만 남아 칩이 없어졌다. **화면에도 로그에도 안 드러난다** —
+       * 학생 눈에는 "눌렀는데 표시가 없어졌다"뿐이다.
+       *
+       * `createNote`가 같은 결함을 만나 **저장을 뒤로 미뤄** 피한 적이 있다
+       * (useCanvasItems.createNote docstring — "타이핑하는 중에 입력창이
+       * 없어졌다"). 스트리밍 카드는 그 수를 못 쓴다: 답이 끝나면 반드시
+       * 저장해야 하므로, id가 갈리는 **이 지점에서** 옮기는 것이 옳다.
+       */
+      const moved = idRemap(tempIds, saved);
+      if (moved.size) {
+        setPickedId((cur) => remapId(cur, moved));
+        setEditingId((cur) => remapId(cur, moved));
+        setSelectedIds((cur) => remapIdSet(cur, moved));
+      }
       // 카드가 서버에 들어간 뒤라야 워커가 그 id로 잡을 돌린다 (D176).
       scheduleCrossCheck();
     },
@@ -1360,7 +1389,23 @@ export function CanvasWorkspace({ spaceId }: Props) {
         ? (items.find((i) => i.id === ink.parentId)?.tag ?? tag)
         : tag;
       void stream.send(question, { pickedId: parent, ink }).then((created) => {
-        setPickedId(nextFocus(parent, parentTag, created));
+        /**
+         * **학생이 기다리는 동안 고른 것을 덮어쓰지 않는다** (D187).
+         *
+         * 답이 오면 방금 받은 답 뒤로 초점을 옮기는 것이 기본이다. 그런데
+         * 예전에는 그것을 **무조건** 했다 — 학생이 스트리밍 중에 다른 카드를
+         * 눌러 두었어도 이 줄이 그 뜻을 지웠다. 게다가 아무것도 안 골랐던
+         * 턴이면 `nextFocus(null, null, …)`가 null을 돌려주므로, 학생이 방금
+         * 누른 카드의 인용 칩이 **답이 끝나는 순간 사라진다.**
+         *
+         * 실측 2026-08-06: 답이 뜨자마자 카드를 누르면 칩이 붙었다가 스트림이
+         * 끝나면서 없어졌다. 학생 눈에는 "눌렀는데 표시가 사라진다"이고,
+         * 그대로 질문을 보내면 답이 엉뚱한 자리(뿌리)에 붙는다.
+         *
+         * 보낼 때와 같으면 우리가 옮기고, 달라졌으면 **학생 쪽이 이긴다** —
+         * 방금 한 조작이 우리가 예정해 둔 이동보다 늦고 더 직접적이다.
+         */
+        setPickedId((cur) => (cur === from ? nextFocus(parent, parentTag, created) : cur));
       });
     },
     [inkContext, items, pickedId, pickedItem, stream],
