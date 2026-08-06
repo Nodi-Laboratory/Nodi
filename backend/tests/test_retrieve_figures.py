@@ -18,6 +18,9 @@ from app.services import figure_search as R
 from app.services import figures as FIG
 from app.services import qdrant_store, rag
 
+#: 도판 id는 uuid 컬럼이다. 라우터가 형식을 검사하므로 대역도 진짜 uuid를 쓴다.
+FIG1 = "11111111-1111-4111-8111-111111111111"
+
 
 class _FakeUser:
     id = "u1"
@@ -43,7 +46,7 @@ class _FakeClient:
 
 
 FIG_ROW = {
-    "id": "fig1",
+    "id": FIG1,
     "file_id": "tb1",
     "page": 7,
     "candidates": ["광합성 그림"],
@@ -82,7 +85,7 @@ def test_display_caption_falls_back_to_alt_when_no_caption():
 def test_figure_item_shape():
     item = FIG.figure_item(FIG_ROW, "https://signed", 0.87)
     assert item == {
-        "figure_id": "fig1",
+        "figure_id": FIG1,
         "file_id": "tb1",
         "page": 7,
         "caption": "광합성 그림",
@@ -216,11 +219,11 @@ def _patch_figures_infra(
 @pytest.mark.asyncio
 async def test_search_figures_class_hit_returns_item(monkeypatch):
     client = _patch_figures_infra(
-        monkeypatch, hits=[{"id": "fig1", "score": 0.9}], rows=[FIG_ROW]
+        monkeypatch, hits=[{"id": FIG1, "score": 0.9}], rows=[FIG_ROW]
     )
     out = await R.search_class_figures(client, "c1", "광합성")
     assert len(out) == 1
-    assert out[0]["figure_id"] == "fig1"
+    assert out[0]["figure_id"] == FIG1
     assert out[0]["caption"] == "광합성 그림"  # candidates[selected_index]
     assert out[0]["url"] == "https://signed"
     assert out[0]["page"] == 7
@@ -231,7 +234,7 @@ async def test_search_figures_class_hit_returns_item(monkeypatch):
 async def test_search_figures_personal_returns_empty(monkeypatch):
     """개인 공간은 space_ref가 없다 — 조회 전에 빈 목록으로 끝난다."""
     client = _patch_figures_infra(
-        monkeypatch, hits=[{"id": "fig1", "score": 0.9}], rows=[FIG_ROW]
+        monkeypatch, hits=[{"id": FIG1, "score": 0.9}], rows=[FIG_ROW]
     )
     assert await R.search_class_figures(client, None, "광합성") == []
 
@@ -239,7 +242,7 @@ async def test_search_figures_personal_returns_empty(monkeypatch):
 @pytest.mark.asyncio
 async def test_search_figures_no_textbook_files_returns_empty(monkeypatch):
     client = _patch_figures_infra(
-        monkeypatch, file_ids=(), hits=[{"id": "fig1", "score": 0.9}], rows=[FIG_ROW]
+        monkeypatch, file_ids=(), hits=[{"id": FIG1, "score": 0.9}], rows=[FIG_ROW]
     )
     out = await R.search_class_figures(client, "c1", "광합성")
     assert out == []
@@ -249,7 +252,7 @@ async def test_search_figures_no_textbook_files_returns_empty(monkeypatch):
 async def test_search_figures_rls_dropped_hit(monkeypatch):
     # 히트는 있으나 RLS 재조회에서 행 안 보임(타 학급) → 조용히 탈락 → []
     client = _patch_figures_infra(
-        monkeypatch, hits=[{"id": "fig1", "score": 0.9}], rows=[]
+        monkeypatch, hits=[{"id": FIG1, "score": 0.9}], rows=[]
     )
     out = await R.search_class_figures(client, "c1", "광합성")
     assert out == []
@@ -259,7 +262,7 @@ async def test_search_figures_rls_dropped_hit(monkeypatch):
 async def test_search_figures_unsigned_dropped(monkeypatch):
     # signed URL 실패(None) → url 없는 figure 노드 방지 → 탈락
     client = _patch_figures_infra(
-        monkeypatch, hits=[{"id": "fig1", "score": 0.9}], rows=[FIG_ROW], sign=None
+        monkeypatch, hits=[{"id": FIG1, "score": 0.9}], rows=[FIG_ROW], sign=None
     )
     out = await R.search_class_figures(client, "c1", "광합성")
     assert out == []
@@ -323,9 +326,9 @@ async def test_get_figure_success(monkeypatch):
 
     monkeypatch.setattr(F.figures, "sign_figure_url", fake_sign)
 
-    out = await F.get_figure("fig1", user=_FakeUser())
+    out = await F.get_figure(FIG1, user=_FakeUser())
     assert out == {
-        "figure_id": "fig1",
+        "figure_id": FIG1,
         "url": "https://signed",
         "caption": "광합성 그림",
         "page": 7,
@@ -351,7 +354,7 @@ async def test_get_figure_sign_unavailable_503(monkeypatch):
 
     monkeypatch.setattr(F.figures, "sign_figure_url", fake_sign)
     with pytest.raises(HTTPException) as ei:
-        await F.get_figure("fig1", user=_FakeUser())
+        await F.get_figure(FIG1, user=_FakeUser())
     assert ei.value.status_code == 503
 
 
@@ -374,3 +377,23 @@ async def test_teacher_list_materials_includes_textbook(monkeypatch):
     await T.list_materials("c1", user=_FakeUser(), _=None)
     assert captured["kind"] == "in.(class_material,textbook)"
     assert "kind" in captured["select"]  # 프론트 배지용
+
+
+# ── 형식이 아닌 도판 id (2026-08-07) ──────────────────────────────────
+@pytest.mark.asyncio
+async def test_도판_id가_uuid가_아니면_404다():
+    """502가 아니라 404여야 한다.
+
+    검증 없이 넘기면 asyncpg가 `invalid input for query argument`로 터지고
+    라우터는 **502**를 낸다 — "우리 쪽이 고장 났다"는 뜻이라 원인을 엉뚱한
+    데서 찾게 만든다. 관리자 콘솔의 펜 실험실이 일부러 없는 id를 쓰는데,
+    화면에는 "도판을 불러오지 못했어요"가 뜨고 서버 로그에는 DB 예외가
+    쌓이고 있었다(실측 2026-08-07).
+    """
+    with pytest.raises(HTTPException) as e:
+        await F.get_figure("lab-figure-missing", user=_FakeUser())
+    assert e.value.status_code == 404
+
+    with pytest.raises(HTTPException) as e2:
+        await F.get_figure_raw("lab-figure-missing", user=_FakeUser())
+    assert e2.value.status_code == 404

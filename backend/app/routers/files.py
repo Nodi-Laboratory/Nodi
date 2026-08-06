@@ -7,6 +7,7 @@ still work (RLS reads via the caller's JWT).
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from fastapi import (
@@ -185,6 +186,23 @@ async def retry_file(
 
 
 # --- Figure 재수화 (D87: signed URL 비영속 → 재발급 창구) ------------------
+def _figure_uuid(figure_id: str) -> str:
+    """도판 id를 검증한다 — 형식이 아니면 **404**다.
+
+    검증 없이 넘기면 asyncpg가 `invalid input for query argument`로 터지고
+    라우터는 **502**를 낸다(실측 2026-08-07: 관리자 콘솔의 펜 실험실이 일부러
+    없는 id를 쓰는데, 화면에는 "도판을 불러오지 못했어요"가 뜨고 서버 로그에는
+    DB 예외가 쌓였다). 없는 것을 찾는 일은 사고가 아니라 평범한 결과다 —
+    502는 "우리 쪽이 고장 났다"는 뜻이라 원인을 엉뚱한 데서 찾게 만든다.
+    """
+    try:
+        return str(uuid.UUID(figure_id))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="도판을 찾을 수 없습니다."
+        ) from None
+
+
 @router.get("/figures/{figure_id}")
 async def get_figure(
     figure_id: str,
@@ -199,6 +217,7 @@ async def get_figure(
     `/figures/{id}`는 2세그먼트라 1세그먼트 `/{file_id}`에 삼켜지지 않는다.
     반환: {figure_id, url, caption, page}.
     """
+    figure_id = _figure_uuid(figure_id)
     client = UserClient.from_user(user)
     rows = await client.select(
         "textbook_figures",
@@ -253,6 +272,7 @@ async def get_figure_raw(
 
     접근 통제는 위와 같다: UserClient로 재조회해 RLS가 판정한다(D104).
     """
+    figure_id = _figure_uuid(figure_id)
     client = UserClient.from_user(user)
     rows = await client.select(
         "textbook_figures",
