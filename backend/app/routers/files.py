@@ -314,6 +314,7 @@ async def get_chunk_context(
     rows = await client.rpc(
         "get_chunk_context",
         {"p_chunk_id": chunk_id, "p_neighbors": neighbors},
+        many=True,
     )
     if isinstance(rows, list):
         if not rows:

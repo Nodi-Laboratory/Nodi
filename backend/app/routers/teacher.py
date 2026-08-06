@@ -51,8 +51,9 @@ async def list_classes(
 ) -> list[dict[str, Any]]:
     """Classes the caller teaches, with student counts."""
     client = UserClient.from_user(user)
-    result = await client.rpc("teacher_classes", {})
-    return result if isinstance(result, list) else []
+    # many=True — 학급이 **하나뿐일 때** 목록 대신 dict가 와서 화면이 빈 채로
+    # 보이던 자리다(2026-08-07 실측, 새 교사는 100% 겪는다).
+    return await client.rpc("teacher_classes", {}, many=True)
 
 
 @router.get("/classes/overview")
@@ -68,8 +69,7 @@ async def list_class_overview(
     classes. The legacy /classes (dropdown) endpoint is unchanged.
     """
     client = UserClient.from_user(user)
-    result = await client.rpc("teacher_class_overview", {})
-    return result if isinstance(result, list) else []
+    return await client.rpc("teacher_class_overview", {}, many=True)
 
 
 class CreateClassBody(BaseModel):
@@ -104,8 +104,7 @@ async def list_students(
 ) -> list[dict[str, Any]]:
     """Students of a class the caller teaches (RPC guards via is_class_teacher)."""
     client = UserClient.from_user(user)
-    result = await client.rpc("class_students", {"p_class_id": class_id})
-    return result if isinstance(result, list) else []
+    return await client.rpc("class_students", {"p_class_id": class_id}, many=True)
 
 
 @router.get("/classes/{class_id}/students/{user_id}/sessions")

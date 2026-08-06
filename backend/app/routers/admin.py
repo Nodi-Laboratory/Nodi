@@ -310,9 +310,7 @@ async def list_skills(
             if name in exposure:
                 exposure[name].append(label)
 
-    usage_rows = await client.rpc("admin_skill_usage", {"p_days": days})
-    if isinstance(usage_rows, dict):
-        usage_rows = [usage_rows]
+    usage_rows = await client.rpc("admin_skill_usage", {"p_days": days}, many=True)
     usage = {r["skill"]: r for r in (usage_rows or []) if r.get("skill")}
 
     skills = []
@@ -385,8 +383,8 @@ async def list_conversations(
             "p_limit": limit,
             "p_offset": offset,
         },
+        many=True,
     )
-    rows = _as_list(rows)
     total = int(rows[0]["total_count"]) if rows else 0
     for r in rows:
         r.pop("total_count", None)
@@ -511,17 +509,16 @@ async def list_documents(
     어긋날 수 있다. 양쪽을 다 돌려주므로 어긋난 파일이 눈에 띈다.
     """
     client = UserClient.from_user(user)
-    rows = _as_list(
-        await client.rpc(
-            "admin_documents",
-            {
-                "p_kind": kind,
-                "p_status": file_status,
-                "p_search": (search or None),
-                "p_limit": limit,
-                "p_offset": offset,
-            },
-        )
+    rows = await client.rpc(
+        "admin_documents",
+        {
+            "p_kind": kind,
+            "p_status": file_status,
+            "p_search": (search or None),
+            "p_limit": limit,
+            "p_offset": offset,
+        },
+        many=True,
     )
     total = int(rows[0]["total_count"]) if rows else 0
     for r in rows:
@@ -1006,28 +1003,6 @@ async def list_lecture_clips(
     )
 
 
-def _as_list(rows: Any) -> list[dict[str, Any]]:
-    """RPC 반환 정규화.
-
-    `UserClient.rpc`는 행이 하나면 **dict**, 여럿이면 list, 없으면 None을
-    돌려준다(스칼라/복합 타입 반환을 구분하려는 계약). 목록을 기대하는 곳에서
-    그대로 쓰면 행이 하나일 때 조용히 깨진다.
-    """
-    if rows is None:
-        return []
-    if isinstance(rows, dict):
-        return [rows]
-    return list(rows)
-
-
-
-# ---------------------------------------------------------------------------
-# 교차 연결 판정 로그 (D172)
-#
-# item_links는 성공한 링크만 남긴다. 여기 있는 것은 **판정 전체**다 — 어떤
-# 세션들을 뒤졌고, 각 후보의 유사도가 얼마였고, 무엇이 왜 떨어졌는지.
-# "왜 안 뜨지"에 답하려면 떨어진 이유가 남아 있어야 한다.
-# ---------------------------------------------------------------------------
 _CROSSLINK_RUN_SELECT = (
     "id,owner_id,from_item_id,from_session_id,from_title,from_tag,"
     "from_space_kind,knobs,candidates,outcome,link_id,explanation,"

@@ -442,8 +442,23 @@ class _BaseClient:
             _fail(exc, f"delete {table}")
 
     # --- 함수 호출 ----------------------------------------------------------
-    async def rpc(self, fn: str, args: dict[str, Any]) -> Any:
-        """DB 함수 호출. 이름 있는 인자로 넘겨 순서 의존을 없앤다."""
+    async def rpc(self, fn: str, args: dict[str, Any], *, many: bool = False) -> Any:
+        """DB 함수 호출. 이름 있는 인자로 넘겨 순서 의존을 없앤다.
+
+        ## `many`를 왜 호출부가 정하나 (2026-08-07)
+
+        반환 **모양만 보고는** "행 하나짜리 목록"과 "복합 타입 하나"를 가를 수
+        없다. 예전에는 행 수로 짐작했는데(`len(out) > 1`이면 목록), 그래서
+        행이 **정확히 하나**일 때 목록을 기대하는 호출부가 dict를 받았다.
+
+        그 결과가 이거다: **학급을 하나만 가진 선생님에게 학급 목록이 빈 채로
+        보였다.** 라우터가 `isinstance(result, list) else []`로 걸러 버리기
+        때문이다. 둘째 학급을 만드는 순간 갑자기 둘 다 나타난다 — 새로 가입한
+        선생님은 100% 겪고, 학급 코드조차 볼 수 없어 **학생을 넣을 방법이
+        없었다**(실측 2026-08-07, 새 교사 여정).
+
+        짐작은 여기서 끝낸다. 목록을 기대하면 `many=True`라고 적는다.
+        """
         try:
             names = list(args.keys())
             call = ", ".join(
@@ -454,6 +469,8 @@ class _BaseClient:
             async with self._conn() as conn:
                 await _prepare(conn)
                 out = _rows(await _fetch(conn, sql, values))
+            if many:
+                return out
             if not out:
                 return None
             # 스칼라 반환(is_admin 등)은 컬럼 1개 행 1개 — 값만 돌려준다.
