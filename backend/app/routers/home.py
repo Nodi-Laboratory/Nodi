@@ -32,3 +32,15 @@ async def home_summary(
         "recent_sessions": recents,
     }
 
+
+
+@router.get("/concept-map")
+async def concept_map(
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """지금까지 대화한 개념 전부 + 비슷한 것끼리의 선 (D189).
+
+    좌표는 **주지 않는다.** 2D 배치는 화면 크기·확대 배율에 따라 달라야 하므로
+    브라우저가 힘 배치로 만든다 — 서버가 정하면 창을 줄일 때마다 어긋난다.
+    """
+    return await home.get_concept_map(UserClient.from_user(user), user.id)

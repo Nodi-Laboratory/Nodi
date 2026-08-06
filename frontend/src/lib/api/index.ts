@@ -105,3 +105,6 @@ export * from "./lectures";
 
 // D176: 교차 세션 개념 연결 — 카드 배지 + 과거 대화로 돌아가기.
 export * from "./crosslink";
+
+// D189: 개념 지도 — 홈 대시보드가 지금까지의 개념 전부를 한 장에 펼친다.
+export * from "./conceptMap";

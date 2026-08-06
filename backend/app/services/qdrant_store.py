@@ -254,3 +254,50 @@ async def search_concepts(
         {"id": str(pt.id), "score": pt.score, "payload": pt.payload or {}}
         for pt in res.points
     ]
+
+
+async def concept_pairs(
+    owner_id: str, *, sample: int, neighbors: int
+) -> list[tuple[str, str, float]]:
+    """한 학생의 개념 카드끼리 **가까운 쌍**을 한 번에 (D189).
+
+    반환은 `(item_id_a, item_id_b, distance)` — 거리 규약은 저장소 공통
+    `distance = 1 - score`다.
+
+    ## 왜 이 API인가
+
+    개념 지도는 "비슷한 것끼리 뭉쳐 보이는 것"이 전부인데, 그러려면 카드 사이
+    유사도가 필요하다. 두 갈래를 다 피했다:
+
+      · 서버에서 2D로 투영(UMAP·t-SNE) — numpy/sklearn을 새로 들여야 한다.
+      · 카드마다 검색 N번 — 카드 300장이면 왕복 300번이다.
+
+    `search_matrix_pairs`는 Qdrant가 이미 갖고 있는 것이다 — 표본 안에서 이웃을
+    찾아 쌍으로 돌려준다. **왕복 한 번**이면 그래프가 온다. 2D 좌표는 화면이
+    힘 배치로 만든다 — 화면 크기마다 달라야 하는 값이라 서버가 정할 일이 아니다.
+
+    ## Qdrant는 신뢰 경계가 아니다
+
+    `owner_id` 필터는 성능·정확도용이다. 실제 권한은 호출부가 `canvas_items`를
+    USER 클라이언트로 다시 읽어 RLS가 판정한다 — **여기서 온 id 중 그 목록에
+    없는 것은 버린다**(불변식).
+
+    실패하면 빈 목록. 지도에 선이 안 그려질 뿐 노드는 여전히 보인다.
+    """
+    try:
+        res = await get_client().search_matrix_pairs(
+            collection_name=COL_CANVAS_CONCEPTS,
+            query_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="owner_id", match=models.MatchValue(value=str(owner_id))
+                    )
+                ]
+            ),
+            sample=sample,
+            limit=neighbors,
+        )
+    except Exception:  # noqa: BLE001 - 지도는 선 없이도 그려진다
+        logger.warning("개념 쌍 조회 실패 owner=%s", owner_id, exc_info=True)
+        return []
+    return [(str(p.a), str(p.b), 1.0 - float(p.score)) for p in (res.pairs or [])]

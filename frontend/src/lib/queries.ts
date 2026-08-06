@@ -5,6 +5,7 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import {
+  getConceptMap,
   getHomeSummary,
   fetchTeacherOverview,
   getSession,
@@ -19,6 +20,7 @@ import {
   listStudentClassSessions,
   listTeacherClasses,
   type ClassLecturePackage,
+  type ConceptMapData,
   type LecturePackage,
   type LectureVideo,
   type SpaceTarget,
@@ -227,6 +229,22 @@ export function prefetchSessionData(qc: QueryClient, sessionId: string) {
 }
 
 /** 홈 요약(공간/최근 세션). */
+/**
+ * 개념 지도 (D189).
+ *
+ * 계산이 가벼운 조회가 아니다(Qdrant 왕복 + 카드 수백 장). 홈을 드나들 때마다
+ * 다시 받으면 지도가 매번 처음부터 뭉치는 것이 보인다 — 캐시를 넉넉히 둬서
+ * **돌아왔을 때 같은 지도**가 그대로 있게 한다.
+ */
+export function useConceptMap() {
+  return useQuery<ConceptMapData>({
+    queryKey: ["home", "concept-map"],
+    queryFn: () => getConceptMap(),
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+  });
+}
+
 export function useHomeSummary() {
   return useQuery<HomeSummary>({
     queryKey: ["home", "summary"],
