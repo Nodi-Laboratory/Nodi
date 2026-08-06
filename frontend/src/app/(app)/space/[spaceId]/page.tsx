@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { CanvasWorkspace } from "@/components/canvas2/CanvasWorkspace";
+import { SpaceGuard } from "@/components/canvas2/SpaceGuard";
 
 /**
  * 학습 캔버스 (D120~D127).
@@ -13,5 +14,10 @@ import { CanvasWorkspace } from "@/components/canvas2/CanvasWorkspace";
 export default function SpacePage() {
   const params = useParams<{ spaceId: string }>();
   const spaceId = params?.spaceId ?? "personal";
-  return <CanvasWorkspace key={spaceId} spaceId={spaceId} />;
+  return (
+    // 내 방이 아니면 빈 캔버스 대신 **무슨 일인지** 보여 준다 (D201).
+    <SpaceGuard spaceId={spaceId}>
+      <CanvasWorkspace key={spaceId} spaceId={spaceId} />
+    </SpaceGuard>
+  );
 }

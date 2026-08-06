@@ -89,19 +89,38 @@ test("C30 드로어는 Esc로 닫히고 캔버스가 살아 있다", async ({ pa
   await page.getByLabel("질문 입력").fill("");
 });
 
+/**
+ * 세션 수는 **서랍에 그려진 줄이 아니라 서버에 물어서** 센다.
+ *
+ * 예전에는 목록의 행을 셌는데, 계정에 대화가 쌓이면 그 수가 "지금 몇 줄이
+ * 그려졌나"가 되어 버린다 — 실측 2026-08-07: 같은 계정에서 1↔2, 1↔11로
+ * 흔들렸고 **줄어들기도** 했다(세션이 줄어들 리는 없다). 재려는 것은 화면이
+ * 아니라 "새로고침이 세션을 만들었나"이므로 창구에 직접 묻는다.
+ */
+async function sessionCount(page: Page): Promise<number> {
+  return page.evaluate(async () => {
+    const token = document.cookie
+      .split("; ")
+      .find((c) => c.startsWith("nodi_token="))
+      ?.slice("nodi_token=".length);
+    const res = await fetch("/api/sessions?space_kind=personal", {
+      headers: { Authorization: `Bearer ${decodeURIComponent(token ?? "")}` },
+    });
+    const rows = (await res.json()) as unknown[];
+    return Array.isArray(rows) ? rows.length : -1;
+  });
+}
+
 test("C96 새로고침 연타가 세션을 불리지 않는다 (J96)", async ({ page }) => {
   await loginAndOpenCanvas(page);
-  await openDrawer(page);
-  const before = await page.getByRole("dialog").getByText(/새 대화|대화\d+/).count();
-  await page.keyboard.press("Escape");
+  const before = await sessionCount(page);
+  expect(before).toBeGreaterThan(0);
 
   for (let i = 0; i < 3; i++) {
     await page.reload();
     await page.waitForTimeout(800);
   }
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
-  await openDrawer(page);
-  const after = await page.getByRole("dialog").getByText(/새 대화|대화\d+/).count();
   // 새로고침마다 세션을 만들면 목록이 쓰레기로 찬다.
-  expect(after).toBe(before);
+  expect(await sessionCount(page)).toBe(before);
 });
