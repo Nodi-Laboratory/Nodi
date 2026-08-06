@@ -32,7 +32,7 @@ from .. import ai
 from ..auth.deps import CurrentUser, Profile, get_current_user, require_admin
 from ..config import get_settings
 from ..db.client import UserClient, get_service_client
-from ..services import admin_backup, admin_console, app_settings, gemini, solar
+from ..services import admin_backup, admin_console, app_settings, clip_thumbnails, gemini, solar
 from ..services import figures as figures_svc
 from . import health
 
@@ -1155,3 +1155,41 @@ async def ink_lab_answer(
         "ink_block": ink_context or "",
         "blocks": [b.get("kind") for b in blocks],
     }
+
+
+# --- 강의 클립 썸네일 (D190) ------------------------------------------------
+#
+# EBS 썸네일을 가져올 방법이 없어(저작권·차단) 관리자가 쓸 만한 그림을 올려
+# 두고 클립마다 그중 하나를 보여 준다. 학생 화면이 읽는 창구는 files 라우터에
+# 있고, 여기는 **넣고 빼는 쪽**이다.
+@router.get("/clip-thumbnails")
+async def list_clip_thumbnails_admin(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    return await clip_thumbnails.list_thumbnails(UserClient.from_user(user))
+
+
+@router.post("/clip-thumbnails", status_code=status.HTTP_201_CREATED)
+async def add_clip_thumbnail(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """썸네일 한 장 등록. 형식·용량 검증은 서비스가 한다."""
+    return await clip_thumbnails.add_thumbnail(
+        UserClient.from_user(user),
+        owner_id=user.id,
+        filename=file.filename or "썸네일",
+        mime=file.content_type,
+        data=await file.read(),
+    )
+
+
+@router.delete("/clip-thumbnails/{thumb_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_clip_thumbnail(
+    thumb_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> None:
+    await clip_thumbnails.remove_thumbnail(UserClient.from_user(user), thumb_id)

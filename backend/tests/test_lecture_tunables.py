@@ -15,7 +15,9 @@ def test_config_defaults():
     assert s.lecture_atoms_per_clip == 4
     assert s.lecture_atom_concurrency == 4
     assert s.lecture_atom_model == "solar-pro3"
-    assert s.lecture_retrieve_top_k == 3
+    # D190: 카드 하나에 영상 하나(사용자 지시 2026-08-06). 정사각형 썸네일
+    # 카드가 되면서 여러 개가 붙으면 답보다 곁다리가 커진다.
+    assert s.lecture_retrieve_top_k == 1
     assert s.lecture_batch_size == 16
 
 

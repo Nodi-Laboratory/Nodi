@@ -158,3 +158,61 @@ export async function toggleClassLecturePackage(
     ),
   );
 }
+
+// --- 강의 클립 썸네일 (D190) -------------------------------------------------
+//
+// EBS 썸네일을 가져올 방법이 없어(저작권·차단) 관리자가 올려 둔 그림 중에서
+// 클립마다 하나를 골라 쓴다. 어느 것을 쓸지는 `lib/canvas2/clipThumb.ts`가
+// clip id로 정한다 — 서버가 매번 무작위로 주면 볼 때마다 그림이 달라진다.
+
+export interface ClipThumbnail {
+  id: string;
+  name: string | null;
+  mime: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+/** 학생 화면이 고를 수 있는 썸네일 목록. */
+export async function listClipThumbnails(): Promise<ClipThumbnail[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/clip-thumbnails`, { headers: await authHeaders() }),
+  );
+  return (await res.json()) as ClipThumbnail[];
+}
+
+/** 썸네일 바이트 주소. `<img src>`는 인증 헤더를 못 실으니 fetch로 받아 쓴다. */
+export function clipThumbnailUrl(id: string): string {
+  return `${API_BASE}/clip-thumbnails/${id}/raw`;
+}
+
+// --- 관리자: 썸네일 넣고 빼기 ------------------------------------------------
+
+export async function listClipThumbnailsAdmin(): Promise<ClipThumbnail[]> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/clip-thumbnails`, { headers: await authHeaders() }),
+  );
+  return (await res.json()) as ClipThumbnail[];
+}
+
+export async function uploadClipThumbnail(file: File): Promise<ClipThumbnail> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/clip-thumbnails`, {
+      method: "POST",
+      headers: await authHeaders(),
+      body: form,
+    }),
+  );
+  return (await res.json()) as ClipThumbnail;
+}
+
+export async function deleteClipThumbnail(id: string): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/admin/clip-thumbnails/${id}`, {
+      method: "DELETE",
+      headers: await authHeaders(),
+    }),
+  );
+}

@@ -483,12 +483,12 @@ _SPECS: list[dict[str, Any]] = [
     },
     {
         "key": "lecture_retrieve_top_k",
-        "label": "강의 클립 표시 개수",
+        "label": "카드당 강의 클립 수",
         "group": "강의 클립",
         "widget": "number",
         "min": 1, "max": 10, "step": 1, "unit": "개",
         "scope": "live",
-        "description": "한 답에 곁들일 강의 클립 수 상한.",
+        "description": "개념 카드 하나에 곁들일 강의 클립 수 상한 (D190: 기본 1).",
         "effect": "클립 노출량",
     },
     {

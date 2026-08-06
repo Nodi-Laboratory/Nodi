@@ -222,7 +222,9 @@ class Settings(BaseSettings):
     lecture_atoms_per_clip: int = 4                # 클립당 생성 질문 수
     lecture_atom_concurrency: int = 4              # solar 동시 호출
     lecture_atom_model: str = "solar-pro3"         # 원자 생성 모델(config/env 전용)
-    lecture_retrieve_top_k: int = 3                # 추천 개수(config 전용)
+    # D190: **개념 카드 하나에 영상 하나**(사용자 지시 2026-08-06). 카드가
+    # 정사각형 썸네일 카드가 되면서 여러 개가 붙으면 답보다 곁다리가 커진다.
+    lecture_retrieve_top_k: int = 1                # 카드당 추천 개수
     lecture_batch_size: int = 16                   # 임베딩/원자 잡 팬아웃 단위
     # 자동 전사(개정 R2) — 업로드 자막이 없으면 EBS 오디오를 Whisper로 전사.
     lecture_whisper_enabled: bool = True           # 자막 없을 때 자동 전사(오버레이 폴백 가능)

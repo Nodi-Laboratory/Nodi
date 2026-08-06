@@ -13,16 +13,21 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { PlayCircle, X } from "lucide-react";
 import { useItemDrag } from "@/lib/canvas2/useItemDrag";
+import { useClipThumb } from "@/lib/canvas2/useClipThumb";
 import type { CanvasItem } from "@/lib/canvas2/types";
 
 /**
- * 클립 카드 폭 (D163).
+ * 클립 카드 한 변 (D163 → D190).
  *
- * ITEM_W(560)였다. 개념 카드 **옆에** 붙게 되면서(layout ATTACH_KINDS) 같은
- * 폭이면 어느 쪽이 답이고 어느 쪽이 곁다리인지 안 갈린다. 좁혀 두면 카드에
- * 딸린 것으로 읽히고, 트리 옆 여백에도 들어간다.
+ * ITEM_W(560) → 340 → **240 정사각형**. 개념 카드 **옆에** 붙는 곁다리라
+ * (layout ATTACH_KINDS) 답보다 크면 어느 쪽이 답인지 안 갈린다.
+ *
+ * 정사각형인 이유는 **썸네일이 들어가서**다(사용자 지시 2026-08-06). 제목과
+ * "EBS에서 이어 보기" 사이에 그림이 앉으면 세로가 늘어나는데, 폭에 맞춰
+ * 정사각으로 고정하면 여러 장이 붙어도 줄이 흐트러지지 않는다. 글자도 함께
+ * 줄였다 — 카드만 줄이면 글자가 상자를 꽉 채워 답답해진다.
  */
-const CLIP_W = 340;
+const CLIP_SIDE = 240;
 
 interface Props {
   item: CanvasItem;
@@ -48,6 +53,7 @@ export function ClipItem({
   onDelete,
 }: Props) {
   const clip = item.data.clip;
+  const thumbUrl = useClipThumb(clip?.clipId);
   const [hover, setHover] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -86,11 +92,12 @@ export function ClipItem({
       data-canvas-item={item.id}
       data-canvas-clip={clip.clipId}
       data-selected={selected ? "1" : undefined}
-      className="absolute rounded-lg border p-3"
+      className="absolute flex flex-col rounded-lg border p-2.5"
       style={{
         left: x,
         top: y,
-        width: CLIP_W,
+        width: CLIP_SIDE,
+        height: CLIP_SIDE,
         pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
         background: "var(--c-raised)",
         borderColor: selected ? "var(--c-live)" : "var(--c-rule)",
@@ -165,34 +172,73 @@ export function ClipItem({
       )}
 
       {/* 머리 — 무엇인지(EBS 강의)와 어디인지(타임라인)를 한 줄로. */}
-      <div className="mb-1.5 flex items-center gap-1.5">
-        <PlayCircle size={15} style={{ color: "var(--c-live-deep)", flexShrink: 0 }} />
-        <span className="label" style={{ color: "var(--c-ink-soft)", letterSpacing: 0 }}>
+      <div className="flex shrink-0 items-center gap-1">
+        <PlayCircle size={13} style={{ color: "var(--c-live-deep)", flexShrink: 0 }} />
+        <span
+          className="label"
+          style={{ color: "var(--c-ink-soft)", letterSpacing: 0, fontSize: 10 }}
+        >
           EBS 강의
         </span>
         <span
-          className="label ml-auto rounded px-1.5 py-0.5"
+          className="label ml-auto rounded px-1 py-px"
           style={{
             color: "var(--c-live-deep)",
             background: "var(--c-live-wash, transparent)",
             border: "1px solid var(--c-rule)",
             letterSpacing: 0,
+            fontSize: 10,
           }}
         >
           {clip.timelineLabel}
         </span>
       </div>
-      <div className="text-sm font-medium leading-snug" style={{ color: "var(--c-ink)" }}>
+
+      {/**
+       * 제목 — **두 줄까지.** 길다고 늘어나면 정사각형이 깨진다.
+       *
+       * 어느 강의인지(`videoTitle`)는 줄로 두지 않고 툴팁으로 옮겼다 (D190).
+       * 240 정사각형에 썸네일까지 넣으면 그 줄이 들어갈 자리가 없는데,
+       * 지워 버리면 "이게 무슨 강의였지"에 답할 방법이 아예 사라진다.
+       */}
+      <div
+        className="mt-1 shrink-0 font-medium leading-snug line-clamp-2"
+        style={{ color: "var(--c-ink)", fontSize: 12.5 }}
+        title={clip.videoTitle || undefined}
+      >
         {clip.title}
       </div>
-      {clip.videoTitle ? (
-        <div
-          className="label mt-1 truncate"
-          style={{ color: "var(--c-ink-faint)", letterSpacing: 0 }}
-        >
-          {clip.videoTitle}
-        </div>
-      ) : null}
+
+      {/**
+       * 썸네일 — 제목과 "이어 보기" 사이 (D190, 사용자 지시 2026-08-06).
+       *
+       * 남는 높이를 **전부** 쓴다(`flex-1`). 고정 높이로 두면 제목이 한 줄인
+       * 카드와 두 줄인 카드의 아래 여백이 달라져 정사각형 안이 들쭉날쭉해진다.
+       *
+       * 실제 그 강의의 장면은 아니다 — EBS 썸네일을 가져올 방법이 없어(저작권·
+       * 차단) 관리자가 올려 둔 그림 중 하나를 clip id로 골라 쓴다. 그래서
+       * **알림 문구를 달지 않는다**: 카드가 무엇인지 말해 주는 장식이지 그
+       * 영상의 한 장면이라고 주장하지 않는다.
+       *
+       * 그림이 없으면(관리자가 아직 안 올렸거나 받기 실패) 자리를 비운다 —
+       * 깨진 이미지 아이콘보다 낫다.
+       */}
+      <div
+        className="my-1.5 min-h-0 flex-1 overflow-hidden rounded"
+        style={{ background: "var(--c-sunk, rgba(0,0,0,.04))" }}
+      >
+        {thumbUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- object URL이라 next/image가 못 다룬다
+          <img
+            src={thumbUrl}
+            alt=""
+            aria-hidden
+            draggable={false}
+            className="h-full w-full object-cover"
+          />
+        ) : null}
+      </div>
+
       <a
         href={clip.pageUrl}
         target="_blank"
@@ -200,8 +246,8 @@ export function ClipItem({
         data-no-pan
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
-        className="mt-2 inline-flex items-center gap-1 text-sm"
-        style={{ color: "var(--c-hand)" }}
+        className="shrink-0 truncate"
+        style={{ color: "var(--c-hand)", fontSize: 12 }}
       >
         EBS에서 이어 보기 →
       </a>
