@@ -47,7 +47,10 @@ async def build_session_file_context(
             "session_context_max_chars",
             settings.session_context_max_chars,
             10_000,
-            300_000,
+            # D195: 상한은 solar-pro3 윈도(131,072토큰)에 묶인다 — 180K자 ≈
+            # 78K 토큰(한국어 최악 2.31자/토큰). 워커 게이트와 같은 값이어야
+            # 저장은 통과하고 주입만 빠지는 어긋남이 안 생긴다.
+            180_000,
         )
         parts: list[str] = []
         metas: list[dict[str, Any]] = []

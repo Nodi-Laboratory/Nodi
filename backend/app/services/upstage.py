@@ -45,7 +45,10 @@ EMBED_DIM = 1024
 
 # 요청당 입력 상한(배치 <=100) / 텍스트당 <=4000토큰 — 토크나이저 없이
 # 문자 기준으로 방어적 절단(~8000자, 한글 기준 넉넉히 토큰 한도 아래).
-_MAX_BATCH = 100
+# D195: 워커가 같은 단위로 청크를 쪼개 병렬 요청하므로 공개 이름을 함께 둔다
+# (두 곳이 다른 값을 쓰면 조각 하나가 상한을 넘어 400으로 돌아온다).
+EMBED_MAX_BATCH = 100
+_MAX_BATCH = EMBED_MAX_BATCH
 _MAX_CHARS = 8000
 
 _TIMEOUT = 30.0  # 임베딩 요청 타임아웃(초)
@@ -159,43 +162,68 @@ def _model_for(kind: str) -> str:
 
 
 async def embed_texts(
-    texts: list[str], *, kind: str = "passage"
+    texts: list[str], *, kind: str = "passage", concurrency: int | None = None
 ) -> list[list[float]]:
     """텍스트 목록 -> L2 정규화된 EMBED_DIM 차원 벡터 목록.
 
     비대칭 모델이므로 kind를 반드시 구분: 질의="query", 문서="passage".
-    배치 <=100 단위로 분할 호출하고, 응답은 index로 정렬해 입력 순서를 보존.
+    배치 <=100(`EMBED_MAX_BATCH`) 단위로 쪼개 **동시에** 보내고(D195), 응답은
+    index로 정렬해 입력 순서를 보존한다.
+
+    ⚠️ **조각 순서는 gather의 반환 순서로 지킨다.** 완료 순서로 이어붙이면
+    벡터가 다른 청크에 붙는데, 그 결과는 "검색이 좀 이상하다"로만 드러나고
+    어떤 예외도 나지 않는다 — `asyncio.gather`가 입력 순서대로 돌려주는 것이
+    이 함수의 계약이다.
+
+    concurrency는 호출부가 admin 오버레이 값을 실어 보내는 통로다(미지정이면
+    config 기본값). 조각이 하나뿐이면 세마포어·gather 없이 그대로 부른다 —
+    질의 임베딩(1건)이 가장 흔한 호출이다.
     """
     if not texts:
         return []
     model = _model_for(kind)
     prepared = [_truncate(t) for t in texts]
-    out: list[list[float]] = []
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        for i in range(0, len(prepared), _MAX_BATCH):
-            batch = prepared[i : i + _MAX_BATCH]
-            resp = await _post_with_retry(
-                client,
-                f"{_base()}/embeddings",
-                # D106: dimensions로 축소 벡터를 받는다. 이 값이 빠지면 4096이
-                # 돌아와 아래 차원 검증에서 즉시 실패한다 — 컬렉션과 어긋난 채
-                # 조용히 적재되는 일은 없다.
-                json={"model": model, "input": batch, "dimensions": EMBED_DIM},
-                headers=_headers(),
+    slices = [
+        prepared[i : i + _MAX_BATCH] for i in range(0, len(prepared), _MAX_BATCH)
+    ]
+
+    async def _one(client: httpx.AsyncClient, batch: list[str]) -> list[list[float]]:
+        resp = await _post_with_retry(
+            client,
+            f"{_base()}/embeddings",
+            # D106: dimensions로 축소 벡터를 받는다. 이 값이 빠지면 4096이
+            # 돌아와 아래 차원 검증에서 즉시 실패한다 — 컬렉션과 어긋난 채
+            # 조용히 적재되는 일은 없다.
+            json={"model": model, "input": batch, "dimensions": EMBED_DIM},
+            headers=_headers(),
+        )
+        data = sorted(resp.json().get("data") or [], key=lambda d: d["index"])
+        if len(data) != len(batch):
+            raise RuntimeError(
+                f"Upstage embeddings: {len(batch)}개 입력에 {len(data)}개 응답"
             )
-            data = sorted(resp.json().get("data") or [], key=lambda d: d["index"])
-            if len(data) != len(batch):
+        vectors: list[list[float]] = []
+        for item in data:
+            vec = [float(v) for v in item["embedding"]]
+            if len(vec) != EMBED_DIM:
                 raise RuntimeError(
-                    f"Upstage embeddings: {len(batch)}개 입력에 {len(data)}개 응답"
+                    f"Upstage embeddings: 기대 차원 {EMBED_DIM}, 실제 {len(vec)}"
                 )
-            for item in data:
-                vec = [float(v) for v in item["embedding"]]
-                if len(vec) != EMBED_DIM:
-                    raise RuntimeError(
-                        f"Upstage embeddings: 기대 차원 {EMBED_DIM}, 실제 {len(vec)}"
-                    )
-                out.append(_l2_normalize(vec))
-    return out
+            vectors.append(_l2_normalize(vec))
+        return vectors
+
+    limit = max(1, concurrency or settings.embedding_request_concurrency)
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        if len(slices) == 1:
+            return await _one(client, slices[0])
+        sem = asyncio.Semaphore(limit)
+
+        async def _guarded(batch: list[str]) -> list[list[float]]:
+            async with sem:
+                return await _one(client, batch)
+
+        parts = await asyncio.gather(*(_guarded(s) for s in slices))
+    return [vec for part in parts for vec in part]
 
 
 async def embed_query(text: str) -> list[float]:

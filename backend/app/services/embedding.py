@@ -30,15 +30,21 @@ async def embed_texts(
     texts: list[str],
     *,
     task_type: str = "RETRIEVAL_DOCUMENT",
+    concurrency: int | None = None,
 ) -> list[list[float]]:
     """텍스트 목록 -> L2 정규화된 EMBED_DIM 차원 벡터 목록 (Upstage).
 
     RETRIEVAL_QUERY -> kind="query", 그 외(RETRIEVAL_DOCUMENT) -> "passage".
     질의/문서 임베딩이 같은 비대칭 모델 쌍을 쓰므로 검색 공간이 일치한다.
+
+    D195: 100개를 넘는 입력은 upstage가 조각내 동시에 보낸다. concurrency는
+    admin 오버레이 값을 실어 보내는 통로 — 미지정이면 config 기본값.
     """
     if not texts:
         return []
-    return await upstage.embed_texts(texts, kind=_kind_for(task_type))
+    return await upstage.embed_texts(
+        texts, kind=_kind_for(task_type), concurrency=concurrency
+    )
 
 
 # ---------------------------------------------------------------------------

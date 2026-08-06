@@ -16,6 +16,10 @@ insert into public.app_settings (key, value) values
     -- 청킹
     ('chunk_size_chars',                '1200'),
     ('chunk_overlap_chars',             '150'),
+    -- 임베딩 팬아웃 (D195) — 잡은 굵게(300청크), 요청은 잘게(100) 동시에.
+    -- 실제 동시 요청 수 = 워커 동시성(3) × embedding_request_concurrency.
+    ('embedding_batch_size',            '300'),
+    ('embedding_request_concurrency',   '4'),
     -- 업로드 상한 (D77: 교사 500MB / 학생 50MB)
     ('class_material_max_bytes',        '524288000'),
     ('file_max_bytes',                  '52428800'),

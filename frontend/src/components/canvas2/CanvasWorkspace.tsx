@@ -52,6 +52,7 @@ import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
 import { uploadFile } from "@/lib/api";
+import { checkUploadFile } from "@/lib/uploadLimits";
 import { sessionFilesKey } from "@/lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCanvasTouchGuard } from "@/lib/canvas2/penGuard";
@@ -1497,6 +1498,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
     (file: File) => {
       if (!sessionId) return;
       setUploadError(null);
+      // D196: 보내기 전에 끊는다 — 50MB 넘는 파일을 다 올린 뒤 413을 받으면
+      // 교실 와이파이에서는 몇 분을 기다린 끝에 오류만 보게 된다.
+      const reason = checkUploadFile(file);
+      if (reason) {
+        setUploadError(reason);
+        return;
+      }
       void uploadFile(target, file, { kind: "user_upload", session_id: sessionId })
         .then(() =>
           queryClient.invalidateQueries({ queryKey: sessionFilesKey(sessionId) }),
