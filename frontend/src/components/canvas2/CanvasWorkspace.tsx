@@ -1009,8 +1009,32 @@ export function CanvasWorkspace({ spaceId }: Props) {
   }, [items, layout, moveMany]);
 
   const handleFit = useCallback(() => {
+    /**
+     * **화면에 그려진 상자를 잰다** — 배치 맵이 아니라.
+     *
+     * 예전에는 `layout.positions`·`layout.sizes`로 상자를 만들었는데, 방금
+     * 답이 끝난 카드의 크기가 아직 옛 값이라 상자가 작게 잡혔다. 그래서
+     * **한 번 눌러서는 안 맞고 세 번 눌러야 맞았다**(실측 2026-08-07:
+     * 배율 0.806 → 0.679 → 0.438, 필요한 값은 0.438). 학생 눈에는 "전체
+     * 보기를 눌렀는데 카드가 아직 화면 밖"이다 — 그러면 그 버튼을 안 믿는다.
+     *
+     * 아이템은 월드 좌표로 절대 배치되고 `offsetWidth/Height`는 transform
+     * 배율의 영향을 받지 않으므로, DOM 값이 그대로 월드 단위다.
+     */
     const rects = items
       .map((i) => {
+        const el = document.querySelector<HTMLElement>(
+          `[data-canvas-item="${CSS.escape(i.id)}"]`,
+        );
+        if (el) {
+          return {
+            x: parseFloat(el.style.left) || 0,
+            y: parseFloat(el.style.top) || 0,
+            w: el.offsetWidth || ITEM_W,
+            h: el.offsetHeight || FALLBACK_H,
+          };
+        }
+        // 아직 안 그려진 것(첫 프레임)은 배치 맵으로 어림한다.
         const p = layout.positions.get(i.id);
         if (!p) return null;
         const s = layout.sizes.get(i.id) ?? { w: ITEM_W, h: FALLBACK_H };

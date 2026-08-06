@@ -75,11 +75,23 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
   const wroteRef = useRef<Camera | null>(null);
   const rafRef = useRef(0);
   const lastTsRef = useRef(0);
+  /**
+   * **직전 프레임에 우리가 움직인 폭.** 납치 판정의 허용치를 여기에 묶는다.
+   *
+   * 브리지 폴링은 Excalidraw의 실제 값을 한 프레임 늦게 되돌려 준다. 그래서
+   * 우리가 빨리 날수록 `wrote`와 `actual`이 크게 벌어지는데, 그건 **우리
+   * 자신의 속도**이지 사람의 손이 아니다. 고정 임계값(24px)만 쓰면 큰 이동일수록
+   * 취소되고, 하필 가장 크게 움직이는 "전체 보기"가 가장 안 먹는다
+   * (실측 2026-08-07: wrote −1388 vs actual −1613, 225px 차이로 첫 프레임에
+   * 취소 → 배율이 1.55에 붙은 채 6초를 지켜봐도 미동이 없었다).
+   */
+  const lastStepRef = useRef({ sx: 0, sy: 0, z: 0 });
 
   const cancel = useCallback(() => {
     targetRef.current = null;
     velRef.current = { sx: 0, sy: 0, z: 0 };
     wroteRef.current = null;
+    lastStepRef.current = { sx: 0, sy: 0, z: 0 };
   }, []);
 
   const jumpTo = useCallback(
@@ -92,7 +104,22 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
 
   const flyTo = useCallback((target: Camera) => {
     targetRef.current = target;
-    // 속도는 보존한다 — 연달아 flyTo를 부르면(추종 루프) 이어서 움직인다.
+    /**
+     * **새 명령은 납치 판정을 새로 시작한다** (2026-08-07 실측).
+     *
+     * `wroteRef`는 "우리가 마지막으로 쓴 카메라"이고, 아래 루프는 그것과 실제가
+     * 어긋나면 사람이 캔버스를 잡은 것으로 보고 추종을 취소한다. 그런데 그 값은
+     * **지난 비행이 끝난 뒤에도 남는다.** 그 사이 저쪽(Excalidraw)이 스크롤을
+     * 조금이라도 바꿔 놓으면, 다음 `flyTo`는 첫 프레임에서 곧바로 취소된다 —
+     * 카메라가 **아예 안 움직인다.**
+     *
+     * 실측: 답이 한 번 오간 뒤 "전체 보기"를 누르면 배율이 1.384에 그대로
+     * 붙어 있었다(6초를 지켜봐도 미동 없음). 방금 연 화면에서는 멀쩡히
+     * 동작해서, 눈으로는 "가끔 안 먹는 버튼"으로만 보인다.
+     *
+     * 속도는 보존한다 — 연달아 flyTo를 부르면(추종 루프) 이어서 움직인다.
+     */
+    wroteRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -117,12 +144,14 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
       const cur = wroteRef.current ?? actual;
 
       // 사용자 조작 감지 — 우리가 쓴 값과 실제가 어긋났으면 사람이 만진 것이다.
+      // 우리가 방금 움직인 만큼의 어긋남은 우리 탓이다 — 그만큼 더 봐준다.
+      const step0 = lastStepRef.current;
       const wrote = wroteRef.current;
       if (
         wrote &&
-        (Math.abs(wrote.scrollX - actual.scrollX) > HIJACK_EPS ||
-          Math.abs(wrote.scrollY - actual.scrollY) > HIJACK_EPS ||
-          Math.abs(wrote.zoom - actual.zoom) > EPS_ZOOM * 20)
+        (Math.abs(wrote.scrollX - actual.scrollX) > HIJACK_EPS + Math.abs(step0.sx) ||
+          Math.abs(wrote.scrollY - actual.scrollY) > HIJACK_EPS + Math.abs(step0.sy) ||
+          Math.abs(wrote.zoom - actual.zoom) > EPS_ZOOM * 20 + Math.abs(step0.z))
       ) {
         cancel();
         lastTsRef.current = ts;
@@ -158,6 +187,11 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
         ? target
         : { scrollX: nx.x, scrollY: ny.x, zoom: nz.x };
 
+      lastStepRef.current = {
+        sx: next.scrollX - cur.scrollX,
+        sy: next.scrollY - cur.scrollY,
+        z: next.zoom - cur.zoom,
+      };
       wroteRef.current = next;
       applyCamera(next);
       if (done) cancel();
