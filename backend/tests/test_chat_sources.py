@@ -40,8 +40,13 @@ SOURCES = [
 ]
 
 
-async def _consume(monkeypatch):
-    """chat_stream을 최소 목으로 구동 — done 이벤트와 rag 호출 kwargs를 반환."""
+async def _consume(monkeypatch, stream=None, turnlog_cls=None):
+    """chat_stream을 최소 목으로 구동 — done 이벤트와 rag 호출 kwargs를 반환.
+
+    `stream`·`turnlog_cls`를 주면 그것을 쓴다. 호출부에서 미리 패치해도 여기서
+    다시 덮어써 버리므로(실측: 봉투 없는 답과 로그 대역이 둘 다 기본값에 졌다),
+    대역을 바꾸려면 **이 인자들로** 준다.
+    """
     monkeypatch.setattr(
         C.UserClient, "from_user", classmethod(lambda cls, u: _FakeClient())
     )
@@ -83,7 +88,7 @@ async def _consume(monkeypatch):
         C.gemini, "compose_system_structured", lambda *a, **k: ("sys", [])
     )
     monkeypatch.setattr(C.solar, "CONCEPT_CARD_SYSTEM_PROMPT", "base", raising=False)
-    monkeypatch.setattr(C.solar, "stream_answer", _fake_stream_answer)
+    monkeypatch.setattr(C.solar, "stream_answer", stream or _fake_stream_answer)
 
     async def fake_append_node(client, sid, pid, q, a, label):
         return {"id": "node-1", "parent_id": None}
@@ -97,7 +102,7 @@ async def _consume(monkeypatch):
         async def save(self, *a, **k):
             pass
 
-    monkeypatch.setattr(C, "TurnLog", _FakeTurnLog)
+    monkeypatch.setattr(C, "TurnLog", turnlog_cls or _FakeTurnLog)
 
     body = ChatStreamBody(session_id="s1", question="질문")
     resp = await C.chat_stream(body, user=_FakeUser())
@@ -128,3 +133,48 @@ async def test_rag_called_with_session_space(monkeypatch):
     """D73 배선 — build_rag_context에 세션의 space_kind/space_ref가 전달된다."""
     _, rag_kwargs = await _consume(monkeypatch)
     assert rag_kwargs == {"space_kind": "class", "space_ref": "class-1"}
+
+
+# ── 계기판: 봉투가 없으면 표시가 남는가 (D197) ──────────────────────────
+@pytest.mark.asyncio
+async def test_봉투_없는_답은_턴로그에_표시된다(monkeypatch):
+    """`missing_concept_envelope`가 실제로 기록돼야 한다.
+
+    프론트가 되살려 주므로 **화면은 멀쩡하다** — 그래서 이 비율이 오르는 것을
+    아무도 모른 채 나빠질 수 있다. 되살리기는 그물이고 이 표시는 계기판이다.
+    계기판이 조용히 고장 나면 그물만 남는데, 그물은 언제 찢어졌는지 안 알려 준다.
+    """
+    marks: list[str] = []
+
+    async def 봉투_없는_답(history, question, system_prompt, *, usage_sink=None, **_):
+        yield "광합성은 **엽록체**에서 일어나요.\n"  # `@concept:`이 없다
+
+    class _표시를_모으는_TurnLog(TurnLog):
+        def add_error(self, code: str) -> None:  # type: ignore[override]
+            marks.append(code)
+            super().add_error(code)
+
+        async def save(self, *a, **k):
+            pass
+
+    await _consume(monkeypatch, stream=봉투_없는_답, turnlog_cls=_표시를_모으는_TurnLog)
+
+    assert "missing_concept_envelope" in marks
+
+
+@pytest.mark.asyncio
+async def test_봉투가_있으면_표시하지_않는다(monkeypatch):
+    """정상 턴까지 표시하면 계기판이 늘 빨개서 아무 뜻이 없어진다."""
+    marks: list[str] = []
+
+    class _표시를_모으는_TurnLog(TurnLog):
+        def add_error(self, code: str) -> None:  # type: ignore[override]
+            marks.append(code)
+            super().add_error(code)
+
+        async def save(self, *a, **k):
+            pass
+
+    # 기본 대역은 `@concept:`을 낸다.
+    await _consume(monkeypatch, turnlog_cls=_표시를_모으는_TurnLog)
+    assert "missing_concept_envelope" not in marks
