@@ -40,6 +40,7 @@ import {
   type D3ZoomEvent,
   type Simulation,
 } from "d3";
+import { MapZoomControls } from "@/components/home/MapZoomControls";
 import type { ConceptMapData, ConceptNode } from "@/lib/api/conceptMap";
 import {
   boundsOf,
@@ -70,6 +71,15 @@ export interface ConceptMapProps {
   data: ConceptMapData;
   /** 노드를 눌렀다 — 그 대화의 그 카드로 간다. */
   onOpen: (node: ConceptNode) => void;
+  /**
+   * 지도에서 **숨긴** 대화 (D191).
+   *
+   * 힘 배치는 이 값을 안 본다 — 자리는 전체 노드로 한 번 정해지고, 여기서는
+   * **그리기만** 거른다. 필터마다 다시 배치하면 체크 하나에 지도 전체가
+   * 헤엄치는데, 그건 D189가 명시적으로 버린 성질이다("어제 왼쪽 위에 있던
+   * 무리가 오늘 오른쪽에 있으면 지도가 아니라 매번 새 그림이다").
+   */
+  hiddenSessions: ReadonlySet<string>;
 }
 
 /** 시작 자리를 뿌릴 원판의 반지름. 화면과 무관한 월드 단위다. */
@@ -99,7 +109,7 @@ const LABEL_MAX_CHARS = 18;
 /** 제목 한 줄 높이(화면 px) — 겹침 판정의 세로 크기다. */
 const LABEL_LINE = 14;
 
-export function ConceptMap({ data, onOpen }: ConceptMapProps) {
+export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const simRef = useRef<Simulation<SimNode, undefined> | null>(null);
@@ -109,6 +119,18 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
   const edgesRef = useRef<SimEdge[]>([]);
   const hoverRef = useRef<SimNode | null>(null);
   const drawRef = useRef<() => void>(() => {});
+  /**
+   * 숨김 집합을 **ref로도** 들고 있는다 (D191).
+   *
+   * 프롭을 그리기 이펙트의 deps에 넣으면 체크 하나에 힘 배치가 통째로 다시
+   * 선다 — 1,200노드가 매 클릭마다 재배치된다. 값은 ref로 흘리고 다시
+   * 그리기만 부른다.
+   */
+  const hiddenRef = useRef<ReadonlySet<string>>(hiddenSessions);
+  /** 확대 버튼이 쓰는 손잡이. 이펙트 안에서만 만들 수 있어 ref로 꺼내 둔다. */
+  const zoomApiRef = useRef<{ zoomBy: (f: number) => void; fit: () => void } | null>(
+    null,
+  );
 
   /** hover한 개념 — 이것만 React가 안다(툴팁 하나 그리는 값이다). */
   const [hover, setHover] = useState<{ node: ConceptNode; sx: number; sy: number } | null>(
@@ -119,6 +141,28 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
     () => new Map(data.sessions.map((s) => [s.id, s])),
     [data.sessions],
   );
+
+  /**
+   * 지금 보이는 개념 수.
+   *
+   * `session_id`가 없는 카드는 어느 대화에도 안 딸리므로 `""`로 조회되고,
+   * 숨김 집합에 그런 키가 없어 **언제나 보인다** — 끌 수단이 없는 것을 꺼진
+   * 것처럼 세면 "전부 숨겼습니다"가 거짓말이 된다.
+   */
+  const visibleCount = useMemo(
+    () =>
+      data.nodes.reduce(
+        (n, x) => (hiddenSessions.has(x.session_id ?? "") ? n : n + 1),
+        0,
+      ),
+    [data.nodes, hiddenSessions],
+  );
+
+  // 숨김이 바뀌면 배치는 그대로 두고 **다시 그리기만** 한다.
+  useEffect(() => {
+    hiddenRef.current = hiddenSessions;
+    drawRef.current();
+  }, [hiddenSessions]);
 
   /**
    * 힘 배치 + 그리기.
@@ -181,6 +225,17 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
       return 3 + Math.min(7, Math.sqrt(n.degree) * 1.7);
     }
 
+    /**
+     * 이 개념이 지금 보이나 (D191).
+     *
+     * ⚠️ **거르는 곳이 다섯이고 하나라도 빠지면 조용히 틀린다** — 선·점·
+     * 제목·무리 이름·히트 판정. 제목을 안 거르면 없는 점 위에 이름만 뜨고,
+     * 히트 판정을 안 거르면 **안 보이는 점이 눌려** 엉뚱한 대화로 간다.
+     */
+    function isVisible(n: SimNode): boolean {
+      return !hiddenRef.current.has(n.session_id ?? "");
+    }
+
     function draw() {
       const { k, x: tx, y: ty } = viewRef.current;
       const tier = tierFor(k);
@@ -203,7 +258,8 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
         for (const e of edgesRef.current) {
           const s = e.source as SimNode;
           const t = e.target as SimNode;
-          if (!s || !t) continue;
+          // 양 끝이 다 보일 때만 — 한쪽만 보이면 허공으로 뻗는 선이 된다.
+          if (!s || !t || !isVisible(s) || !isVisible(t)) continue;
           // 가까운 쌍일수록 진하게. 먼 쌍까지 같은 농도로 그으면 구조가 묻힌다.
           const strength = Math.max(0, 1 - e.distance / 0.7);
           ctx!.strokeStyle = `rgba(160,101,3,${0.06 + strength * 0.22})`;
@@ -217,6 +273,7 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
       // --- 노드 ---------------------------------------------------------
       const hovered = hoverRef.current;
       for (const n of nodesRef.current) {
+        if (!isVisible(n)) continue;
         // 화면 크기를 배율로 나눠 월드 단위로 — 결과가 확대와 무관하게 일정하다.
         const r = nodeScreenRadius(n) / k;
         const hue = tagHue(n.tag);
@@ -251,7 +308,9 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
          * 검은 글자 벽이 됐다). 화면을 격자로 나눠 칸마다 하나만 쓴다 — 어느
          * 것을 살릴지는 선이 많은 순서다(이정표가 되는 개념이 이름을 갖는다).
          */
-        const named = nodesRef.current.filter((n) => n.title || n.preview);
+        const named = nodesRef.current.filter(
+          (n) => isVisible(n) && (n.title || n.preview),
+        );
         // 선이 많은 개념이 먼저 자리를 잡는다 — 이정표가 이름을 갖는다.
         named.sort((a, b) => b.degree - a.degree);
         for (const n of pickSpacedLabels(named, (v) => {
@@ -277,15 +336,18 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
         ctx!.textBaseline = "middle";
         const clusterSize = (count: number) =>
           Math.min(30, 12 + Math.sqrt(count) * 2.4);
-        const labels = pickSpacedLabels(clusterLabels(nodesRef.current), (c) => {
-          ctx!.font = `600 ${clusterSize(c.count)}px ${CANVAS_FONT}`;
-          return {
-            x: c.x * k + tx,
-            y: c.y * k + ty,
-            w: ctx!.measureText(c.tag).width,
-            h: clusterSize(c.count),
-          };
-        });
+        const labels = pickSpacedLabels(
+          clusterLabels(nodesRef.current.filter(isVisible)),
+          (c) => {
+            ctx!.font = `600 ${clusterSize(c.count)}px ${CANVAS_FONT}`;
+            return {
+              x: c.x * k + tx,
+              y: c.y * k + ty,
+              w: ctx!.measureText(c.tag).width,
+              h: clusterSize(c.count),
+            };
+          },
+        );
         for (const c of labels) {
           const size = clusterSize(c.count) / k;
           ctx!.font = `600 ${size}px ${CANVAS_FONT}`;
@@ -329,9 +391,28 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
     ro.observe(wrap);
 
     // --- 팬/줌 -----------------------------------------------------------
+    //
+    // ## 지도 위에서는 결과가 하나다 (D191)
+    //
+    // 예전에는 **같은 손동작이 커서 위치에 따라 두 결과**를 냈다 — 캔버스 안이면
+    // 지도가, 헤더나 여백이면 브라우저가 확대됐다. 학생이 실제로 겪은 것은
+    // "확대했더니 웹 화면이 커졌고, 되돌리려니 지도가 줄어든" 것이다
+    // (사용자 보고 2026-08-06).
+    //
+    // 캔버스 위의 휠은 **ctrl 여부와 무관하게** 지도가 먹고 브라우저로 안
+    // 넘긴다. d3가 대개 막아 주지만 핀치(ctrl+wheel)는 브라우저·OS 조합에
+    // 따라 새고, 그 한 경우가 위 증상이다. d3보다 **먼저** 걸어 두어야
+    // d3의 필터가 거절하는 경우까지 덮는다(우리는 preventDefault만 하고
+    // 전파를 안 끊으므로 d3의 확대는 그대로 돈다).
+    const blockPageZoom = (e: WheelEvent) => e.preventDefault();
+    canvas.addEventListener("wheel", blockPageZoom, { passive: false });
+
     const sel = select<HTMLCanvasElement, unknown>(canvas);
     const zoomer = d3zoom<HTMLCanvasElement, unknown>()
       .scaleExtent([0.12, 6])
+      // 기본값과 같지만 **명시한다** — 이 화면이 "ctrl+휠도 지도"라는 필터에
+      // 기대고 있다는 사실이 코드에 남아야 다음 사람이 안 뒤집는다.
+      .filter((e: Event) => !(e as MouseEvent).button)
       .on("zoom", (ev: D3ZoomEvent<HTMLCanvasElement, unknown>) => {
         viewRef.current = { k: ev.transform.k, x: ev.transform.x, y: ev.transform.y };
         draw();
@@ -345,13 +426,20 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
      * 화면 밖으로 넘친다(실측 2026-08-06: 개념 76개에서 1,200개용 배율을 쓰니
      * 한가운데 작은 점 무리였다). 지도는 펼쳐진 채로 시작해야 지도다.
      *
-     * **한 번만** 맞춘다 — 학생이 옮겨 놓은 화면을 배치가 식을 때마다 되돌리면
-     * 지도를 볼 수가 없다.
+     * 저절로는 **한 번만** 맞춘다 — 학생이 옮겨 놓은 화면을 배치가 식을 때마다
+     * 되돌리면 지도를 볼 수가 없다. 버튼(`force`)은 그 빗장을 넘는다.
+     *
+     * **보이는 개념만** 담는다 (D191). 대화를 끄면 그 자리에 구멍이 남는데,
+     * 재배치 없이 그 구멍을 푸는 방법이 이것이다 — 남은 것에 맞춰 당기면
+     * 구멍은 화면 밖으로 밀린다.
      */
     let fitted = false;
-    const fitToContent = () => {
-      if (fitted || !width || !height) return;
-      const b = boundsOf(nodesRef.current);
+    const fitToContent = (force = false) => {
+      if ((fitted && !force) || !width || !height) return;
+      const shown = nodesRef.current.filter(isVisible);
+      // 전부 껐으면 안내 문구가 덮으므로 배율은 아무래도 좋다 — 그래도
+      // 전체로 맞춰 두어야 다시 켰을 때 엉뚱한 자리에 있지 않다.
+      const b = boundsOf(shown.length ? shown : nodesRef.current);
       if (!b) return;
       fitted = true;
       const pad = 48;
@@ -365,9 +453,15 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
         .translate(-(b.x + b.w / 2), -(b.y + b.h / 2));
       sel.call(zoomer.transform, t);
     };
-    sim.on("end", fitToContent);
+    sim.on("end", () => fitToContent());
     // 배치가 아주 오래 식는 경우에도 학생을 기다리게 하지 않는다.
-    const fitTimer = window.setTimeout(fitToContent, 2500);
+    const fitTimer = window.setTimeout(() => fitToContent(), 2500);
+
+    // 확대 버튼이 쓸 손잡이. `zoomer`·`sel`은 이 이펙트 밖에서 못 만든다.
+    zoomApiRef.current = {
+      zoomBy: (f) => sel.call(zoomer.scaleBy, f),
+      fit: () => fitToContent(true),
+    };
 
     resize();
 
@@ -376,6 +470,8 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
       sim.stop();
       ro.disconnect();
       sel.on(".zoom", null);
+      canvas.removeEventListener("wheel", blockPageZoom);
+      zoomApiRef.current = null;
       simRef.current = null;
     };
   }, [data]);
@@ -390,6 +486,9 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
     let best: SimNode | null = null;
     let bestD = reach * reach;
     for (const n of nodesRef.current) {
+      // 숨긴 대화의 개념은 안 잡힌다 (D191) — 안 거르면 **안 보이는 점이
+      // 눌려** 학생이 끄기로 한 대화로 끌려간다.
+      if (hiddenRef.current.has(n.session_id ?? "")) continue;
       const dx = n.x - wx;
       const dy = n.y - wy;
       const d = dx * dx + dy * dy;
@@ -441,16 +540,45 @@ export function ConceptMap({ data, onOpen }: ConceptMapProps) {
     setHover(null);
   }, []);
 
+  const zoomIn = useCallback(() => zoomApiRef.current?.zoomBy(1.6), []);
+  const zoomOut = useCallback(() => zoomApiRef.current?.zoomBy(1 / 1.6), []);
+  const fit = useCallback(() => zoomApiRef.current?.fit(), []);
+
   return (
-    <div ref={wrapRef} className="relative h-full w-full overflow-hidden">
+    <div
+      ref={wrapRef}
+      className="relative h-full w-full overflow-hidden"
+      /* 캔버스는 픽셀로 못 센다 — e2e가 필터를 확인하는 신호다(D176 `data-strokes`). */
+      data-visible-nodes={visibleCount}
+    >
       <canvas
         ref={canvasRef}
         onMouseMove={handleMove}
         onMouseLeave={handleLeave}
         onClick={handleClick}
-        className="h-full w-full cursor-grab active:cursor-grabbing"
+        /* `touch-none`: 트랙패드·터치 핀치가 페이지 확대로 새지 않게 한다. */
+        className="h-full w-full touch-none cursor-grab active:cursor-grabbing"
       />
-      {hover && (
+
+      <MapZoomControls onZoomIn={zoomIn} onZoomOut={zoomOut} onFit={fit} />
+
+      {/*
+        전부 껐을 때 빈 캔버스로 두지 않는다 — 빈 화면은 고장과 구분되지
+        않는다(`EmptyMap`과 같은 태도). 무엇을 하면 돌아오는지 말해 준다.
+      */}
+      {visibleCount === 0 && (
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 bg-bg-elevated/80 px-4 text-center">
+          <p className="text-sm font-medium text-fg">지도에 띄운 대화가 없습니다</p>
+          <p className="text-xs text-fg-muted">왼쪽 목록에서 볼 대화를 켜세요.</p>
+        </div>
+      )}
+
+      {/*
+        hover한 개념이 방금 숨겨졌을 수 있다 — 마우스가 멈춰 있으면 다음
+        mousemove가 안 와서 툴팁만 남는다. 렌더 중에 걸러 낸다(이펙트로 지우면
+        한 프레임 어긋나고 React Compiler 규칙에도 걸린다).
+      */}
+      {hover && !hiddenSessions.has(hover.node.session_id ?? "") && (
         <div
           className="pointer-events-none absolute z-10 rounded-lg border border-accent-border/50 bg-bg-elevated px-3 py-2 shadow-lg"
           // 자리는 핸들러가 이미 화면 안으로 접어서 넣어 준다.

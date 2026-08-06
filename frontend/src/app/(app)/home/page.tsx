@@ -1,10 +1,25 @@
 "use client";
 
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2, Map as MapIcon, MessageSquare } from "lucide-react";
 import { ConceptMap } from "@/components/home/ConceptMap";
+import { MapSessionTree } from "@/components/home/MapSessionTree";
 import { useProfile } from "@/lib/hooks";
+import {
+  loadCollapsedFolders,
+  loadHiddenSessions,
+  saveCollapsedFolders,
+  saveHiddenSessions,
+} from "@/lib/home/mapPrefs";
+import {
+  buildSessionTree,
+  pruneHidden,
+  toggleFolder,
+  toggleSession,
+  type SessionFolder,
+} from "@/lib/home/sessionTree";
 import { useConceptMap, useHomeSummary } from "@/lib/queries";
 import { useRoutePrefetch } from "@/lib/useRoutePrefetch";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
@@ -61,6 +76,60 @@ export default function HomePage() {
   useRoutePrefetch(["/space/personal", ...spaceIds]);
 
   /**
+   * 지도에 무엇을 띄울지 (D191).
+   *
+   * 저장값을 `useState` 초기화에서 읽는다 — `mapPrefs`가 `window` 부재까지
+   * 삼키므로 서버 렌더에서는 빈 집합이 나오고, 그때 화면은 아직 로딩 상태라
+   * 하이드레이션이 어긋날 자리가 없다.
+   */
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(
+    () => new Set(loadHiddenSessions()),
+  );
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
+    () => new Set(loadCollapsedFolders()),
+  );
+
+  const folders = useMemo(
+    () => buildSessionTree(map?.nodes ?? [], map?.sessions ?? [], summary?.spaces ?? []),
+    [map, summary],
+  );
+
+  /**
+   * 저장은 **걸러서** 한다.
+   *
+   * 유령 id를 `setHidden`으로 정리하면 이펙트 안의 setState가 되는데(React
+   * Compiler 규칙이 막는다) 그럴 이유도 없다 — 없는 id는 화면에서 아무것도
+   * 안 가리므로, 저장하는 순간에만 털어 내면 값이 무한히 자라지 않는다.
+   */
+  useEffect(() => {
+    saveHiddenSessions(pruneHidden(hidden, folders));
+  }, [hidden, folders]);
+
+  useEffect(() => {
+    saveCollapsedFolders(collapsed);
+  }, [collapsed]);
+
+  const handleToggleSession = useCallback(
+    (id: string) => setHidden((h) => toggleSession(h, id)),
+    [],
+  );
+  const handleToggleFolder = useCallback(
+    (f: SessionFolder) => setHidden((h) => toggleFolder(h, f)),
+    [],
+  );
+  const handleToggleCollapse = useCallback(
+    (key: string) =>
+      setCollapsed((c) => {
+        const next = new Set(c);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      }),
+    [],
+  );
+  const handleShowAll = useCallback(() => setHidden(new Set<string>()), []);
+
+  /**
    * 개념을 누르면 **그 대화의 그 카드**로 간다.
    *
    * 도착해서 바로 초점을 맞출 수는 없다 — 목적지 세션은 아직 안 채워져 있고
@@ -89,28 +158,53 @@ export default function HomePage() {
         </h1>
         <p className="mt-1 text-sm text-fg-muted">
           지금까지 대화한 개념이 비슷한 것끼리 뭉쳐 있습니다. 확대하면 낱개가
-          보이고, 누르면 그 대화로 갑니다.
+          보이고, 누르면 그 대화로 갑니다. 왼쪽에서 볼 대화를 고르세요.
         </p>
       </header>
 
-      {/* 대시보드의 큰 박스 하나 — 남은 높이를 전부 쓴다. */}
-      <section className="min-h-0 flex-1 overflow-hidden rounded-xl border border-accent-border/30 bg-bg-elevated">
+      {/*
+        지도 박스 (D191).
+
+        예전에는 남은 높이를 **전부** 먹어 화면이 지도 하나였다(사용자 지시
+        2026-08-06). 높이 상한과 좌우 최대 폭을 두어 페이지에 여백을 남긴다 —
+        박스가 화면과 같으면 "페이지"와 "지도" 중 어느 것을 확대하는지도
+        구분되지 않는다.
+
+        테두리를 3px로 세운다. 사이드바가 박스 **안**이라 테두리 하나가 목록과
+        지도를 함께 감싼다 — 둘이 한 물건이라는 표시다.
+      */}
+      <section className="mx-auto flex max-h-[620px] min-h-0 w-full max-w-[1280px] flex-1 overflow-hidden rounded-xl border-[3px] border-accent-border/70 bg-bg-elevated shadow-sm">
         {isLoading ? (
-          <div className="flex h-full items-center justify-center gap-2 text-sm text-fg-muted">
+          <div className="flex h-full w-full items-center justify-center gap-2 text-sm text-fg-muted">
             <Loader2 size={16} className="animate-spin" aria-hidden />
             개념을 모으는 중…
           </div>
         ) : isError ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+          <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center">
             <p className="text-sm text-fg">지도를 불러오지 못했습니다</p>
             <p className="text-xs text-fg-muted">
               잠시 뒤 다시 열어 보세요. 대화 기록은 그대로 있습니다.
             </p>
           </div>
         ) : !map || map.nodes.length === 0 ? (
-          <EmptyMap />
+          <div className="h-full w-full">
+            <EmptyMap />
+          </div>
         ) : (
-          <ConceptMap data={map} onOpen={openConcept} />
+          <>
+            <MapSessionTree
+              folders={folders}
+              hidden={hidden}
+              collapsed={collapsed}
+              onToggleSession={handleToggleSession}
+              onToggleFolder={handleToggleFolder}
+              onToggleCollapse={handleToggleCollapse}
+              onShowAll={handleShowAll}
+            />
+            <div className="min-w-0 flex-1">
+              <ConceptMap data={map} onOpen={openConcept} hiddenSessions={hidden} />
+            </div>
+          </>
         )}
       </section>
 
