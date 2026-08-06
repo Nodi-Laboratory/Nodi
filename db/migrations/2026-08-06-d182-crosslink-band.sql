@@ -34,8 +34,11 @@ UPDATE public.app_settings
  WHERE key = 'crosslink_max_distance'
    AND value = '0.72';
 
+-- ⚠️ `value`는 **jsonb**다. 문자열 값은 JSON 문자열이어야 한다 —
+-- 'solar-pro2'로 쓰면 `invalid input syntax for type json`으로 배포가 멎는다
+-- (실측 2026-08-06). 지금까지 노브가 전부 숫자·불리언이라 처음 드러났다.
 INSERT INTO public.app_settings (key, value)
-VALUES ('crosslink_model', 'solar-pro2')
+VALUES ('crosslink_model', '"solar-pro2"'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
 COMMIT;

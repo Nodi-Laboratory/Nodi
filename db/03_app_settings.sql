@@ -60,7 +60,10 @@ insert into public.app_settings (key, value) values
     ('crosslink_top_k',                 '8'),
     -- 관련성 판정에 쓰는 모델 (D182). 배지 하나에 대화 생성과 같은 모델을
     -- 쓸 이유가 없다. 비우면 전역 채팅 모델을 쓴다.
-    ('crosslink_model',                 'solar-pro2'),
+    -- ⚠️ `value`는 **jsonb**다. 문자열 값은 JSON 문자열이어야 한다 —
+    -- 'solar-pro2'는 `invalid input syntax for type json`으로 터진다.
+    -- 지금까지 노브가 전부 숫자·불리언이라 이 함정이 드러난 적이 없었다.
+    ('crosslink_model',                 '"solar-pro2"'),
     -- 상시 켜기 (D172). 켜면 **거리 띠를 무시하고** 가장 가까운 후보를 무조건
     -- 잇는다. 테스트용이다 — 이걸 켜 두면 "드물게"라는 성질이 사라진다.
     ('crosslink_always_on',             'false'),
