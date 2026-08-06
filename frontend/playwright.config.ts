@@ -20,7 +20,17 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   use: {
-    baseURL: "http://localhost:3000",
+    /**
+     * 기본은 dev 서버다. **성능을 잴 때는 프로덕션 빌드를 가리켜야 한다** —
+     * `next dev`는 React 개발 모드라 `jsxDEV`·`validateProperty`·
+     * `logComponentRender`가 CPU의 큰 몫을 먹는다. 실측 2026-08-06: 줌
+     * 프로파일 상위가 통째로 그 계측이었고, 그래서 리렌더를 줄여도 숫자가
+     * 꿈쩍하지 않았다 — **재는 대상이 제품이 아니었다.**
+     *
+     *   npm run build && npx next start -p 3100
+     *   PLAYWRIGHT_BASE_URL=http://localhost:3100 npx playwright test
+     */
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
