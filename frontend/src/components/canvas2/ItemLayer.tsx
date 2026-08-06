@@ -136,6 +136,11 @@ export function ItemLayer({
               x={p.x}
               y={p.y}
               measure={measure}
+              zoom={zoom}
+              selected={selectedIds.has(item.id)}
+              onSelect={handlers.onSelect}
+              onResize={handlers.onResize}
+              onResetSize={handlers.onResetSize}
             />
           );
         }

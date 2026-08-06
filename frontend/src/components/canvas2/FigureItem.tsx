@@ -24,6 +24,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ResizeHandles, type ResizeCommit } from "./ResizeHandles";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { getFigure } from "@/lib/api/retrieve";
@@ -35,9 +36,31 @@ interface Props {
   x: number;
   y: number;
   measure: (id: string, el: HTMLElement | null) => void;
+  /**
+   * 도판도 **크기를 바꿀 수 있다** (D147, 2026-08-07 복구).
+   *
+   * 교과서 도판은 작게 잘려 오는 일이 많아 학생이 키워 봐야 한다. 이 기능은
+   * 2026-08-03 병합에서 태그 이름변경과 **함께** 사라졌고, 그 스펙은 시드가
+   * 없으면 조용히 skip하는 구조라 나흘 동안 아무도 못 봤다.
+   */
+  zoom: number;
+  selected: boolean;
+  onSelect: (id: string | null, additive?: boolean) => void;
+  onResize: (id: string, next: ResizeCommit) => void;
+  onResetSize: (id: string) => void;
 }
 
-export function FigureItem({ item, x, y, measure }: Props) {
+export function FigureItem({
+  item,
+  x,
+  y,
+  measure,
+  zoom,
+  selected,
+  onSelect,
+  onResize,
+  onResetSize,
+}: Props) {
   const fig = item.data.figure;
   // 재발급으로 얻은 url만 상태로 들고, 평소에는 prop을 그대로 쓴다.
   //
@@ -51,6 +74,8 @@ export function FigureItem({ item, x, y, measure }: Props) {
   const url = refreshed ?? fig?.url ?? "";
   const figureId = fig?.figureId;
   const closeRef = useRef<HTMLButtonElement>(null);
+  /** 손잡이가 잡을 상자. `measure`와 **같은 요소**여야 크기가 어긋나지 않는다. */
+  const rootRef = useRef<HTMLDivElement | null>(null);
   /**
    * 요청이 나가 있는 중인가. state가 아니라 ref인 이유는 둘이다 — 이 값이
    * 바뀐다고 다시 그릴 것이 없고, 이펙트 안에서 **동기 setState**를 하면
@@ -109,15 +134,28 @@ export function FigureItem({ item, x, y, measure }: Props) {
   return (
     <>
       <div
-        ref={(el) => measure(item.id, el)}
+        ref={(el) => {
+          rootRef.current = el;
+          measure(item.id, el);
+        }}
         data-canvas-item={item.id}
         // E2E가 도판을 집는 손잡이 (D163, ClipItem의 data-canvas-clip과 대칭).
         data-canvas-figure={item.data.figure?.figureId}
+        onPointerDown={(e) => {
+          // 그림을 누르면 그 도판이 골라진다 — 손잡이는 고른 것에만 뜬다.
+          //
+          // **손잡이에서 시작한 누름은 건드리지 않는다.** 여기서 선택을 다시
+          // 걸면 리렌더가 끼어들어 방금 시작한 크기 조절이 끊긴다.
+          if ((e.target as HTMLElement).closest("[data-resize-handle]")) return;
+          e.stopPropagation();
+          onSelect(item.id, e.shiftKey);
+        }}
         className="absolute"
         style={{
           left: x,
           top: y,
-          width: ITEM_W,
+          // 학생이 늘려 둔 폭이 있으면 그것을 쓴다(없으면 기본 폭).
+          width: item.data.size?.w ?? ITEM_W,
           pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
           zIndex: 10,
           // 글(TextItem)과 같은 이징. 없으면 재배치 때 글만 미끄러지고
@@ -142,7 +180,18 @@ export function FigureItem({ item, x, y, measure }: Props) {
         <button
           type="button"
           data-no-pan
-          onClick={() => url && setOpen(true)}
+          /**
+           * **누르면 고르기, 두 번 누르면 크게 보기** (2026-08-07).
+           *
+           * 예전에는 한 번 누르면 곧바로 라이트박스가 열렸다. 그런데 크기
+           * 조절 손잡이를 되살리고 보니(D147) 그 손잡이를 쓸 방법이 없었다 —
+           * 고르려고 누르는 순간 라이트박스가 화면을 덮어 손잡이를 가린다
+           * (실측: 손잡이 자리에 `fixed inset-0 z-[100]`가 있었다).
+           *
+           * 캔버스의 다른 글과 같은 문법으로 맞춘다: 한 번은 고르기, 두 번은
+           * 그 글에 대한 행동(글은 편집, 도판은 크게 보기).
+           */
+          onDoubleClick={() => url && setOpen(true)}
           className="block w-full overflow-hidden rounded-lg border text-left transition-colors"
           style={{ borderColor: "var(--c-rule)", background: "var(--c-raised)" }}
         >
@@ -174,6 +223,16 @@ export function FigureItem({ item, x, y, measure }: Props) {
             </p>
           </div>
         </button>
+        {/* 고른 도판에는 여덟 손잡이 (TextItem과 같은 부품·같은 규칙). */}
+        {selected && (
+          <ResizeHandles
+            zoom={zoom}
+            color="var(--c-live)"
+            getEl={() => rootRef.current}
+            onCommit={(next) => onResize(item.id, next)}
+            onReset={() => onResetSize(item.id)}
+          />
+        )}
       </div>
 
       {/* 라이트박스는 body로 포털한다 — 변환 평면(scale) 안에서는 position:fixed가

@@ -270,9 +270,16 @@ async def seed() -> None:
         session_id = "94f21035-0000-4000-8000-000000000301"
         await conn.execute(
             """
-            INSERT INTO sessions (id, owner_id, title, space_kind)
-            VALUES ($1, $2, 'E2E 도판 세션', 'personal')
-            ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title
+            INSERT INTO sessions (id, owner_id, title, space_kind, space_ref)
+            VALUES ($1, $2, 'E2E 도판 세션', 'personal', $2)
+            ON CONFLICT (id) DO UPDATE
+                SET title = EXCLUDED.title,
+                    space_ref = EXCLUDED.space_ref,
+                    -- **가장 최근 대화로 만든다.** 개인 공간은 `updated_at.desc`로
+                    -- 첫 대화를 고르므로(sessions.list_sessions), 이걸 안 올리면
+                    -- 시드 카드가 있는 대화가 열리지 않아 `figure.spec`이 조용히
+                    -- 건너뛴다 — 초록으로 보이면서 아무것도 안 보는 상태다.
+                    updated_at = now()
             """,
             session_id, student,
         )
