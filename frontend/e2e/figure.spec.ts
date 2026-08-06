@@ -10,8 +10,8 @@ import { loginAndOpenCanvas } from "./helpers";
  * 심어 두고, 캔버스를 열었을 때 이미지가 실제로 로드되는지(naturalWidth>0)를
  * 확인한다.
  *
- * 전제: seed로 e2e-student를 교과서 학급에 넣고, 그의 개인 세션에 url="" 도판
- * 행(caption='E2E도판')을 심어 두었다.
+ * 전제: `cd backend && uv run python -m scripts.seed_e2e`
+ * (학급 등록 + 학생 개인 세션에 url="" 도판 카드(caption='E2E도판')까지 심는다.)
  */
 test("재수화된 교과서 도판이 signed URL을 받아 이미지를 불러온다", async ({ page }) => {
   await loginAndOpenCanvas(page);

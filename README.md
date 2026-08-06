@@ -110,6 +110,23 @@ uv run python -m app.cli grant-admin someone@example.com   # 기존 계정 승�
 uv run python -m app.cli list-users
 ```
 
+### 4-1) E2E 시드 (선택 — e2e를 돌릴 때만)
+
+일부 e2e 스펙(`lecture-clip`·`figure`·`figure-url`)은 **학급 하나와 그 학급의
+교과서 도판·강의 클립**을 전제로 한다. 예전에는 그 데이터가 누군가의 기계에만
+손으로 있어서 다른 기계에서는 그냥 실패했다. 이제 한 줄로 심는다:
+
+```bash
+cd backend
+uv run python -m app.cli create-user e2e-student@nodi.test 'e2ePass!234' --role student
+uv run python -m app.cli create-user teacher@nodi.local 'teacherPass!234' --role teacher
+uv run python -m scripts.seed_e2e            # 학급·도판·클립·썸네일
+uv run python -m scripts.seed_e2e --check    # 상태만 확인
+```
+
+도판·클립의 임베딩은 **진짜 Upstage로** 만든다(거리 게이트가 실제 벡터 공간에서만
+뜻이 있으므로). `UPSTAGE_API_KEY`가 필요하다.
+
 ### 5) 설정 확인
 
 서버를 띄운 뒤 **<http://localhost:8000/health/config>** 를 연다.
