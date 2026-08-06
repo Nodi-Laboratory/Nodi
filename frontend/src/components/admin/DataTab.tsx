@@ -9,6 +9,7 @@ import {
   ShieldAlert,
   Trash2,
   TriangleAlert,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -16,6 +17,7 @@ import {
   deleteAdminBackup,
   downloadAdminBackup,
   getAdminBackups,
+  importAdminBackup,
   purgeAdminData,
   restoreAdminBackup,
 } from "@/lib/api";
@@ -42,9 +44,12 @@ const PURGE_PHRASE = "초기화합니다";
 const SCOPE_LABEL: Record<string, string> = {
   // D152: 캔버스가 곧 대화 내용이다(D122). 라벨에서 빠뜨리면 지우려는 사람이
   // "글은 남겠지"라고 오해한다.
-  conversations: "대화 (세션·노드·캔버스 글/그림·턴 로그)",
-  documents: "문서 (파일·청크·도판·벡터)",
+  conversations: "대화 (세션·노드·캔버스 글/그림·개념 연결·턴 로그)",
+  documents: "문서 (파일·청크·교과서 도판·원자 질문)",
   people: "계정·학급",
+  // D193: 인제스트를 다시 돌리면 Whisper 전사와 solar 원자 생성이 다시 나간다 —
+  // 시연 직전에 그걸 기다릴 수는 없다.
+  lectures: "강의 (패키지·영상·클립·썸네일)",
   settings: "런타임 설정",
 };
 
@@ -57,10 +62,35 @@ export function DataTab() {
 
   const [note, setNote] = useState("");
   const [backupScopes, setBackupScopes] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
   const [confirmPurge, setConfirmPurge] = useState<string[] | null>(null);
   const [result, setResult] = useState<string | null>(null);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["admin", "backups"] });
+
+  /**
+   * 백업 파일 가져오기 (D193).
+   *
+   * 넣기만 하고 **적용하지 않는다.** 올리자마자 덮어쓰면 되돌릴 방법이 없다 —
+   * 무엇이 들었는지 보고 스코프를 골라 복원하는 것이 관리자의 일이다.
+   */
+  const handleImport = async (file: File | null) => {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const got = await importAdminBackup(file);
+      const rows = Object.entries(got.rows)
+        .filter(([, n]) => (n as number) > 0)
+        .map(([t, n]) => `${t} ${n}`)
+        .join(" · ");
+      setResult(`가져왔습니다: ${got.name} (${rows || "빈 백업"})`);
+      refresh();
+    } catch (e) {
+      setResult(`가져오지 못했습니다 — ${(e as Error).message}`);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const make = useMutation<AdminBackup, Error>({
     mutationFn: () => createAdminBackup({ scopes: backupScopes, note }),
@@ -155,6 +185,31 @@ export function DataTab() {
             <p className="text-xs text-[#e0796a]">실패: {make.error.message}</p>
           )}
         </div>
+      </Panel>
+
+      {/* ── 가져오기 (D193) ─────────────────────────────────── */}
+      <Panel
+        title="백업 가져오기"
+        right={
+          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-white/15 px-2 py-1 text-sm text-[#e7e3d8] hover:bg-white/5">
+            <Upload size={14} />
+            {importing ? "가져오는 중…" : "파일 선택"}
+            <input
+              type="file"
+              accept="application/json,.json"
+              disabled={importing}
+              className="hidden"
+              onChange={(e) => void handleImport(e.target.files?.[0] ?? null)}
+            />
+          </label>
+        }
+      >
+        <p className="text-xs text-[#8b857a]">
+          다른 서버에서 만든 백업 파일을 목록에 넣습니다. 시연에 쓸 상황을 미리
+          만들어 두고 여기서 불러오면 됩니다.{" "}
+          <strong className="text-[#e7e3d8]">가져오기만으로는 아무것도 안 바뀝니다</strong>{" "}
+          — 아래 목록에서 스코프를 골라 복원을 눌러야 적용됩니다.
+        </p>
       </Panel>
 
       {/* ── 스냅샷 목록 ─────────────────────────────────────── */}

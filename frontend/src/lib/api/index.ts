@@ -92,6 +92,7 @@ export {
   deleteAdminBackup,
   downloadAdminBackup,
   restoreAdminBackup,
+  importAdminBackup,
   purgeAdminData,
   // D172 교차 연결 판정 로그
   getCrossLinkRuns,

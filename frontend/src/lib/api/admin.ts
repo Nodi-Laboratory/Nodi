@@ -365,3 +365,29 @@ export async function getCrossLinkSummary(): Promise<Record<string, number>> {
   );
   return res.json();
 }
+
+/**
+ * 다른 곳에서 만든 백업 파일 가져오기 (D193).
+ *
+ * 시연에 쓸 상황을 미리 만들어 두고 그때 불러오려면 파일이 서버를 건너와야 한다.
+ * **가져오는 것과 적용하는 것은 다른 단계다** — 여기서는 목록에 넣기만 하고,
+ * 복원은 스코프를 골라 따로 누른다(올리자마자 덮어쓰면 되돌릴 방법이 없다).
+ */
+export async function importAdminBackup(file: File): Promise<{
+  name: string;
+  scopes: string[];
+  note: string;
+  rows: Record<string, number>;
+  size_bytes: number;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/backups/import`, {
+      method: "POST",
+      headers: await authHeaders(),
+      body: form,
+    }),
+  );
+  return res.json();
+}

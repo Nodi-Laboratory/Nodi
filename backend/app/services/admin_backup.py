@@ -85,6 +85,24 @@ _SCOPE_TABLES: dict[str, list[tuple[str, str, str]]] = {
             "session_id,elements,files,updated_at",
             "updated_at.asc",
         ),
+        # D193: 개념 연결 배지 (D171). `canvas_items`에 CASCADE라 초기화 때 같이
+        # 지워지는데 백업에는 없었다 — 백업→초기화→복원 하면 **링크만 사라진다.**
+        # D152가 canvas_items에서 고친 것과 정확히 같은 형태의 구멍이다.
+        (
+            "item_links",
+            "id,owner_id,from_item_id,to_item_id,explanation,distance,"
+            "opened_at,created_at",
+            "created_at.asc",
+        ),
+        # 판정 이력 (D172). 없어도 서비스는 돌지만 "왜 이 배지가 떴나"를 되짚을
+        # 수 없게 된다. 초기화 후 주인 없는 행이 남는 것도 이걸로 막는다.
+        (
+            "crosslink_runs",
+            "id,owner_id,from_item_id,from_session_id,from_title,from_tag,"
+            "from_space_kind,knobs,candidates,outcome,link_id,explanation,"
+            "searched_sessions,duration_ms,created_at",
+            "created_at.asc",
+        ),
     ],
     "documents": [
         (
@@ -95,6 +113,21 @@ _SCOPE_TABLES: dict[str, list[tuple[str, str, str]]] = {
             "created_at.asc",
         ),
         ("file_chunks", "id,file_id,seq,chunk_text,status,created_at", "created_at.asc"),
+        # D193: 교과서 도판 행 (D86). 다시 만들려면 **비전 모델을 전 도판에 다시
+        # 돌려야 한다** — 캡션 생성이 이 파이프라인에서 제일 비싸다.
+        (
+            "textbook_figures",
+            "id,file_id,seq,page,element_id,bbox,caption,alt,description,"
+            "figure_type,heading,candidates,selected_index,judge_reason,"
+            "match_kind,embed_text,image_path,status,created_at,page_text",
+            "created_at.asc",
+        ),
+        # 원자 질문 (D129). 청크마다 solar를 다시 돌려야 한다.
+        (
+            "chunk_atoms",
+            "id,chunk_id,file_id,chunk_seq,question,status,created_at",
+            "created_at.asc",
+        ),
     ],
     "people": [
         (
@@ -105,20 +138,72 @@ _SCOPE_TABLES: dict[str, list[tuple[str, str, str]]] = {
         ("classes", "id,name,join_code,teacher_id,created_at", "created_at.asc"),
         ("class_members", "class_id,user_id,role_in_class,created_at", "created_at.asc"),
     ],
+    # D193: 강의 클립 (D149) + 클립 썸네일 (D190).
+    #
+    # **시연 시나리오의 핵심이다.** 인제스트를 다시 돌리면 Whisper 전사와 solar
+    # 원자 생성이 다시 나간다(느리고 비싸다) — 시연 직전에 그걸 기다릴 수는 없다.
+    "lectures": [
+        (
+            "lecture_packages",
+            "id,grade,subject,title,created_by,created_at",
+            "created_at.asc",
+        ),
+        (
+            "lecture_videos",
+            "id,package_id,source,page_url,subtitle_path,title,status,error,created_at",
+            "created_at.asc",
+        ),
+        (
+            "lecture_clips",
+            "id,video_id,seq,start_sec,end_sec,title,transcript,status,created_at",
+            "created_at.asc",
+        ),
+        (
+            "lecture_clip_atoms",
+            "id,clip_id,package_id,question,status,created_at",
+            "created_at.asc",
+        ),
+        ("class_lecture_packages", "class_id,package_id,created_at", "created_at.asc"),
+        (
+            "clip_thumbnails",
+            "id,storage_path,mime,size_bytes,name,created_by,created_at",
+            "created_at.asc",
+        ),
+    ],
     "settings": [
         ("app_settings", "key,value,updated_at,updated_by", "key.asc"),
     ],
 }
 
+# ---------------------------------------------------------------------------
+# 담지 않는 표와 그 이유 (D193)
+#
+#   jobs   큐다. 복원하면 **이미 끝난 일을 다시 돌린다** — 임베딩·전사가 다시
+#          나가고, 실패한 잡은 다시 실패한다. 상태가 아니라 진행 중인 작업이다.
+#   users  비밀번호 해시가 든다. **백업 파일에 자격 증명을 적지 않는다** —
+#          파일은 내려받아 옮겨 다니는 물건이고, DB보다 훨씬 쉽게 샌다.
+#          계정의 안전한 사본은 `profiles`이고, 시연 계정은 CLI로 만든다.
+#
+# 이 목록을 여기 적어 두는 이유: 다음 사람이 "왜 이건 빠졌지"를 코드에서
+# 못 찾으면 **빠뜨린 것으로 오해하고 넣는다.**
+UNBACKED_TABLES = ("jobs", "users")
+
 ALL_SCOPES = tuple(_SCOPE_TABLES)
 # 복원 가능한 스코프. documents가 빠진 이유는 모듈 docstring 참고.
-RESTORABLE_SCOPES = ("conversations", "settings")
+#
+# D193: `lectures`를 더했다 — 시연 시나리오를 미리 만들어 두고 불러오는 것이
+# 이 기능의 목적인데, 강의 없이 대화만 복원하면 클립 카드가 전부 빈다.
+RESTORABLE_SCOPES = ("conversations", "settings", "lectures")
 # 초기화 가능한 스코프. people은 없다 — 계정을 지우면 그 사람의 모든 것이
 # CASCADE로 사라지고 되돌릴 방법이 없다. 계정은 권한 탭에서 하나씩 다룬다.
 PURGEABLE_SCOPES = ("conversations", "documents")
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.json$")
 _PAGE = 1000  # 한 번에 읽어 오는 행 수
+
+# 가져오는 백업 파일 상한. 대화가 쌓이면 수십 MB가 되므로 넉넉히 두되,
+# 무제한으로 받으면 디스크가 먼저 찬다.
+MAX_IMPORT_BYTES = 200 * 1024 * 1024
 
 
 def _dir() -> Path:
@@ -373,6 +458,12 @@ async def restore_backup(
         payload = {t: data.get(t, []) for t, _, _ in _SCOPE_TABLES["conversations"]}
         out = await client.rpc("admin_restore_conversations", {"p_data": payload})
         result["restored"]["conversations"] = out
+    if "lectures" in picked:
+        # 대화와 같은 규약: 표 목록을 **백업 스코프에서 파생**한다. 손으로 적으면
+        # 표를 더했을 때 복원만 옛 목록을 넘겨 조용히 빠진다(D152의 교훈).
+        payload = {t: data.get(t, []) for t, _, _ in _SCOPE_TABLES["lectures"]}
+        out = await client.rpc("admin_restore_lectures", {"p_data": payload})
+        result["restored"]["lectures"] = out
     if "settings" in picked:
         out = await client.rpc(
             "admin_restore_settings", {"p_data": {"app_settings": data.get("app_settings", [])}}
@@ -380,3 +471,81 @@ async def restore_backup(
         result["restored"]["settings"] = out
     logger.info("복원: %s %s", name, result["restored"])
     return result
+
+
+# --- 백업 가져오기 (D193) -----------------------------------------------------
+
+
+async def import_backup(filename: str, data: bytes) -> dict[str, Any]:
+    """다른 곳에서 만든 백업 파일을 이 서버의 백업 목록에 넣는다.
+
+    ## 왜 필요한가
+
+    시연에 쓸 상황을 미리 만들어 두고 그때 불러오려면, **백업 파일이 서버를
+    건너올 수 있어야** 한다(사용자 지시 2026-08-06). 지금까지는 이 서버에서
+    만든 것만 복원할 수 있었다 — 내려받기는 되는데 올리기가 없었다.
+
+    ## 검사부터 한다
+
+    복원은 관리자 권한으로 도는 SECURITY DEFINER RPC다. 아무 JSON이나 받아
+    두면 복원 단계에서 알 수 없는 이유로 죽거나, 더 나쁘게는 **일부만 들어간
+    상태**가 된다. 그래서 여기서 모양을 본다:
+
+      · JSON이고 `data`가 객체인가
+      · `scopes`가 우리가 아는 스코프인가 (모르는 스코프는 복원이 조용히 무시한다)
+
+    행 내용까지는 안 본다 — 그건 RPC의 FK가 판정한다(부모 없는 행은 안 들어간다).
+
+    ## 이름은 우리가 짓는다
+
+    올린 파일 이름을 그대로 쓰면 `../`이나 기존 백업 덮어쓰기가 열린다.
+    `_path()`가 막지만, 애초에 **받은 이름을 경로로 쓰지 않는 편**이 안전하다 —
+    원래 이름은 note에 남겨 관리자가 알아볼 수 있게 한다.
+    """
+    if len(data) > MAX_IMPORT_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"백업 파일이 너무 큽니다({len(data) / 1024 / 1024:.0f}MB). "
+                f"{MAX_IMPORT_BYTES // 1024 // 1024}MB까지 올릴 수 있습니다."
+            ),
+        )
+    try:
+        body = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="백업 파일이 아닙니다(JSON을 읽지 못했습니다).",
+        ) from exc
+    if not isinstance(body, dict) or not isinstance(body.get("data"), dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="백업 파일의 모양이 아닙니다(data 항목이 없습니다).",
+        )
+    scopes = [s for s in (body.get("scopes") or []) if s in _SCOPE_TABLES]
+    if not scopes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "이 서버가 아는 스코프가 없습니다"
+                f"(가능: {', '.join(ALL_SCOPES)}). 더 오래된 버전의 백업일 수 있습니다."
+            ),
+        )
+    body["scopes"] = scopes
+    origin = (filename or "backup.json").strip()[:80]
+    body["note"] = f"가져옴: {origin}" + (
+        f" — {body['note']}" if body.get("note") else ""
+    )
+
+    name = f"import-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
+    path = _path(name)
+    path.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+    counts = {t: len(v) for t, v in body["data"].items() if isinstance(v, list)}
+    logger.info("백업 가져오기: %s (%s) rows=%s", name, origin, counts)
+    return {
+        "name": name,
+        "scopes": scopes,
+        "note": body["note"],
+        "rows": counts,
+        "size_bytes": len(data),
+    }

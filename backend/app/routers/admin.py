@@ -399,10 +399,27 @@ async def get_conversation(
     user: CurrentUser = Depends(get_current_user),
     _: Profile = Depends(require_admin),
 ) -> dict[str, Any]:
-    """한 대화의 전체 기록 — 세션 · 노드(질문/답변) · 그 세션의 턴 로그.
+    """한 대화의 전체 기록 — 세션 · 캔버스 · 노드 · 턴 로그.
 
-    노드와 로그를 **함께** 돌려준다. 노드는 학생이 본 것이고 로그는 그렇게
+    노드와 로그를 **함께** 돌려준다. 노드는 AI가 뱉은 원문이고 로그는 그렇게
     나오기까지의 과정이라, 둘을 나란히 놓아야 원인을 짚을 수 있다.
+
+    ## 캔버스가 곧 학생이 본 화면이다 (D193)
+
+    예전에는 `sessions + nodes + ai_logs`만 읽었다. 캔버스 v2(D120~D122) 이후
+    **학생이 실제로 보고 고치는 글은 `canvas_items`에 있다** — `nodes.answer`는
+    AI가 뱉은 원문이라, 학생이 카드를 고치거나 분류를 바꾸거나 메모를 더한 것이
+    이 화면에 안 나왔다.
+
+    같은 함정을 저장소가 이미 두 번 기록했다: D135("태그의 출처는
+    `canvas_items.tag`다 — `nodes.answer` 파싱은 학생이 고친 분류를 못 본다")와
+    D152(백업이 같은 이유로 canvas_items를 추가했다). 대화 탭만 안 옮겨져 있었다.
+
+    **증상이 안 보이는 것이 이 결함의 성질이다** — 화면은 정상으로 그려지고,
+    그냥 학생 편집분이 없을 뿐이다.
+
+    개념 연결(D171)도 함께 준다. "왜 이 배지가 떴나"를 관리자가 되짚으려면
+    카드와 나란히 있어야 한다.
     """
     client = UserClient.from_user(user)
     sessions = await client.select(
@@ -437,6 +454,30 @@ async def get_conversation(
             "order": "created_at.asc",
         },
     )
+    # 학생이 실제로 본 화면 (D193). 순서는 캔버스와 같게 `seq`다 — 화면에서
+    # 위에서 아래로 읽히는 순서라야 관리자가 짚어 가며 볼 수 있다.
+    items = await client.select(
+        "canvas_items",
+        {
+            "session_id": f"eq.{session_id}",
+            "select": (
+                "id,node_id,parent_item_id,kind,source,title,body,tag,"
+                "x,y,pinned,seq,data,created_at,updated_at"
+            ),
+            "order": "seq.asc",
+        },
+    )
+    # 개념 연결 배지 (D171) — 이 세션의 카드에서 **나간** 것.
+    links: list[dict[str, Any]] = []
+    if items:
+        ids = ",".join(str(i["id"]) for i in items)
+        links = await client.select(
+            "item_links",
+            {
+                "from_item_id": f"in.({ids})",
+                "select": "id,from_item_id,to_item_id,explanation,distance,opened_at",
+            },
+        )
     owners = await client.select(
         "profiles",
         {"id": f"eq.{session['owner_id']}", "select": "id,email,role,display_name", "limit": "1"},
@@ -446,6 +487,8 @@ async def get_conversation(
         "owner": owners[0] if owners else None,
         "nodes": nodes,
         "logs": logs,
+        "canvas_items": items,
+        "item_links": links,
     }
 
 
@@ -1201,3 +1244,23 @@ async def delete_clip_thumbnail(
     _: Profile = Depends(require_admin),
 ) -> None:
     await clip_thumbnails.remove_thumbnail(UserClient.from_user(user), thumb_id)
+
+
+@router.post("/backups/import", status_code=status.HTTP_201_CREATED)
+async def import_backup(
+    file: UploadFile = File(...),
+    _u: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """다른 곳에서 만든 백업 파일을 가져온다 (D193).
+
+    시연에 쓸 상황을 미리 만들어 두고 그때 불러오려면 파일이 서버를 건너올 수
+    있어야 한다 — 지금까지는 내려받기만 되고 올리기가 없었다.
+
+    가져오는 것과 **적용하는 것은 다른 단계**다. 여기서는 목록에 넣기만 하고,
+    복원은 관리자가 스코프를 골라 따로 누른다 — 올리자마자 덮어쓰면 되돌릴
+    방법이 없다.
+    """
+    return await admin_backup.import_backup(
+        file.filename or "backup.json", await file.read()
+    )

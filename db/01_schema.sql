@@ -1830,3 +1830,39 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.class_lecture_packages TO nodi_ap
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.lecture_packages, public.lecture_videos, public.lecture_clips, public.lecture_clip_atoms TO nodi_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.class_lecture_packages TO nodi_worker;
 
+
+-- ---------------------------------------------------------------------------
+-- 강의 클립 썸네일 (D190)
+--
+-- EBS 썸네일을 가져올 방법이 없어(저작권·차단) 관리자가 올린 그림 중 하나를
+-- 클립마다 보여 준다. 학생 데이터가 아니라 장식용이라 로그인한 사람은 다
+-- 읽고, 넣고 빼는 것은 관리자만 한다.
+--
+-- ⚠️ 이 표는 마이그레이션(2026-08-06-d190)에도 있다. **둘 다 있어야 한다** —
+-- 마이그레이션만 있으면 빈 볼륨으로 새로 세운 개발자에게 표가 없고, 여기만
+-- 있으면 이미 돌고 있는 서버가 못 받는다.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.clip_thumbnails (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    storage_path  text NOT NULL,
+    mime          text NOT NULL,
+    size_bytes    integer NOT NULL DEFAULT 0,
+    name          text,
+    created_by    uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_clip_thumbnails_created
+    ON public.clip_thumbnails (created_at DESC);
+
+ALTER TABLE public.clip_thumbnails ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS clip_thumbnails_select ON public.clip_thumbnails;
+CREATE POLICY clip_thumbnails_select ON public.clip_thumbnails
+    FOR SELECT USING ((SELECT auth.uid()) IS NOT NULL);
+DROP POLICY IF EXISTS clip_thumbnails_write_admin ON public.clip_thumbnails;
+CREATE POLICY clip_thumbnails_write_admin ON public.clip_thumbnails
+    FOR ALL USING ((SELECT public.is_admin()))
+    WITH CHECK ((SELECT public.is_admin()));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.clip_thumbnails TO nodi_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.clip_thumbnails TO nodi_worker;
