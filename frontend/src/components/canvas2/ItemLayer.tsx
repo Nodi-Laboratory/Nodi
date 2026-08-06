@@ -46,6 +46,8 @@ interface Props {
     onCancelEdit: () => void;
     onDelete: (id: string) => void;
     onTagChange: (id: string, tag: string | null) => void;
+    onRenameTag: (from: string, to: string) => void;
+    onRemoveTag: (tag: string) => void;
     onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
     onReflow: (id: string) => void;
     onDismissReflow: (id: string) => void;

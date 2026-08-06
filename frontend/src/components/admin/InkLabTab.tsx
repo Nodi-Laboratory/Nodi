@@ -395,6 +395,8 @@ export function InkLabTab() {
                 onCancelEdit: NOOP,
                 onDelete: NOOP,
                 onTagChange: NOOP,
+                onRenameTag: NOOP,
+                onRemoveTag: NOOP,
                 onDragEnd: NOOP,
                 onReflow: NOOP,
                 onDismissReflow: NOOP,

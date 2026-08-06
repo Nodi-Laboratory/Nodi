@@ -47,12 +47,7 @@ import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
 import { descendants, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
 import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
-import {
-  chainForCoach,
-  decideCoach,
-  type CoachItem,
-} from "@/lib/canvas2/questionCoach";
-import { askQuestionDirections, getCoachSettings } from "@/lib/api";
+import { useQuestionCoach } from "@/lib/canvas2/useQuestionCoach";
 import { CoachBubble } from "./CoachBubble";
 import { navigate, type NavDir } from "@/lib/canvas2/navigate";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
@@ -595,6 +590,36 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 화면에서는 이미 함께 움직였으므로(TextItem이 DOM을 직접 밀었다) 여기서
    * 좌표만 맞춰 주면 된다.
    */
+  /**
+   * 태그 이름 변경 — 그 태그를 단 **모든 카드**에 반영한다 (D147).
+   *
+   * 사용자 결정(2026-08-02): 수정은 이 카드 하나가 아니라 분류 자체를 고치는
+   * 일이다. 열 라벨도 `canvas_items.tag`가 소스라 함께 바뀐다.
+   *
+   * 옛 구현은 자기만의 일괄 저장 경로(`retag` + `pendingPatches`)를 들고
+   * 있었는데, 지금은 `tagMany`가 같은 일을 **한 번의 요청**으로 한다(D183) —
+   * 되돌리기도 한 항목이다. 되살리면서 그쪽에 얹었다.
+   */
+  const onRenameTag = useEventCallback((from: string, to: string) => {
+    const next = to.trim().slice(0, 16);
+    if (!next || next === from) return;
+    const ids = items.filter((i) => i.tag === from).map((i) => i.id);
+    if (!ids.length) return;
+    tagMany(ids, next, "분류 이름을 바꿨습니다");
+  });
+
+  /**
+   * 태그 삭제 — 그 태그를 단 모든 카드가 분류 없음이 된다 (D147).
+   *
+   * **카드는 지우지 않는다.** 지우는 것은 분류이고, 글은 학생의 것이다.
+   * 이 카드 하나만 떼는 것(detach)은 '분류 없음' 고르기다.
+   */
+  const onRemoveTag = useEventCallback((tag: string) => {
+    const ids = items.filter((i) => i.tag === tag).map((i) => i.id);
+    if (!ids.length) return;
+    tagMany(ids, null, `분류 '${tag}'을(를) 지웠습니다`);
+  });
+
   const onDragEnd = useEventCallback((id: string, x: number, y: number, dx: number, dy: number) => {
     /**
      * 끈 것 + 함께 고른 것 + **그 아래 가지 전부** (D154, 사용자 지시
@@ -843,6 +868,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onCommitEdit,
       onDelete,
       onTagChange,
+      onRenameTag,
+      onRemoveTag,
       onDragEnd,
       onResize,
       onResetSize,
@@ -851,7 +878,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onAsk,
       onPick,
     }),
-    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onPick],
+    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onPick],
   );
 
   /**
@@ -933,6 +960,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
   );
 
   /**
+   * 질문 방향성 코치 (D194) — 규칙·문구·자리 계산은 훅이 가진다.
+   *
+   * 발동 판정에 **브랜치(조상 사슬)**가 필요하고 부모를 정하는 곳이 여기라
+   * (D151 `assignParents`) 호출은 여기서 한다 — 서버에도 같은 판정을 두면
+   * 둘이 갈리는데 그 어긋남은 "가끔 안 뜬다"로만 보인다.
+   */
+  const coach = useQuestionCoach({
+    items,
+    positions: layout.positions,
+    sizes: layout.sizes,
+    pickedId,
+    patch,
+  });
+
+  /**
    * 재배치 — 태그 무리를 최소한으로 움직여 서로 갈라 놓는다 (D143).
    *
    * 열 배치를 다시 돌리는 것이 아니다. 지금 자리를 출발점으로 삼으므로
@@ -943,50 +985,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
    *
    * @returns 실제로 옮겼나. 호출부가 "이미 나뉘어 있다"를 알려 준다.
    */
-  /** 말풍선을 닫는다 — 입력창 위 문구도 함께 사라진다(권유이지 강요가 아니다). */
-  const dismissCoach = useEventCallback((id: string) => {
-    const it = store.items.find((i) => i.id === id);
-    if (!it?.data.coach) return;
-    store.patch(id, {
-      data: { ...it.data, coach: { ...it.data.coach, dismissed: true } },
-    });
-  });
-
-  /** 지금 띄울 말풍선 — 닫지 않았고 판정이 있는 것 하나. */
-  const coachCard = useMemo(
-    () =>
-      items.find((i) => i.data.coach?.advice && !i.data.coach.dismissed) ?? null,
-    [items],
-  );
-
-  /**
-   * 말풍선이 붙을 자리 — 그 카드의 실측 상자.
-   *
-   * 배치가 아직 없으면(첫 프레임) 안 그린다. 좌표 없이 그리면 왼쪽 위 구석에
-   * 떴다가 튄다.
-   */
-  const coachBox = useMemo(() => {
-    if (!coachCard) return null;
-    const at = layout.positions.get(coachCard.id);
-    const size = layout.sizes.get(coachCard.id);
-    if (!at) return null;
-    return { x: at.x, y: at.y, w: size?.w ?? ITEM_W };
-  }, [coachCard, layout.positions, layout.sizes]);
-
-  /**
-   * 입력창 위에 뜨는 방향 문구 (D194).
-   *
-   * **누른 카드가 그 카드일 때만** 뜬다(사용자 지시). 말풍선을 끄면 `dismissed`가
-   * 붙어 함께 사라진다 — 권유이지 강요가 아니다.
-   */
-  const coachHint = useMemo(() => {
-    if (!pickedId) return null;
-    const it = items.find((i) => i.id === pickedId);
-    const c = it?.data.coach;
-    if (!c?.advice || c.dismissed) return null;
-    return c.advice.hint;
-  }, [items, pickedId]);
-
   const handleRegroup = useCallback((): boolean => {
     const input: RegroupItem[] = items.map((i) => {
       const p = layout.positions.get(i.id);
@@ -1422,80 +1420,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     setInkContext(null);
   }, [askStrokes, bridge.api]);
 
-  /**
-   * 질문 방향성 코치 (D194) — 이 턴의 카드가 브랜치를 n+1로 만들었나.
-   *
-   * ## 왜 여기인가
-   *
-   * 발동 판정에는 **브랜치(조상 사슬)**가 필요하고, 부모를 정하는 곳이 여기다
-   * (D151 `assignParents`). 서버에도 같은 판정을 두면 둘이 갈리는데, 그
-   * 어긋남은 "가끔 안 뜬다"로만 보인다.
-   *
-   * ## 턴을 막지 않는다
-   *
-   * 답이 다 나온 **뒤에** 따로 돈다. 실패하면 조용히 아무 일도 안 한다 —
-   * 코치는 곁들이고, "RAG는 채팅을 절대 막지 않는다"와 같은 성질이다.
-   */
-  const runCoach = useEventCallback(async (created: readonly CanvasItem[]) => {
-    if (!created.length) return;
-    /**
-     * ⚠️ **방금 만든 카드를 store에서 되찾지 않는다.**
-     *
-     * 처음에는 id만 받아 `store.items`에서 찾았다. 그런데 이 함수는 저장이
-     * 끝난 직후에 도는데, 그때 store에는 아직 **서버 id로 바뀐 행이 커밋되기
-     * 전**이다 — 조회가 빈손이라 코치가 조용히 되돌아 나갔고, 화면에는
-     * "그냥 말을 안 거는 것"으로만 보였다(실측 2026-08-07, e2e가 잡았다:
-     * `/coach/settings`조차 안 나갔다). 그래서 `send`가 실체를 돌려준다.
-     */
-    const fresh = created.filter((i) => i.kind === "concept" && i.source === "ai");
-    if (!fresh.length) return;
-    // 이 턴에 생긴 것 중 **마지막** 카드가 사슬의 끝이다(한 턴의 같은 태그는
-    // 사슬로 이어진다 — D151).
-    const head = fresh[fresh.length - 1];
-
-    let minCards: number;
-    try {
-      const cfg = await getCoachSettings();
-      if (!cfg.enabled) return;
-      minCards = cfg.min_cards;
-    } catch {
-      return; // 설정을 못 읽으면 조용히 넘어간다
-    }
-
-    // 화면이 자기 상수로 n을 들고 있으면 관리자가 콘솔에서 바꿔도 안 따라간다
-    // (D192에서 노브 여덟 개가 그 상태였다).
-    //
-    // 사슬의 **조상**은 store가 안다(이미 커밋된 옛 카드들). **이번 턴**은
-    // store가 아직 모를 수 있으므로 위와 같은 이유로 `created`가 이긴다.
-    const merged = new Map<string, CanvasItem>();
-    for (const i of store.items) merged.set(i.id, i);
-    for (const i of created) merged.set(i.id, i);
-    const all: CoachItem[] = [...merged.values()].map((i) => ({
-      id: i.id,
-      parentItemId: i.parentItemId,
-      kind: i.kind,
-      source: i.source,
-      seq: i.seq,
-    }));
-    // 이미 말을 건 카드들 — 중단한 경우도 포함한다. 중단도 "이 브랜치는 봤다"라
-    // 바로 다시 물으면 LLM만 태운다.
-    const spokenAt = new Set(store.items.filter((i) => i.data.coach).map((i) => i.id));
-
-    const decision = decideCoach(all, head.id, minCards, spokenAt);
-    if (!decision.should) return;
-
-    const chainIds = chainForCoach(all, head.id);
-    let advice = null;
-    try {
-      advice = await askQuestionDirections(chainIds);
-    } catch {
-      return; // 판정 실패는 아무 말도 안 하는 것과 같다
-    }
-    // **중단도 기록한다** — advice가 null이어도 `coach`를 남겨야 이 브랜치를
-    // 다시 묻지 않는다.
-    store.patch(head.id, { data: { ...head.data, coach: { advice } } });
-  });
-
   const handleSend = useCallback(
     (question: string) => {
       const from = pickedId;
@@ -1532,11 +1456,11 @@ export function CanvasWorkspace({ spaceId }: Props) {
          * 방금 한 조작이 우리가 예정해 둔 이동보다 늦고 더 직접적이다.
          */
         setPickedId((cur) => (cur === from ? nextFocus(parent, parentTag, created) : cur));
-        void runCoach(created);
+        void coach.run(created);
       });
     },
-    // runCoach는 useEventCallback이라 신원이 고정이다 — 넣어도 묶음이 안 깨진다.
-    [inkContext, items, pickedId, pickedItem, stream, runCoach],
+    // coach.run은 useEventCallback이라 신원이 고정이다 — 넣어도 묶음이 안 깨진다.
+    [inkContext, items, pickedId, pickedItem, stream, coach],
   );
 
   /**
@@ -1839,7 +1763,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
             busy={stream.busy}
             reply={stream.reply}
             quote={quote}
-            coachHint={coachHint}
+            coachHint={coach.hint}
             disabled={!sessionId}
             focusSignal={askFocus}
             onClearQuote={() => setPickedId(null)}
@@ -1854,13 +1778,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
         * ItemLayer **앞에** 두지만 z-index로 위에 온다 — 카드가 겹쳐 그려져도
         * (선택 카드 z 12) 말풍선이 밑에 깔리면 안 된다는 사용자 지시.
         */}
-      {coachCard && coachBox && (
+      {coach.card && coach.box && (
         <CoachBubble
-          advice={coachCard.data.coach!.advice!}
-          x={coachBox.x}
-          y={coachBox.y}
-          width={coachBox.w}
-          onDismiss={() => dismissCoach(coachCard.id)}
+          advice={coach.card.data.coach!.advice!}
+          x={coach.box.x}
+          y={coach.box.y}
+          width={coach.box.w}
+          onDismiss={() => coach.dismiss(coach.card!.id)}
         />
       )}
 

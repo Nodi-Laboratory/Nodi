@@ -128,6 +128,8 @@ export interface TextItemProps {
   onCancelEdit: () => void;
   onDelete: (id: string) => void;
   onTagChange: (id: string, tag: string | null) => void;
+  onRenameTag: (from: string, to: string) => void;
+  onRemoveTag: (tag: string) => void;
   /** 이동량도 함께 준다 — 여럿이 선택돼 있으면 호출부가 전부에 같은 양을 적용한다. */
   onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
   onReflow: (id: string) => void;
@@ -175,6 +177,8 @@ function TextItemImpl(props: TextItemProps) {
     onCancelEdit,
     onDelete,
     onTagChange,
+    onRenameTag,
+    onRemoveTag,
     onDragEnd,
     onReflow,
     onDismissReflow,
@@ -671,6 +675,8 @@ function TextItemImpl(props: TextItemProps) {
             onEdit={() => onStartEdit(item.id)}
             onDelete={() => onDelete(item.id)}
             onTagChange={(t) => onTagChange(item.id, t)}
+            onRenameTag={onRenameTag}
+            onRemoveTag={onRemoveTag}
             resized={!!size}
             onResetSize={() => onResetSize(item.id)}
             onOpenChange={setMenuOpen}

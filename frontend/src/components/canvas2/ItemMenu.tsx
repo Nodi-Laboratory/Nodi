@@ -22,6 +22,10 @@ interface Props {
   onEdit: () => void;
   onDelete: () => void;
   onTagChange: (tag: string | null) => void;
+  /** 태그 이름 변경 — 그 태그를 단 **모든 카드**에 반영된다 (D147). */
+  onRenameTag: (from: string, to: string) => void;
+  /** 태그 삭제 — 그 태그를 단 모든 카드가 분류 없음이 된다 (D147). */
+  onRemoveTag: (tag: string) => void;
   /** 손잡이로 크기를 바꾼 상태인가 — 그때만 되돌리기를 보여 준다 (D142). */
   resized?: boolean;
   onResetSize?: () => void;
@@ -35,6 +39,8 @@ export function ItemMenu({
   onEdit,
   onDelete,
   onTagChange,
+  onRenameTag,
+  onRemoveTag,
   resized,
   onResetSize,
   onOpenChange,
@@ -178,6 +184,8 @@ export function ItemMenu({
             setOpen(false);
             onTagChange(t);
           }}
+          onRenameTag={onRenameTag}
+          onRemoveTag={onRemoveTag}
           onClose={() => {
             setTagOpen(false);
             setOpen(false);
