@@ -42,8 +42,14 @@ describe("장력 — 끊기기 전에는 뒤처진다", () => {
   it("끊길 무렵의 뒤처짐이 느껴지되 과하지 않다", () => {
     const d = BREAK_DIST * 0.98;
     const lag = d - tensionPull(d);
-    expect(lag).toBeGreaterThan(90); // 안 느껴지면 안 된다
-    expect(lag).toBeLessThan(140); // 손에서 떨어져 나간 것처럼 보이면 안 된다
+    /**
+     * **비율로 잰다.** 절대 px로 박아 두면 끊김 거리를 조정할 때마다 이 테스트가
+     * 같이 깨지는데, 정작 손맛은 그대로다(실측 2026-08-06: 260→150으로 줄이자
+     * 느낌은 같은데 테스트만 깨졌다). 느낌을 정하는 것은 **끌린 거리 대비**
+     * 얼마나 뒤처지느냐다.
+     */
+    expect(lag / d).toBeGreaterThan(0.3); // 안 느껴지면 안 된다
+    expect(lag / d).toBeLessThan(0.55); // 손에서 떨어져 나간 것처럼 보이면 안 된다
   });
 
   /**
@@ -66,7 +72,7 @@ describe("장력 — 끊기기 전에는 뒤처진다", () => {
   it("끊기는 자리에서 뒤처짐이 한 번에 0이 된다", () => {
     const before = BREAK_DIST - 0.001;
     const lagBefore = before - tensionPull(before);
-    expect(lagBefore).toBeGreaterThan(90);
+    expect(lagBefore / before).toBeGreaterThan(0.3);
     expect(BREAK_DIST - tensionPull(BREAK_DIST)).toBe(0);
   });
 
@@ -160,13 +166,23 @@ describe("세기 — 끌려가고, 바로 붙는다", () => {
   const cands: Candidate[] = [{ id: "p", rect: card(0, 0) }];
 
   /**
-   * 220은 "잘 안 걸린다", 560은 "너무 쎄" — 그 사이를 못 박는다.
-   * 카드 폭이 560이므로 그 절반보다는 넓고 한 장 폭보다는 좁아야 한다.
+   * **걸리는 거리와 붙는 거리가 멀면 안 된다** (사용자 2026-08-06).
+   *
+   *   "자석이 시작되는 부분은 너무 빠른데 그 뒤로 연결되려면 더 가까이
+   *    붙어야 한다. 이 사이의 텀을 줄여야 해."
+   *
+   * 그 구간이 길면 **끌려는 가는데 안 붙는** 구간이 길어진다 — 학생 눈에는
+   * "반응은 하는데 연결이 안 된다"이다. 둘이 같으면 경계에서 깜박이므로
+   * 완전히 붙이지도 않는다.
    */
-  it("자석 반경이 카드 반쪽보다 넓고 한 장 폭보다 좁다", () => {
-    expect(MAGNET_DIST).toBeGreaterThan(280);
-    expect(MAGNET_DIST).toBeLessThan(480);
-    const m = magnetFor(card(0, 140 + MAGNET_DIST - 40), cands, NONE);
+  it("걸리는 거리와 붙는 거리가 가깝다", () => {
+    const band = MAGNET_DIST - SNAP_DIST;
+    expect(band).toBeGreaterThan(20); // 붙었다 떨어졌다 깜박이면 안 된다
+    expect(band).toBeLessThan(120); // 끌리기만 하고 안 붙는 구간이 길면 안 된다
+  });
+
+  it("자석 반경 안이면 걸린다", () => {
+    const m = magnetFor(card(0, 140 + MAGNET_DIST - 30), cands, NONE);
     expect(m.id).toBe("p");
   });
 
@@ -184,7 +200,7 @@ describe("세기 — 끌려가고, 바로 붙는다", () => {
    * 학생 눈에는 "가까이 갈수록 연결이 안 된다"로 보인다(사용자 2026-08-06).
    */
   it("자석이 끌고 간 자리에는 선이 들어갈 자리가 남는다", () => {
-    for (const gap of [150, 250, 350]) {
+    for (const gap of [ATTACH_GAP + 20, SNAP_DIST, MAGNET_DIST - 10]) {
       const m = magnetFor(card(0, 140 + gap), cands, NONE);
       const pull = Math.hypot(m.pull.x, m.pull.y);
       // 끌리기는 한다.
@@ -203,11 +219,10 @@ describe("세기 — 끌려가고, 바로 붙는다", () => {
 
   it("붙는 거리가 카드 높이만큼은 된다 — 근처로 가면 붙는다", () => {
     expect(SNAP_DIST).toBeGreaterThanOrEqual(120);
+    // 자석에 걸리는 것보다 늦게 붙어야 한다(순서가 뒤집히면 뜻이 없다).
+    expect(SNAP_DIST).toBeLessThan(MAGNET_DIST);
   });
 
-  it("붙는 거리가 자석 반경의 절반 아래다 — 끌리는 구간이 남는다", () => {
-    expect(SNAP_DIST).toBeLessThan(MAGNET_DIST / 2);
-  });
 });
 
 describe("detachStep — 한 프레임", () => {
