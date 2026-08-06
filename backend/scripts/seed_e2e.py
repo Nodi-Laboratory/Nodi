@@ -50,9 +50,12 @@ if hasattr(sys.stdout, "buffer"):
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.config import get_settings  # noqa: E402
 from app.db import storage  # noqa: E402
 from app.db.pool import worker_conn  # noqa: E402
 from app.services import qdrant_store, upstage  # noqa: E402
+
+settings = get_settings()
 
 # e2e 스펙이 하드코딩한 값들 — 여기가 그 계약의 소유자다.
 CLASS_ID = "94f21035-f19e-4b0f-91bd-84aa69d65330"
@@ -200,9 +203,12 @@ async def seed() -> None:
 
         points = []
         for i, fig in enumerate(FIGURES):
+            # **버킷은 `files` 하나다.** `image_path`가 곧 그 버킷 안의 경로이고,
+            # 서명·다운로드가 그대로 그 값을 쓴다(figures.py). 여기서 다른 버킷에
+            # 넣으면 행은 멀쩡한데 그림만 404가 된다 — 실측 2026-08-07에 그랬다.
             path = f"figures/{teacher}/{TEXTBOOK_ID}/{fig['id']}.png"
             await storage.upload(
-                "figures", path.split("/", 1)[1], _png(160, 120, (220, 200, 150)),
+                settings.storage_bucket, path, _png(160, 120, (220, 200, 150)),
                 "image/png",
             )
             await conn.execute(
@@ -324,7 +330,7 @@ async def seed() -> None:
         for i, rgb in enumerate([(120, 160, 200), (200, 150, 120)], start=1):
             tid = f"94f21035-0000-4000-8000-00000000040{i}"
             tpath = f"clip-thumbs/{tid}.png"
-            await storage.upload("files", tpath, _png(320, 320, rgb), "image/png")
+            await storage.upload(settings.storage_bucket, tpath, _png(320, 320, rgb), "image/png")
             await conn.execute(
                 """
                 INSERT INTO clip_thumbnails (id, storage_path, mime, size_bytes, name,
