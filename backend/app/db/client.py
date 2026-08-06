@@ -313,6 +313,74 @@ class _BaseClient:
         except Exception as exc:
             _fail(exc, f"update {table}")
 
+    async def update_many(
+        self,
+        table: str,
+        rows: list[dict[str, Any]],
+        *,
+        types: dict[str, str],
+        key: str = "id",
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """행마다 **다른 값**으로 갱신 — 왕복 한 번, 트랜잭션 하나 (D183).
+
+        `update()`는 한 filter에 한 patch라 "카드 150장을 각자 다른 좌표로"를
+        표현하지 못한다. 그래서 호출부가 `update()`를 150번 부르고, 그것이
+        HTTP 요청 150개가 됐다(실측: 로컬에서 842ms — 네트워크 지연이 0인데도).
+
+        ## 왜 jsonb_to_recordset인가
+
+        `VALUES (...), (...)`로 펴면 파라미터가 행×열 개로 늘어나고 asyncpg가
+        열마다 타입을 추론해야 한다 — 좌표가 정수로 온 행 하나 때문에 전체
+        추론이 흔들린다. jsonb 하나로 넘기고 **컬럼 타입을 SQL에 적어 두면**
+        추론이 낄 자리가 없다.
+
+        ## RLS는 그대로다
+
+        UPDATE 정책이 행마다 판정한다(D104). 못 건드리는 행은 조용히 빠지므로
+        **호출부가 반환 행 수를 확인해야 한다** — 그 확인이 곧 "저장됐다"의
+        근거다. `filters`는 그 위에 얹는 추가 울타리다(예: 한 세션 안으로).
+
+        :param types: 갱신할 컬럼 → SQL 타입. `key`도 반드시 포함해야 한다.
+        """
+        if not rows:
+            return []
+        cols = [c for c in types if c != key]
+        if not cols:
+            raise ValueError("갱신할 컬럼이 없다")
+        # `build_where`는 컬럼을 수식 없이 낸다. 그 이름이 v에도 있으면
+        # "column reference is ambiguous"로 죽는다 — 조용히 틀리지는 않지만
+        # 호출부가 이유를 알기 어려우므로 여기서 막는다.
+        clash = set(filters or ()) & set(types)
+        if clash:
+            raise ValueError(f"필터와 갱신 컬럼이 겹친다: {sorted(clash)}")
+        try:
+            coldef = ", ".join(f"{Q._ident(c)} {t}" for c, t in types.items())
+            sets = ", ".join(f"{Q._ident(c)} = v.{Q._ident(c)}" for c in cols)
+            # **직렬화하지 않고 넘긴다.** `_prepare`가 jsonb에 json.dumps 코덱을
+            # 걸어 두므로 여기서 문자열로 만들면 한 번 더 감싸여 배열이 아니라
+            # 문자열 스칼라가 되고, `jsonb_to_recordset`이 "non-array"로 죽는다
+            # (실측 2026-08-06 — mock 테스트로는 절대 안 잡힌다).
+            payload = [
+                {c: _jsonable(_encode(r.get(c))) for c in types} for r in rows
+            ]
+            args: list[Any] = [payload]
+            where, wargs, _ = Q.build_where(filters or {}, start_index=2)
+            # build_where는 `WHERE ...`를 낸다 — 여기서는 이미 조인 조건이
+            # 있으므로 AND로 이어 붙인다.
+            extra = where.replace(" WHERE ", " AND ", 1) if where else ""
+            sql = (
+                f"UPDATE {Q._ident(table)} AS t SET {sets} "
+                f"FROM jsonb_to_recordset($1::jsonb) AS v({coldef}) "
+                f"WHERE t.{Q._ident(key)} = v.{Q._ident(key)}{extra} "
+                f"RETURNING t.*"
+            )
+            async with self._conn() as conn:
+                await _prepare(conn)
+                return _rows(await _fetch(conn, sql, [*args, *wargs]))
+        except Exception as exc:
+            _fail(exc, f"update_many {table}")
+
     async def upsert(
         self, table: str, row: dict[str, Any], on_conflict: str
     ) -> dict[str, Any]:

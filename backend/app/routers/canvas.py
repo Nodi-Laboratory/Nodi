@@ -62,6 +62,17 @@ class PatchItemBody(BaseModel):
     parent_item_id: str | None = None
 
 
+class PatchEntry(BaseModel):
+    """대량 수정 1건 (D183). `patch`의 미지정/null 구분은 위와 같다."""
+
+    id: str
+    patch: PatchItemBody
+
+
+class PatchItemsBody(BaseModel):
+    items: list[PatchEntry]
+
+
 class PutDrawingBody(BaseModel):
     elements: list[dict[str, Any]] = Field(default_factory=list)
     files: dict[str, Any] = Field(default_factory=dict)
@@ -86,6 +97,31 @@ async def create_items(
         UserClient.from_user(user),
         session_id,
         [it.model_dump() for it in body.items],
+    )
+
+
+@router.patch("/sessions/{session_id}/canvas/items")
+async def patch_items(
+    session_id: str,
+    body: PatchItemsBody,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    """아이템 여러 장을 각자 다른 값으로 한 번에 수정 (D183).
+
+    재배치·가지 이동은 카드 수백 장을 동시에 옮긴다. 단건 경로를 그만큼
+    부르면 브라우저 동시 연결 상한에 걸려 초 단위로 늘어진다 —
+    `services/canvas_items.patch_items` docstring에 실측이 있다.
+
+    단건 경로(`PATCH /canvas/items/{id}`)는 그대로 둔다. 한 장을 고칠 때
+    세션 id를 들고 다니지 않아도 되는 것이 그쪽의 존재 이유다.
+    """
+    return await svc.patch_items(
+        UserClient.from_user(user),
+        session_id,
+        [
+            {"id": e.id, "patch": e.patch.model_dump(exclude_unset=True)}
+            for e in body.items
+        ],
     )
 
 

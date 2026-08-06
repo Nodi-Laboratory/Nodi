@@ -21,6 +21,7 @@ import {
   createItems as apiCreate,
   deleteItem as apiDelete,
   patchItem as apiPatch,
+  patchItems as apiPatchMany,
 } from "@/lib/api/canvas";
 import { isRealId } from "@/lib/ids";
 import type { CanvasItem, ItemData } from "./types";
@@ -292,6 +293,36 @@ export function useCanvasItems(): CanvasItemsApi {
     [items, showUndo],
   );
 
+  /**
+   * 여러 아이템의 저장을 **요청 하나**로 보낸다 (D183).
+   *
+   * 예전에는 `Promise.all(ids.map(apiPatch))`였다. 병렬처럼 보이지만 브라우저는
+   * 한 출처에 동시 연결을 6개쯤으로 묶으므로 실제로는 줄을 선다 — 카드 150장
+   * 재배치가 지연 0인 로컬에서도 842ms였고, 되돌리기에 655ms가 또 들었다.
+   *
+   * 세션별로 나누는 이유는 서버 경로가 세션 하위라서다. 한 캔버스의 카드는
+   * 모두 같은 세션이므로 보통 무리는 하나다.
+   */
+  const saveBulk = useCallback(
+    (
+      entries: readonly { id: string; patch: ItemPatch }[],
+      lookup: (id: string) => CanvasItem | undefined,
+    ): Promise<unknown> => {
+      const bySession = new Map<string, { id: string; patch: ItemPatch }[]>();
+      for (const e of entries) {
+        const it = lookup(e.id);
+        if (!it || !isRealId(e.id)) continue;
+        const list = bySession.get(it.sessionId);
+        if (list) list.push(e);
+        else bySession.set(it.sessionId, [e]);
+      }
+      return Promise.all(
+        [...bySession].map(([sid, list]) => apiPatchMany(sid, list)),
+      );
+    },
+    [],
+  );
+
   const moveMany = useCallback(
     (moves: readonly { id: string; x: number; y: number }[], label: string) => {
       const before = new Map<string, CanvasItem>();
@@ -324,8 +355,9 @@ export function useCanvasItems(): CanvasItemsApi {
       const rollback = () =>
         setItems((prev) => prev.map((i) => before.get(i.id) ?? i));
 
-      void Promise.all(
-        plain.map((m) => apiPatch(m.id, { x: m.x, y: m.y, pinned: true })),
+      void saveBulk(
+        plain.map((m) => ({ id: m.id, patch: { x: m.x, y: m.y, pinned: true } })),
+        (id) => before.get(id),
       ).catch((e: Error) => {
         setError(`저장하지 못했습니다 — ${e.message}`);
         rollback();
@@ -338,18 +370,17 @@ export function useCanvasItems(): CanvasItemsApi {
         run: () => {
           rollback();
           setUndo(null);
-          void Promise.all(
-            targets
-              .filter((m) => isRealId(m.id))
-              .map((m) => {
-                const b = before.get(m.id)!;
-                return apiPatch(m.id, { x: b.x, y: b.y, pinned: b.pinned });
-              }),
+          void saveBulk(
+            targets.map((m) => {
+              const b = before.get(m.id)!;
+              return { id: m.id, patch: { x: b.x, y: b.y, pinned: b.pinned } };
+            }),
+            (id) => before.get(id),
           ).catch((e: Error) => setError(`되돌리지 못했습니다 — ${e.message}`));
         },
       });
     },
-    [items, patch, showUndo],
+    [items, patch, showUndo, saveBulk],
   );
 
   const tagMany = useCallback(
@@ -378,7 +409,10 @@ export function useCanvasItems(): CanvasItemsApi {
       const rollback = () =>
         setItems((prev) => prev.map((i) => before.get(i.id) ?? i));
 
-      void Promise.all(plain.map((b) => apiPatch(b.id, { tag }))).catch((e: Error) => {
+      void saveBulk(
+        plain.map((b) => ({ id: b.id, patch: { tag } })),
+        (id) => before.get(id),
+      ).catch((e: Error) => {
         setError(`저장하지 못했습니다 — ${e.message}`);
         rollback();
       });
@@ -390,15 +424,14 @@ export function useCanvasItems(): CanvasItemsApi {
         run: () => {
           rollback();
           setUndo(null);
-          void Promise.all(
-            [...before.values()]
-              .filter((b) => isRealId(b.id))
-              .map((b) => apiPatch(b.id, { tag: b.tag })),
+          void saveBulk(
+            [...before.values()].map((b) => ({ id: b.id, patch: { tag: b.tag } })),
+            (id) => before.get(id),
           ).catch((e: Error) => setError(`되돌리지 못했습니다 — ${e.message}`));
         },
       });
     },
-    [items, patch, showUndo],
+    [items, patch, showUndo, saveBulk],
   );
 
   const patchMany = useCallback(
@@ -438,7 +471,7 @@ export function useCanvasItems(): CanvasItemsApi {
       const rollback = () =>
         setItems((prev) => prev.map((i) => before.get(i.id) ?? i));
 
-      void Promise.all(plain.map((e) => apiPatch(e.id, e.patch))).catch((err: Error) => {
+      void saveBulk(plain, (id) => before.get(id)).catch((err: Error) => {
         setError(`저장하지 못했습니다 — ${err.message}`);
         rollback();
       });
@@ -448,23 +481,31 @@ export function useCanvasItems(): CanvasItemsApi {
         run: () => {
           rollback();
           setUndo(null);
-          void Promise.all(
-            targets
-              .filter((e) => isRealId(e.id))
-              .map((e) => {
-                const b = before.get(e.id)!;
-                // 되돌릴 값은 **바꾼 항목만** 되짚는다.
-                const revert: ItemPatch = {};
-                if (e.patch.tag !== undefined) revert.tag = b.tag;
-                if (e.patch.parent_item_id !== undefined)
-                  revert.parent_item_id = b.parentItemId;
-                return apiPatch(e.id, revert);
-              }),
-          ).catch((err: Error) => setError(`되돌리지 못했습니다 — ${err.message}`));
+          const reverts = targets
+            .map((e) => {
+              const b = before.get(e.id)!;
+              // 되돌릴 값은 **바꾼 항목만** 되짚는다.
+              const revert: ItemPatch = {};
+              if (e.patch.tag !== undefined) revert.tag = b.tag;
+              if (e.patch.parent_item_id !== undefined)
+                revert.parent_item_id = b.parentItemId;
+              // 좌표도 되짚는다. 빠져 있어서 화면만 제자리로 오고 **서버에는
+              // 옮긴 자리가 남았다** — 새로고침하면 되돌리기가 없던 일이 된다.
+              if (e.patch.x !== undefined) revert.x = b.x;
+              if (e.patch.y !== undefined) revert.y = b.y;
+              if (e.patch.pinned !== undefined) revert.pinned = b.pinned;
+              return { id: e.id, patch: revert };
+            })
+            // 되짚을 것이 없는 항목은 뺀다. 빈 patch는 422이고, 대량 경로에서는
+            // 그 하나가 무리 전체를 실패시킨다.
+            .filter((r) => Object.keys(r.patch).length > 0);
+          void saveBulk(reverts, (id) => before.get(id)).catch((err: Error) =>
+            setError(`되돌리지 못했습니다 — ${err.message}`),
+          );
         },
       });
     },
-    [items, patch, showUndo],
+    [items, patch, showUndo, saveBulk],
   );
 
   const remove = useCallback(

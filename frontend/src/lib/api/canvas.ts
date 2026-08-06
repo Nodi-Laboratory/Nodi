@@ -142,6 +142,47 @@ export async function patchItem(
   return toItem(await res.json());
 }
 
+export interface ItemPatchEntry {
+  id: string;
+  patch: ItemPatch;
+}
+
+/**
+ * 여러 아이템을 각자 다른 값으로 **한 번에** 수정 (D183).
+ *
+ * 재배치·가지 이동은 카드 수백 장을 동시에 옮긴다. `patchItem`을 그만큼 부르면
+ * 브라우저의 출처당 동시 연결 상한(HTTP/1.1에서 6개쯤)에 걸려 줄을 선다 —
+ * 실측 2026-08-06: 지연 0인 로컬에서도 카드 150장에 842ms, 되돌리기에 655ms.
+ * 학교 Wi-Fi(RTT 40ms)면 초 단위가 된다.
+ *
+ * **부분 성공은 409다.** 일부만 저장됐는데 성공으로 받으면 낙관적 화면과 서버가
+ * 갈리는데, 그 어긋남은 새로고침해야 드러난다. 호출부는 실패 시 통째로 되돌린다.
+ */
+export async function patchItems(
+  sessionId: string,
+  entries: readonly ItemPatchEntry[],
+): Promise<CanvasItem[]> {
+  if (!entries.length) return [];
+  for (const e of entries) {
+    // patchItem과 **같은 방어선**이다 — 한쪽만 막으면 그쪽으로 임시 id가 샌다.
+    if (!isRealId(e.id)) {
+      throw new Error(`저장되지 않은 항목은 수정할 수 없습니다: ${e.id}`);
+    }
+    const p = e.patch.parent_item_id;
+    if (p !== undefined && p !== null && !isRealId(p)) {
+      throw new Error("저장되지 않은 항목을 부모로 지정할 수 없습니다.");
+    }
+  }
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/sessions/${sessionId}/canvas/items`, {
+      method: "PATCH",
+      headers: await authHeaders(true),
+      body: JSON.stringify({ items: entries }),
+    }),
+  );
+  return ((await res.json()) as ItemRow[]).map(toItem);
+}
+
 export async function deleteItem(itemId: string): Promise<void> {
   if (!isRealId(itemId)) {
     throw new Error(`저장되지 않은 항목은 삭제할 수 없습니다: ${itemId}`);

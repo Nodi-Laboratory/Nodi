@@ -351,6 +351,104 @@ async def patch_item(
     return rows[0]
 
 
+# 컬럼 → SQL 타입. `update_many`가 jsonb 페이로드를 풀 때 쓴다 (D183).
+# **PATCHABLE과 짝이다** — 여기 없는 컬럼은 대량 수정으로 바꿀 수 없다.
+PATCH_TYPES = {
+    "x": "double precision",
+    "y": "double precision",
+    "pinned": "boolean",
+    "title": "text",
+    "body": "text",
+    "tag": "text",
+    "seq": "integer",
+    "data": "jsonb",
+    "parent_item_id": "uuid",
+}
+
+# 한 번에 고칠 수 있는 아이템 수. 재배치는 캔버스 전체를 옮길 수 있으므로
+# 생성 상한(50)보다 넉넉해야 한다. 넘으면 프론트가 나눠 보낸다.
+MAX_PATCH_PER_CALL = 400
+
+
+async def patch_items(
+    client: UserClient, session_id: str, entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """여러 아이템을 **각자 다른 값으로** 한 번에 수정 (D183).
+
+    ## 왜 필요한가
+
+    재배치(`handleRegroup`)·가지 이동·별 포인터로 떼어내기는 카드 수십~수백
+    장을 한꺼번에 옮긴다. 프론트는 그것을 `PATCH /canvas/items/{id}` 하나씩으로
+    보냈다 — 카드 150장이면 **요청 150개, 트랜잭션 150개**다. 브라우저는 한
+    출처에 동시 연결을 6개쯤으로 묶으므로 25번 줄을 서고, 되돌리기를 누르면
+    같은 수가 한 번 더 나간다(실측 2026-08-06: 지연 0인 로컬에서 842ms).
+
+    ## 부분 성공을 성공이라 하지 않는다
+
+    RLS가 막은 행은 조용히 빠진다. 그대로 200을 주면 프론트는 전부 저장됐다고
+    믿고 낙관적 화면을 유지하는데, 새로고침하면 일부만 남아 있다 —
+    **그 어긋남은 화면에도 로그에도 안 드러난다.** 하나라도 빠지면 409로
+    알리고 프론트가 통째로 되돌린다.
+
+    ## 세션 울타리
+
+    단건 경로는 아이템 id만 받는다(RLS가 판정하므로 안전하다). 여기는 세션
+    하위 경로라 `session_id`를 한 번 더 건다 — 한 요청이 여러 세션에 걸치는
+    일은 정상 동작에 없다.
+    """
+    if not entries:
+        return []
+    if len(entries) > MAX_PATCH_PER_CALL:
+        raise _bad(
+            f"한 번에 수정할 수 있는 아이템은 {MAX_PATCH_PER_CALL}개까지입니다"
+            f"(요청 {len(entries)}개)."
+        )
+    await _assert_session(client, session_id)
+
+    # ## 왜 컬럼 조합으로 묶나
+    #
+    # 한 문장으로 합치려면 안 보낸 컬럼을 "지금 값 유지"로 표현해야 하는데,
+    # `COALESCE(v.col, t.col)`로 풀면 **NULL로 지우기가 막힌다** — 별 포인터로
+    # 가지를 떼는 일(tag=null·parent_item_id=null)이 정확히 그 동작이라
+    # 학생이 떼어낸 가지가 도로 붙는다. 조용히 틀리는 쪽이라 더 나쁘다.
+    #
+    # 그래서 **같은 컬럼 집합끼리만** 한 문장으로 묶는다. 호출부 하나가 내는
+    # 조합은 보통 하나(재배치는 x·y·pinned)이고, 많아야 둘셋이다.
+    groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for e in entries:
+        item_id = str(e.get("id") or "")
+        if not _UUID_RE.fullmatch(item_id):
+            raise _bad(f"아이템 id가 아닙니다: {item_id!r}")
+        patch = dict(e.get("patch") or {})
+        unknown = set(patch) - PATCHABLE
+        if unknown:
+            raise _bad(f"수정할 수 없는 필드입니다: {sorted(unknown)}")
+        if not patch:
+            raise _bad(f"수정할 내용이 없습니다: {item_id}")
+        groups.setdefault(tuple(sorted(patch)), []).append(
+            {"id": item_id, **patch}
+        )
+
+    updated: list[dict[str, Any]] = []
+    for cols, rows in groups.items():
+        updated += await client.update_many(
+            "canvas_items",
+            rows,
+            types={"id": "uuid", **{c: PATCH_TYPES[c] for c in cols}},
+            filters={"session_id": f"eq.{session_id}"},
+        )
+    if len(updated) != len(entries):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{len(entries)}개 중 {len(updated)}개만 저장했습니다.",
+        )
+    logger.info(
+        "캔버스 아이템 %d개 수정 (문장 %d개) session=%s",
+        len(entries), len(groups), session_id,
+    )
+    return updated
+
+
 async def delete_item(client: UserClient, item_id: str) -> None:
     rows = await client.delete("canvas_items", {"id": f"eq.{item_id}"})
     if not rows:
