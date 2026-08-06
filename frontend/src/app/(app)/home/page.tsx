@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, Map as MapIcon, MessageSquare } from "lucide-react";
+import { Loader2, Map as MapIcon } from "lucide-react";
 import { ConceptMap } from "@/components/home/ConceptMap";
 import { MapSessionTree } from "@/components/home/MapSessionTree";
 import { useProfile } from "@/lib/hooks";
@@ -158,22 +158,26 @@ export default function HomePage() {
         </h1>
         <p className="mt-1 text-sm text-fg-muted">
           지금까지 대화한 개념이 비슷한 것끼리 뭉쳐 있습니다. 확대하면 낱개가
-          보이고, 누르면 그 대화로 갑니다. 왼쪽에서 볼 대화를 고르세요.
+          보이고, 누르면 그 대화로 갑니다. 오른쪽에서 볼 대화를 고르세요.
         </p>
       </header>
 
       {/*
         지도 박스 (D191).
 
-        예전에는 남은 높이를 **전부** 먹어 화면이 지도 하나였다(사용자 지시
-        2026-08-06). 높이 상한과 좌우 최대 폭을 두어 페이지에 여백을 남긴다 —
-        박스가 화면과 같으면 "페이지"와 "지도" 중 어느 것을 확대하는지도
-        구분되지 않는다.
+        **남은 높이를 다 쓴다** (사용자 지시 2026-08-06). 상한 620을 걸었더니
+        아래에 빈 자리가 크게 남아 박스가 화면 위쪽에 떠 있는 꼴이 됐다 —
+        "가운데가 아니다"의 정체가 그것이었다. 최근 대화 줄을 걷어낸 지금
+        (같은 지시) 박스 밑에 올 것이 없으므로 남길 여백도 없다.
 
-        테두리를 3px로 세운다. 사이드바가 박스 **안**이라 테두리 하나가 목록과
+        페이지 여백(p-6)이 박스를 화면에서 떼어 놓는 일을 대신한다 — 그래서
+        "페이지"와 "지도"의 경계는 그대로 보인다. 좌우는 `mx-auto`로 가운데에
+        두되 아주 넓은 화면에서만 상한이 걸린다.
+
+        테두리를 3px로 세운다. 목록이 박스 **안**이라 테두리 하나가 목록과
         지도를 함께 감싼다 — 둘이 한 물건이라는 표시다.
       */}
-      <section className="mx-auto flex max-h-[620px] min-h-0 w-full max-w-[1280px] flex-1 overflow-hidden rounded-xl border-[3px] border-accent-border/70 bg-bg-elevated shadow-sm">
+      <section className="mx-auto flex min-h-0 w-full max-w-[1800px] flex-1 overflow-hidden rounded-xl border-[3px] border-accent-border/70 bg-bg-elevated shadow-sm">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center gap-2 text-sm text-fg-muted">
             <Loader2 size={16} className="animate-spin" aria-hidden />
@@ -192,6 +196,10 @@ export default function HomePage() {
           </div>
         ) : (
           <>
+            {/* 목록은 **오른쪽**이다(사용자 지시 2026-08-06) — 지도가 왼쪽 끝에서 시작한다. */}
+            <div className="min-w-0 flex-1">
+              <ConceptMap data={map} onOpen={openConcept} hiddenSessions={hidden} />
+            </div>
             <MapSessionTree
               folders={folders}
               hidden={hidden}
@@ -201,40 +209,9 @@ export default function HomePage() {
               onToggleCollapse={handleToggleCollapse}
               onShowAll={handleShowAll}
             />
-            <div className="min-w-0 flex-1">
-              <ConceptMap data={map} onOpen={openConcept} hiddenSessions={hidden} />
-            </div>
           </>
         )}
       </section>
-
-      {/* 지도가 답하지 못하는 것 하나 — "방금 하던 대화로 돌아가기". */}
-      {summary && summary.recent_sessions.length > 0 && (
-        <footer className="flex shrink-0 items-center gap-2 overflow-x-auto text-xs">
-          <span className="shrink-0 text-fg-muted">최근 대화</span>
-          {summary.recent_sessions.slice(0, 5).map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => {
-                const spaceId =
-                  s.space_kind === "class" && s.space_ref ? s.space_ref : "personal";
-                setActiveSpace(spaceId);
-                setActiveSession(s.id, spaceId);
-                router.push(`/space/${spaceId}`);
-              }}
-              className="flex shrink-0 items-center gap-1 rounded-full border border-accent-border/40 px-3 py-1 text-fg transition-colors hover:bg-accent-soft"
-            >
-              <span aria-hidden>
-                {s.emoji || <MessageSquare size={11} className="opacity-60" />}
-              </span>
-              <span className="max-w-40 truncate">
-                {s.title?.trim() || "제목 없는 대화"}
-              </span>
-            </button>
-          ))}
-        </footer>
-      )}
     </div>
   );
 }

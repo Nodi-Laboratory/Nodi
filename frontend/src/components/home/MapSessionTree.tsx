@@ -25,9 +25,30 @@ import {
 } from "lucide-react";
 import {
   folderCheckState,
+  UNTITLED_SESSION,
   type CheckState,
   type SessionFolder,
+  type TreeSession,
 } from "@/lib/home/sessionTree";
+
+/**
+ * 목록에 쓸 이름.
+ *
+ * **제목 없는 대화는 날짜로 가른다** (실측 2026-08-06: 목록이 "제목 없는 대화"
+ * 24줄이었다). 전부 같은 글자면 무엇을 끄는지 고를 수가 없고, 체크박스의
+ * 접근 이름까지 같아 화면 낭독기와 e2e도 구분하지 못한다. 옆의 개념 수는
+ * 세는 값이지 가르는 값이 아니다 — 1이 스무 줄이면 그것도 다 같다.
+ *
+ * 제목이 있는 대화에는 안 붙인다. 붙이면 정작 읽어야 할 제목이 잘린다.
+ */
+function rowLabel(s: TreeSession): string {
+  if (s.title !== UNTITLED_SESSION) return s.title;
+  const d = new Date(s.updatedAt);
+  if (Number.isNaN(d.getTime())) return s.title;
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${s.title} · ${d.getMonth() + 1}/${d.getDate()} ${hh}:${mm}`;
+}
 
 export interface MapSessionTreeProps {
   folders: SessionFolder[];
@@ -84,7 +105,8 @@ export function MapSessionTree({
   );
 
   return (
-    <div className="flex h-full w-56 shrink-0 flex-col border-r border-accent-border/40 bg-bg">
+    /* 목록은 박스의 **오른쪽**이다(사용자 지시 2026-08-06) — 경계선도 왼쪽에 선다. */
+    <div className="flex h-full w-56 shrink-0 flex-col border-l border-accent-border/40 bg-bg">
       <div className="flex shrink-0 items-center justify-between gap-1 border-b border-accent-border/30 px-3 py-2">
         <span className="text-xs font-semibold text-fg">대화</span>
         {/*
@@ -145,6 +167,7 @@ export function MapSessionTree({
                 {open &&
                   f.sessions.map((s) => {
                     const shown = !hidden.has(s.id);
+                    const label = rowLabel(s);
                     return (
                       <div
                         key={s.id}
@@ -152,19 +175,20 @@ export function MapSessionTree({
                       >
                         <CheckBox
                           state={shown ? "all" : "none"}
-                          label={`${s.title} 표시`}
+                          label={`${label} 표시`}
                           onClick={() => onToggleSession(s.id)}
                         />
                         <button
                           type="button"
                           onClick={() => onToggleSession(s.id)}
+                          title={label}
                           className="flex min-w-0 flex-1 items-center gap-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep"
                         >
                           {/* 꺼진 대화는 흐리게 — 목록에서 사라지면 되돌릴 수가 없다. */}
                           <span
                             className={`truncate text-xs ${shown ? "text-fg" : "text-fg-muted/60"}`}
                           >
-                            {s.title}
+                            {label}
                           </span>
                           <span className="ml-auto shrink-0 text-[10px] tabular-nums text-fg-muted">
                             {s.count}
