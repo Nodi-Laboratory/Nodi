@@ -196,7 +196,7 @@ async def _handle_crosslink(svc: Any, job: dict[str, Any]) -> None:
         cand["session_title"] = (past_sess or {}).get("title")
         cand["title"] = past.get("title")
 
-        text = await crosslink.explain(item, past)
+        text = await crosslink.explain(item, past, knobs.get("model"))
         if not text:
             # 모델이 "관련 없음"이라고 했거나 생성이 실패했다. **억지로 잇지
             # 않는다** — 잘못된 연결은 없는 것보다 나쁘다.

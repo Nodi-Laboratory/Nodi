@@ -237,6 +237,10 @@ async def read_knobs() -> dict[str, Any]:
         "always_on": app_settings.as_bool(
             overlay, "crosslink_always_on", settings.crosslink_always_on
         ),
+        # D182: 판정 모델. 관리자가 비워 두면 전역 채팅 모델을 쓴다.
+        "model": app_settings.as_str(
+            overlay, "crosslink_model", settings.crosslink_model
+        ),
     }
 
 
@@ -272,17 +276,20 @@ async def index_item(item: dict[str, Any], session: dict[str, Any]) -> bool:
     return True
 
 
-async def explain(cur: dict[str, Any], past: dict[str, Any]) -> str:
+async def explain(
+    cur: dict[str, Any], past: dict[str, Any], model: str | None = None
+) -> str:
     """두 카드의 연결 설명. 실패·무연결이면 빈 문자열.
 
     **가벼운 모델로 부른다** (D182, 사용자 지시 2026-08-06). 배지 하나에 대화
     생성과 같은 모델을 쓸 이유가 없다 — 하는 일은 "이 둘이 실제로 이어지나"라는
     판단과 두어 문장이다. 노브가 비어 있으면 전역 채팅 모델을 쓴다(옛 동작).
     """
-    model = (settings.crosslink_model or "").strip() or None
+    # 호출부가 노브를 읽어 넘긴다(admin 오버레이 > config). 안 주면 config.
+    picked = (model if model is not None else settings.crosslink_model).strip() or None
     try:
         comp = await solar.complete(
-            build_explain_messages(cur, past), max_tokens=400, model=model
+            build_explain_messages(cur, past), max_tokens=400, model=picked
         )
         return parse_explanation((comp.message or {}).get("content") or "")
     except Exception:  # noqa: BLE001 - 설명 실패는 링크를 안 만드는 것으로 끝난다

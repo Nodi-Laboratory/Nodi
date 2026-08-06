@@ -5,6 +5,8 @@
 방향 규칙이 틀리면 개인 공간의 사적인 대화가 학급으로 샌다.
 """
 
+import pytest
+
 from app.services import crosslink
 
 # ── 태그 정규화 ────────────────────────────────────────────────────────
@@ -239,3 +241,38 @@ def test_배지_판정은_가벼운_모델로():
     from app.config import get_settings
 
     assert get_settings().crosslink_model == "solar-pro2"
+
+
+@pytest.mark.asyncio
+async def test_판정_모델은_admin_오버레이가_이긴다(monkeypatch):
+    """튜너블의 규약 그대로 (D62). 노브를 만들어 놓고 config만 읽으면 관리자가
+    바꿔도 아무 일도 안 일어난다."""
+    from app.services import app_settings
+
+    async def fake_overlay():
+        return {"crosslink_model": "solar-mini"}
+
+    monkeypatch.setattr(app_settings, "get_overlay", fake_overlay)
+    knobs = await crosslink.read_knobs()
+    assert knobs["model"] == "solar-mini"
+
+
+@pytest.mark.asyncio
+async def test_판정_모델을_비우면_전역_모델을_쓴다(monkeypatch):
+    """빈 문자열은 값이다 — "전역 채팅 모델을 써라"는 뜻이고, 설정한 적이
+    없는 것과 구분돼야 한다."""
+    seen: dict = {}
+
+    class _C:
+        message = {"content": "판정: 관련있음\n설명: 이어진다."}
+        usage = None
+
+    async def fake_complete(messages, *, tools=None, max_tokens=None, model=None):
+        seen["model"] = model
+        return _C()
+
+    monkeypatch.setattr(crosslink.solar, "complete", fake_complete)
+    await crosslink.explain({"title": "가"}, {"title": "나"}, "")
+    assert seen["model"] is None
+    await crosslink.explain({"title": "가"}, {"title": "나"}, "solar-pro2")
+    assert seen["model"] == "solar-pro2"

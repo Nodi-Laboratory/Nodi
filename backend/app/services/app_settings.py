@@ -128,3 +128,16 @@ def as_bool(overlay: dict[str, Any], key: str, default: bool) -> bool:
         return raw.strip().lower() in ("true", "1", "yes", "on")
     return default
 
+
+
+def as_str(overlay: dict[str, Any], key: str, default: str) -> str:
+    """문자열 노브 (D182: 개념 연결 판정 모델).
+
+    **빈 문자열은 값이다.** 관리자가 일부러 비운 것("전역 모델을 써라")과
+    설정한 적이 없는 것을 구분해야 한다 — `or default`로 뭉개면 비울 방법이
+    사라진다.
+    """
+    raw = overlay.get(key)
+    if raw is None:
+        return default
+    return str(raw).strip()
