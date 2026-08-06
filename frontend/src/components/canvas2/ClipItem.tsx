@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import { PlayCircle, X } from "lucide-react";
+import { Play, PlayCircle, X } from "lucide-react";
 import { useItemDrag } from "@/lib/canvas2/useItemDrag";
 import { useClipThumb } from "@/lib/canvas2/useClipThumb";
 import type { CanvasItem } from "@/lib/canvas2/types";
@@ -221,10 +221,26 @@ export function ClipItem({
        * 영상의 한 장면이라고 주장하지 않는다.
        *
        * 그림이 없으면(관리자가 아직 안 올렸거나 받기 실패) 자리를 비운다 —
-       * 깨진 이미지 아이콘보다 낫다.
+       * 깨진 이미지 아이콘보다 낫다. **재생 버튼은 그때도 남긴다**: 그림이
+       * 없다고 이 카드가 영상이 아닌 것은 아니다.
+       *
+       * ## 눌리는 자리다
+       *
+       * 재생 버튼이 아무 일도 안 하면 거짓말이다 — 학생은 그걸 누른다. 그림
+       * 영역 자체가 아래 글자 링크와 **같은 곳으로 가는 링크**다.
+       *
+       * 드래그로 새지 않게 `data-no-pan` + pointerdown 차단을 건다(아래 글자
+       * 링크와 같은 처리). 안 걸면 카드를 끌려다가 EBS가 열린다.
        */}
-      <div
-        className="my-1.5 min-h-0 flex-1 overflow-hidden rounded"
+      <a
+        href={clip.pageUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-no-pan
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        aria-label={`${clip.title} — EBS에서 재생`}
+        className="group relative my-1.5 min-h-0 flex-1 overflow-hidden rounded"
         style={{ background: "var(--c-sunk, rgba(0,0,0,.04))" }}
       >
         {thumbUrl ? (
@@ -237,7 +253,44 @@ export function ClipItem({
             className="h-full w-full object-cover"
           />
         ) : null}
-      </div>
+
+        {/**
+         * 반투명 재생 버튼 (사용자 지시 2026-08-06).
+         *
+         * ## ⚠️ 여기서 재생되지 않는다 — 그게 설계다
+         *
+         * 영상을 우리가 받아서 틀면 저작권 문제가 된다(사용자 확인 2026-08-06).
+         * 이 버튼이 하는 일은 **EBS로 보내는 것**이고, 그래서 아래 글자 링크와
+         * 같은 곳으로 간다. 그림도 그 영상의 장면이 아니라 대역이다.
+         *
+         * **여기에 플레이어를 붙이지 마라.** "버튼이 있는데 왜 안 틀어지지"는
+         * 자연스러운 다음 생각인데, 그 순간 이 기능은 우리가 감당 못 할 것이 된다.
+         *
+         * ## 왜 색 토큰을 안 쓰나
+         *
+         * 이 원 아래 오는 것은 우리 배경이 아니라 **남의 사진**이다. 밝은 그림
+         * 에서도 어두운 그림에서도 보여야 하므로 흰 테두리 + 반투명 검정으로
+         * 둘 다 잡는다 — 테마 색은 그 대비를 보장하지 못한다.
+         */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 flex items-center justify-center"
+        >
+          <span
+            className="flex items-center justify-center rounded-full transition-transform group-hover:scale-110"
+            style={{
+              width: 34,
+              height: 34,
+              background: "rgba(0,0,0,.42)",
+              border: "1.5px solid rgba(255,255,255,.85)",
+              backdropFilter: "blur(2px)",
+            }}
+          >
+            {/* 삼각형을 살짝 오른쪽으로 — 시각 무게중심이 왼쪽에 쏠린다. */}
+            <Play size={15} fill="#fff" color="#fff" style={{ marginLeft: 2 }} />
+          </span>
+        </span>
+      </a>
 
       <a
         href={clip.pageUrl}
