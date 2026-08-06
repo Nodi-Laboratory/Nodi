@@ -67,6 +67,21 @@ TEACHER_EMAIL = "teacher@nodi.local"
 TEXTBOOK_ID = "94f21035-0000-4000-8000-000000000001"
 PACKAGE_ID = "94f21035-0000-4000-8000-000000000002"
 VIDEO_ID = "94f21035-0000-4000-8000-000000000003"
+MATERIAL_ID = "94f21035-0000-4000-8000-000000000004"
+
+#: 선생님이 올린 **학급 자료** 청크. 도판·클립만 심으면 RAG 검색 경로가 늘
+#: 빈손이라, 관리자 콘솔의 RAG 테스트도 `search_class_material` 스킬도
+#: 아무것도 못 본다(실측 2026-08-07: 통과 0 · 차단 0).
+MATERIAL_CHUNKS = [
+    "3학년 1반 실험 안전 규칙. 실험대 위에는 물병을 올리지 않는다. "
+    "지진계 모형을 옮길 때는 반드시 두 손으로 든다. 관측이 끝나면 기록지를 "
+    "담당 모둠장에게 낸다.",
+    "지진파에는 P파와 S파가 있다. P파는 고체와 액체를 모두 통과하고 속도가 "
+    "빠르다. S파는 고체만 통과하며 P파보다 느리다. 이 차이 때문에 지구 "
+    "내부에 액체 상태의 외핵이 있다는 사실을 알 수 있다.",
+    "우리 반 관측 기록에 따르면 P파가 도착하고 12초 뒤에 S파가 도착했다. "
+    "이 시간차로 진앙까지의 거리를 어림할 수 있다.",
+]
 
 FIGURES = [
     {
@@ -237,6 +252,42 @@ async def seed() -> None:
             )
         await qdrant_store.upsert(qdrant_store.COL_TEXTBOOK_FIGURES, points)
 
+        # ── 학급 자료(청크 검색용) ─────────────────────────────────────
+        await conn.execute(
+            """
+            INSERT INTO files (id, owner_id, name, kind, status, space_kind, space_ref,
+                               storage_path, mime, size_bytes, chunk_total, chunk_done)
+            VALUES ($1, $2, 'e2e-수업자료.txt', 'class_material', 'indexed', 'class', $3,
+                    $4, 'text/plain', 2048, $5, $5)
+            ON CONFLICT (id) DO UPDATE SET status = 'indexed'
+            """,
+            MATERIAL_ID, teacher, CLASS_ID,
+            f"files/{teacher}/{MATERIAL_ID}/e2e.txt", len(MATERIAL_CHUNKS),
+        )
+        chunk_vecs = await upstage.embed_texts(MATERIAL_CHUNKS, kind="passage")
+        chunk_points = []
+        for i, (ctext, cvec) in enumerate(zip(MATERIAL_CHUNKS, chunk_vecs, strict=True)):
+            cid = f"94f21035-0000-4000-8000-00000000050{i}"
+            await conn.execute(
+                """
+                INSERT INTO file_chunks (id, file_id, seq, chunk_text, status)
+                VALUES ($1, $2, $3, $4, 'embedded')
+                ON CONFLICT (file_id, seq) DO UPDATE
+                    SET chunk_text = EXCLUDED.chunk_text, status = 'embedded'
+                """,
+                cid, MATERIAL_ID, i, ctext,
+            )
+            chunk_points.append(
+                {
+                    "id": cid,
+                    "vector": cvec,
+                    # 본문은 안 넣는다 — Qdrant는 신뢰 경계가 아니다(불변식).
+                    "payload": {"chunk_id": cid, "file_id": MATERIAL_ID,
+                                "owner_id": teacher},
+                }
+            )
+        await qdrant_store.upsert(qdrant_store.COL_FILE_CHUNKS, chunk_points)
+
         # ── 강의 패키지 + 클립 ─────────────────────────────────────────
         await conn.execute(
             """
@@ -351,6 +402,7 @@ async def seed() -> None:
     print(f"학급 {CLASS_ID} ({CLASS_NAME}, 코드 {JOIN_CODE})")
     print(f"  학생 {STUDENT_EMAIL} 등록")
     print(f"  교과서 도판 {len(FIGURES)}장 · 강의 클립 {len(CLIPS)}개 (임베딩 완료)")
+    print(f"  학급 자료 청크 {len(MATERIAL_CHUNKS)}개")
     print("  클립 썸네일 2장 · 학생 개인 세션에 도판 카드 1장")
 
 
@@ -364,8 +416,12 @@ async def check() -> int:
         clips = await conn.fetchval(
             "SELECT count(*) FROM lecture_clips WHERE video_id = $1", VIDEO_ID
         )
-    print(f"학급 {cls} · 도판 {figs} · 클립 {clips}")
-    ok = cls == 1 and figs == len(FIGURES) and clips == len(CLIPS)
+        chunks = await conn.fetchval(
+            "SELECT count(*) FROM file_chunks WHERE file_id = $1", MATERIAL_ID
+        )
+    print(f"학급 {cls} · 도판 {figs} · 클립 {clips} · 자료 청크 {chunks}")
+    ok = (cls == 1 and figs == len(FIGURES) and clips == len(CLIPS)
+          and chunks == len(MATERIAL_CHUNKS))
     print("시드 정상" if ok else "시드 없음 — `python -m scripts.seed_e2e`를 돌려라")
     return 0 if ok else 1
 
