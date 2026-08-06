@@ -98,12 +98,20 @@ async def config_report() -> dict:
         "base_url": settings.judge_base_url or None,
         "model": settings.judge_model or None,
         "pipeline_enabled": settings.figure_pipeline_enabled,
-        # D103: 판정은 교과서 업로드를 막지 않는다 — 파서가 캡션으로 라벨한
-        # figure는 판정 없이 처리되고, 판정은 라벨 없는 figure의 폴백이다.
-        "role": "fallback",
+        # ⚠️ **폴백이 아니다** (D134, 점검 2026-08-06에서 바로잡음).
+        #
+        # D103 시절에는 파서 라벨이 본선이고 비전이 폴백이었다. D134가 그걸
+        # 뒤집었다 — 캡션은 **비전 생성이 단독으로** 만들고 폴백이 없다
+        # (`services/worker/figures.py` 머리말: "judge 계열 미설정이면 생성
+        # 자체가 불가하므로 전 행 no-caption failed").
+        #
+        # 그런데 이 문구는 옛 설명 그대로였다. 관리자가 "일부만 안 된다"로 읽고
+        # 급한 문제로 안 볼 수 있는데, 실제로는 **교과서 도판이 하나도 검색에
+        # 안 뜬다.** 진단이 사실보다 낙관적이면 없느니만 못하다.
+        "role": "required-for-figures",
         "note": (
-            "미설정이어도 교과서 업로드는 가능하다. 파서가 캡션으로 라벨하지 "
-            "않은 도판만 처리되지 않는다."
+            "미설정이면 교과서 도판이 **하나도** 검색에 안 뜬다(캡션 생성이 "
+            "불가하므로 전 도판이 실패). 텍스트 인덱싱과 업로드 자체는 정상이다."
         ),
     }
 

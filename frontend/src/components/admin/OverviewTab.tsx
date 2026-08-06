@@ -175,7 +175,9 @@ function EnvironmentPanel() {
       label: "도판 비전 판정",
       value: data.judge.configured
         ? `${data.judge.model} @ ${data.judge.base_url}`
-        : `미설정 (${data.judge.missing.join(", ")}) — 라벨 없는 도판만 처리 안 됨`,
+        : // D134 이후 폴백이 없다 — 판정 모델이 없으면 캡션 생성 자체가
+          // 불가해 **전 도판이 실패**한다(점검 2026-08-06에서 바로잡음).
+          `미설정 (${data.judge.missing.join(", ")}) — 교과서 도판이 하나도 안 뜸`,
       tone: data.judge.configured ? "ok" : "warn",
     },
   ];
