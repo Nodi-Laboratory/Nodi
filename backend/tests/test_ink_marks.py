@@ -235,8 +235,11 @@ async def test_비전_미설정이면_부르지도_않는다(monkeypatch):
         return _reply("가리킴: 1\n설명: 뭔가.")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        assert ink_marks.read_marks is not None
+        got = await ink_marks.read_marks(CARDS, b"png", client=c)
+    # **부르지 않았다는 것이 요점이다.** 상태로도, 호출 여부로도 확인한다 —
+    # 상태만 보면 "불렀는데 실패했다"와 구분이 안 된다.
     assert not called
+    assert (got.note, got.status) == ("", "unconfigured")
 
 
 @pytest.mark.asyncio
@@ -250,9 +253,9 @@ async def test_킬_스위치를_내리면_안_부른다(vision_on, monkeypatch):
         return _reply("가리킴: 1\n설명: 뭔가.")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        assert ink_marks.read_marks is not None
+        got = await ink_marks.read_marks(CARDS, b"png", client=c)
     assert not called
-
+    assert (got.note, got.status) == ("", "off")
 
 
 @pytest.mark.asyncio
@@ -360,16 +363,20 @@ def test_조사를_숫자_읽기에_맞춘다():
     1(일)·3(삼)은 받침이 있어 "을", 2(이)·4(사)는 "를". "으로/로"는 ㄹ받침이
     갈린다 — 1은 "1로", 3은 "3으로".
     """
-    ro = lambda a, b: ink_marks.gesture_line(
-        {"shape": "arrow", "from": [a], "points": [b], "encloses": [],
-         "within": [], "crosses": []}
-    )
+    def ro(a: int, b: int) -> str:
+        return ink_marks.gesture_line(
+            {"shape": "arrow", "from": [a], "points": [b], "encloses": [],
+             "within": [], "crosses": []}
+        )
+
     assert "[카드 3]으로 향한다" in ro(2, 3)
     assert "[카드 1]로 향한다" in ro(2, 1)
-    eul = lambda n: ink_marks.gesture_line(
-        {"shape": "circle", "encloses": [n], "within": [], "points": [],
-         "from": [], "crosses": []}
-    )
+    def eul(n: int) -> str:
+        return ink_marks.gesture_line(
+            {"shape": "circle", "encloses": [n], "within": [], "points": [],
+             "from": [], "crosses": []}
+        )
+
     assert "[카드 1]을 통째로" in eul(1)
     assert "[카드 2]를 통째로" in eul(2)
 
