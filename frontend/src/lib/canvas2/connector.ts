@@ -31,6 +31,14 @@ export const PAD_Y = 12;
 export const END_GAP = 4;
 /** 변 위에서 앵커가 모서리에 붙지 않도록 남기는 여백. */
 export const EDGE_INSET = 18;
+/**
+ * "같은 줄기"로 볼 가로 어긋남 (world px, D206).
+ *
+ * 트리의 자식은 부모 바로 아래 같은 x에 놓이고, 갈라질 때만 들여쓴다
+ * (`layout.ts`의 SIB_GAP 200). 그보다 크게 벌어진 것은 옆 열이거나 멀리
+ * 떨어진 카드라, 세로줄로 이으면 화면을 가로지르는 긴 직선이 된다.
+ */
+export const SAME_COLUMN_TOL = 240;
 
 /** 패딩을 씌운 상자. 연결선이 실제로 붙는 대상이다. */
 export function padded(r: Rect): Rect {
@@ -114,6 +122,39 @@ export function normal(side: Side): Point {
 export function linkGeometry(rawParent: Rect, rawChild: Rect): LinkGeometry {
   const parent = padded(rawParent);
   const child = padded(rawChild);
+
+  /**
+   * **자식이 아래에 있으면 언제나 왼쪽 세로줄로 잇는다** (D206).
+   *
+   * 예전에는 양쪽 앵커가 각자 "상대 중심을 향한 변"을 고르고, 그 둘이 **다
+   * 위아래일 때만** 왼쪽 홈통으로 옮겼다(D158). 그런데 카드가 만들어지는
+   * 중에는 그 조건이 성립하지 않는다 — 자식이 아직 짧아 부모 쪽 앵커가
+   * 옆(오른쪽)으로 잡히고, 그러면 끝점이 **부모 중심 축**에서 내려온다.
+   * 글이 채워져 상자가 커지면 그제야 조건이 참이 되어 끝점이 왼쪽으로
+   * 훌쩍 옮겨 간다 — 사용자가 "어색하다"고 한 그 움직임이다(2026-08-07).
+   *
+   * 아래로 가는 관계는 **처음부터** 세로다. 상자 크기와 무관하게 판정되므로
+   * 글이 자라도 끝점이 움직이지 않는다.
+   */
+  const straightDown =
+    child.y >= parent.y + parent.h - EDGE_INSET &&
+    Math.abs(child.x - parent.x) <= SAME_COLUMN_TOL;
+  if (straightDown) {
+    const ax = parent.x + EDGE_INSET;
+    const bx = child.x + EDGE_INSET;
+    const a = { x: ax, y: parent.y + parent.h + END_GAP };
+    const b = { x: bx, y: child.y - END_GAP };
+    const bow = clamp(Math.hypot(b.x - a.x, b.y - a.y) * 0.42, 36, 190);
+    return {
+      a,
+      b,
+      c1: { x: a.x, y: a.y + bow },
+      c2: { x: b.x, y: b.y - bow },
+      sideA: "bottom",
+      sideB: "top",
+    };
+  }
+
   const a0 = anchor(parent, center(child));
   const b0 = anchor(child, center(parent));
   const na = normal(a0.side);

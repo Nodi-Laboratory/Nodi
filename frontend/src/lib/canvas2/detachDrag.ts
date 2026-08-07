@@ -86,15 +86,18 @@ export function laggedDelta(dx: number, dy: number, breakAt = BREAK_DIST): Pt {
  *
  * 이 거리부터 카드가 포인터를 벗어나 부모 쪽으로 끌린다.
  *
- * 220 → 560 → 380 → 260. 마지막 조정은 **띠를 좁히기 위해서다**: "자석이
- * 시작되는 부분은 너무 빠른데 그 뒤로 연결되려면 더 가까이 붙어야 한다.
- * 이 사이의 텀을 줄여야 해"(사용자 2026-08-06).
+ * 220 → 560 → 380 → 260 → 228. 조정은 전부 **띠를 좁히려는 것**이었다:
+ * "자석이 시작되는 부분은 너무 빠른데 그 뒤로 연결되려면 더 가까이 붙어야
+ * 한다"(2026-08-06) → "점선이 되는 조건이 실선이 되는 조건보다 너무 멀리
+ * 있어. 점선의 거리를 줄여라"(2026-08-07).
  *
  * 걸리는 거리와 붙는 거리가 멀면 **끌려는 가는데 안 붙는 구간**이 길어진다 —
- * 학생 눈에는 "반응은 하는데 연결이 안 된다"이다. 지금은 260에서 걸려
- * 200에서 붙는다(띠 60px). 걸리면 곧 붙는다.
+ * 학생 눈에는 "반응은 하는데 연결이 안 된다"이다. 지금은 228에서 걸려
+ * 200에서 붙는다(띠 28px). 걸리면 거의 곧바로 붙는다.
+ *
+ * 0으로 붙이지는 않는다 — 같은 값이면 경계에서 붙었다 떨어졌다 깜박인다.
  */
-export const MAGNET_DIST = 260;
+export const MAGNET_DIST = 228;
 
 /**
  * 붙는 간격. 여기까지 오면 연결선이 **팍** 생긴다.
@@ -107,6 +110,20 @@ export const MAGNET_DIST = 260;
  * 아니다: 완전히 붙이면 경계에서 붙었다 떨어졌다 깜박인다.
  */
 export const SNAP_DIST = 200;
+
+/**
+ * 부모 후보로 **인정할 수 있는 세로 어긋남** (world px, D206).
+ *
+ * 부모는 자식보다 위에 있어야 한다. A가 B보다 아래에 있는데 B를 A 위로
+ * 가져가면, 지금까지는 A가 후보로 잡혀 **B가 A의 부모가 아니라 자식이
+ * 되려 했다**(사용자 보고 2026-08-07). 화면에서는 "위에 있는 카드가 아래
+ * 카드에 딸려 들어가는" 것으로 보인다.
+ *
+ * 그래서 **자기보다 아래에 있는 카드는 후보에서 뺀다.** 0으로 자르지 않는
+ * 이유는 나란히 놓인 카드 둘의 y가 몇 px 어긋나는 일이 흔해서다 — 그
+ * 정도로 부모가 될 자격이 사라지면 옆 카드에 못 붙는다.
+ */
+export const PARENT_Y_TOL = 24;
 
 /**
  * 자석이 카드를 부모 쪽으로 당기는 최대 거리(world px).
@@ -181,14 +198,19 @@ export function magnetFor(
   card: Rect,
   candidates: readonly Candidate[],
   blocked: ReadonlySet<string>,
-  opts: { magnet?: number; snap?: number } = {},
+  opts: { magnet?: number; snap?: number; parentYTol?: number } = {},
 ): MagnetState {
   const reach = opts.magnet ?? MAGNET_DIST;
   const snapAt = opts.snap ?? SNAP_DIST;
+  const yTol = opts.parentYTol ?? PARENT_Y_TOL;
   let best: Candidate | null = null;
   let bestGap = Infinity;
   for (const c of candidates) {
     if (blocked.has(c.id)) continue;
+    // 부모는 위에 있어야 한다 (D206). 판정은 **끌고 있는 지금 자리**로 한다 —
+    // 누를 때의 자리로 걸러 두면 카드를 위로 올리는 동안 후보가 갱신되지 않아
+    // 방금 지나친 카드에 계속 붙으려 한다.
+    if (c.rect.y > card.y + yTol) continue;
     const g = rectGap(card, c.rect);
     if (g < bestGap) {
       bestGap = g;

@@ -29,7 +29,7 @@
  */
 
 import { useEffect, useRef } from "react";
-import type { Placed } from "@/lib/canvas2/layout";
+import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Rect } from "@/lib/canvas2/rect";
@@ -45,7 +45,14 @@ interface Props {
   sizes: Map<string, Size>;
 }
 
-const FALLBACK: Size = { w: 460, h: 180 };
+/**
+ * 아직 못 잰 카드의 기본 크기 (D206).
+ *
+ * 460이었다 — 배치 엔진의 `ITEM_W`(560)와 **달랐다.** 그래서 카드가 만들어진
+ * 직후와 실측이 끝난 뒤의 기하가 서로 달라, 글이 채워지는 순간 연결선 끝점이
+ * 툭 옮겨 갔다. 두 곳이 같은 값을 봐야 그 움직임이 사라진다.
+ */
+const FALLBACK: Size = { w: ITEM_W, h: 180 };
 /** 도트 반지름. */
 const DOT_R = 3.5;
 /** SVG 화폭 여유. 드래그로 선이 밖으로 나가도 `overflow:visible`이 받아 준다. */
