@@ -15,7 +15,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { SessionMap } from "@/components/canvas2/SessionMap";
-import { useCanvasItems } from "@/lib/canvas2/useCanvasItems";
+import { patchItems } from "@/lib/api/canvas";
+import { isRealId } from "@/lib/ids";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
@@ -32,7 +33,11 @@ export default function SessionMapPage() {
   const router = useRouter();
   const snapshot = useWorkspaceStore((s) => s.mapSnapshot);
   const setPendingFocusItem = useWorkspaceStore((s) => s.setPendingFocusItem);
-  const store = useCanvasItems();
+  /** 끌어 옮긴 자리 — 저장이 끝나기 전에도 화면이 그 자리에 있어야 한다. */
+  const [moved, setMoved] = useState<Map<string, { x: number; y: number }>>(
+    () => new Map(),
+  );
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 900, h: 600 });
@@ -59,10 +64,11 @@ export default function SessionMapPage() {
 
   const mine = snapshot && snapshot.spaceId === spaceId ? snapshot : null;
 
-  const positions = useMemo(
-    () => new Map<string, { x: number; y: number }>(mine?.positions ?? []),
-    [mine],
-  );
+  const positions = useMemo(() => {
+    const m = new Map<string, { x: number; y: number }>(mine?.positions ?? []);
+    for (const [id, at] of moved) m.set(id, at);
+    return m;
+  }, [mine, moved]);
   const sizes = useMemo(() => new Map<string, Size>(mine?.sizes ?? []), [mine]);
   const items = useMemo(() => (mine?.items ?? []) as CanvasItem[], [mine]);
 
@@ -80,14 +86,30 @@ export default function SessionMapPage() {
   /**
    * 노드를 끌어 옮겼다 — **실제 카드 좌표**를 옮긴다.
    *
-   * `moveMany`는 `pinned: true`로 저장한다. 학생이 손으로 정한 자리이므로
-   * 배치 엔진이 다시 밀어내면 안 된다(D122).
+   * ⚠️ 캔버스의 `moveMany`를 쓰면 **아무 일도 일어나지 않는다.** 그쪽은
+   * 스토어에 있는 아이템만 옮기는데(`before.has(m.id)`로 거른다) 이 화면은
+   * 스토어를 채우지 않는다 — 배치 사진만 받아 그린다. 실측으로 잡았다:
+   * 노드를 끌어도 요청이 한 건도 안 나갔다.
+   *
+   * `pinned: true`로 저장한다. 학생이 손으로 정한 자리이므로 배치 엔진이
+   * 다시 밀어내면 안 된다(D122).
    */
   const moveNode = useCallback(
     (id: string, x: number, y: number) => {
-      store.moveMany([{ id, x, y }], "지도에서 옮김");
+      if (!mine || !isRealId(id)) return;
+      // 저장을 기다리지 않고 화면부터 옮긴다 — 손을 뗀 자리에 그대로 있어야
+      // "내가 옮겼다"로 읽힌다.
+      setMoved((prev) => new Map(prev).set(id, { x, y }));
+      setSaveError(null);
+      void patchItems(mine.sessionId, [
+        { id, patch: { x, y, pinned: true } },
+      ]).catch(() => {
+        // 되돌리지 않는다 — 되돌리면 학생이 옮긴 것이 소리 없이 사라진다.
+        // 대신 저장이 안 됐다고 말한다.
+        setSaveError("자리를 저장하지 못했어요. 잠시 뒤 다시 옮겨 보세요.");
+      });
     },
-    [store],
+    [mine],
   );
 
   return (
@@ -104,6 +126,11 @@ export default function SessionMapPage() {
         </button>
         <div>
           <h1 className="text-[15px] font-semibold text-fg">대화방 지도</h1>
+          {saveError ? (
+            <p className="text-[12px]" style={{ color: "var(--danger)" }}>
+              {saveError}
+            </p>
+          ) : null}
           <p className="text-[12px] text-fg-muted">
             끌어서 둘러보고, 확대하면 글 하나하나가 보입니다. 노드를 끌면 캔버스의
             자리도 함께 옮겨집니다.
@@ -121,7 +148,9 @@ export default function SessionMapPage() {
              */
             className="canvas2 overflow-hidden rounded-2xl"
             style={{
-              border: "4px solid var(--c-rule)",
+              // 괘선색(--c-rule)은 캔버스 **안**에서 쓰는 옅은 선이라 상자
+              // 테두리로는 거의 안 보인다. 경계가 뚜렷해야 "이 안이 지도"로 읽힌다.
+              border: "5px solid var(--accent-border)",
               background: "var(--c-paper)",
               boxShadow: "var(--c-shadow-lg)",
             }}

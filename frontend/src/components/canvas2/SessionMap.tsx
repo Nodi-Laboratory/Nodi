@@ -82,6 +82,23 @@ function radius(count: number): number {
   return Math.max(9, Math.min(26, 9 + Math.sqrt(count) * 4));
 }
 
+/**
+ * 노드에 붙일 이름.
+ *
+ * 제목이 없으면 본문 앞을 쓰는데, 본문에는 **전선 형식이 그대로** 들어 있다
+ * (`@concept: 광합성 | 생명과학`). 그걸 지도에 찍으면 학생이 못 읽는다 —
+ * 형식은 우리 사정이지 학생의 것이 아니다.
+ */
+function nodeTitle(title: string | null | undefined, body: string): string {
+  const t = title?.trim();
+  if (t) return t;
+  const first = body.split("\n").find((l) => l.trim()) ?? "";
+  const m = /^@concept:\s*(.+)$/.exec(first.trim());
+  const raw = m ? m[1] : first;
+  // `제목 | 분류` 꼴이면 제목만 쓴다.
+  return raw.split("|")[0].replace(/\s+/g, " ").trim().slice(0, 24);
+}
+
 export interface SessionMapProps {
   items: CanvasItem[];
   positions: Map<string, { x: number; y: number }>;
@@ -185,7 +202,7 @@ export function SessionMap({
           {
             id,
             tag: t.tag,
-            title: it?.title?.trim() || it?.body.replace(/\s+/g, " ").slice(0, 24) || "",
+            title: nodeTitle(it?.title, it?.body ?? ""),
             root: (depthOf.get(id) ?? 0) === 0,
             color: colorOf(t.tag),
             ...c,
@@ -203,7 +220,7 @@ export function SessionMap({
       return [
         {
           id: it.id,
-          title: it.title?.trim() || it.body.replace(/\s+/g, " ").slice(0, 24) || "",
+          title: nodeTitle(it.title, it.body),
           color: it.source === "ai" ? "var(--c-live)" : "var(--c-hand)",
           ...c,
           world: { x: r.x, y: r.y },

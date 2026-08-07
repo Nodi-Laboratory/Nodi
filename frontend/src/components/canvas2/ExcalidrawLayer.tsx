@@ -59,6 +59,14 @@ interface Props {
    * 확정적으로 적용되므로 경합 자체가 없다.
    */
   initialCamera?: { scrollX: number; scrollY: number; zoom: number };
+  /**
+   * 마운트 시점의 도구 (D208).
+   *
+   * 손가락 기기는 **화면 이동**으로 시작한다. 마운트 뒤에 `setActiveTool`로
+   * 바꾸면 저쪽이 initialData를 적용하며 되돌려 놓는다 — 위 주석이 카메라에
+   * 대해 적어 둔 경합과 똑같은 일이다(실측: 태블릿 기본 도구가 계속 선택).
+   */
+  initialTool?: "selection" | "hand";
 }
 
 export function ExcalidrawLayer({
@@ -68,6 +76,7 @@ export function ExcalidrawLayer({
   onSceneChange,
   viewOnly = false,
   initialCamera,
+  initialTool,
 }: Props) {
   const timerRef = useRef<number | null>(null);
   // 최신 콜백을 ref에 담아 둔다 — 렌더 중에 쓰면 React Compiler가 막으므로
@@ -152,6 +161,12 @@ export function ExcalidrawLayer({
           files: (initialScene?.files ?? {}) as never,
           appState: {
             viewBackgroundColor: "transparent",
+            // Excalidraw의 `activeTool`은 내부 필드가 더 있는 타입이라
+            // 부분 지정이 안 된다. 런타임은 type만 봐도 되므로 캐스팅한다
+            // (zoom의 NormalizedZoomValue와 같은 처지다).
+            ...(initialTool
+              ? { activeTool: { type: initialTool } as unknown as never }
+              : {}),
             ...(initialCamera
               ? {
                   scrollX: initialCamera.scrollX,

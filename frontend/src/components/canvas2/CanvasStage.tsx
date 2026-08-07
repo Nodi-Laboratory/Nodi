@@ -165,11 +165,18 @@ export function CanvasStage({
    * 않는 것처럼 보인다. `coarse`는 붙은 뒤 한 번 true가 되므로 이 이펙트도
    * 그때 한 번 돈다.
    */
+  /**
+   * 손가락 기기는 **화면 이동 도구로 시작한다** (D208, 사용자 지시).
+   *
+   * ⚠️ 마운트 뒤에 `setTool("hand")`을 부르면 안 된다. Excalidraw가
+   * initialData를 적용하며 선택 도구로 되돌려 놓는다 — 실측으로 확인했다
+   * (태블릿에서 계속 선택이었다). `ExcalidrawLayer`의 initialData에 실어
+   * 마운트 시점에 확정한다.
+   *
+   * `coarse`는 첫 렌더에 false이고 붙은 뒤 true가 된다(hydration 보호).
+   * 그 변화가 `sceneKey`를 바꾸지는 않으므로 리마운트를 따로 태운다.
+   */
   const coarse = useCoarsePointer();
-  const { setTool } = bridge;
-  useEffect(() => {
-    if (coarse) setTool("hand");
-  }, [coarse, setTool]);
 
   /**
    * 오버레이 변환 — **React가 아니라 여기가 소유한다.**
@@ -363,7 +370,11 @@ export function CanvasStage({
       <div ref={gridRef} className="canvas2-grid" />
 
       <ExcalidrawLayer
-        key={sceneKey ?? "none"}
+        // 손가락 기기는 화면 이동으로 시작한다 (D208).
+        initialTool={coarse ? "hand" : "selection"}
+        // 기기 종류가 정해진 뒤 한 번 다시 마운트해 그 도구를 확정한다 —
+        // 첫 렌더는 언제나 PC로 그려지기 때문이다(hydration).
+        key={`${sceneKey ?? "none"}-${coarse ? "touch" : "mouse"}`}
         onApi={bridge.setApi}
         initialScene={initialScene}
         onSceneCommit={onSceneCommit}
