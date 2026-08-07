@@ -41,8 +41,8 @@ function NavIcon({
       aria-current={active ? "page" : undefined}
       className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep ${
         active
-          ? "bg-white/10 text-sidebar-fg-active"
-          : "text-sidebar-fg hover:bg-white/5 hover:text-sidebar-fg-active"
+          ? "bg-accent-soft text-sidebar-fg-active"
+          : "text-sidebar-fg hover:bg-accent-soft/60 hover:text-sidebar-fg-active"
       }`}
     >
       {active ? (
@@ -88,7 +88,7 @@ function SpaceBadge({
       className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep ${
         active
           ? "border-accent-deep bg-accent text-accent-fg"
-          : "border-white/15 text-sidebar-fg hover:border-accent-deep hover:text-sidebar-fg-active"
+          : "border-accent-border text-sidebar-fg hover:border-accent-deep hover:text-sidebar-fg-active"
       }`}
     >
       {Icon ? <Icon size={18} strokeWidth={2} /> : initial}
@@ -127,7 +127,7 @@ export function IconSidebar() {
   return (
     <nav
       aria-label="주 메뉴"
-      className="flex h-full w-16 shrink-0 flex-col items-center gap-3 bg-bg-sidebar py-3"
+      className="flex h-full w-16 shrink-0 flex-col items-center gap-3 border-r border-accent-border/40 bg-bg-sidebar py-3"
     >
       {/* 브랜드 마크 */}
       <Link
@@ -209,7 +209,7 @@ export function IconSidebar() {
         {profile?.display_name ? (
           <span
             title={profile.display_name}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold text-sidebar-fg-active"
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-fg"
           >
             {initials(profile.display_name, "나")}
           </span>
