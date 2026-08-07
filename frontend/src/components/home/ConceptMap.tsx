@@ -109,6 +109,24 @@ const LABEL_MAX_CHARS = 18;
 /** 제목 한 줄 높이(화면 px) — 겹침 판정의 세로 크기다. */
 const LABEL_LINE = 14;
 
+/**
+ * 테마 토큰(헥스)에 알파를 입힌다 (D203).
+ *
+ * canvas 2D의 `ctx`는 CSS 변수를 못 읽으므로 `getComputedStyle`로 헥스를
+ * 받아 오는데, 반투명하게 그으려면 rgba가 필요하다.
+ *
+ * 헥스가 아니면(`color-mix()` 같은 값으로 바뀌면) **알파를 포기하고 원래
+ * 값을 그대로 돌려준다** — 선이 안 그려지는 것보다 불투명하게 그려지는
+ * 쪽이 낫다. 여기서 던지면 지도 전체가 빈 화면이 된다.
+ */
+function withAlpha(color: string, alpha: number): string {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
+  if (!m) return color;
+  const h = m[1].length === 3 ? m[1].replace(/./g, (c) => c + c) : m[1];
+  const n = parseInt(h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
 export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -193,9 +211,20 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
     const css = getComputedStyle(document.documentElement);
     const tone = (name: string, fallback: string) =>
       css.getPropertyValue(name).trim() || fallback;
-    const inkColor = tone("--fg", "#221e17");
-    const mutedColor = tone("--fg-muted", "#6a6153");
-    const paperColor = tone("--bg-elevated", "#fffefa");
+    const inkColor = tone("--fg", "#1e2418");
+    const mutedColor = tone("--fg-muted", "#5f6656");
+    const paperColor = tone("--bg-elevated", "#ffffff");
+    /**
+     * 선 색 (D203).
+     *
+     * `--c-live`(AI 초록)를 먼저 본다 — 캔버스와 같은 뜻의 선이기 때문이다.
+     * 다만 그 토큰은 `.canvas2` 안에서만 정의되고 이 지도는 홈 화면이라,
+     * 실제로는 대개 앱 셸의 `--accent-deep`으로 떨어진다. **둘 다 브랜드
+     * 토큰이므로 다음에 색을 바꿔도 여기가 따라온다** — 예전에는 이 자리에
+     * `rgba(160,101,3,…)`가 박혀 있어 토큰을 아무리 고쳐도 조용히 오커로
+     * 남았고, 지도를 열어 봐야만 드러났다.
+     */
+    const linkColor = tone("--c-live", tone("--accent-deep", "#54761c"));
 
     let width = 0;
     let height = 0;
@@ -262,7 +291,7 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
           if (!s || !t || !isVisible(s) || !isVisible(t)) continue;
           // 가까운 쌍일수록 진하게. 먼 쌍까지 같은 농도로 그으면 구조가 묻힌다.
           const strength = Math.max(0, 1 - e.distance / 0.7);
-          ctx!.strokeStyle = `rgba(160,101,3,${0.06 + strength * 0.22})`;
+          ctx!.strokeStyle = withAlpha(linkColor, 0.06 + strength * 0.22);
           ctx!.beginPath();
           ctx!.moveTo(s.x, s.y);
           ctx!.lineTo(t.x, t.y);
@@ -279,9 +308,14 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
         const hue = tagHue(n.tag);
         ctx!.beginPath();
         ctx!.arc(n.x, n.y, r, 0, Math.PI * 2);
+        // 태그가 있으면 **이름 해시로 정한 색**이다(브랜드와 무관 — 태그마다
+        // 달라야 무리가 갈린다). 태그가 없으면 흐린 중립색인데, 예전 값
+        // `hsl(40 6% 62%)`는 따뜻한 회색이라 초록 화면에서 혼자 떴다.
+        // `--fg-muted`를 옅게 깔아 **토큰을 따라가게** 한다 — 토큰을 그대로
+        // 쓰면 본문 글자만큼 진해져서 태그 있는 점보다 무거워진다(D203).
         ctx!.fillStyle = n.tag
           ? `hsl(${hue} 62% 52%)`
-          : `hsl(40 6% 62%)`;
+          : withAlpha(mutedColor, 0.45);
         ctx!.globalAlpha = tier === "clusters" ? 0.75 : 1;
         ctx!.fill();
         if (n === hovered) {
