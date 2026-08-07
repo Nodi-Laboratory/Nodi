@@ -34,7 +34,7 @@ export function SpaceGuard({
   if (!없는방) return <>{children}</>;
 
   return (
-    <main className="flex h-screen flex-col items-center justify-center gap-4 bg-bg px-6 text-center">
+    <main className="flex h-dvh flex-col items-center justify-center gap-4 bg-bg px-6 text-center">
       <h1 className="text-lg font-semibold text-fg">들어갈 수 없는 학급이에요</h1>
       <p className="max-w-md text-sm leading-relaxed text-fg-muted">
         이 학급에 속해 있지 않거나, 주소가 잘못됐어요. 선생님께 받은 학급 코드로

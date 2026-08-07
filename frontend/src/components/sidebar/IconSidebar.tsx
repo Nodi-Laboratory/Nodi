@@ -144,7 +144,7 @@ export function IconSidebar() {
         <>
           <NavIcon href="/home" label="홈" icon={Home} active={isActive("/home")} />
 
-          <div className="my-1 h-px w-8 bg-white/10" />
+          <div className="my-1 h-px w-8 bg-accent-border/50" />
 
           {/* min-h-0가 있어야 flex 부모 안에서 실제로 스크롤된다 — 없으면 학급이
               많을 때 목록이 사이드바 밖으로 밀려 하단 프로필 버튼을 가린다. */}

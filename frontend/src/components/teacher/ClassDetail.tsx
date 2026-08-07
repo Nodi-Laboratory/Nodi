@@ -32,7 +32,7 @@ export function ClassDetail({ classId }: { classId: string }) {
   };
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-fg">
+    <div className="flex h-dvh flex-col bg-bg text-fg">
       <TeacherHeader>
         <nav
           aria-label="위치"

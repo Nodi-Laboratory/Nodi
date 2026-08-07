@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -44,6 +44,27 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "nodi",
   description: "AI 대화를 노드·트리 구조로 시각화하는 대화형 AI 서비스",
+};
+
+/**
+ * 뷰포트 (D204) — **패드에서 아래가 잘리던 문제.**
+ *
+ * 셸이 `100vh`였다. 모바일 브라우저의 `100vh`는 주소창이 **보이지 않는다고
+ * 가정한** 높이라, 주소창이 떠 있는 동안 화면보다 큰 상자가 된다. 그래서
+ * 아래에 붙는 것들(질문 입력창·사이드바 하단 프로필)이 화면 밖으로 밀려
+ * 눌러 볼 수조차 없었다(사용자 보고 2026-08-07). 셸은 `dvh`로 옮겼다.
+ *
+ * `interactiveWidget`은 **자판이 올라올 때** 같은 일이 벌어지는 것을 막는다 —
+ * 기본값(`resizes-visual`)은 상자 크기를 그대로 두고 화면만 밀어 올려서
+ * 입력창이 자판 뒤에 깔린다.
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // 확대를 막지 않는다 — 교실에서 글씨를 키워 보는 학생이 있다.
+  maximumScale: 5,
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({

@@ -9,7 +9,7 @@ import { StudentShellGuard } from "@/components/auth/StudentShellGuard";
  */
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex h-screen w-full overflow-hidden">
+    <div className="flex h-dvh w-full overflow-hidden">
       <StudentShellGuard />
       <IconSidebar />
       <main className="flex-1 overflow-auto">{children}</main>

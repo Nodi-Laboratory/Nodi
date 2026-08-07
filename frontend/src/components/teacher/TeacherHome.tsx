@@ -35,7 +35,7 @@ export function TeacherHome() {
   useRoutePrefetch(list.map((c) => `/teacher/${c.id}`));
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-fg">
+    <div className="flex h-dvh flex-col bg-bg text-fg">
       <TeacherHeader />
 
       <main className="min-h-0 flex-1 overflow-auto px-6 py-6">
