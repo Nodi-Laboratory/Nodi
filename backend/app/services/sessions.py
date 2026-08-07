@@ -55,6 +55,11 @@ async def create_session(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class sessions require space_ref (class id).",
         )
+    # D202: 빈 대화가 이미 있으면 그것을 준다 — 새로 만들지 않는다.
+    if title is None:
+        reusable = await _empty_session(client, space_kind, ref)
+        if reusable is not None:
+            return reusable
     row = {
         "owner_id": owner_id,
         "space_kind": space_kind,
@@ -62,6 +67,45 @@ async def create_session(
         "title": title,
     }
     return await client.insert("sessions", row)
+
+
+async def _empty_session(
+    client: UserClient, space_kind: str, ref: str | None
+) -> dict[str, Any] | None:
+    """이 공간의 **가장 최근 대화가 아직 비어 있으면** 그 행을 돌려준다 (D202).
+
+    "새 대화"를 누를 때마다 행이 하나씩 생긴다. 그런데 학생이 그 대화에서
+    아무것도 안 하고 나가는 일이 훨씬 흔하다 — 서랍을 열었다가 닫고, 홈에서
+    다시 들어오고, 다른 학급으로 옮긴다. 실측(2026-08-07): 개인 공간 하나에
+    **211개**가 쌓였고 대부분이 글 한 줄 없는 빈 대화다. 목록이 "새 대화"
+    수십 줄로 덮이면 정작 찾던 대화가 스크롤 밑으로 밀린다.
+
+    ⚠️ **지우지 않는다.** 자동 정리는 학생이 쓴 것을 지울 위험이 있고, 되돌릴
+    방법도 없다. 여기서는 **안 만드는** 쪽으로 푼다 — 빈 대화는 서로
+    구분할 수 없으므로 그중 하나를 다시 여는 것은 아무것도 잃지 않는다.
+
+    비어 있다 = 제목이 없고 · 캔버스 아이템이 없고 · 붙인 파일이 없다.
+    파일까지 보는 이유: 자료만 올려 둔 대화를 재사용하면 그 파일이 다음
+    질문의 컨텍스트로 조용히 딸려 간다(학생은 올린 적이 없다고 기억한다).
+    """
+    recent = await client.select(
+        "sessions",
+        {
+            "space_kind": f"eq.{space_kind}",
+            "space_ref": f"eq.{ref}",
+            "select": SESSION_SELECT,
+            "order": "updated_at.desc",
+            "limit": "1",
+        },
+    )
+    if not recent or (recent[0].get("title") or "").strip():
+        return None
+    sid = recent[0]["id"]
+    if await client.count("canvas_items", {"session_id": f"eq.{sid}"}):
+        return None
+    if await client.count("files", {"session_id": f"eq.{sid}"}):
+        return None
+    return recent[0]
 
 
 async def list_sessions(
