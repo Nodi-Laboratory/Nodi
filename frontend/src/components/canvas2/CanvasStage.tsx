@@ -20,6 +20,8 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
+import { useCoarsePointer } from "@/lib/canvas2/coarsePointer";
+import { useTouchNavigate } from "@/lib/canvas2/useTouchNavigate";
 // 캔버스 손글씨 @font-face (D164). **여기서** 임포트하는 이유는 unicode-range
 // 목록이 gzip 13KB이기 때문이다 — globals.css에 넣으면 로그인·홈·관리자 화면도
 // 그걸 받는다. 폰트가 캔버스 전용이니 CSS도 캔버스 라우트 청크에만 둔다.
@@ -157,6 +159,19 @@ export function CanvasStage({
   useMiddleDragPan(rootRef, panByScreen);
 
   /**
+   * 손가락 기기에서는 **기본 도구가 화면 이동**이다 (D208, 사용자 지시).
+   *
+   * 한 번만 바꾼다 — 그 뒤 학생이 고른 도구를 되돌리면 도구 레일이 눌리지
+   * 않는 것처럼 보인다. `coarse`는 붙은 뒤 한 번 true가 되므로 이 이펙트도
+   * 그때 한 번 돈다.
+   */
+  const coarse = useCoarsePointer();
+  const { setTool } = bridge;
+  useEffect(() => {
+    if (coarse) setTool("hand");
+  }, [coarse, setTool]);
+
+  /**
    * 오버레이 변환 — **React가 아니라 여기가 소유한다.**
    *
    * style prop으로 두면 팬 프레임마다 리렌더가 필요하고, 그 리렌더가 아이템
@@ -209,6 +224,14 @@ export function CanvasStage({
       if (t.closest("[data-no-pan]") || t.closest("[data-canvas-item]")) return;
       // 왼쪽 버튼만. 중클릭은 팬(useMiddleDragPan)이 가져간다.
       if (e.button !== 0) return;
+      /**
+       * 손가락·펜은 **여기서 처리하지 않는다** (D208).
+       *
+       * 끌기의 뜻이 반대다 — PC는 올가미, 손가락은 화면 이동이다. 두 규칙이
+       * 같은 이벤트를 보면 손가락으로 끌 때 화면이 움직이면서 선택 상자까지
+       * 잡힌다. `useTouchNavigate`가 캡처 단계에서 먼저 가져간다.
+       */
+      if (coarse && e.pointerType !== "mouse") return;
 
       if (activeTool === "note") {
         e.preventDefault();
@@ -306,7 +329,18 @@ export function CanvasStage({
       window.removeEventListener("pointermove", onShapeMove, { capture: true });
       window.removeEventListener("pointerup", onUp, { capture: true });
     };
-  }, [activeTool, onCanvasClick, onBackgroundClick, onMarquee, toWorld, hasElementSelection, elementAtPoint, cameraRef, onShapeDrag]);
+  }, [activeTool, coarse, onCanvasClick, onBackgroundClick, onMarquee, toWorld, hasElementSelection, elementAtPoint, cameraRef, onShapeDrag]);
+
+  /** 손가락: 끌면 이동, 길게 누르면 선택 상자 (D208). */
+  useTouchNavigate({
+    rootRef,
+    activeTool,
+    enabled: coarse,
+    panByScreen,
+    toWorld,
+    onMarquee,
+    onBackgroundClick,
+  });
 
   return (
     <div
