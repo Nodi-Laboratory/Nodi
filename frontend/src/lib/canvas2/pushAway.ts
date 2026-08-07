@@ -111,12 +111,51 @@ export function pushAway(
   const half = gap / 2;
   const movers = moving.map((r) => inflate(r, half));
 
+  /**
+   * **가까운 카드만 계산에 넣는다** (넓은 단계).
+   *
+   * 이 함수는 드래그 프레임마다 돈다. 이웃 검사가 카드 수의 제곱이라 그냥
+   * 두면 학기 말 캔버스에서 프레임을 통째로 먹는다(실측: 300장 2.44ms,
+   * 600장이면 10ms — 한 프레임 예산 16.7ms의 절반이다).
+   *
+   * 끄는 카드에서 아주 멀리 있는 카드는 이번 프레임에 밀릴 수도, 밀린
+   * 이웃에 떠밀릴 수도 없다. 반경은 **한 판에 밀릴 수 있는 최대 거리**로
+   * 잡는다 — 카드 하나 크기 + 간격에 판 수를 곱한 값이면 넉넉하다.
+   */
+  let qx0 = Infinity;
+  let qy0 = Infinity;
+  let qx1 = -Infinity;
+  let qy1 = -Infinity;
+  let biggest = 0;
+  for (const m of movers) {
+    qx0 = Math.min(qx0, m.x);
+    qy0 = Math.min(qy0, m.y);
+    qx1 = Math.max(qx1, m.x + m.w);
+    qy1 = Math.max(qy1, m.y + m.h);
+    biggest = Math.max(biggest, m.w, m.h);
+  }
+  for (const s of statics) biggest = Math.max(biggest, s.rect.w, s.rect.h);
+  const reach = (biggest + gap) * (passes + 1);
+  const near: PushCandidate[] = [];
+  for (const s of statics) {
+    const r = s.rect;
+    if (
+      r.x + r.w >= qx0 - reach &&
+      r.x <= qx1 + reach &&
+      r.y + r.h >= qy0 - reach &&
+      r.y <= qy1 + reach
+    ) {
+      near.push(s);
+    }
+  }
+  if (!near.length) return out;
+
   /** 지금까지 밀린 결과를 반영한 자리. */
-  const at = new Map<string, Rect>(statics.map((s) => [s.id, s.rect]));
+  const at = new Map<string, Rect>(near.map((s) => [s.id, s.rect]));
 
   for (let pass = 0; pass < passes; pass++) {
     let touched = false;
-    for (const s of statics) {
+    for (const s of near) {
       const cur = at.get(s.id)!;
       const box = inflate(cur, half);
       let dx = 0;
@@ -129,7 +168,7 @@ export function pushAway(
       }
       // 2) 이미 밀린 이웃과도 안 겹쳐야 한다. **모든 카드 종류가 대상이다**
       //    (사용자 지시: "모든 카드 종류는 겹칠 수 없다").
-      for (const o of statics) {
+      for (const o of near) {
         if (o.id === s.id) continue;
         const t = minTranslation(box, inflate(at.get(o.id)!, half));
         dx += t.dx;
@@ -154,7 +193,7 @@ export function pushAway(
    * 들린 카드와 겹치는 것은 학생 눈에 곧바로 보이므로, 그 하나만은 성질로
    * 보장한다 — 이웃끼리의 남은 겹침은 판 수 상한 안에서 최선을 다한다.
    */
-  for (const s of statics) {
+  for (const s of near) {
     const cur = at.get(s.id)!;
     let dx = 0;
     let dy = 0;
@@ -168,7 +207,7 @@ export function pushAway(
     }
   }
 
-  for (const s of statics) {
+  for (const s of near) {
     const now = at.get(s.id)!;
     const dx = now.x - s.rect.x;
     const dy = now.y - s.rect.y;

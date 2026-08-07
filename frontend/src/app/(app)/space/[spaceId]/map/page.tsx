@@ -16,6 +16,8 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { SessionMap } from "@/components/canvas2/SessionMap";
 import { patchItems } from "@/lib/api/canvas";
+import { pushAway, type PushCandidate } from "@/lib/canvas2/pushAway";
+import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 import { isRealId } from "@/lib/ids";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Size } from "@/lib/canvas2/useItemLayout";
@@ -38,6 +40,7 @@ export default function SessionMapPage() {
     () => new Map(),
   );
   const [saveError, setSaveError] = useState<string | null>(null);
+  const settings = useClientSettings();
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 900, h: 600 });
@@ -97,19 +100,60 @@ export default function SessionMapPage() {
   const moveNode = useCallback(
     (id: string, x: number, y: number) => {
       if (!mine || !isRealId(id)) return;
+      const size = sizes.get(id);
+      /**
+       * **여기서도 겹치지 않는다** (D207).
+       *
+       * 캔버스에서 끌 때는 배경 카드가 비켜 주는데(useCardPush) 지도에서
+       * 옮길 때는 그 경로를 안 탄다 — 그러면 지도로 옮긴 카드만 남의 위에
+       * 얹힌다. 규칙은 "모든 카드 종류는 겹칠 수 없다"이지 "캔버스에서
+       * 끌었을 때만"이 아니다.
+       *
+       * 지도는 축소된 화면이라 손짓 몇 px이 월드에서는 수백 px이다. 그만큼
+       * 엉뚱한 자리에 놓이기 쉬우므로 여기서 정리해 주는 값이 더 크다.
+       */
+      const others: PushCandidate[] = [];
+      for (const [otherId, at] of positions) {
+        if (otherId === id) continue;
+        const sz = sizes.get(otherId);
+        if (!sz) continue;
+        others.push({ id: otherId, rect: { x: at.x, y: at.y, w: sz.w, h: sz.h } });
+      }
+      const 밀림 =
+        size && others.length
+          ? pushAway([{ x, y, w: size.w, h: size.h }], others, {
+              gap: settings.cardMinGap,
+              strength: settings.cardPushStrength,
+            })
+          : new Map();
+
       // 저장을 기다리지 않고 화면부터 옮긴다 — 손을 뗀 자리에 그대로 있어야
       // "내가 옮겼다"로 읽힌다.
-      setMoved((prev) => new Map(prev).set(id, { x, y }));
+      setMoved((prev) => {
+        const next = new Map(prev).set(id, { x, y });
+        for (const [pid, d] of 밀림) {
+          const at = positions.get(pid);
+          if (at) next.set(pid, { x: at.x + d.dx, y: at.y + d.dy });
+        }
+        return next;
+      });
       setSaveError(null);
-      void patchItems(mine.sessionId, [
+      const 저장 = [
         { id, patch: { x, y, pinned: true } },
-      ]).catch(() => {
+        ...[...밀림.entries()].flatMap(([pid, d]) => {
+          const at = positions.get(pid);
+          return at
+            ? [{ id: pid, patch: { x: at.x + d.dx, y: at.y + d.dy, pinned: true } }]
+            : [];
+        }),
+      ].filter((e) => isRealId(e.id));
+      void patchItems(mine.sessionId, 저장).catch(() => {
         // 되돌리지 않는다 — 되돌리면 학생이 옮긴 것이 소리 없이 사라진다.
         // 대신 저장이 안 됐다고 말한다.
         setSaveError("자리를 저장하지 못했어요. 잠시 뒤 다시 옮겨 보세요.");
       });
     },
-    [mine],
+    [mine, positions, settings.cardMinGap, settings.cardPushStrength, sizes],
   );
 
   return (

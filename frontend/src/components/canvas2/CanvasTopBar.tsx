@@ -87,6 +87,9 @@ export function CanvasTopBar({
         <button
           type="button"
           onClick={onFit}
+          // 글자가 배율(42%)이라 **접근 이름이 "42%"가 된다** — 낭독기로는
+          // 이 버튼이 무엇을 하는지 알 수 없다. 이름을 따로 준다.
+          aria-label="전체 보기"
           title="전체 보기"
           className="label px-1.5 py-1.5 tabular-nums transition-colors hover:bg-[var(--c-sunk)]"
           style={{ color: "var(--c-ink-soft)", minWidth: 46 }}

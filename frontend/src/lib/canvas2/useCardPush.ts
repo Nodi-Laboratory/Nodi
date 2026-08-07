@@ -73,8 +73,19 @@ export function useCardPush({
 
   /** 마지막으로 계산한 밀림. 손을 뗄 때 이것을 좌표로 확정한다. */
   const pushedRef = useRef<Map<string, Displacement>>(new Map());
-  /** 밀린 카드의 원래 자리 — 확정할 때 더할 기준이다. */
-  const baseRef = useRef<Map<string, Rect>>(new Map());
+  /**
+   * 이번 드래그의 카드 자리 — **한 번만 잰다.**
+   *
+   * 끄는 동안 다른 카드의 좌표는 바뀌지 않는다(밀림은 transform이고 좌표는
+   * 손을 뗄 때 확정된다). 그런데 매 프레임 `rectsOf()`를 부르면 카드 수만큼
+   * 객체를 새로 만들어 Map에 넣는 일이 초당 60번 돈다 — 계산보다 이쪽이
+   * 비쌌다.
+   */
+  const baseRef = useRef<Map<string, Rect> | null>(null);
+  /** 요소 조회 캐시. `querySelector`를 프레임마다 부르지 않는다. */
+  const elCacheRef = useRef<Map<string, HTMLElement | null>>(new Map());
+  /** transition을 이미 건 요소. 매 프레임 다시 쓰면 스타일 재계산이 돈다. */
+  const easedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     /** 화면에서 밀림을 걷어낸다. 손을 뗀 뒤·확정 뒤에 부른다. */
@@ -90,14 +101,30 @@ export function useCardPush({
       }
     };
 
+    /** 이번 드래그 동안만 유효한 요소 조회. */
+    const el = (id: string): HTMLElement | null => {
+      const cache = elCacheRef.current;
+      if (cache.has(id)) return cache.get(id) ?? null;
+      const found = elOf(id);
+      cache.set(id, found);
+      return found;
+    };
+
+    /** 드래그가 끝났다 — 이번 판의 캐시를 버린다. */
+    const endDrag = () => {
+      baseRef.current = null;
+      elCacheRef.current = new Map();
+      easedRef.current = new Set();
+    };
+
     const apply = (moving: ReadonlyMap<string, DragOffset>) => {
       const a = argsRef.current;
 
       // ── 손을 뗐다 ──────────────────────────────────────────────────
       if (!moving.size) {
         const pushed = pushedRef.current;
-        if (pushed.size) {
-          const base = baseRef.current;
+        const base = baseRef.current;
+        if (pushed.size && base) {
           const moves = [...pushed.entries()].flatMap(([id, d]) => {
             const b = base.get(id);
             return b ? [{ id, x: b.x + d.dx, y: b.y + d.dy }] : [];
@@ -108,21 +135,27 @@ export function useCardPush({
           clearMarks(true);
           if (moves.length) a.commit(moves);
         } else {
+          pushedRef.current = new Map();
           clearMarks(false);
         }
+        endDrag();
         return;
       }
 
       if (!a.enabled || a.strength <= 0) return;
 
       // ── 끄는 중 ───────────────────────────────────────────────────
-      const rects = a.rectsOf();
-      baseRef.current = rects;
+      // 자리는 **드래그 시작에 한 번만** 잰다(위 baseRef 주석).
+      let rects = baseRef.current;
+      if (!rects) {
+        rects = a.rectsOf();
+        baseRef.current = rects;
+      }
       const movingRects: Rect[] = [];
       const statics: PushCandidate[] = [];
       for (const [id, r] of rects) {
         const off = moving.get(id);
-        if (off) movingRects.push({ ...r, x: r.x + off.dx, y: r.y + off.dy });
+        if (off) movingRects.push({ x: r.x + off.dx, y: r.y + off.dy, w: r.w, h: r.h });
         else statics.push({ id, rect: r });
       }
       if (!movingRects.length || !statics.length) return;
@@ -137,18 +170,23 @@ export function useCardPush({
       // 자연스럽게 돌아와야 한다").
       for (const id of pushedRef.current.keys()) {
         if (next.has(id)) continue;
-        const el = elOf(id);
-        if (el) {
-          el.style.transform = "";
-          el.removeAttribute(MARK);
+        const node = el(id);
+        if (node) {
+          node.style.transform = "";
+          node.removeAttribute(MARK);
         }
       }
       for (const [id, d] of next) {
-        const el = elOf(id);
-        if (!el) continue;
-        el.style.transition = `transform ${a.speedMs}ms cubic-bezier(.22,1,.36,1)`;
-        el.style.transform = `translate(${d.dx}px, ${d.dy}px)`;
-        el.setAttribute(MARK, "1");
+        const node = el(id);
+        if (!node) continue;
+        // transition은 **처음 한 번만** 건다. 매 프레임 다시 쓰면 그때마다
+        // 스타일 재계산이 돌고, 값이 같아도 브라우저는 그걸 모른다.
+        if (!easedRef.current.has(id)) {
+          node.style.transition = `transform ${a.speedMs}ms cubic-bezier(.22,1,.36,1)`;
+          node.setAttribute(MARK, "1");
+          easedRef.current.add(id);
+        }
+        node.style.transform = `translate(${d.dx}px, ${d.dy}px)`;
       }
       pushedRef.current = next;
     };

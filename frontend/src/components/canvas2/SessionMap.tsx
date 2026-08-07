@@ -133,6 +133,16 @@ export function SessionMap({
   /** 방금 동작이 끌기였나. pointerup이 click보다 먼저 돌아 ref로는 못 본다. */
   const movedRef = useRef(false);
   /**
+   * 판을 끄는 동안 내용을 담는 그룹 — **여기만 민다.**
+   *
+   * 예전에는 pointermove마다 `setPan`을 불렀다. 그러면 매 프레임 트리를 다시
+   * 세우고(`buildTrees`) 간선을 다시 잇고 SVG 노드 전부를 다시 렌더한다 —
+   * 손보다 늦게 따라온다. 지도를 끄는 것은 **화면 좌표를 그대로
+   * 평행이동**하는 것과 같으므로 transform 하나로 정확히 같은 결과가 나온다
+   * (캔버스 팬이 쓰는 방법과 같다, D124). 손을 뗄 때 한 번만 state로 올린다.
+   */
+  const contentRef = useRef<SVGGElement>(null);
+  /**
    * 끄는 동안 보이는 자리는 **DOM을 직접 고쳐** 옮긴다.
    *
    * ref로 붙잡으면 안 된다 — 어느 노드가 잡혔는지는 렌더 중에 알 수 없고
@@ -147,6 +157,9 @@ export function SessionMap({
   const H = Math.max(200, box.h);
 
   const model = useMemo(() => {
+    // id → 아이템. 예전에는 노드마다 `items.find(...)`를 돌아 카드 수의
+    // 제곱이었다 — 150장이면 22,500번이고 그게 팬 프레임마다 돌았다.
+    const byId = new Map(items.map((i) => [i.id, i]));
     const rectOf = (id: string): Rect | null => {
       const p = positions.get(id);
       if (!p) return null;
@@ -197,7 +210,7 @@ export function SessionMap({
         const c = centerOf(id);
         const r = rectOf(id);
         if (!c || !r) return [];
-        const it = items.find((i) => i.id === id);
+        const it = byId.get(id);
         return [
           {
             id,
@@ -299,15 +312,27 @@ export function SessionMap({
     const dy = e.clientY - p.sy;
     if (!movedRef.current && Math.hypot(dx, dy) < DRAG_MIN) return;
     movedRef.current = true;
-    setPan({ x: p.cx - toWorld(dx), y: p.cy - toWorld(dy) });
+    // **React를 거치지 않는다** — 그룹 하나만 민다(위 contentRef 주석).
+    contentRef.current?.setAttribute("transform", `translate(${dx},${dy})`);
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
     const n = nodeRef.current;
+    const p = panRef.current;
     nodeRef.current = null;
     panRef.current = null;
     if (n && movedRef.current) {
       onMoveNode(n.id, n.x0 + toWorld(e.clientX - n.sx), n.y0 + toWorld(e.clientY - n.sy));
+      return;
+    }
+    // 끌어 옮긴 만큼을 **한 번만** state로 올린다. 올리는 순간 모델이 그
+    // 자리로 다시 그려지므로 임시 transform은 같은 프레임에 걷는다.
+    if (p && movedRef.current) {
+      contentRef.current?.removeAttribute("transform");
+      setPan({
+        x: p.cx - toWorld(e.clientX - p.sx),
+        y: p.cy - toWorld(e.clientY - p.sy),
+      });
     }
   };
 
@@ -358,6 +383,7 @@ export function SessionMap({
           ))}
         </defs>
 
+        <g ref={contentRef}>
         {nodeView ? (
           <>
             {model.edges.map((e) => (
@@ -459,6 +485,7 @@ export function SessionMap({
             </g>
           ))
         )}
+        </g>
       </svg>
 
       {/* 축척 — 상자 오른쪽 아래. 확대해야 낱개 노드가 보인다는 것을 글로도 알린다. */}
