@@ -489,6 +489,10 @@ CLIENT_KEYS = (
     "canvas_col_gap",
     "canvas_row_gap",
     "canvas_sib_gap",
+    # D207: 밀어내기는 브라우저에서 돈다(월드 좌표와 실측 크기가 거기 있다).
+    "card_min_gap",
+    "card_push_strength",
+    "card_push_speed_ms",
     # D178: 카드 선정·도식 렌더는 **브라우저에서** 돈다(월드 좌표와 실측 크기가
     # 거기 있다). 서버가 판정하는 값(ink_vlm_enabled·타임아웃·본문 길이)은
     # 내려보내지 않는다 — 프론트가 알 이유가 없다.

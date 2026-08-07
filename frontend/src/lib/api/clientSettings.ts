@@ -33,6 +33,12 @@ export interface ClientSettings {
   inkSceneMaxSide: number;
   /** 표시가 도판에 닿으면 확대본을 한 장 더 보낼지. */
   inkFigureZoomEnabled: boolean;
+  /** 두 카드 사이 최소 거리(world px) — D207. */
+  cardMinGap: number;
+  /** 밀려남의 강도(0~1.5). 1이면 딱 안 겹칠 만큼. */
+  cardPushStrength: number;
+  /** 비키고 되돌아오는 시간(ms). */
+  cardPushSpeedMs: number;
 }
 
 export const CLIENT_SETTINGS_FALLBACK: ClientSettings = {
@@ -49,6 +55,9 @@ export const CLIENT_SETTINGS_FALLBACK: ClientSettings = {
   inkBoxMaxScale: 2.5,
   inkSceneMaxSide: 1280,
   inkFigureZoomEnabled: true,
+  cardMinGap: 48,
+  cardPushStrength: 1,
+  cardPushSpeedMs: 160,
 };
 
 interface Row {
@@ -65,6 +74,9 @@ interface Row {
   ink_box_max_scale?: number;
   ink_scene_max_side?: number;
   ink_figure_zoom_enabled?: boolean;
+  card_min_gap?: number;
+  card_push_strength?: number;
+  card_push_speed_ms?: number;
 }
 
 /** snake_case 경계를 여기 한 곳에만 둔다(다른 api 모듈과 같은 규약). */
@@ -86,6 +98,14 @@ function toSettings(row: Row): ClientSettings {
     inkSceneMaxSide: row.ink_scene_max_side ?? f.inkSceneMaxSide,
     inkFigureZoomEnabled:
       row.ink_figure_zoom_enabled ?? f.inkFigureZoomEnabled,
+    cardMinGap: row.card_min_gap ?? f.cardMinGap,
+    // 관리자 콘솔은 **퍼센트**로 받는다(사람이 읽는 단위). 계산은 배율이므로
+    // 경계에서 한 번만 나눈다 — 안 그러면 100을 곱한 값이 밀어내기로 간다.
+    cardPushStrength:
+      row.card_push_strength === undefined
+        ? f.cardPushStrength
+        : row.card_push_strength / 100,
+    cardPushSpeedMs: row.card_push_speed_ms ?? f.cardPushSpeedMs,
   };
 }
 

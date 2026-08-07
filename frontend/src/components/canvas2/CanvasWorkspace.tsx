@@ -16,7 +16,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { Map, Undo2, X } from "lucide-react";
+// ⚠️ lucide의 `Map`을 그대로 들이면 **전역 `Map` 생성자를 가린다**
+// (`new Map<string, Rect>()`가 통째로 타입 오류가 된다). 이름을 바꾼다.
+import { Map as MapIcon, Undo2, X } from "lucide-react";
 import { getCanvas, putDrawing } from "@/lib/api/canvas";
 import { ApiError } from "@/lib/api/_core";
 import type { DrawingScene } from "@/lib/api/canvas";
@@ -37,7 +39,7 @@ import type { CanvasItem, ToolName } from "@/lib/canvas2/types";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import { spaceTargetFromId } from "@/lib/api";
 import { useSessionDetail } from "@/lib/queries";
-import { intersects, union } from "@/lib/canvas2/rect";
+import { intersects, union, type Rect } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
@@ -45,6 +47,7 @@ import { focusCamera } from "@/lib/canvas2/focusCamera";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
+import { useCardPush } from "@/lib/canvas2/useCardPush";
 import { descendants, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
 import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
 import { useQuestionCoach } from "@/lib/canvas2/useQuestionCoach";
@@ -654,6 +657,41 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * **여기서 한 번만 만든다.** 후보 목록과 자손 집합을 매 렌더에 계산하면
    * 아무도 안 끄는 동안에도 카드 수만큼 곱해진 일이 계속 돈다.
    */
+  /* ── 카드 밀어내기 (D207) ─────────────────────────────────────────── */
+
+  /**
+   * 지금 캔버스에 있는 모든 카드의 자리.
+   *
+   * **끌 때마다 새로 읽는다.** 값으로 들고 있으면 카드가 하나 늘 때마다
+   * 구독이 다시 걸리고, 드래그 도중에 그 일이 나면 밀림이 한 프레임 끊긴다.
+   */
+  const cardRects = useEventCallback(() => {
+    const out = new Map<string, Rect>();
+    for (const it of items) {
+      const p = layout.positions.get(it.id);
+      const sz = layout.sizes.get(it.id);
+      if (!p || !sz) continue;
+      out.set(it.id, { x: p.x, y: p.y, w: sz.w, h: sz.h });
+    }
+    return out;
+  });
+
+  const commitPush = useEventCallback(
+    (moves: readonly { id: string; x: number; y: number }[]) => {
+      // 밀려난 자리는 **학생이 정한 자리와 같은 자격**이다 — 배치 엔진이
+      // 다시 밀어내면 방금 비켜 준 것이 헛일이 된다(moveMany가 pinned로 쓴다).
+      store.moveMany(moves, "카드 비켜남");
+    },
+  );
+
+  useCardPush({
+    rectsOf: cardRects,
+    commit: commitPush,
+    gap: clientSettings.cardMinGap,
+    strength: clientSettings.cardPushStrength,
+    speedMs: clientSettings.cardPushSpeedMs,
+  });
+
   const beginEdit = useEventCallback((id: string): EditContext | null => {
     const at = layout.positions.get(id);
     const size = layout.sizes.get(id);
@@ -1926,7 +1964,7 @@ function MapDoor({ onOpen }: { onOpen: () => void }) {
         boxShadow: "var(--c-shadow-md)",
       }}
     >
-      <Map size={26} />
+      <MapIcon size={26} />
       <span className="label text-[10px]" style={{ color: "var(--c-ink-soft)" }}>
         지도
       </span>
