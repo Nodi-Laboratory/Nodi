@@ -57,6 +57,28 @@ interface WorkspaceState {
   returnTo: { sessionId: string; spaceId: string; itemId: string | null } | null;
   setReturnTo: (r: WorkspaceState["returnTo"]) => void;
 
+  /**
+   * 지도 화면이 그릴 **배치 사진** (D205).
+   *
+   * 지도를 별도 페이지로 떼면서 생긴 문제 하나: 배치(`useItemLayout`)는
+   * **실측 크기**에 의존한다. 카드가 화면에 그려져 ResizeObserver가 재야
+   * 높이·폭을 알고, 그 값이 열 안의 y 누적을 정한다. 지도 페이지에는 카드가
+   * 없으므로 거기서 다시 계산하면 **캔버스와 다른 지도**가 나온다 — 지도가
+   * 거짓말을 하는 셈이다.
+   *
+   * 그래서 캔버스가 계산한 결과를 그대로 넘긴다. 지도는 그리기만 한다.
+   * Map은 담지 않는다(불변 취급이 어렵다) — 배열로 넘기고 지도가 되만든다.
+   */
+  mapSnapshot: {
+    spaceId: string;
+    sessionId: string;
+    items: unknown[];
+    positions: [string, { x: number; y: number }][];
+    sizes: [string, { w: number; h: number }][];
+    tagOrder: string[];
+  } | null;
+  setMapSnapshot: (s: WorkspaceState["mapSnapshot"]) => void;
+
   reset: () => void;
 }
 
@@ -79,6 +101,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setPendingFocusItem: (id) => set({ pendingFocusItemId: id }),
   returnTo: null,
   setReturnTo: (r) => set({ returnTo: r }),
+  mapSnapshot: null,
+  setMapSnapshot: (m) => set({ mapSnapshot: m }),
   // pendingSession은 의도적으로 유지(홈에서 설정 후 워크스페이스 마운트 시 소비)
   reset: () =>
     set({

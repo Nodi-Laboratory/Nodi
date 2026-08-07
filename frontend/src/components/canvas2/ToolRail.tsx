@@ -214,7 +214,7 @@ export function ToolRail({ active, onSelect, setDrawStyle, paused = false }: Pro
         onClick={() => setOpen(true)}
         aria-label={`도구 펼치기 (지금: ${cur.label})`}
         title={`도구 펼치기 — 지금 ${cur.label}`}
-        className="ui absolute bottom-6 right-4 z-30 flex h-10 w-10 items-center justify-center rounded-xl border transition-colors"
+        className="ui absolute right-4 top-1/2 z-30 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-xl border transition-colors"
         style={{
           background: "var(--c-raised)",
           borderColor: "var(--c-rule)",
@@ -231,7 +231,7 @@ export function ToolRail({ active, onSelect, setDrawStyle, paused = false }: Pro
     // 오른쪽 **아래** — 사용자 지시. 하단 입력창은 가운데라 부딪히지 않는다.
     // 색 팔레트는 레일 **왼쪽**에 붙인다. 레일 안에 넣으면 세로로 더 길어져
     // 좁은 화면(교실 태블릿)에서 상단바까지 닿는다.
-    <div className="absolute bottom-6 right-4 z-30 flex items-end gap-2">
+    <div className="absolute right-4 top-1/2 z-30 flex -translate-y-1/2 items-center gap-2">
       {isColorableTool(active) && (
         <Palette
           colors={colors}

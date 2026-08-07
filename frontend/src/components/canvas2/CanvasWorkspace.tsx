@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { Undo2, X } from "lucide-react";
+import { Map, Undo2, X } from "lucide-react";
 import { getCanvas, putDrawing } from "@/lib/api/canvas";
 import { ApiError } from "@/lib/api/_core";
 import type { DrawingScene } from "@/lib/api/canvas";
@@ -74,7 +74,6 @@ import {
 import { interpretInk, ocrErrorMessage } from "@/lib/api";
 import { AskBar, type AskBarHandle } from "./AskBar";
 import { CanvasTopBar } from "./CanvasTopBar";
-import { Minimap } from "./Minimap";
 import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
 import { CrossLinkLayer } from "./CrossLinkLayer";
@@ -181,6 +180,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   // 교차 연결 이동 (D176) — 공간·세션을 함께 옮기고, 도착 후 초점을 맞춘다.
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
   const setReturnTo = useWorkspaceStore((s) => s.setReturnTo);
+  const setMapSnapshot = useWorkspaceStore((s) => s.setMapSnapshot);
   const returnTo = useWorkspaceStore((s) => s.returnTo);
   const pendingFocusItemId = useWorkspaceStore((s) => s.pendingFocusItemId);
   const setPendingFocusItem = useWorkspaceStore((s) => s.setPendingFocusItem);
@@ -1260,6 +1260,26 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 그려지든 OCR과 무관하다: 보내는 그림은 **점에서 다시 그린다**(흰 종이에
    * 검은 획). 그래서 색·굵기를 우리가 정할 이유가 없다.
    */
+  /**
+   * 지도 화면으로 나간다 (D205).
+   *
+   * 나가기 전에 **지금 배치를 스토어에 남긴다.** 배치는 실측 크기에
+   * 의존하는데(ResizeObserver) 지도 페이지에는 카드가 없다 — 거기서 다시
+   * 계산하면 캔버스와 다른 자리에 점이 찍힌다.
+   */
+  const openMap = useCallback(() => {
+    if (!sessionId) return;
+    setMapSnapshot({
+      spaceId,
+      sessionId,
+      items,
+      positions: [...layout.positions].map(([id, p]) => [id, { x: p.x, y: p.y }]),
+      sizes: [...layout.sizes].map(([id, sz]) => [id, { w: sz.w, h: sz.h }]),
+      tagOrder: [...layout.tagOrder],
+    });
+    router.push(`/space/${spaceId}/map`);
+  }, [items, layout.positions, layout.sizes, layout.tagOrder, router, sessionId, setMapSnapshot, spaceId]);
+
   const handleTool = useCallback(
     (tool: ToolName) => {
       setInkRecognized(false);
@@ -1499,18 +1519,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 않는다(그 이상은 글자가 뭉개진다). 작은 노드 하나를 눌러도 화면을
    * 가득 채운다.
    */
-  const handleMinimapFocus = useCallback(
-    (r: { x: number; y: number; w: number; h: number }) => {
-      const { w, h } = viewport();
-      const pad = 120;
-      const zoom = Math.min(
-        2.5,
-        Math.max(0.2, Math.min((w - pad) / Math.max(1, r.w), (h - pad) / Math.max(1, r.h))),
-      );
-      flyTo(cameraForRect(r, { w, h }, zoom));
-    },
-    [flyTo],
-  );
 
   /**
    * 도형을 끄는 동안 **함께 선택된 우리 글도 같이 옮긴다** (D120).
@@ -1734,16 +1742,11 @@ export function CanvasWorkspace({ spaceId }: Props) {
               );
             })()}
           {store.undo && <UndoToast label={store.undo.label} onUndo={store.undo.run} />}
-          <Minimap
-            items={items}
-            positions={layout.positions}
-            sizes={layout.sizes}
-            tagOrder={layout.tagOrder}
-            camera={bridge.camera}
-            viewport={vp}
-            pickedId={pickedId}
-            onFocus={handleMinimapFocus}
-          />
+          {/* 지도는 **자기 화면으로 나갔다** (D205). 여기 남은 것은 버튼뿐이고
+              크기를 두 배로 키웠다(사용자 지시 2026-08-07) — 캔버스 위의 크롬
+              중에 이것만 화면을 바꾸는 문이라 다른 아이콘과 같은 크기면
+              찾기 어렵다. */}
+          <MapDoor onOpen={openMap} />
           <div
             className="ui absolute left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
             // 펜 입력판이 펴진 만큼 비킨다 (D176) — 안 비키면 판 위에 겹쳐 뜬다.
@@ -1899,6 +1902,38 @@ function UndoToast({ label, onUndo }: { label: string; onUndo: () => void }) {
  * **화면 고정 UI다**(변환 평면 밖). 평면 안에 두면 카메라 초기 위치에 따라
  * 화면 밖으로 나가서, 정작 아무것도 없을 때 안내가 안 보인다.
  */
+/**
+ * 지도로 나가는 문 (D205).
+ *
+ * 미니맵이 있던 자리(오른쪽 위)를 그대로 쓴다 — 학생이 지도를 찾던 곳이다.
+ * 크기는 두 배(36 → 72px)다. 캔버스 위의 다른 아이콘들은 **이 화면 안에서**
+ * 무언가를 하지만 이것만 화면을 바꾼다. 같은 크기로 두면 그 차이가 안 보인다.
+ */
+function MapDoor({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      data-no-pan
+      onClick={onOpen}
+      aria-label="개념 지도 열기"
+      title="개념 지도"
+      className="ui absolute right-4 top-4 z-30 flex h-[72px] w-[72px] flex-col items-center
+                 justify-center gap-1 rounded-2xl border-2 transition-colors"
+      style={{
+        background: "var(--c-raised)",
+        borderColor: "var(--c-rule)",
+        color: "var(--c-live)",
+        boxShadow: "var(--c-shadow-md)",
+      }}
+    >
+      <Map size={26} />
+      <span className="label text-[10px]" style={{ color: "var(--c-ink-soft)" }}>
+        지도
+      </span>
+    </button>
+  );
+}
+
 function EmptyHint() {
   return (
     <div
