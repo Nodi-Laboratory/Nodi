@@ -72,11 +72,25 @@ def skills_for(
     names: list[str] = list(_CONCEPTS) if has_concepts else []
     if space_kind == "class":
         names += _CLASS_ONLY
-        names.append(_MEDIA_INTENT)
         if role in ("teacher", "admin"):
             names += _TEACHER_ONLY
     if has_session_files:
         names += _SESSION_FILES
     if len(names) >= _PLANNER_MIN_TOOLS:
         names.append(_PLANNER)
+    # 의도 판정은 **학급 밖에서도** 연다 (D211 11).
+    #
+    # 학급에만 노출했더니 개인 세션에서 "이미지만 추천해줘"가 평소 답으로
+    # 흘렀다 — 판정 자체가 없으니 갈래가 안 생긴다. 그런데 **학생이 쓰는 곳은
+    # 대개 개인 세션**이라, 기능이 있는데 없는 것처럼 보였다. 개인 세션에는
+    # 찾을 자료가 없지만 **그 사실을 말해 주는 것**이 조용히 평소 답을 내는
+    # 것보다 낫다(오케스트레이터가 그 말을 만든다).
+    #
+    # ⚠️ 다만 **빈 세션 규칙은 안 깬다** — 줄 도구가 하나도 없는 첫 턴에는
+    # 여기도 안 얹는다. 카탈로그가 비면 판단 단계 자체를 건너뛰므로 인사 한
+    # 마디에 LLM 왕복이 통째로 사라진다(위 `_PLANNER` 주석과 같은 근거).
+    # `_PLANNER` 판정 **뒤에** 얹는 이유도 같다: 이것 때문에 계획 도구가
+    # 딸려 나오면 도구 0개 세션에서 헛도는 그 낭비가 되살아난다.
+    if names:
+        names.append(_MEDIA_INTENT)
     return names

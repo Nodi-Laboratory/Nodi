@@ -97,6 +97,8 @@ class TurnOutcome:
     media_mode: str = ""
     # 학생이 말한 종류("figure"/"clip"). 비면 둘 다.
     media_kinds: list[str] = field(default_factory=list)
+    # 답 뒤에 덧붙일 안내 한 줄(D211 11). 찾을 곳이 없을 때만 채워진다.
+    media_note: str = ""
     # 요청 표현을 뺀 **주제어**. 검색어로 쓴다(D210 7-1) — 문장 그대로 쓰면
     # "추천해줘"가 임베딩을 끌고 가 거리 게이트를 넘긴다.
     media_topic: str = ""
@@ -154,6 +156,13 @@ _SKILL_KIND = {"search_textbook_figure": "figure", "search_lecture_clip": "clip"
 _MEDIA_WORDS = (
     "그림", "이미지", "사진", "도판", "도표", "그래프", "삽화",
     "영상", "동영상", "비디오", "강의", "클립", "유튜브",
+)
+
+#: 찾을 자료가 없는 곳(개인 대화방)용 밀어주기.
+_MEDIA_NUDGE_NO_SEARCH = (
+    "이 질문에는 그림·영상 얘기가 들어 있다. "
+    "`set_media_intent`를 **반드시 한 번 부르고** mode를 정하라. "
+    "이 대화방에는 검색 도구가 없으니 그 도구만 부르면 된다."
 )
 
 #: 밀어주기 문구. **무엇으로 정할지는 말하지 않는다** — 그건 모델의 일이다.
@@ -249,7 +258,19 @@ class Orchestrator:
         # 그림·영상 얘기가 나왔다 — 의도를 정하라고 한 줄 더 붙인다(위 설명).
         # 무엇으로 정할지는 말하지 않는다. 그건 모델의 일이다.
         if any(w in question for w in _MEDIA_WORDS):
-            messages.append({"role": "system", "content": _MEDIA_NUDGE})
+            # 찾을 도구가 없는 곳(개인 대화방)에서는 "검색 도구도 함께 불러라"가
+            # 거짓말이 된다 — 모델이 지시를 못 지키겠다고 보고 **아예 아무것도
+            # 안 부른다**(실측 2026-08-08: 도구 0건).
+            has_search = any(
+                name in {c.get("function", {}).get("name") for c in catalog}
+                for name, _ in _RECOMMEND_SKILLS
+            )
+            messages.append(
+                {
+                    "role": "system",
+                    "content": _MEDIA_NUDGE if has_search else _MEDIA_NUDGE_NO_SEARCH,
+                }
+            )
 
         if catalog:
             for step in range(max_steps):
@@ -379,10 +400,32 @@ class Orchestrator:
             )
             outcome.media_mode = ""
 
+        searchable = any(
+            name in {c.get("function", {}).get("name") for c in catalog}
+            for name, _ in _RECOMMEND_SKILLS
+        )
+        # ── 찾을 곳이 아예 없는 대화방 (D211 11) ─────────────────────
+        #
+        # 개인 대화방에는 선생님이 올린 교과서·강의가 없다. 여기서는 **모델의
+        # 판정이 결과를 바꾸지 않는다** — 자료만 달라고 했든 설명과 함께
+        # 달라고 했든, 우리가 할 수 있는 일은 "평소대로 답하고 왜 자료가
+        # 없는지 알려 주기" 하나뿐이다.
+        #
+        # 그래서 여기서는 모델에게 묻지 않는다. 실측 2026-08-08: 찾을 도구가
+        # 없는 카탈로그에서 모델은 `set_media_intent`를 **한 번도 안 불렀다**
+        # (도구 0건). 결과가 같은 갈래를 위해 모델 순응을 쫓는 것은 값만 든다.
+        #
+        # ⚠️ 설명을 **건너뛰지 않는다**. `only`가 생성을 건너뛰는 이유는 곁들일
+        # 자료가 실제로 붙기 때문인데, 여기서는 붙을 것이 없다 — 건너뛰면
+        # 학생에게 남는 것이 안내 한 줄뿐이다.
+        if not searchable and any(w in question for w in _MEDIA_WORDS):
+            outcome.media_mode = ""
+            outcome.media_note = self._recommend_note(outcome, searchable=False)
+
         if outcome.media_mode == "only":
             async for ev in self._recommend(ctx, outcome, question, catalog, force=True):
                 yield ev
-            note = self._recommend_note(outcome)
+            note = self._recommend_note(outcome, searchable=searchable)
             outcome.final_system = answer_system_prompt
             # 개념 카드 형식을 만들지 않는다 — `CHAT:` 한 줄이면 프론트가
             # 말풍선만 띄우고 카드를 안 만든다(파서는 그대로 쓴다).
@@ -440,6 +483,10 @@ class Orchestrator:
         if forced or solar.extract_used_tags([{"answer": answer}]):
             async for ev in self._recommend(ctx, outcome, question, catalog, force=forced):
                 yield ev
+
+        # 찾을 곳이 없다고 알린다 — 마지막 `CHAT:` 줄이 말풍선을 채운다.
+        if outcome.media_note:
+            yield ("token", "\n" + outcome.media_note)
 
         yield ("outcome", outcome)
 
@@ -510,14 +557,23 @@ class Orchestrator:
                     break
 
     @staticmethod
-    def _recommend_note(outcome: TurnOutcome) -> str:
+    def _recommend_note(outcome: TurnOutcome, *, searchable: bool = True) -> str:
         """자료만 추천한 턴의 한 줄 (D210 7-1).
 
         **빈손일 때 아무 말도 안 하면 안 된다.** 학생은 요청했는데 화면이
         그대로다 — 요청이 씹힌 것과 구분할 방법이 없다.
+
+        `searchable`이 거짓이면 **찾을 곳 자체가 없다**(개인 대화방에는 선생님이
+        올린 교과서·강의가 없다, D211 11). "없었어요"와 "여기서는 못 찾아요"는
+        학생에게 다른 말이다 — 앞은 다시 물어보게 하고 뒤는 자리를 옮기게 한다.
         """
         n_fig = len(outcome.figures)
         n_clip = len(outcome.clips)
+        if not searchable:
+            return (
+                "CHAT: 이 대화방에는 찾아볼 교과서·강의 자료가 없어요. "
+                "선생님이 자료를 올린 학급 대화방에서 물어봐 주세요."
+            )
         if not n_fig and not n_clip:
             return "CHAT: 찾아봤는데 관련된 그림이나 영상이 없었어요. 다른 말로 물어봐 주실래요?"
         parts = []

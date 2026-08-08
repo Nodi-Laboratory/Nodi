@@ -311,3 +311,76 @@ async def test_건졌으면_두_번_찾지_않는다(monkeypatch):
         history=[], tool_names=ALL, answer_system_prompt="BASE", max_steps=3,
     )
     assert len(_Clip.calls) == 1
+
+
+async def test_찾을_곳이_없으면_그렇게_말한다(monkeypatch):
+    """개인 대화방에는 선생님이 올린 교과서·강의가 없다 (D211 11).
+
+    학급에만 의도 판정을 열어 뒀더니 개인 세션에서 "이미지만 추천해줘"가
+    평소 답으로 흘렀다 — 학생이 쓰는 곳은 대개 개인 세션이라 **기능이 있는데
+    없는 것처럼** 보였다.
+
+    "못 찾았어요"와 "여기서는 못 찾아요"는 다른 말이다: 앞은 다시 물어보게
+    하고 뒤는 자리를 옮기게 한다.
+    """
+    _reset()
+    _patch(monkeypatch, [[_call("set_media_intent", '{"mode":"only","topic":"지진파"}')], None])
+    # 검색 도구가 하나도 없는 카탈로그(개인 세션).
+    outcome, text = await _drain(
+        Orchestrator(_registry()), ctx=_ctx(),
+        question="지진파 이미지만 추천해줘",
+        history=[], tool_names=["set_media_intent"],
+        answer_system_prompt="BASE", max_steps=3,
+    )
+    # **설명을 지우지 않는다** — 찾을 곳이 없는 곳에서 생성을 건너뛰면 학생에게
+    # 남는 것이 안내 한 줄뿐이다.
+    assert outcome.media_mode == ""
+    assert STREAMED == [True], "평소대로 설명해야 한다"
+    assert text.startswith(CARD), "답이 먼저 오고"
+    assert "학급" in text, f"어디로 가야 하는지 안 알려 준다: {text}"
+
+
+async def test_찾을_곳이_있으면_빈손_문구는_그대로(monkeypatch):
+    """둘을 헷갈리면 학급에서 못 찾은 학생이 엉뚱하게 자리를 옮긴다."""
+    _reset()
+    _Clip.hits = _Figure.hits = False
+    _patch(monkeypatch, [[_call("set_media_intent", '{"mode":"only"}')], None])
+    _outcome, text = await _drain(
+        Orchestrator(_registry()), ctx=_ctx(),
+        question="지진파 이미지만 추천해줘",
+        history=[], tool_names=ALL, answer_system_prompt="BASE", max_steps=3,
+    )
+    assert "학급" not in text
+    assert "없었" in text
+
+
+
+async def test_찾을_곳이_없으면_모델_판정을_안_기다린다(monkeypatch):
+    """결과가 같은 갈래를 위해 모델 순응을 쫓지 않는다 (D211 11).
+
+    실측 2026-08-08: 찾을 도구가 없는 카탈로그에서 모델은 `set_media_intent`를
+    **한 번도 안 불렀다**(도구 0건). 그런데 여기서는 판정이 결과를 안 바꾼다 —
+    자료만 달라고 했든 함께 달라고 했든 할 수 있는 일은 하나뿐이다.
+    """
+    _reset()
+    _patch(monkeypatch, [None])  # 모델이 아무 도구도 안 부른다
+    outcome, text = await _drain(
+        Orchestrator(_registry()), ctx=_ctx(),
+        question="지진파 이미지만 추천해줘",
+        history=[], tool_names=["set_media_intent"],
+        answer_system_prompt="BASE", max_steps=3,
+    )
+    assert "학급" in text, f"안내가 없다: {text}"
+    assert outcome.media_note
+
+
+async def test_그림_얘기가_없으면_안내도_없다(monkeypatch):
+    """평범한 질문에 "학급으로 가세요"가 붙으면 군더더기다."""
+    _reset()
+    _patch(monkeypatch, [None])
+    _outcome, text = await _drain(
+        Orchestrator(_registry()), ctx=_ctx(), question="지진파가 뭐야?",
+        history=[], tool_names=["set_media_intent"],
+        answer_system_prompt="BASE", max_steps=3,
+    )
+    assert "학급" not in text
