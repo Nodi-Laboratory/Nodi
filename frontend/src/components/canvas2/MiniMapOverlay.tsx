@@ -26,8 +26,13 @@ import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { cornerPos, nearestCorner, type Corner } from "@/lib/canvas2/cornerSnap";
 
-/** 미니맵 상자 크기(px). 캔버스를 가리지 않는 선. */
-const MINI = { w: 340, h: 260 };
+/**
+ * 미니맵 상자 크기(px). 캔버스를 가리지 않는 선.
+ *
+ * 340×260이었다. 0.8배로 줄였다(사용자 지시 2026-08-08) — 캔버스 위에 늘
+ * 떠 있는 것이라 작을수록 좋고, 자세히 볼 때는 팝업이 있다.
+ */
+const MINI = { w: 272, h: 208 };
 /** 팝업은 뷰포트의 이 비율까지만 — 뒤쪽 캔버스가 테두리처럼 보여야 한다. */
 const POPUP_RATIO = 0.78;
 const POPUP_MAX = { w: 1200, h: 800 };
@@ -37,7 +42,9 @@ const CORNER_KEY = "nodi.map.corner";
 function loadCorner(): Corner {
   if (typeof window === "undefined") return "br";
   const v = window.localStorage.getItem(CORNER_KEY);
-  return v === "tl" || v === "tr" || v === "bl" || v === "br" ? v : "br";
+  // 좌상단은 더 이상 허용하지 않는다(D211 9) — 예전에 거기 두었던 학생도
+  // 다음에 열면 오른쪽 아래에서 시작한다.
+  return v === "tr" || v === "bl" || v === "br" ? v : "br";
 }
 
 interface Props {
@@ -47,6 +54,8 @@ interface Props {
   tagOrder: readonly string[];
   open: boolean;
   onClose: () => void;
+  /** 붙은 모서리가 바뀌었다 — 도구바가 비켜설 수 있게 알린다 (D211 9). */
+  onCornerChange?: (corner: Corner) => void;
   onOpenNode: (itemId: string) => void;
   onMoveNode: (id: string, x: number, y: number) => void;
 }
@@ -60,6 +69,7 @@ export function MiniMapOverlay({
   onClose,
   onOpenNode,
   onMoveNode,
+  onCornerChange,
 }: Props) {
   /**
    * 첫 값을 **렌더에서 바로 읽는다** (게으른 초기값).
@@ -106,6 +116,16 @@ export function MiniMapOverlay({
 
   useEffect(() => () => obsRef.current?.disconnect(), []);
 
+  /**
+   * 열릴 때도 지금 모서리를 알린다 (D211 9).
+   *
+   * 끌어 옮길 때만 알리면, 저장된 자리가 우상단인 학생은 **열자마자 겹친
+   * 화면**을 본다 — 한 번 끌어야 비켜서는 셈이다.
+   */
+  useEffect(() => {
+    if (open) onCornerChange?.(corner);
+  }, [open, corner, onCornerChange]);
+
   /** 아직 못 쟀으면 교실 노트북 기본값 — 한 프레임뿐이고 그동안은 숨어 있다. */
   const vp = useMemo(() => frame ?? { w: 1440, h: 900 }, [frame]);
 
@@ -137,7 +157,22 @@ export function MiniMapOverlay({
       if (t.closest("button")) return;
       // 지도 안(노드)에서 시작한 것은 지도의 일이다.
       if (t.closest("[data-map-grab]") === null) return;
-      dragRef.current = { sx: e.clientX, sy: e.clientY, x: at.x, y: at.y };
+      /**
+       * 출발점은 **지금 화면에 있는 자리**다 (D211 8).
+       *
+       * state에서 계산한 `at`을 쓰면, 앞 드래그의 인라인 값이 남아 있거나
+       * 전이가 도는 중일 때 실제 자리와 어긋난다 — 잡는 순간 상자가 튄다.
+       */
+      const box = e.currentTarget as HTMLElement;
+      const host = box.offsetParent as HTMLElement | null;
+      const br = box.getBoundingClientRect();
+      const hr = host?.getBoundingClientRect();
+      dragRef.current = {
+        sx: e.clientX,
+        sy: e.clientY,
+        x: hr ? br.x - hr.x : at.x,
+        y: hr ? br.y - hr.y : at.y,
+      };
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     },
     [at.x, at.y],
@@ -163,14 +198,27 @@ export function MiniMapOverlay({
         vp,
         MINI,
       );
-      // 감속하며 붙는다. 자리는 state가 정하므로 인라인 값을 걷어낸다.
+      /**
+       * ⚠️ **인라인 좌표를 지우면 안 된다** (D211 8, 사용자 보고 2026-08-08).
+       *
+       * 지우면 React가 다시 그릴 때까지 `left/top`이 비어, 상자가 컨테이너
+       * 원점(좌상단)으로 튄다. 그리고 스냅 결과가 **지금 모서리와 같으면**
+       * `setCorner`가 같은 값이라 React가 아예 다시 그리지 않는다 — 그래서
+       * "우측 상단에 놓았는데 좌측 상단으로 갔다"가 됐고, 다음에 잡으면
+       * state의 자리로 돌아와 "아까 안 갔던 곳에 있다"가 됐다.
+       *
+       * 목표 좌표를 **직접 쓴다.** React의 인라인 값과 같아지므로 다시 그리든
+       * 안 그리든 자리가 같다.
+       */
+      const at2 = cornerPos(next, vp, MINI);
       el.style.transition = "";
-      el.style.left = "";
-      el.style.top = "";
+      el.style.left = `${at2.x}px`;
+      el.style.top = `${at2.y}px`;
       setCorner(next);
       window.localStorage.setItem(CORNER_KEY, next);
+      onCornerChange?.(next);
     },
-    [vp],
+    [vp, onCornerChange],
   );
 
   if (!open) return null;
@@ -186,7 +234,8 @@ export function MiniMapOverlay({
       positions={positions}
       sizes={sizes}
       tagOrder={tagOrder}
-      box={{ w: box.w, h: box.h - 34 }}
+      box={{ w: box.w, h: box.h - 30 }}
+      compact={box.w <= MINI.w}
       onOpen={onOpenNode}
       onMoveNode={onMoveNode}
     />
@@ -197,6 +246,8 @@ export function MiniMapOverlay({
       <div
         ref={attach}
         data-no-pan
+        // 도구바가 이 상자를 피해 비켜선다 (D211 9).
+        data-minimap
         className="canvas2 ui absolute z-30 overflow-hidden rounded-xl"
         style={{
           // 무대를 재기 전 한 프레임은 숨긴다 — 안 그러면 열자마자 옆으로 미끄러진다.
@@ -219,8 +270,13 @@ export function MiniMapOverlay({
         {/* 손잡이 — 여기서만 끌린다. 지도 안에서 끌면 지도가 움직여야 한다. */}
         <div
           data-map-grab
-          className="flex items-center justify-between px-2 py-1"
-          style={{ cursor: "grab", borderBottom: "1px solid var(--c-rule)" }}
+          className="flex items-center justify-between px-2"
+          style={{
+            paddingTop: 2,
+            paddingBottom: 2,
+            cursor: "grab",
+            borderBottom: "1px solid var(--c-rule)",
+          }}
         >
           <span className="label text-[11px]" style={{ color: "var(--c-ink-soft)" }}>
             지도

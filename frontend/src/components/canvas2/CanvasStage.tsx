@@ -66,6 +66,8 @@ const SELECTION_SETTLE_MS = 90;
 const GRAB_TOLERANCE_PX = 10;
 
 interface Props {
+  /** 미니맵이 붙어 있는 모서리 — 도구바가 비켜설지 정한다 (D211 9). */
+  mapCorner?: "tl" | "tr" | "bl" | "br" | null;
   bridge: Bridge;
   initialScene: DrawingScene | null;
   /** 씬이 도착한 시점을 나타내는 키. 바뀌면 그리기 레이어만 리마운트된다. */
@@ -150,6 +152,7 @@ export function CanvasStage({
   onToolSelect,
   chrome,
   children,
+  mapCorner = null,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -415,6 +418,7 @@ export function CanvasStage({
 
       {!viewOnly && (
         <ToolRail
+          mapCorner={mapCorner}
           paused={penWriting}
           active={activeTool}
           onSelect={onToolSelect ?? bridge.setTool}

@@ -12,7 +12,14 @@
 
 export type Corner = "tl" | "tr" | "bl" | "br";
 
-export const CORNERS: readonly Corner[] = ["tl", "tr", "bl", "br"];
+/**
+ * 붙을 수 있는 모서리 (D211 9, 사용자 지시 2026-08-08).
+ *
+ * **좌상단은 뺀다.** 거기에는 대화 목록·배율 버튼이 있어서 미니맵이 가려
+ * 버린다. 목록에서 빼는 것이 "갔다가 튕겨 나오게" 하는 것보다 낫다 —
+ * 갈 수 없는 자리를 보여 주면 학생이 거기로 끌어 보고 실패를 겪는다.
+ */
+export const CORNERS: readonly Corner[] = ["tr", "bl", "br"];
 
 export interface Viewport {
   w: number;

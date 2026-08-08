@@ -1394,6 +1394,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 쓰므로 둘이 갈라지지 않는다.
    */
   const [mapOpen, setMapOpen] = useState(false);
+  /**
+   * 미니맵이 붙은 모서리 — 도구바가 비켜설지 정한다 (D211 9).
+   *
+   * 처음 값은 미니맵이 읽어 알려 준다(저장된 자리가 있다). 여기서 다시 읽으면
+   * 두 곳이 같은 것을 저장하게 되고, 언젠가 갈린다.
+   */
+  const [mapCorner, setMapCorner] = useState<"tl" | "tr" | "bl" | "br" | null>(null);
   const openMap = useCallback(() => {
     // 페이지 쪽도 살아 있으므로 배치 사진은 계속 남긴다.
     if (sessionId) {
@@ -1840,6 +1847,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   return (
     <CanvasStage
+      // 미니맵이 같은 변에 붙으면 도구바가 비켜선다 (D211 9).
+      mapCorner={mapOpen ? mapCorner : null}
       bridge={bridge}
       sceneKey={sceneKey}
       initialCamera={INITIAL_CAMERA}
@@ -1914,7 +1923,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
               크기를 두 배로 키웠다(사용자 지시 2026-08-07) — 캔버스 위의 크롬
               중에 이것만 화면을 바꾸는 문이라 다른 아이콘과 같은 크기면
               찾기 어렵다. */}
-          <MapDoor onOpen={openMap} />
+          {/**
+           * 지도 버튼은 **미니맵이 떠 있으면 숨는다** (D211 9, 사용자 지시).
+           *
+           * 같은 것을 여는 버튼이 남아 있으면 닫는 버튼으로 오해된다 —
+           * 닫기는 미니맵 자신의 ✕가 맡는다.
+           */}
+          {!mapOpen && <MapDoor onOpen={openMap} />}
           <MiniMapOverlay
             items={items}
             positions={layout.positions}
@@ -1924,6 +1939,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
             onClose={() => setMapOpen(false)}
             onOpenNode={openFromMap}
             onMoveNode={moveFromMap}
+            onCornerChange={setMapCorner}
           />
           <div
             className="ui absolute left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2"

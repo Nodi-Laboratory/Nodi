@@ -1,7 +1,7 @@
 /** 모서리 스냅 (D210 5-1). */
 
 import { describe, expect, it } from "vitest";
-import { cornerPos, nearestCorner, SNAP_MARGIN } from "./cornerSnap";
+import { CORNERS, cornerPos, nearestCorner, SNAP_MARGIN } from "./cornerSnap";
 
 const VP = { w: 1440, h: 900 };
 const BOX = { w: 340, h: 250 };
@@ -28,10 +28,19 @@ describe("모서리 자리", () => {
 });
 
 describe("가장 가까운 모서리", () => {
-  it("각 모서리에 둔 것은 그 모서리로 돌아간다", () => {
-    for (const c of ["tl", "tr", "bl", "br"] as const) {
+  it("붙을 수 있는 모서리에 둔 것은 그 모서리로 돌아간다", () => {
+    for (const c of CORNERS) {
       expect(nearestCorner(cornerPos(c, VP, BOX), VP, BOX)).toBe(c);
     }
+  });
+
+  it("좌상단은 후보에서 빠졌다 (D211 9)", () => {
+    /**
+     * 거기에는 대화 목록·배율 버튼이 있어 미니맵이 가려 버린다. 좌상단 자리에
+     * 놓아도 **다른 모서리**로 간다 — 갈 수 없는 자리는 애초에 목록에 없다.
+     */
+    expect(CORNERS).not.toContain("tl");
+    expect(nearestCorner(cornerPos("tl", VP, BOX), VP, BOX)).not.toBe("tl");
   });
 
   it("왼쪽 가장자리 한가운데는 **왼쪽** 모서리로 간다", () => {
@@ -41,7 +50,7 @@ describe("가장 가까운 모서리", () => {
      * 재면 왼쪽 둘 중 하나가 나온다.
      */
     const 왼쪽중앙 = { x: SNAP_MARGIN, y: (VP.h - BOX.h) / 2 };
-    expect(nearestCorner(왼쪽중앙, VP, BOX)).toMatch(/^(tl|bl)$/);
+    expect(nearestCorner(왼쪽중앙, VP, BOX)).toBe("bl");
   });
 
   it("오른쪽 아래로 끌면 br", () => {

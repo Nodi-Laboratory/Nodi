@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { useEffect } from "react";
 import type { DrawStyle, ToolName } from "@/lib/canvas2/types";
+import { useRailAvoid } from "@/lib/canvas2/useRailAvoid";
 import { isColorableTool } from "@/lib/canvas2/types";
 import { useCollapsible, useStickyChoice } from "@/lib/canvas2/useCollapsible";
 
@@ -123,6 +124,11 @@ const HIGHLIGHT_STYLE = { opacity: 40, strokeWidth: 6, roughness: 0 } as const;
 const PEN_STYLE = { opacity: 100, strokeWidth: 2, roughness: 1 } as const;
 
 interface Props {
+  /**
+   * 미니맵이 붙어 있는 모서리(닫혀 있으면 null) — 같은 변을 쓰면 비켜선다
+   * (D211 9).
+   */
+  mapCorner?: "tl" | "tr" | "bl" | "br" | null;
   active: ToolName;
   onSelect: (tool: ToolName) => void;
   /** 다음에 그릴 것의 색·굵기·투명도를 정한다 (D150). */
@@ -136,7 +142,9 @@ interface Props {
   paused?: boolean;
 }
 
-export function ToolRail({ active, onSelect, setDrawStyle, paused = false }: Props) {
+export function ToolRail({
+  mapCorner = null, active, onSelect, setDrawStyle, paused = false }: Props) {
+  const [avoidRef, avoidShift] = useRailAvoid(mapCorner);
   const pen = useStickyChoice(
     "pen.color",
     PEN_COLORS.map((c) => c.value),
@@ -248,7 +256,22 @@ export function ToolRail({ active, onSelect, setDrawStyle, paused = false }: Pro
     // 오른쪽 **아래** — 사용자 지시. 하단 입력창은 가운데라 부딪히지 않는다.
     // 색 팔레트는 레일 **왼쪽**에 붙인다. 레일 안에 넣으면 세로로 더 길어져
     // 좁은 화면(교실 태블릿)에서 상단바까지 닿는다.
-    <div className="c2-rail-in absolute right-4 top-1/2 z-30 flex -translate-y-1/2 items-center gap-2">
+    <div
+      ref={avoidRef}
+      className="c2-rail-in absolute right-4 top-1/2 z-30 flex -translate-y-1/2 items-center gap-2"
+      /**
+       * 미니맵이 같은 변에 붙으면 겹친 만큼만 비켜선다 (D211 9).
+       *
+       * `margin-top`으로 민다 — `transform`은 등장 애니메이션(`c2-rail-in`)과
+       * Tailwind의 세로 가운데 맞춤이 이미 쓰고 있어서, 거기 얹으면 셋이
+       * 겹쳐 엉킨다(D210 5-3에서 실제로 도구바가 화면 위로 올라갔다).
+       * 버튼 사이 간격은 안 건드리므로 **밀려도 배열은 그대로**다.
+       */
+      style={{
+        marginTop: avoidShift,
+        transition: "margin-top .34s cubic-bezier(.22,.9,.24,1)",
+      }}
+    >
       {isColorableTool(active) && (
         <Palette
           colors={colors}
