@@ -52,6 +52,7 @@ import { useCardPush } from "@/lib/canvas2/useCardPush";
 import { usePortLink } from "@/lib/canvas2/usePortLink";
 import { descendants, groupSizes, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
 import { slowMove } from "@/lib/canvas2/moveEase";
+import { dropSpots as dropSpotsAt, type Rect as DropRect } from "@/lib/canvas2/dropSpot";
 import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
 import { useQuestionCoach } from "@/lib/canvas2/useQuestionCoach";
 import { CoachBubble } from "./CoachBubble";
@@ -474,16 +475,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
   // `send`의 신원이 바뀐다.
   const getItems = useEventCallback(() => store.items);
 
-  const stream = useCanvasStream({
-    sessionId,
-    getItems,
-    onSessionGone: dropSession,
-    upsertLocal,
-    onPersisted,
-    nextSeq,
-    hasFigure,
-    hasClip,
-  });
 
   // --- 배치 ------------------------------------------------------------------
 
@@ -514,6 +505,37 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const groupSize = useMemo(() => groupSizes(layoutSources), [layoutSources]);
 
   const layout = useItemLayout(sessionId, layoutSources, bridge.getObstacles);
+
+  /**
+   * 딸릴 카드가 없을 때 자료를 놓을 자리 (D210 7-1 C).
+   *
+   * 좌표와 크기는 **배치 엔진이 소유한다** — 스트림은 모른다. 그래서 여기서
+   * 지금 화면 가운데를 월드 좌표로 풀고 배치가 아는 상자들을 넘긴다.
+   */
+  const dropSpots = useEventCallback((count: number) => {
+    const root = document.querySelector(".canvas2");
+    const box = root?.getBoundingClientRect() ?? new DOMRect(0, 0, 1440, 900);
+    const center = bridge.toWorld(box.width / 2, box.height / 2, box);
+    const rects: DropRect[] = [];
+    for (const [id, at] of layout.positions) {
+      const sz = layout.sizes.get(id);
+      if (sz) rects.push({ x: at.x, y: at.y, w: sz.w, h: sz.h });
+    }
+    return dropSpotsAt(center, count, { w: 320, h: 240 }, rects);
+  });
+
+  const stream = useCanvasStream({
+    sessionId,
+    getItems,
+    onSessionGone: dropSession,
+    upsertLocal,
+    onPersisted,
+    nextSeq,
+    hasFigure,
+    hasClip,
+    // 배치가 정한 좌표를 읽는다 — 그래서 이 호출이 배치 아래에 있다.
+    dropSpots,
+  });
 
   // 그림을 그린 직후 배치를 다시 돌린다 — 새 선이 장애물이 됐을 수 있다.
   const { invalidate } = layout;

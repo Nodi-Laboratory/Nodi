@@ -49,6 +49,14 @@ _DECIDE_SYSTEM = """너는 중·고등학생을 가르치는 교사 보조 시�
 - 개념을 설명해 달라는 질문이면 자료 검색과 **함께** 강의 영상·교과서 도판 도구도 부른다
   (목록에 보일 때만 있다). 학생 화면에 곁들여 뜨는 것이라 답을 방해하지 않는다.
 - 검색 결과가 질문의 일부만 덮으면, 부족한 부분을 다른 검색어로 다시 찾아라.
+- 학생의 말에 **그림·이미지·사진·영상·동영상·강의** 같은 낱말이 있으면
+  `set_media_intent`를 **반드시** 부른다. 검색 도구만 부르고 이걸 빠뜨리면
+  학생이 무엇을 원했는지가 시스템에 전달되지 않는다.
+  · "…같이 설명해줘" · "설명하면서 보여줘"      → mode=with_answer
+  · "…만 추천해줘" · "추천해줘" · "보여줘" · "볼 수 있는 거 있어?"
+    처럼 **설명을 요구하지 않으면**                → mode=only
+  검색 도구도 함께 부른다 — 이 도구는 검색을 하지 않는다.
+  그림·영상 얘기가 없는 평범한 질문에는 부르지 마라.
 - 도구를 부르지 않기로 했다면 아주 짧게 한 마디만 하고 끝낸다(이 텍스트는 학생에게 보이지 않는다).
 """
 
@@ -82,6 +90,17 @@ class TurnOutcome:
     skill_traces: list[dict[str, Any]] = field(default_factory=list)
     # D113: LLM 호출별 실측 usage — `[{stage, model, prompt, completion, ...}]`.
     llm_calls: list[dict[str, Any]] = field(default_factory=list)
+    # D210 7-1: 학생이 그림·영상을 콕 집어 요청했는가.
+    #   ""            평범한 질문 — 지금까지와 같다
+    #   "with_answer" 설명 + 곁들이 (반드시)
+    #   "only"        설명 없이 자료만 — **생성 단계를 건너뛴다**
+    media_mode: str = ""
+    # 학생이 말한 종류("figure"/"clip"). 비면 둘 다.
+    media_kinds: list[str] = field(default_factory=list)
+    # 요청 표현을 뺀 **주제어**. 검색어로 쓴다(D210 7-1) — 문장 그대로 쓰면
+    # "추천해줘"가 임베딩을 끌고 가 거리 게이트를 넘긴다.
+    media_topic: str = ""
+
 
 
 # 전용 렌더가 이미 담는 키 — 일반 렌더에서 중복으로 싣지 않는다.
@@ -93,7 +112,10 @@ _HANDLED_KEYS = frozenset({"sources", "figures", "captions", "chunks", "clips"})
 # "방금 도구로 확인한 실제 데이터"라는 문구와 함께 자기 추측이 되돌아온다 —
 # 모델이 자기 계획을 검증된 사실로 취급하게 만드는 셈이다. 계획은 판단 단계의
 # 대화 이력(tool_result)에만 남기면 충분하다.
-_NOT_EVIDENCE = frozenset({"think"})
+#
+# `set_media_intent`도 조회한 사실이 아니라 모델의 선언이다(D210 7-1). 근거
+# 블록에 실으면 "학생이 이미지를 원한다"가 설명의 근거인 양 답에 섞인다.
+_NOT_EVIDENCE = frozenset({"think", "set_media_intent"})
 
 # 화면에 **곁들여 띄우는** 것들 (D163). 답을 바꾸지 않고 옆에 붙기만 한다.
 # `(스킬 이름, 이미 건졌는가)` — 건진 게 없으면 모델이 불렀더라도 다시 부른다.
@@ -101,6 +123,48 @@ _RECOMMEND_SKILLS: tuple[tuple[str, str], ...] = (
     ("search_textbook_figure", "figures"),
     ("search_lecture_clip", "clips"),
 )
+#: 스킬이 찾는 것의 종류. 학생이 "영상"만 말했을 때 도판을 빼는 데 쓴다.
+_SKILL_KIND = {"search_textbook_figure": "figure", "search_lecture_clip": "clip"}
+
+#: 그림·영상 낱말 (D210 7-1). **두 곳에서 쓴다 — 둘 다 판정은 안 한다.**
+#:
+#:   1) 밀어주기 — 이 낱말이 있으면 판단 단계에 "의도를 정하라"고 한 줄 더 붙인다.
+#:   2) 거부권   — 이 낱말이 없으면 `only` 선언을 되돌린다.
+#:
+#: 의도 판정(설명과 같이냐 자료만이냐)은 **여전히 모델이 한다.** 한국어 표현이
+#: 다양해서 낱말로는 못 가른다("영상 좀 보여줘"가 A인지 B인지는 문맥이다).
+#: 낱말이 하는 일은 "그림·영상 얘기가 나왔나" 하나뿐이고, 그건 셀 수 있다.
+#:
+#: 밀어주기가 왜 필요한가 — 도구가 늘면 이 지시가 묻힌다. 실측(2026-08-08):
+#: 도구 4개짜리 목록으로는 7/7이었는데 **실제 학급 목록(7개)에서는 10/14**로
+#: 떨어졌고, 진짜 턴에서도 "지진파 영상만 추천해줘"에 의도를 안 불렀다.
+#: 좁은 목록으로 재면 실제와 다른 숫자가 나온다.
+#:
+#: `mode="only"`의 **거부권**에 쓰는 낱말들 (D210 7-1).
+#:
+#: 의도 판정 자체는 모델이 한다 — 한국어 표현이 다양해서 문자열 매칭으로는
+#: 못 가른다("영상 좀 보여줘"·"그림으로 볼 수 있을까"). 하지만 `only`는
+#: **설명을 통째로 없애는** 판정이라 헛발이 제일 비싸다: 실측(2026-08-08)에서
+#: 모델이 "고마워!"에 only를 선언했다. 인사 턴에 검색이 나가고("인사에는
+#: 임베딩이 아예 나가지 않아야 한다") 답이 "찾은 것이 없어요"가 된다.
+#:
+#: 그래서 낱말은 **고르는 데 안 쓰고 되돌리는 데만 쓴다.** 학생이 그림·영상을
+#: 입에 담지도 않았으면 only는 성립할 수 없다. `with_answer`에는 거부권을 걸지
+#: 않는다 — 헛발이어도 곁들이가 하나 더 뜰 뿐이다.
+_MEDIA_WORDS = (
+    "그림", "이미지", "사진", "도판", "도표", "그래프", "삽화",
+    "영상", "동영상", "비디오", "강의", "클립", "유튜브",
+)
+
+#: 밀어주기 문구. **무엇으로 정할지는 말하지 않는다** — 그건 모델의 일이다.
+_MEDIA_NUDGE = (
+    "이 질문에는 그림·영상 얘기가 들어 있다. "
+    "`set_media_intent`를 **반드시 한 번 부르고** mode를 정하라 — "
+    "설명도 원하면 with_answer, 자료만 원하면 only다. "
+    "`topic`에는 요청 표현을 뺀 **주제어만** 적어라('지진파 영상만 추천해줘' → '지진파'). "
+    "검색 도구도 함께 부른다."
+)
+
 # 일반 렌더 1건의 길이 상한. 스킬이 큰 목록을 돌려줘도 프롬프트가 폭주하지 않게.
 _GENERIC_MAX_CHARS = 4000
 
@@ -181,6 +245,11 @@ class Orchestrator:
             if a:
                 messages.append({"role": "assistant", "content": a[:500]})
         messages.append({"role": "user", "content": question})
+
+        # 그림·영상 얘기가 나왔다 — 의도를 정하라고 한 줄 더 붙인다(위 설명).
+        # 무엇으로 정할지는 말하지 않는다. 그건 모델의 일이다.
+        if any(w in question for w in _MEDIA_WORDS):
+            messages.append({"role": "system", "content": _MEDIA_NUDGE})
 
         if catalog:
             for step in range(max_steps):
@@ -275,6 +344,11 @@ class Orchestrator:
                         }
                     )
                     self._collect(outcome, name, result)
+                    if name == "set_media_intent" and result.ok:
+                        outcome.media_mode = str((result.data or {}).get("mode") or "")
+                        kinds = (result.data or {}).get("kinds") or []
+                        outcome.media_kinds = [str(k) for k in kinds]
+                        outcome.media_topic = str((result.data or {}).get("topic") or "")
 
                     yield (
                         "sse",
@@ -292,6 +366,29 @@ class Orchestrator:
                     )
             else:
                 logger.info("ReAct 스텝 상한(%d) 도달 — 생성 단계로 넘어간다", max_steps)
+
+        # ── 자료만 추천하는 턴 ───────────────────────────────────────
+        #
+        # D210 7-1 B·C. 학생이 "이미지만 추천해줘"라고 했다. 설명을 안 쓰므로
+        # **생성 단계를 통째로 건너뛴다** — 이 갈래가 빠른 이유가 그것이다.
+        # 개념 카드가 없는 턴이라 아래 곁들이 보장(개념 카드 유무로 판정)에는
+        # 안 걸리므로, 여기서 직접 부른다.
+        if outcome.media_mode == "only" and not any(w in question for w in _MEDIA_WORDS):
+            logger.info(
+                "only 선언을 되돌린다 — 질문에 그림·영상 얘기가 없다: %r", question[:60]
+            )
+            outcome.media_mode = ""
+
+        if outcome.media_mode == "only":
+            async for ev in self._recommend(ctx, outcome, question, catalog, force=True):
+                yield ev
+            note = self._recommend_note(outcome)
+            outcome.final_system = answer_system_prompt
+            # 개념 카드 형식을 만들지 않는다 — `CHAT:` 한 줄이면 프론트가
+            # 말풍선만 띄우고 카드를 안 만든다(파서는 그대로 쓴다).
+            yield ("token", note)
+            yield ("outcome", outcome)
+            return
 
         # ── 생성 단계 ────────────────────────────────────────────────
         # 도구로 모은 것을 근거 블록으로 붙인다. tools는 주지 않는다.
@@ -336,31 +433,62 @@ class Orchestrator:
         # 판정은 이미 있는 파서를 그대로 쓴다 — 개념 카드 형식을 읽는 네 번째
         # 구현을 만들면 반드시 어긋난다(CLAUDE.md).
         answer = "".join(answer_parts)
+        #
+        # 학생이 **콕 집어 요청했으면**(with_answer) 개념 카드 유무와 무관하게
+        # 반드시 곁들인다 — 요청했는데 안 뜨는 것은 고장으로 읽힌다(D210 7-1 A).
+        forced = outcome.media_mode == "with_answer"
+        if forced or solar.extract_used_tags([{"answer": answer}]):
+            async for ev in self._recommend(ctx, outcome, question, catalog, force=forced):
+                yield ev
+
+        yield ("outcome", outcome)
+
+    async def _recommend(
+        self,
+        ctx: SkillContext,
+        outcome: TurnOutcome,
+        question: str,
+        catalog: list[dict[str, Any]],
+        *,
+        force: bool = False,
+    ) -> AsyncIterator[tuple[str, Any]]:
+        """곁들이 검색을 대신 부른다 (D163 · D210 7-1).
+
+        `force`는 **학생이 콕 집어 요청했을 때**다. 평소에는 모델이 같은
+        검색어로 이미 해 봤으면 다시 안 하지만, 요청받은 턴에서는 한 번 더
+        해 본다 — 모델이 다듬은 검색어로 빈손이어도 원문으로는 걸리는 일이
+        실제로 있다(D163 실측).
+        """
         catalog_names = {c.get("function", {}).get("name") for c in catalog}
-        if solar.extract_used_tags([{"answer": answer}]):
-            for name, bucket in _RECOMMEND_SKILLS:
-                if name not in catalog_names or getattr(outcome, bucket):
+        want = set(outcome.media_kinds)
+        #: 주제어가 있으면 그것으로 찾는다 — 없으면 지금까지처럼 질문 원문이다.
+        #: 빈손이면 원문으로 한 번 더 해 본다(D135·D163과 같은 태도: 다듬은
+        #: 검색어가 빈손이어도 원문으로는 걸리는 일이 있다).
+        queries = [outcome.media_topic, question] if outcome.media_topic else [question]
+        for name, bucket in _RECOMMEND_SKILLS:
+            if name not in catalog_names or getattr(outcome, bucket):
+                continue
+            # 학생이 종류를 콕 집었으면 그것만 찾는다 — "영상 추천해줘"에
+            # 도판이 딸려 오면 묻지 않은 것을 준 셈이다.
+            if want and _SKILL_KIND[name] not in want:
+                continue
+            tried = {
+                (t.get("args") or {}).get("query")
+                for t in outcome.skill_traces
+                if t.get("skill") == name
+            }
+            for q in queries:
+                if q in tried and not force:
                     continue
-                # 모델이 **같은 검색어로** 이미 해 봤으면 다시 하지 않는다.
-                # 다른 검색어였다면 한 번 더 해 본다 — 실측(2026-08-03)에서
-                # 모델이 "측정 표준이 왜 필요해?"를 "측정 표준의 필요성"으로
-                # 다듬어 부르는 바람에 0건이었는데, 원문으로는 걸렸다.
-                tried = {
-                    (t.get("args") or {}).get("query")
-                    for t in outcome.skill_traces
-                    if t.get("skill") == name
-                }
-                if question in tried:
-                    continue
-                yield ("sse", _sse("tool_call", {"name": name, "args": {"query": question}}))
+                yield ("sse", _sse("tool_call", {"name": name, "args": {"query": q}}))
                 started = time.perf_counter()
-                result = await self.registry.dispatch(name, {"query": question}, ctx)
+                result = await self.registry.dispatch(name, {"query": q}, ctx)
                 outcome.used_skills.append(name)
                 outcome.skill_traces.append(
                     {
                         "skill": name,
-                        "step": -1,          # 모델이 아니라 시스템이 부른 호출
-                        "args": {"query": question},
+                        "step": -1,      # 모델이 아니라 시스템이 부른 호출
+                        "args": {"query": q},
                         "ok": result.ok,
                         "message": result.message,
                         "error_code": result.error_code,
@@ -377,8 +505,27 @@ class Orchestrator:
                         {"name": name, "ok": result.ok, "message": result.message},
                     ),
                 )
+                # 건졌으면 여기서 멈춘다 — 같은 것을 두 번 찾을 이유가 없다.
+                if getattr(outcome, bucket):
+                    break
 
-        yield ("outcome", outcome)
+    @staticmethod
+    def _recommend_note(outcome: TurnOutcome) -> str:
+        """자료만 추천한 턴의 한 줄 (D210 7-1).
+
+        **빈손일 때 아무 말도 안 하면 안 된다.** 학생은 요청했는데 화면이
+        그대로다 — 요청이 씹힌 것과 구분할 방법이 없다.
+        """
+        n_fig = len(outcome.figures)
+        n_clip = len(outcome.clips)
+        if not n_fig and not n_clip:
+            return "CHAT: 찾아봤는데 관련된 그림이나 영상이 없었어요. 다른 말로 물어봐 주실래요?"
+        parts = []
+        if n_fig:
+            parts.append(f"교과서 그림 {n_fig}개")
+        if n_clip:
+            parts.append(f"강의 영상 {n_clip}개")
+        return f"CHAT: {'와 '.join(parts)}를 찾아 옆에 놓아 둘게요."
 
     @staticmethod
     def _collect(outcome: TurnOutcome, name: str, result: Any) -> None:

@@ -21,6 +21,11 @@ from __future__ import annotations
 # 실제로 데이터를 가져오는 도구 — 스코프가 결정한다.
 _CLASS_ONLY = ["search_class_material", "search_textbook_figure", "search_lecture_clip"]
 
+# 추천 의도 선언 (D210 7-1). **곁들이 검색이 있는 곳에서만** 뜻이 있다 —
+# 개인 세션에는 도판·클립 도구가 없으므로 의도를 선언해 봐야 찾을 것이 없다.
+_MEDIA_INTENT = "set_media_intent"
+
+
 # 이 세션에서 만든 개념 조회 — 어디서나 가능하지만 **카드가 있을 때만** 넣는다.
 # 첫 질문(카드 0장)에 노출하면 모델이 부르고 빈 목록을 받는다. think가 도구
 # 0개인 세션에서 헛돌던 것과 같은 낭비다(2026-07-28 실측).
@@ -48,7 +53,7 @@ _PLANNER_MIN_TOOLS = 2
 # 오타 하나로 스킬이 **조용히 사라지는** 것을 막는다(레지스트리는 모르는 이름을
 # 그냥 건너뛴다).
 ALL_DECLARED: frozenset[str] = frozenset(
-    [*_CLASS_ONLY, *_CONCEPTS, *_TEACHER_ONLY, *_SESSION_FILES, _PLANNER]
+    [*_CLASS_ONLY, *_CONCEPTS, *_TEACHER_ONLY, *_SESSION_FILES, _PLANNER, _MEDIA_INTENT]
 )
 
 
@@ -67,6 +72,7 @@ def skills_for(
     names: list[str] = list(_CONCEPTS) if has_concepts else []
     if space_kind == "class":
         names += _CLASS_ONLY
+        names.append(_MEDIA_INTENT)
         if role in ("teacher", "admin"):
             names += _TEACHER_ONLY
     if has_session_files:

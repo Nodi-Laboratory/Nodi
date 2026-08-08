@@ -132,6 +132,13 @@ interface Deps {
   hasClip: (clipId: string) => boolean;
   /** 세션이 서버에서 사라졌다(404). 호출부가 다시 고르게 한다 (D153). */
   onSessionGone: () => void;
+  /**
+   * 지금 보고 있는 자리 근처의 **빈 자리** n개 (D210 7-1 C).
+   *
+   * "이미지만 추천해줘"인데 고른 카드도 없으면 곁들이가 붙을 데가 없다.
+   * 좌표와 크기는 배치 엔진이 소유하므로(스트림은 모른다) 호출부가 준다.
+   */
+  dropSpots: (count: number) => { x: number; y: number }[];
 }
 
 /**
@@ -203,6 +210,7 @@ export function useCanvasStream({
   nextSeq,
   hasFigure,
   hasClip,
+  dropSpots,
   onSessionGone,
 }: Deps): CanvasStreamApi {
   // D174: 글자 속도·한 턴 카드 수는 관리자가 정한다.
@@ -444,7 +452,28 @@ export function useCanvasStream({
                * 부모를 주면 배치가 카드 오른쪽에 붙인다(layout 3)). 태그도
                * 물려받는다 — 카드가 지워졌을 때 같은 열로 떨어지라고.
                */
-              const host = made.find((m) => m.kind === "concept");
+              /**
+               * 개념 카드가 없는 턴도 있다 (D210 7-1 B·C) — "이미지만 추천해줘".
+               * 그때는 학생이 **고른 카드**에 딸린다(B). 고른 것도 없으면(C)
+               * 화면 가운데의 빈 자리를 받는다.
+               */
+              const 고른것 = opts?.pickedId
+                ? (getItems().find((i) => i.id === opts.pickedId) ?? null)
+                : null;
+              const host = made.find((m) => m.kind === "concept") ?? 고른것 ?? undefined;
+              /**
+               * 자리는 **미리** 다 받아 둔다. 하나씩 요청하면 앞서 만든 것이
+               * 아직 배치에 안 들어가 같은 칸이 두 번 나온다.
+               */
+              const 놓을수 = host ? 0 : (d.figures?.length ?? 0) + (d.clips?.length ?? 0);
+              const 빈자리 = 놓을수 ? dropSpots(놓을수) : [];
+              let 자리번호 = 0;
+              /** 딸릴 데가 없으면 좌표를 직접 준다 — `pinned`라 배치가 안 끌어간다. */
+              const 자리 = () => {
+                if (host) return { x: 0, y: 0, pinned: false };
+                const at = 빈자리[자리번호++] ?? { x: 0, y: 0 };
+                return { x: at.x, y: at.y, pinned: true };
+              };
               // 교과서 도판(D86~D95) — 서버가 done에 실어 보낸다. url은 signed라
               // 만료되므로 **저장하지 않는다**(D87). figureId만 남기고 화면에서
               // 필요할 때 재발급한다.
@@ -467,9 +496,7 @@ export function useCanvasStream({
                   title: null,
                   body: "",
                   tag: host?.tag ?? null,
-                  x: 0,
-                  y: 0,
-                  pinned: false,
+                  ...자리(),
                   seq: baseSeq + made.length,
                   data: {
                     askedQuestion,
@@ -502,9 +529,7 @@ export function useCanvasStream({
                   title: null,
                   body: "",
                   tag: host?.tag ?? null,
-                  x: 0,
-                  y: 0,
-                  pinned: false,
+                  ...자리(),
                   seq: baseSeq + made.length,
                   data: {
                     ...(askedQuestion ? { askedQuestion } : {}),
@@ -674,7 +699,7 @@ export function useCanvasStream({
     },
     [
       sessionId, busy, getItems, upsertLocal, onPersisted, nextSeq,
-      hasFigure, hasClip, onSessionGone,
+      hasFigure, hasClip, onSessionGone, dropSpots,
       // D174: 관리자가 바꾸면 다음 턴부터 새 값으로 돈다.
       charsPerFrame, cardsPerTurn,
     ],
