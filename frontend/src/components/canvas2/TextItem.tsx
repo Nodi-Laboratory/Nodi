@@ -36,6 +36,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";
 import { widestLineWidth } from "@/lib/canvas2/measureWidth";
+import { followerEls } from "@/lib/canvas2/followers";
 import { PortHandles, type PortDragStart } from "./PortHandles";
 // 좌우 패딩은 hover 박스와 같은 값이다 — 연결선도 이 상자를 쓴다(D126).
 import { PAD_X } from "@/lib/canvas2/connector";
@@ -390,6 +391,19 @@ function TextItemImpl(props: TextItemProps) {
         el.style.transition = "none";
         el.style.transform = shift;
       }
+      /**
+       * 딸린 것도 같이 간다 (D211 6) — 도판·클립·코치 말풍선.
+       *
+       * 상자만 가고 붙어 있던 것이 남으면 관계가 끊겨 보인다. 연결선을
+       * 따라가게 만든 것과 같은 이유이고, **같은 목록**(`followerEls`)을
+       * 밀어내기도 쓴다.
+       */
+      for (const el of followerEls(
+        new Set(peers.map((e) => e.getAttribute("data-canvas-item") ?? "")),
+      )) {
+        el.style.transition = "none";
+        el.style.transform = shift;
+      }
       // 연결선도 같이 움직여야 한다 — 상자만 가고 선이 남으면 관계가 끊겨
       // 보인다(사용자 지적). 역시 React를 거치지 않는다.
       setDragOffsets(
@@ -417,6 +431,13 @@ function TextItemImpl(props: TextItemProps) {
       if (!d) return;
 
       const peers = peerEls(d.group, rootRef.current);
+      // 딸린 것들의 임시 이동을 걷는다 — React가 낸 새 좌표가 곧 온다.
+      for (const el of followerEls(
+        new Set(peers.map((e) => e.getAttribute("data-canvas-item") ?? "")),
+      )) {
+        el.style.transition = "";
+        el.style.transform = "";
+      }
       // 연결선은 이제 React가 낸 최종 좌표를 쓴다.
       clearDragOffsets();
       clearLiveLink();

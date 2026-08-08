@@ -29,6 +29,8 @@ const GAP = 18;
 
 export interface CoachBubbleProps {
   advice: CoachAdvice;
+  /** 붙어 있는 카드 id — 그 카드가 움직이면 함께 간다 (D211 6). */
+  cardId: string;
   /** 붙을 카드의 월드 좌표와 폭. */
   x: number;
   y: number;
@@ -36,10 +38,17 @@ export interface CoachBubbleProps {
   onDismiss: () => void;
 }
 
-export function CoachBubble({ advice, x, y, width, onDismiss }: CoachBubbleProps) {
+export function CoachBubble({ advice, cardId, x, y, width, onDismiss }: CoachBubbleProps) {
   return (
     <div
       data-coach-bubble
+      /**
+       * 주인 카드가 움직이면 함께 간다 (D211 6).
+       *
+       * 자리는 React state로 그리므로 드래그·밀어내기 중에는 갱신되지 않는다 —
+       * 표식만 달아 두면 미는 쪽이 DOM으로 같이 밀어 준다.
+       */
+      data-follows={cardId}
       className="absolute rounded-xl border px-3 py-2.5 shadow-lg"
       style={{
         left: x + width + GAP,

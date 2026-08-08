@@ -2002,6 +2002,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
       {coach.card && coach.box && (
         <CoachBubble
           advice={coach.card.data.coach!.advice!}
+          cardId={coach.card.id}
           x={coach.box.x}
           y={coach.box.y}
           width={coach.box.w}

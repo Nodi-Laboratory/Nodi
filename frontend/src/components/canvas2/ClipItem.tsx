@@ -90,6 +90,8 @@ export function ClipItem({
     <div
       ref={setNode}
       data-canvas-item={item.id}
+      // 주인 카드가 움직이면 함께 간다 (D211 6).
+      data-follows={item.parentItemId ?? undefined}
       data-canvas-clip={clip.clipId}
       data-selected={selected ? "1" : undefined}
       className="absolute flex flex-col rounded-lg border p-2.5"
