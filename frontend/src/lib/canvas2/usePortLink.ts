@@ -33,6 +33,25 @@ export interface PortLinkResult {
   begin: (start: PortDragStart, e: React.PointerEvent) => void;
 }
 
+/**
+ * 미리보기 선의 색.
+ *
+ * ⚠️ **`var(--c-live)`를 그대로 쓰면 안 된다.** 그 토큰은 `.canvas2` 안에서만
+ * 정의돼 있는데 이 SVG는 `document.body`에 붙는다 — 변수가 안 풀려 `stroke`가
+ * 무효가 되고, 브라우저는 그것을 `none`으로 계산한다. 선은 **그려지는데 색이
+ * 없어서 안 보인다**(실측 2026-08-08: `d`는 있고 `stroke: none`).
+ *
+ * 학생 눈에는 "끌어도 아무 일이 없다"였고, 그래서 **기능이 없다고 보고됐다.**
+ * 무대에서 값을 읽어 진짜 색으로 박는다.
+ */
+function liveColor(): string {
+  const stage = document.querySelector(".canvas2");
+  const v = stage
+    ? getComputedStyle(stage).getPropertyValue("--c-live").trim()
+    : "";
+  return v || "#789e18";
+}
+
 /** 미리보기 선을 담을 SVG. 필요할 때 만들고 끝나면 지운다. */
 function ensureGhost(): SVGPathElement {
   let svg = document.querySelector<SVGSVGElement>("[data-port-ghost]");
@@ -49,8 +68,9 @@ function ensureGhost(): SVGPathElement {
     } satisfies Partial<CSSStyleDeclaration>);
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("fill", "none");
-    path.setAttribute("stroke", "var(--c-live)");
-    path.setAttribute("stroke-width", "2.4");
+    path.setAttribute("stroke", liveColor());
+    // 축소 배율에서도 눈에 들어와야 한다 — 화면 좌표로 그리므로 고정값이다.
+    path.setAttribute("stroke-width", "3");
     path.setAttribute("stroke-linecap", "round");
     path.setAttribute("stroke-dasharray", "8 6");
     svg.appendChild(path);

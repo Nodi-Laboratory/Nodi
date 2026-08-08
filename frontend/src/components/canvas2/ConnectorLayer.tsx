@@ -375,7 +375,15 @@ export function ConnectorLayer({ items, positions, sizes, onCut }: Props) {
         // 노드마다 ref를 다는 대신 조회한다. ref 콜백을 렌더에서 만들면
         // 그 안의 `ref.current` 접근이 렌더 중 접근으로 잡힌다.
         const g0 = svg.querySelector<SVGGElement>(`[data-link="${CSS.escape(l.id)}"]`);
-        const path = g0?.querySelector("path");
+        /**
+         * ⚠️ **`querySelector("path")`는 히트 선을 집는다** (실측 2026-08-08).
+         *
+         * D211 3에서 손이 닿는 투명 선을 그룹 **맨 앞에** 넣었다. 그 뒤로
+         * 여기서 집히는 것이 그 투명 선이라, 끄는 동안 **보이는 선은 한 번도
+         * 갱신되지 않았다** — 카드만 가고 선은 제자리에 남았다(사용자 보고).
+         * 히트 선은 아래에서 따로 옮긴다.
+         */
+        const path = g0?.querySelector<SVGPathElement>("path:not([data-link-hit])");
         if (!g0 || !path) continue;
         // 앞 드래그에서 숨겨 뒀으면 되살린다 — 안 그러면 선이 영영 안 보인다.
         if (g0.style.display === "none") g0.style.display = "";

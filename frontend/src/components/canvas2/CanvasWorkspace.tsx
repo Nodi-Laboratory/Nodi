@@ -95,6 +95,9 @@ interface Props {
 
 const FALLBACK_H = 180;
 
+/** 스스로 사라지는 안내가 머무는 시간(ms) — 사용자 지시 2026-08-08. */
+const FLASH_MS = 5000;
+
 /**
  * 새 답이 생겼을 때의 배율 **상한** (D162, 사용자 지시: 235%).
  *
@@ -242,6 +245,30 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
+  /**
+   * 잠깐 띄웠다 **스스로 사라지는** 안내 (사용자 지시 2026-08-08).
+   *
+   * 끌어 잇기가 빗나갔을 때의 안내는 그 순간에만 쓸모가 있다. 남겨 두면
+   * 학생이 다음에 무엇을 해도 그 문구가 화면에 붙어 있어 고장처럼 보인다.
+   * 오류(그리기 실패·OCR 실패)는 그대로 둔다 — 그건 학생이 읽고 조치해야
+   * 하는 것이라 스스로 사라지면 안 된다.
+   */
+  const flashTimer = useRef<number | null>(null);
+  const flashError = useEventCallback((msg: string) => {
+    setDrawError(msg);
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => {
+      flashTimer.current = null;
+      // 그 사이에 다른 안내가 떴으면 그것을 지우지 않는다.
+      setDrawError((cur) => (cur === msg ? null : cur));
+    }, FLASH_MS);
+  });
+  useEffect(
+    () => () => {
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    },
+    [],
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   /** 가지 한가운데를 떼어내려는 중 — 아래를 어떻게 할지 묻는다 (D156). */
@@ -859,7 +886,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
      * 조용히 끝나면 "연결 드래그가 안 된다"와 구분이 안 된다 — 실제로 그렇게
      * 보고됐다. 이미 있는 안내 자리를 쓴다(새 창을 띄우지 않는다).
      */
-    onNothing: (reason) => setDrawError(reason),
+    onNothing: (reason) => flashError(reason),
   });
 
   const onEditEnd = useEventCallback((r: EditResult) => {

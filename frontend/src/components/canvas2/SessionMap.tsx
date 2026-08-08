@@ -162,8 +162,19 @@ export function SessionMap({
   const nodeElAt = (id: string) =>
     document.querySelector<SVGGElement>(`[data-map-node="${CSS.escape(id)}"]`);
 
-  const W = Math.max(200, box.w);
-  const H = Math.max(200, box.h);
+  /**
+   * ⚠️ **하한이 미니맵을 넘치게 했다** (실측 2026-08-08).
+   *
+   * 200px 하한은 페이지·팝업에서 "너무 납작한 지도"를 막으려던 것인데,
+   * 미니맵의 지도 자리는 176px이라 그 하한이 이겨 상자가 **24px 넘쳤다.**
+   * 미니맵은 `overflow: hidden`이라 넘친 만큼이 잘렸고, 하필 그 자리에
+   * 배율 버튼이 있어 "테두리에 잘린다"로 보고됐다.
+   *
+   * 좁은 상자에서는 하한을 낮춘다 — 준 자리를 넘지 않는 것이 먼저다.
+   */
+  const FLOOR = compact ? 110 : 200;
+  const W = Math.max(FLOOR, box.w);
+  const H = Math.max(FLOOR, box.h);
 
   const model = useMemo(() => {
     // id → 아이템. 예전에는 노드마다 `items.find(...)`를 돌아 카드 수의
@@ -497,11 +508,20 @@ export function SessionMap({
         </g>
       </svg>
 
-      {/* 축척 — 상자 오른쪽 아래. 확대해야 낱개 노드가 보인다는 것을 글로도 알린다. */}
+      {/**
+       * 축척 — 상자 오른쪽 아래. 확대해야 낱개 노드가 보인다는 것을 글로도 알린다.
+       *
+       * ⚠️ 미니맵에서는 **더 띄워야 한다**(사용자 보고 2026-08-08: "테두리에
+       * 잘린다"). 미니맵의 테두리가 3px이고 지도 상자 자체가 작아 `bottom-3`
+       * 으로는 버튼이 테두리에 물린다. 좁은 상자에서만 여백을 키운다 — 팝업·
+       * 페이지에서 괜히 떠 있으면 그것도 어색하다.
+       */}
       <div
         data-no-pan
-        className="ui absolute bottom-3 right-3 flex items-center gap-1 rounded-lg border px-1 py-1"
+        className="ui absolute flex items-center gap-1 rounded-lg border px-1 py-1"
         style={{
+          right: compact ? 10 : 12,
+          bottom: compact ? 12 : 12,
           background: "var(--c-raised)",
           borderColor: "var(--c-rule)",
           boxShadow: "var(--c-shadow-sm)",
