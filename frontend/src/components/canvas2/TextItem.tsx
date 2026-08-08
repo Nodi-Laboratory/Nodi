@@ -632,7 +632,17 @@ function TextItemImpl(props: TextItemProps) {
            * 늘어나기만 한다.
            */
           maxW={() => {
-            const body = rootRef.current?.querySelector<HTMLElement>("[data-writing], [data-body]");
+            /**
+             * ⚠️ **`[data-writing]`을 재면 안 된다** (실측 2026-08-08).
+             *
+             * 그 표식은 **스트리밍 중에만** 붙는다(`ItemBody`). 글이 다 써진
+             * 카드에는 없으니 조회가 빈손이 되고, 그러면 상한이 조용히
+             * `ITEM_W`로 떨어져 **3-2가 아무 일도 안 한 것처럼 보인다.**
+             * 학생이 겪는 것은 "손잡이를 끌어도 560에서 멈춘다"이다.
+             *
+             * 본문 상자에는 언제나 `data-item-text`가 있다.
+             */
+            const body = rootRef.current?.querySelector<HTMLElement>("[data-item-text]");
             const 글폭 = widestLineWidth(body ?? null);
             return 글폭 ? 글폭 + PAD_X * 2 : 0;
           }}

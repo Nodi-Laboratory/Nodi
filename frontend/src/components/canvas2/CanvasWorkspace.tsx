@@ -1990,7 +1990,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
         items={store.items}
         positions={layout.positions}
         sizes={layout.sizes}
-        tagOrder={layout.tagOrder}
         tagOptions={store.tagOptions}
         groupSize={groupSize}
         cardEdit={bridge.activeTool === "cardedit"}

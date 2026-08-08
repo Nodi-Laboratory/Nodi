@@ -382,8 +382,7 @@ export function InkLabTab() {
               items={items}
               positions={layout.positions}
               sizes={layout.sizes}
-              tagOrder={layout.tagOrder}
-              // 실험실은 태그를 안 쓴다 — 빈 판이면 새 분류 만들기가 잠긴다.
+                    // 실험실은 태그를 안 쓴다 — 빈 판이면 새 분류 만들기가 잠긴다.
               groupSize={EMPTY_GROUPS}
               tagOptions={layout.tagOrder}
               zoom={bridge.camera.zoom}
