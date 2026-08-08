@@ -252,8 +252,27 @@ function TextItemImpl(props: TextItemProps) {
     el.style.transform = "";
     void el.offsetHeight; // 강제 리플로우 — transition:none을 이 프레임에 확정
     el.style.transition = prev;
+
+    /**
+     * 딸린 것과 연결선도 **여기서** 놓는다 (사용자 보고 2026-08-08).
+     *
+     * 손을 뗀 자리(`finishDrag`)에서 놓으면 안 된다. 그 순간에는 React가 아직
+     * 새 좌표를 안 냈으므로, 이동량을 걷는 즉시 연결선이 **옛 자리로 한 프레임
+     * 돌아갔다가** 새 자리로 뛴다 — "놓을 때 연결선이 과거 위치에서 깜빡거린다"가
+     * 그것이다.
+     *
+     * 이 함수는 새 좌표가 도착한 프레임에 불린다(`useLayoutEffect [x, y]`).
+     * 아이템의 transform을 여기서 걷는 이유와 **똑같은 이유**다.
+     */
+    for (const fel of followerEls(new Set([item.id]))) {
+      fel.style.transition = "none";
+      fel.style.transform = "";
+      void fel.offsetHeight;
+      fel.style.transition = "";
+    }
+    clearDragOffsets();
     setDragging(false);
-  }, []);
+  }, [item.id]);
 
   // 새 좌표가 도착한 프레임에 정리한다(페인트 전이라 중간 상태가 안 보인다).
   useLayoutEffect(() => {
@@ -428,15 +447,13 @@ function TextItemImpl(props: TextItemProps) {
       if (!d) return;
 
       const peers = peerEls(d.group, rootRef.current);
-      // 딸린 것들의 임시 이동을 걷는다 — React가 낸 새 좌표가 곧 온다.
-      for (const el of followerEls(
-        new Set(peers.map((e) => e.getAttribute("data-canvas-item") ?? "")),
-      )) {
-        el.style.transition = "";
-        el.style.transform = "";
-      }
-      // 연결선은 이제 React가 낸 최종 좌표를 쓴다.
-      clearDragOffsets();
+      /**
+       * ⚠️ **여기서 이동량을 걷지 않는다** (사용자 보고 2026-08-08).
+       *
+       * 이 순간 React는 아직 새 좌표를 안 냈다. 걷으면 연결선과 딸린 것이
+       * 옛 자리로 한 프레임 돌아갔다가 새 자리로 뛴다 — 깜빡임의 정체다.
+       * 새 좌표가 도착한 프레임에 `settle()`이 함께 놓는다.
+       */
       clearLiveLink();
       if (!d.moved) {
         // 움직이지 않은 클릭. 선택은 pointerdown에서 이미 정해졌고, 남은 경우는

@@ -25,6 +25,8 @@ import { SessionMap } from "./SessionMap";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { cornerPos, nearestCorner, type Corner } from "@/lib/canvas2/cornerSnap";
+import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
+import { scaled } from "@/lib/ui/scale";
 
 /**
  * 미니맵 상자 크기(px). 캔버스를 가리지 않는 선.
@@ -32,7 +34,7 @@ import { cornerPos, nearestCorner, type Corner } from "@/lib/canvas2/cornerSnap"
  * 340×260이었다. 0.8배로 줄였다(사용자 지시 2026-08-08) — 캔버스 위에 늘
  * 떠 있는 것이라 작을수록 좋고, 자세히 볼 때는 팝업이 있다.
  */
-const MINI = { w: 272, h: 208 };
+const MINI = { w: scaled(272), h: scaled(208) };
 /** 팝업은 뷰포트의 이 비율까지만 — 뒤쪽 캔버스가 테두리처럼 보여야 한다. */
 const POPUP_RATIO = 0.78;
 const POPUP_MAX = { w: 1200, h: 800 };
@@ -78,6 +80,7 @@ export function MiniMapOverlay({
    * `open`이 거짓이라 아무것도 안 나온다. 그러니 hydration이 어긋날 자리가
    * 없고, 이펙트에서 setState를 부를 이유도 없다(React Compiler가 막는다).
    */
+  const chrome = useChromeFitValue();
   const [corner, setCorner] = useState<Corner>(loadCorner);
   const [big, setBig] = useState(false);
   /**
@@ -252,6 +255,9 @@ export function MiniMapOverlay({
         style={{
           // 무대를 재기 전 한 프레임은 숨긴다 — 안 그러면 열자마자 옆으로 미끄러진다.
           visibility: frame ? "visible" : "hidden",
+          // 도구바가 나란히 설 자리를 내준다 (사용자 지시 2026-08-08).
+          // 0이면 아무 일도 안 일어난다 — 평소 화면은 그대로다.
+          transform: chrome.mapDx ? `translateX(${-chrome.mapDx}px)` : undefined,
           left: at.x,
           top: at.y,
           width: MINI.w,

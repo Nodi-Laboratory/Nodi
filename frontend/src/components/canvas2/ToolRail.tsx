@@ -29,7 +29,9 @@ import {
 } from "lucide-react";
 import { useEffect } from "react";
 import type { DrawStyle, ToolName } from "@/lib/canvas2/types";
-import { useRailAvoid } from "@/lib/canvas2/useRailAvoid";
+import { useChromeFit } from "@/lib/canvas2/useChromeFit";
+import { SNAP_MARGIN } from "@/lib/canvas2/cornerSnap";
+import { scaled } from "@/lib/ui/scale";
 import { isColorableTool } from "@/lib/canvas2/types";
 import { useCollapsible, useStickyChoice } from "@/lib/canvas2/useCollapsible";
 
@@ -144,7 +146,7 @@ interface Props {
 
 export function ToolRail({
   mapCorner = null, active, onSelect, setDrawStyle, paused = false }: Props) {
-  const [avoidRef, avoidShift] = useRailAvoid(mapCorner);
+  const [fitRef, fit] = useChromeFit(mapCorner);
   const pen = useStickyChoice(
     "pen.color",
     PEN_COLORS.map((c) => c.value),
@@ -257,20 +259,44 @@ export function ToolRail({
     // 색 팔레트는 레일 **왼쪽**에 붙인다. 레일 안에 넣으면 세로로 더 길어져
     // 좁은 화면(교실 태블릿)에서 상단바까지 닿는다.
     <div
-      ref={avoidRef}
-      className="c2-rail-in absolute right-4 top-1/2 z-30 flex -translate-y-1/2 items-center gap-2"
+      ref={fitRef}
+      data-rail-mode={fit.railMode}
+      className="c2-rail-in absolute right-4 z-30 flex items-center gap-2"
       /**
-       * 미니맵이 같은 변에 붙으면 겹친 만큼만 비켜선다 (D211 9).
+       * 미니맵과 같은 변을 쓸 때의 자리 (사용자 지시 2026-08-08).
        *
-       * `margin-top`으로 민다 — `transform`은 등장 애니메이션(`c2-rail-in`)과
-       * Tailwind의 세로 가운데 맞춤이 이미 쓰고 있어서, 거기 얹으면 셋이
-       * 겹쳐 엉킨다(D210 5-3에서 실제로 도구바가 화면 위로 올라갔다).
-       * 버튼 사이 간격은 안 건드리므로 **밀려도 배열은 그대로**다.
+       *   center  평소 — 세로 가운데. 겹치면 `railShift`만큼 비켜선다.
+       *   top/bottom  밀 자리가 없다 — 지도와 **나란히** 서고 지도가 왼쪽으로
+       *               물러난다(규칙은 `lib/canvas2/chromeFit.ts`).
+       *
+       * `margin-top`으로 미는 이유: `transform`은 등장 애니메이션(`c2-rail-in`)이
+       * 이미 쓰고, 세로 가운데는 Tailwind의 `translate` 속성이 쓴다 — 거기 얹으면
+       * 셋이 엉킨다(D210 5-3에서 실제로 도구바가 화면 위로 올라갔다).
+       * 버튼 사이 간격은 어느 자리에서도 안 건드린다.
        */
-      style={{
-        marginTop: avoidShift,
-        transition: "margin-top .34s cubic-bezier(.22,.9,.24,1)",
-      }}
+      style={
+        fit.railMode === "center"
+          ? {
+              // 화면보다 길면 안쪽 열이 굴러야 한다 — 그러려면 상한이 **여기**
+              // 있어야 한다(부모가 무대라 퍼센트가 풀린다). 안쪽에만 두면
+              // 부모 높이가 auto라 퍼센트가 정의되지 않아 아무 일도 안 난다.
+              maxHeight: `calc(100% - ${SNAP_MARGIN * 2}px)`,
+              top: "50%",
+              translate: "0 -50%",
+              marginTop: fit.railShift,
+              transition:
+                "margin-top .34s cubic-bezier(.22,.9,.24,1), top .34s cubic-bezier(.22,.9,.24,1)",
+            }
+          : {
+              maxHeight: `calc(100% - ${SNAP_MARGIN * 2}px)`,
+              top: fit.railMode === "top" ? SNAP_MARGIN : undefined,
+              bottom: fit.railMode === "bottom" ? SNAP_MARGIN : undefined,
+              translate: "0 0",
+              marginTop: 0,
+              transition:
+                "margin-top .34s cubic-bezier(.22,.9,.24,1), top .34s cubic-bezier(.22,.9,.24,1)",
+            }
+      }
     >
       {isColorableTool(active) && (
         <Palette
@@ -282,8 +308,21 @@ export function ToolRail({
       )}
       <div
         data-no-pan
+        /**
+         * 화면보다 길어지면 **잘리지 말고 스크롤한다** (사용자 지시 2026-08-08의
+         * 140% 배율에서 실제로 그랬다: 620px 화면에서 막대가 699px이라 위쪽이
+         * -95px로 잘렸다).
+         *
+         * 버튼을 줄이거나 간격을 좁히는 길도 있지만, 그러면 "밀려난 버튼 위치는
+         * 그대로"라는 약속이 깨진다. 자리는 그대로 두고 넘치는 만큼만 굴린다.
+         */
         className="ui flex flex-col gap-1 rounded-xl border p-1.5"
         style={{
+          // 바깥 막대가 정해 준 높이 안에서 굴린다. `min-height: 0`이 없으면
+          // flex 자식은 내용만큼 늘어나 max-height를 무시한다.
+          maxHeight: "100%",
+          minHeight: 0,
+          overflowY: "auto",
           background: "var(--c-raised)",
           borderColor: "var(--c-rule)",
           boxShadow: "var(--c-shadow-md)",
@@ -314,7 +353,7 @@ export function ToolRail({
               // 학생의 손(그리기·글쓰기)은 주황, 선택/이동은 중립
               accent={tool === "selection" || tool === "hand" ? "neutral" : "hand"}
             >
-              <Icon size={17} strokeWidth={1.9} />
+              <Icon size={scaled(17)} strokeWidth={1.9} />
             </ToolButton>
           ))}
         </div>
@@ -417,8 +456,17 @@ function ToolButton({
       title={`${label} (${hint})`}
       aria-label={label}
       aria-pressed={active}
-      className="group relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+      /**
+       * 크롬 배율 (사용자 지시 2026-08-08).
+       *
+       * ⚠️ 도구바에는 `zoom`을 못 건다. 이 막대는 `absolute`이고 자리를
+       * `top: 50%`·`marginTop`(px)으로 잡는데, `zoom`은 퍼센트의 기준(무대)과
+       * px 값을 서로 다르게 건드려 **계산이 통째로 어긋난다**. 크기만 키운다.
+       */
+      className="group relative flex items-center justify-center rounded-lg transition-colors"
       style={{
+        width: scaled(36),
+        height: scaled(36),
         background: active ? (accent === "hand" ? "var(--c-hand-wash)" : "var(--c-sunk)") : "transparent",
         color: active ? on : "var(--c-ink-soft)",
       }}

@@ -32,7 +32,12 @@ export function CanvasTopBar({
   onFit,
 }: Props) {
   return (
-    <div data-no-pan className="ui absolute left-4 top-4 z-30 flex items-center gap-2">
+    <div
+      data-no-pan
+      /* 크롬 배율 (`lib/ui/scale.ts`). */
+      style={{ zoom: "var(--ui-scale, 1)" }}
+      className="ui absolute left-4 top-4 z-30 flex items-center gap-2"
+    >
       <button
         type="button"
         onClick={onOpenSessions}

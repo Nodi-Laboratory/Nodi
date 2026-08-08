@@ -8,6 +8,7 @@
  * 무엇에 대해 묻는지 보이지 않으면 답이 어디에 붙을지도 모른다(D149).
  */
 
+import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
 import {
   ArrowUp,
   Check,
@@ -94,6 +95,8 @@ export function AskBar({
   onWriteAgain,
   ref,
 }: Props) {
+  // 우하단 미니맵과 겹칠 때만 왼쪽으로 물러난다 (사용자 지시 2026-08-08).
+  const chrome = useChromeFitValue();
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -157,6 +160,20 @@ export function AskBar({
       data-no-pan
       // bottom-6이었다. 아래 방향 버튼(D157)이 입력창 **아래**에 놓이므로
       // 그만큼 올린다 — 사용자 지시: "아래쪽 버튼은 입력 공간의 아래에".
+      data-ask-bar
+      /**
+       * 크롬 배율 — 입력창 안에는 좌표 계산이 없다(`lib/ui/scale.ts`).
+       *
+       * `translate`는 우하단 미니맵과 겹칠 때만 값을 갖는다(사용자 지시
+       * 2026-08-08). 가로 가운데 맞춤(`-translate-x-1/2`)은 Tailwind의
+       * `translate` 속성이 쓰므로 여기서는 `transform`으로 민다 — 둘은
+       * 겹쳐서 적용된다.
+       */
+      style={{
+        zoom: "var(--ui-scale, 1)",
+        transform: chrome.askDx ? `translateX(${-chrome.askDx}px)` : undefined,
+        transition: "transform .34s cubic-bezier(.22,.9,.24,1)",
+      }}
       className="ui absolute bottom-[52px] left-1/2 z-50 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
     >
       {showStatus && (

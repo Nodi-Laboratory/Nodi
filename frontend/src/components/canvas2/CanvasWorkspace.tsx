@@ -51,6 +51,7 @@ import { useCardPush } from "@/lib/canvas2/useCardPush";
 import { usePortLink } from "@/lib/canvas2/usePortLink";
 import { descendants, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
 import { autoTagFor } from "@/lib/canvas2/autoTag";
+import { scaled } from "@/lib/ui/scale";
 import { slowMove } from "@/lib/canvas2/moveEase";
 import { dropSpots as dropSpotsAt, type Rect as DropRect } from "@/lib/canvas2/dropSpot";
 import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
@@ -2142,16 +2143,19 @@ function MapDoor({ onOpen }: { onOpen: () => void }) {
       onClick={onOpen}
       aria-label="개념 지도 열기"
       title="개념 지도"
-      className="ui absolute right-4 top-4 z-30 flex h-[72px] w-[72px] flex-col items-center
+      /* 크롬 배율 (사용자 지시 2026-08-08) — `lib/ui/scale.ts`. */
+      className="ui absolute right-4 top-4 z-30 flex flex-col items-center
                  justify-center gap-1 rounded-2xl border-2 transition-colors"
       style={{
+        width: scaled(72),
+        height: scaled(72),
         background: "var(--c-raised)",
         borderColor: "var(--c-rule)",
         color: "var(--c-live)",
         boxShadow: "var(--c-shadow-md)",
       }}
     >
-      <MapIcon size={26} />
+      <MapIcon size={scaled(26)} />
       <span className="label text-[10px]" style={{ color: "var(--c-ink-soft)" }}>
         지도
       </span>
