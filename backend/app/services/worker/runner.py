@@ -16,7 +16,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from ...config import get_settings
 from ...db.client import ServiceClient, get_service_client
 from .. import app_settings
-from . import atoms, batch, common, crosslinks, figures, jobs, lectures, split
+from . import atoms, batch, common, crosslinks, figures, jobs, lectures, retention, split
 
 logger = logging.getLogger("nodi.worker.runner")
 settings = get_settings()
@@ -176,6 +176,14 @@ async def poll_once() -> int:
         return len(claimed)
 
 
+async def _sweep_retention() -> None:
+    """보존 정리 한 바퀴. 서비스 클라이언트가 없으면 아무 일도 안 한다."""
+    svc = get_service_client()
+    if svc is None:
+        return
+    await retention.sweep(svc)
+
+
 def start(_app: object | None = None) -> None:
     """Start the polling scheduler if a service-role client is available."""
     global _scheduler
@@ -192,6 +200,16 @@ def start(_app: object | None = None) -> None:
         max_instances=1,
         coalesce=True,
         id="embedding_poll",
+    )
+    # 진단용 표의 보존 정리 (2026-08-09). 하루 한 번이면 충분하다 — 폴은 몇
+    # 초마다 돌지만 이 일은 그 리듬이 아니다.
+    _scheduler.add_job(
+        _sweep_retention,
+        "interval",
+        seconds=retention.INTERVAL_SECONDS,
+        max_instances=1,
+        coalesce=True,
+        id="retention_sweep",
     )
     _scheduler.start()
     logger.info(
