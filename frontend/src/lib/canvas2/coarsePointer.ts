@@ -35,14 +35,18 @@ export function isCoarsePointer(): boolean {
 }
 
 /**
- * 기기 종류를 따라간다.
+ * 기기 종류를 따라간다. **`null`은 "아직 모름"이다** (D209).
  *
- * 처음 렌더는 **언제나 false**다. 서버가 그린 것과 다르면 hydration이 깨지고,
+ * 처음 렌더에서 실제 값을 내면 서버가 그린 것과 달라져 hydration이 깨지고,
  * 그러면 캔버스가 통째로 안 뜬다 — 도구 하나 때문에 화면을 잃을 수는 없다.
- * 붙자마자 실제 값으로 맞춘다.
+ *
+ * 그렇다고 `false`로 시작하면 "PC로 정해졌다"와 구별되지 않는다. 그 구별이
+ * 필요한 곳이 있다: Excalidraw는 **마운트 시점의 도구**만 받으므로, 값이
+ * 정해지기 전에 마운트하면 나중에 리마운트해야 하고 그건 캔버스를 통째로
+ * 다시 세우는 비용이다. `null`이면 **기다렸다가 한 번만** 마운트한다.
  */
-export function useCoarsePointer(): boolean {
-  const [coarse, setCoarse] = useState(false);
+export function useCoarsePointer(): boolean | null {
+  const [coarse, setCoarse] = useState<boolean | null>(null);
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const mq = window.matchMedia(QUERY);
