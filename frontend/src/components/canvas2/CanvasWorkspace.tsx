@@ -374,7 +374,22 @@ export function CanvasWorkspace({ spaceId }: Props) {
   // 없으면 학생이 지난 대화를 열었을 때 빈 캔버스를 본다(데이터가 날아간
   // 것처럼 보인다). nodes.answer를 파싱해 읽기용으로 그리고, 첫 편집 때
   // 서버로 승격한다(legacyItems.ts 참조).
-  const { data: detail, isPending: detailPending } = useSessionDetail(sessionId);
+  /**
+   * 구 세션 폴백은 **캔버스가 비었을 때만** 부른다 (2026-08-09).
+   *
+   * 이 쿼리는 대화의 **모든 답 원문**을 받아 온다(`NODE_SELECT`에 answer가
+   * 있다). 그런데 쓰이는 곳은 v2 이전 세션 하나뿐이고, 카드가 있는 세션에서는
+   * 받자마자 버린다 — 방을 바꿀 때마다 대화 길이에 비례한 payload가 오간
+   * 셈이다.
+   *
+   * `planHydration`이 이미 "카드가 있으면 detail을 안 기다린다"로 되어 있으니
+   * (`snapshotCount > 0` → `fill: "items"`), 여기서 요청 자체를 막아도
+   * 폴백 경로는 그대로다 — 카드가 0장일 때만 부른다.
+   */
+  const needsLegacy = !!snapshot && snapshot.items.length === 0;
+  const { data: detail, isPending: detailPending } = useSessionDetail(
+    needsLegacy ? sessionId : null,
+  );
 
   /**
    * 이미 채워 넣은 세션 — **수화는 세션당 한 번이다** (D147).
