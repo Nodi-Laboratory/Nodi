@@ -1,15 +1,31 @@
-"""이 세션의 개념 카드 조회 스킬 (D109 2단계).
+"""이 세션의 개념 카드 조회 스킬 (D109 2단계 → D215에서 출처 교체).
 
-기존에는 `extract_used_tags`가 매 턴 태그 목록을 뽑아 tag_guide 블록으로
-무조건 주입했다. 태그 연속성(D89)을 위해서인데, 인사 턴에는 필요 없는 일이다.
-
-두 스킬로 나눈다:
   list_session_concepts  지금까지 만든 개념의 제목·분류 목록 (태그 재사용의 근거)
   get_concept            특정 개념의 본문 (이어지는 질문에 답할 때)
 
-개념 카드는 별도 테이블이 아니라 `nodes.answer` 원문에 줄 형식으로 들어 있다.
-파싱 규약은 프론트 파서·`solar.extract_used_tags`와 같아야 한다 — "|" split의
-두 번째 조각이 분류다(정규식으로 하면 개행을 넘어 다음 줄을 삼킨다, D89 하드닝).
+## ⚠️ 출처는 `canvas_items`다 — `nodes.answer`가 아니다
+
+원래는 `nodes.answer` 원문을 파싱했다. 그 시절에는 그것이 유일한 사본이었지만
+지금은 아니다:
+
+  · 학생이 카드 본문을 **고친다**(캔버스 편집기).
+  · 분류를 바꾸고, 가지를 떼어내면 **시스템이 새 분류를 붙인다**(D211 10).
+  · 카드를 **지운다.**
+
+`nodes.answer`는 AI가 처음 쓴 글이라 이 셋 중 무엇도 안 보인다. D135가 태그에
+대해 이미 같은 결론을 내렸다 — "출처는 canvas_items.tag다. nodes.answer 파싱은
+학생이 직접 고친 분류를 못 본다." 그 결론이 **이 스킬에는 적용되지 않은 채**
+남아 있었다.
+
+## 그리고 본문이 통째로 비어 있었다
+
+옛 파서는 `- `로 시작하는 줄만 본문으로 주웠다. 그때는 개념 카드가 목록이었기
+때문이다. 지금 프롬프트는 **"설명을 목록으로 쪼개지 마라"**(solar.py)라 본문이
+문단이다 — 실측 2026-08-09: 지금 형식의 카드에서 본문 줄 수가 **0**이었다.
+`get_concept`은 "아까 그거"에 답하라고 만든 스킬인데 아무것도 못 주고 있었다.
+
+행을 그대로 읽으면 파싱이 아예 없어진다. 개념 카드 형식을 읽는 구현이 이미
+셋인데(CLAUDE.md 불변식) 여기서 하나를 **줄인다.**
 """
 
 from __future__ import annotations
@@ -21,50 +37,31 @@ from ..base import SkillBase, SkillContext, SkillResult
 
 logger = logging.getLogger("nodi.ai.skill.concepts")
 
-_CONCEPT = "@concept:"
-# 프론트 파서(conceptParser.ts)와 같은 관용성 — 모델이 표기를 흔든다.
-_END_TOKENS = {"@end", "/end", "[end]", "(end)", r"\end"}
 # 목록이 길어지면 프롬프트만 부풀린다. 최근 것 위주로 잘라 준다.
 _MAX_LIST = 40
+# 본문 한 장의 상한. 카드 하나가 프롬프트를 삼키지 않게 한다.
+_MAX_BODY = 1200
 
-
-def _parse_cards(answer: str) -> list[dict[str, Any]]:
-    """answer 원문 → [{title, cluster, body}]. 형식 밖 줄은 조용히 버린다."""
-    cards: list[dict[str, Any]] = []
-    cur: dict[str, Any] | None = None
-    for raw in (answer or "").splitlines():
-        line = raw.strip()
-        if line.startswith(_CONCEPT):
-            parts = line[len(_CONCEPT) :].split("|")
-            cur = {
-                "title": parts[0].strip(),
-                "cluster": parts[1].strip() if len(parts) > 1 else "",
-                "body": [],
-            }
-            cards.append(cur)
-            continue
-        if line.lower() in _END_TOKENS:
-            cur = None
-            continue
-        if cur is not None and line.startswith("- "):
-            # 강조 마커는 걷어내고 준다 — 모델이 읽을 때 잡음일 뿐이다.
-            cur["body"].append(line[2:].replace("**", "").replace("==", "").strip())
-    return cards
+_SELECT = "id,title,body,tag,seq,kind,source"
 
 
 async def _session_cards(ctx: SkillContext) -> list[dict[str, Any]]:
-    nodes = await ctx.client.select(
-        "nodes",
+    """이 세션의 **AI 개념 카드**를 화면 순서(seq)대로.
+
+    도판·클립·학생 글은 뺀다 — 개념 목록에 그것들이 섞이면 모델이 "이미 있는
+    개념"으로 오해한다.
+    """
+    rows = await ctx.client.select(
+        "canvas_items",
         {
             "session_id": f"eq.{ctx.session_id}",
-            "select": "answer,created_at",
-            "order": "created_at.asc",
+            "kind": "eq.concept",
+            "source": "eq.ai",
+            "select": _SELECT,
+            "order": "seq.asc",
         },
     )
-    out: list[dict[str, Any]] = []
-    for n in nodes:
-        out.extend(_parse_cards(n.get("answer") or ""))
-    return out
+    return [r for r in rows if (r.get("title") or "").strip()]
 
 
 class ListSessionConceptsSkill(SkillBase):
@@ -87,7 +84,7 @@ class ListSessionConceptsSkill(SkillBase):
         recent = cards[-_MAX_LIST:]
         clusters: list[str] = []
         for c in cards:
-            cl = c["cluster"]
+            cl = (c.get("tag") or "").strip()
             if cl and cl not in clusters:
                 clusters.append(cl)
         return SkillResult(
@@ -95,7 +92,8 @@ class ListSessionConceptsSkill(SkillBase):
             message=f"개념 {len(cards)}개, 분류 {len(clusters)}종.",
             data={
                 "concepts": [
-                    {"title": c["title"], "cluster": c["cluster"]} for c in recent
+                    {"title": c["title"], "cluster": (c.get("tag") or "")}
+                    for c in recent
                 ],
                 # 태그 재사용의 핵심 — 이 목록에 있으면 글자 그대로 다시 쓰게 한다.
                 "clusters": clusters,
@@ -141,20 +139,23 @@ class GetConceptSkill(SkillBase):
         if hit is None:
             return SkillResult(
                 ok=True,
-                message=f"'{want}' 개념을 찾지 못했습니다.",
+                message=f"'{want}'라는 개념을 찾지 못했습니다.",
+                # 헛물을 켜지 않게 후보를 준다 — 없다고만 하면 다시 헤맨다.
                 data={
                     "found": False,
-                    # 헛물을 켜지 않도록 있는 제목을 알려 준다.
                     "available": [c["title"] for c in cards[-_MAX_LIST:]],
                 },
             )
+        body = (hit.get("body") or "").strip()
         return SkillResult(
             ok=True,
-            message=f"'{hit['title']}' 개념을 찾았습니다.",
+            message=f"'{hit['title']}' 본문입니다.",
             data={
                 "found": True,
                 "title": hit["title"],
-                "cluster": hit["cluster"],
-                "body": hit["body"],
+                "cluster": (hit.get("tag") or ""),
+                # **학생이 고친 뒤의 글**이다 — 그것이 지금 화면에 있는 글이고,
+                # 학생이 "아까 그거"라고 부르는 것도 그것이다.
+                "body": body[:_MAX_BODY],
             },
         )

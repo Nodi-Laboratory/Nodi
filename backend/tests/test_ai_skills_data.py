@@ -14,7 +14,6 @@ from app.ai.skills import search_class_material as scm
 from app.ai.skills.concepts import (
     GetConceptSkill,
     ListSessionConceptsSkill,
-    _parse_cards,
 )
 from app.ai.skills.search_class_material import SearchClassMaterialSkill
 from app.ai.skills.session_files import (
@@ -22,29 +21,35 @@ from app.ai.skills.session_files import (
     ReadSessionFileSkill,
 )
 
-ANSWER_1 = """CHAT: 광합성을 알아볼까요?
-@concept: 광합성 | 식물의 생명 활동
-- 식물이 **빛**으로 ==포도당==을 만들어요
-- 산소가 나와요
-@related: 엽록체
-@end"""
 
-ANSWER_2 = """CHAT: 이어서 볼게요
-@concept: 세포호흡 | 식물의 생명 활동
-- 포도당을 분해해 에너지를 얻어요
-@end
-@concept: 엽록체 | 세포 소기관
-- 광합성이 일어나는 곳이에요
-/end"""
+def _card(title: str, tag: str, body: str, seq: int) -> dict[str, Any]:
+    """`canvas_items` 행 한 장 — 지금 화면에 있는 그대로다."""
+    return {
+        "id": f"i{seq}",
+        "title": title,
+        "body": body,
+        "tag": tag,
+        "seq": seq,
+        "kind": "concept",
+        "source": "ai",
+    }
+
+
+CARDS = [
+    _card("광합성", "식물의 생명 활동", "식물이 빛으로 포도당을 만들어요.\n\n산소가 나와요.", 1),
+    _card("세포호흡", "식물의 생명 활동", "포도당을 분해해 에너지를 얻어요.", 2),
+    _card("엽록체", "세포 소기관", "광합성이 일어나는 곳이에요.", 3),
+]
 
 
 class _Client:
     """select만 흉내 내는 대역. 테이블별로 준비된 행을 돌려준다."""
 
-    def __init__(self, nodes=None, files=None, chunks=None):
+    def __init__(self, nodes=None, files=None, chunks=None, items=None):
         self._nodes = nodes or []
         self._files = files or []
         self._chunks = chunks or []
+        self._items = items or []
         self.calls: list[tuple[str, dict]] = []
 
     async def select(self, table: str, params: dict) -> list[dict[str, Any]]:
@@ -53,6 +58,7 @@ class _Client:
             "nodes": self._nodes,
             "files": self._files,
             "file_chunks": self._chunks,
+            "canvas_items": self._items,
         }.get(table, [])
 
 
@@ -67,42 +73,22 @@ def _ctx(client) -> SkillContext:
     )
 
 
-# --- 개념 카드 파싱 --------------------------------------------------------
+# --- 개념 스킬 (출처: canvas_items) ----------------------------------------
+#
+# ⚠️ 예전에는 `nodes.answer` 원문을 파싱했다. 지금 정본은 `canvas_items`다 —
+# 학생이 본문을 고치고, 분류를 바꾸고, 카드를 지우기 때문이다(D122·D135·D147).
+# 원문을 읽으면 그 셋 중 무엇도 안 보인다.
 
 
-def test_카드_파싱은_제목과_분류를_가른다():
-    cards = _parse_cards(ANSWER_1)
-    assert len(cards) == 1
-    assert cards[0]["title"] == "광합성"
-    assert cards[0]["cluster"] == "식물의 생명 활동"
-
-
-def test_본문에서_강조_마커를_걷어낸다():
-    # 모델이 다시 읽을 때 `**`·`==`는 잡음일 뿐이다.
-    body = _parse_cards(ANSWER_1)[0]["body"]
-    assert body[0] == "식물이 빛으로 포도당을 만들어요"
-
-
-def test_종료_토큰_변형도_카드를_닫는다():
-    # 파서와 같은 관용성 — 모델이 `/end`를 쓰는 일이 실제로 있다.
-    cards = _parse_cards(ANSWER_2)
-    assert [c["title"] for c in cards] == ["세포호흡", "엽록체"]
-
-
-def test_분류가_없으면_빈_문자열():
-    assert _parse_cards("@concept: 제목만\n- 본문\n@end")[0]["cluster"] == ""
-
-
-def test_형식_밖_줄은_버린다():
-    cards = _parse_cards("그냥 텍스트\n@concept: A | T\n> 인용\n- 본문\n@end")
-    assert cards[0]["body"] == ["본문"]
-
-
-# --- list_session_concepts -------------------------------------------------
+async def test_카드가_없으면_새로_지어도_된다고_알려준다():
+    res = await ListSessionConceptsSkill().run({}, _ctx(_Client()))
+    assert res.ok
+    assert res.data["concepts"] == []
+    assert "새 분류" in res.message
 
 
 async def test_개념_목록과_분류_목록을_돌려준다():
-    c = _Client(nodes=[{"answer": ANSWER_1}, {"answer": ANSWER_2}])
+    c = _Client(items=CARDS)
     res = await ListSessionConceptsSkill().run({}, _ctx(c))
     assert res.ok
     assert [x["title"] for x in res.data["concepts"]] == ["광합성", "세포호흡", "엽록체"]
@@ -110,44 +96,67 @@ async def test_개념_목록과_분류_목록을_돌려준다():
     assert res.data["clusters"] == ["식물의 생명 활동", "세포 소기관"]
 
 
-async def test_개념이_없으면_새로_지어도_된다고_알려준다():
-    res = await ListSessionConceptsSkill().run({}, _ctx(_Client()))
-    assert res.ok
-    assert res.data["concepts"] == []
-    assert "새 분류" in res.message
-
-
-# --- get_concept -----------------------------------------------------------
+async def test_AI_개념_카드만_읽는다():
+    """도판·클립·학생 글이 섞이면 모델이 "이미 있는 개념"으로 오해한다."""
+    c = _Client(items=CARDS)
+    await ListSessionConceptsSkill().run({}, _ctx(c))
+    table, params = c.calls[0]
+    assert table == "canvas_items"
+    assert params["kind"] == "eq.concept"
+    assert params["source"] == "eq.ai"
+    assert params["session_id"] == "eq.s1"
 
 
 async def test_제목이_정확히_맞으면_본문을_준다():
-    c = _Client(nodes=[{"answer": ANSWER_1}])
+    """**문단 본문**이 그대로 온다.
+
+    옛 파서는 `- `로 시작하는 줄만 주웠다. 지금 프롬프트는 "설명을 목록으로
+    쪼개지 마라"라 본문이 문단이고, 그래서 본문이 **늘 비어 있었다**
+    (실측 2026-08-09: 지금 형식의 카드에서 본문 줄 수 0).
+    """
+    c = _Client(items=CARDS)
     res = await GetConceptSkill().run({"title": "광합성"}, _ctx(c))
     assert res.data["found"] is True
     assert res.data["cluster"] == "식물의 생명 활동"
-    assert "포도당" in res.data["body"][0]
+    assert "포도당" in res.data["body"]
+    assert "산소" in res.data["body"], "문단이 둘이면 둘 다 와야 한다"
+
+
+async def test_학생이_고친_글이_온다():
+    """학생이 캔버스에서 고친 뒤의 글이 곧 "아까 그거"다."""
+    고친것 = [_card("광합성", "내가 만든 분류", "내가 고쳐 쓴 설명이다.", 1)]
+    res = await GetConceptSkill().run({"title": "광합성"}, _ctx(_Client(items=고친것)))
+    assert res.data["body"] == "내가 고쳐 쓴 설명이다."
+    assert res.data["cluster"] == "내가 만든 분류"
 
 
 async def test_제목이_조금_달라도_찾는다():
     # 모델이 제목을 정확히 기억하지 못하는 일이 흔하다.
-    c = _Client(nodes=[{"answer": ANSWER_1}])
+    c = _Client(items=CARDS)
     res = await GetConceptSkill().run({"title": "광합성 과정"}, _ctx(c))
     assert res.data["found"] is True
 
 
 async def test_못_찾으면_있는_제목을_알려준다():
     """헛물을 켜지 않게 후보를 준다 — 없다고만 하면 다시 헤맨다."""
-    c = _Client(nodes=[{"answer": ANSWER_1}])
+    c = _Client(items=CARDS)
     res = await GetConceptSkill().run({"title": "미분"}, _ctx(c))
     assert res.ok
     assert res.data["found"] is False
-    assert res.data["available"] == ["광합성"]
+    assert res.data["available"] == ["광합성", "세포호흡", "엽록체"]
 
 
 async def test_빈_제목은_거절한다():
     res = await GetConceptSkill().run({"title": "  "}, _ctx(_Client()))
     assert res.ok is False
     assert res.error_code == "bad_args"
+
+
+async def test_제목이_빈_카드는_목록에_안_낀다():
+    """도판처럼 제목 없는 행이 섞여 들어오면 빈 항목이 목록에 뜬다."""
+    섞임 = [*CARDS, _card("", "", "제목 없는 무엇", 4)]
+    res = await ListSessionConceptsSkill().run({}, _ctx(_Client(items=섞임)))
+    assert all(x["title"] for x in res.data["concepts"])
 
 
 # --- 세션 파일 -------------------------------------------------------------

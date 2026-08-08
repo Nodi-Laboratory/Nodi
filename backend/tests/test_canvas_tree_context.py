@@ -120,3 +120,60 @@ def test_순환이_있어도_멈추지_않는다():
 def test_부모가_사라져도_뿌리로_살아남는다():
     rows = [card("b", "물리", "없는-id", 0)]
     assert flat_ids(_tree_lines(rows), "물리") == ["b"]
+
+
+# --- 넘칠 때 무엇을 버리나 (2026-08-09) -------------------------------------
+
+
+class _Rows:
+    """`select`만 흉내 내는 대역."""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    async def select(self, table: str, params: dict) -> list[dict]:
+        return self._rows
+
+
+def _big(tags: list[str], per: int = 20) -> list[dict]:
+    """상한을 넘길 만큼 큰 세션 — 태그마다 카드 여러 장."""
+    rows: list[dict] = []
+    n = 0
+    for t in tags:
+        for _ in range(per):
+            n += 1
+            r = card(f"i{n}", t, seq=n, title=f"{t} 개념 {n}")
+            r["body"] = "설명 " * 120
+            rows.append(r)
+    return rows
+
+
+async def test_넘치면_보고_있는_트리는_남긴다():
+    """**태그 순서 = 첫 등장 순서**라, 오래된 것부터 버리면 학기 초에 만든
+    트리로 돌아가 복습할 때 하필 그 트리가 첫 버림 대상이 된다.
+
+    실측 2026-08-09(태그 6종 × 20장): 학생이 보고 있던 '판 구조론'이 통째로
+    사라지고 무관한 트리 셋만 남았다 — `focus_tag`로 "여기를 보고 있다"고
+    가리켜 놓고 정작 그 내용을 안 준 셈이다.
+    """
+    from app.services.canvas_items import TREE_MAX_CHARS, session_tree_context
+
+    tags = ["판 구조론", "광합성", "이차방정식", "고대 국가", "물질의 상태", "함수"]
+    text = await session_tree_context(_Rows(_big(tags)), "s1", focus_tag=tags[0])
+    assert text is not None
+    assert len(text) <= TREE_MAX_CHARS, "상한은 그대로 지킨다"
+    assert f"[{tags[0]}]" in text, "보고 있는 트리가 살아남아야 한다"
+    assert "← 학생이 지금" in text
+    # 버리기는 여전히 일어난다 — 전부 남으면 상한의 뜻이 없다.
+    assert sum(1 for t in tags if f"[{t}]" in text) < len(tags)
+
+
+async def test_초점이_없으면_예전처럼_오래된_것부터_버린다():
+    """가리킨 것이 없으면 "최근이 가깝다"는 규칙이 그대로 옳다."""
+    from app.services.canvas_items import session_tree_context
+
+    tags = ["가", "나", "다", "라", "마", "바"]
+    text = await session_tree_context(_Rows(_big(tags)), "s1", focus_tag=None)
+    assert text is not None
+    assert "[바]" in text, "가장 최근 트리는 남는다"
+    assert "[가]" not in text, "가장 오래된 트리가 먼저 버려진다"

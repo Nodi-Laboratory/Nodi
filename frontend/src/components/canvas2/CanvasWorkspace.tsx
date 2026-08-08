@@ -96,6 +96,9 @@ interface Props {
 
 const FALLBACK_H = 180;
 
+/** 방을 다시 열 때의 배율 상한 — 읽히면서 이웃도 보이는 선 (2026-08-09). */
+const LANDING_ZOOM = 1;
+
 /** 스스로 사라지는 안내가 머무는 시간(ms) — 사용자 지시 2026-08-08. */
 const FLASH_MS = 5000;
 
@@ -1804,9 +1807,49 @@ export function CanvasWorkspace({ spaceId }: Props) {
    */
   const { focusId, clearFocus } = stream;
   const storeItems = store.items;
+
+  /**
+   * 방을 열면 **마지막에 하던 카드**로 내려앉는다 (2026-08-09).
+   *
+   * 지금까지 대화방을 바꾸면 카메라가 그대로 있었다. 카드가 쌓인 방으로
+   * 들어가면 학생이 보는 것은 빈 캔버스에 가깝다 — 실측: 40장짜리 방에서
+   * **화면 안에 2장**뿐이었다. 나머지를 찾으려면 손으로 헤매야 한다.
+   *
+   * 어디로 갈 것인가: **가장 최근 AI 개념 카드**다. 그것이 대화가 끝난
+   * 자리이고, 다시 들어온 학생이 이어서 할 자리다. 전체 보기로 맞추는 길도
+   * 있지만 그러면 글이 깨알같아 읽을 수가 없다(D162가 확대를 넣은 이유).
+   */
+  const landTarget = useMemo(() => {
+    let best: { id: string; seq: number } | null = null;
+    for (const i of storeItems) {
+      if (i.kind !== "concept" || i.source !== "ai") continue;
+      if (!best || i.seq > best.seq) best = { id: i.id, seq: i.seq };
+    }
+    return best?.id ?? null;
+  }, [storeItems]);
+  /**
+   * 이 방에 이미 내려앉았나. **ref다** — state로 두면 이펙트 안의 setState가
+   * 되고(React Compiler가 막는다) 렌더가 한 번 더 돈다.
+   */
+  const landedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusId) return;
-    const p = layout.positions.get(focusId);
+    /**
+     * 답이 새로 왔으면 그 카드가 먼저다. 없으면 **방에 처음 들어온 것**이니
+     * 마지막에 하던 카드로 내려앉는다(한 방에 한 번).
+     */
+    const landing = !focusId && sessionId != null && landedRef.current !== sessionId;
+    const target = focusId ?? (landing ? landTarget : null);
+    /**
+     * ⚠️ 여기서 "왔다"고 **표시하면 안 된다.**
+     *
+     * 방에 들어온 직후에는 수화 전이라 카드 목록이 비어 있다. 그때 표시해
+     * 버리면 잠시 뒤 카드가 도착해도 착지가 이미 끝난 것이 되어 **아무 일도
+     * 안 일어난다** — 실측 2026-08-09: 40장짜리 방에서 화면 안 카드가 그대로
+     * 2장이었다. 표시는 **실제로 날아간 뒤**에만 한다.
+     */
+    if (!target) return;
+    const focusId2 = target;
+    const p = layout.positions.get(focusId2);
     if (!p) return; // 아직 배치 전 — 다음 렌더에 다시 시도한다
 
     /**
@@ -1816,13 +1859,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
      * 보인다. 딸린 것이 있을 때만 배율을 낮춰 묶음을 담는다(focusCamera).
      */
     const attached = storeItems.filter(
-      (i) => i.parentItemId === focusId && (i.kind === "clip" || i.kind === "figure"),
+      (i) => i.parentItemId === focusId2 && (i.kind === "clip" || i.kind === "figure"),
     );
     // 아직 실측 전인 첨부가 있으면 기다린다. 폴백 크기로 날아가면 카메라가
     // 한 번 어긋난 자리에 서고, focus는 이미 지워져 다시 맞출 기회가 없다.
     if (attached.some((a) => !layout.positions.has(a.id) || !layout.sizes.has(a.id))) return;
 
-    const size = layout.sizes.get(focusId) ?? { w: ITEM_W, h: FALLBACK_H };
+    const size = layout.sizes.get(focusId2) ?? { w: ITEM_W, h: FALLBACK_H };
     const 처음 = focusCamera(
         { x: p.x, y: p.y, w: size.w, h: size.h },
         attached.map((a) => {
@@ -1840,18 +1883,41 @@ export function CanvasWorkspace({ spaceId }: Props) {
           bottom: UI_BOTTOM,
         },
         {
-          maxZoom: clientSettings.focusZoom || NEW_NODE_ZOOM,
+          /**
+           * 새 답이면 크게(235%), **방에 들어온 것이면 덜 크게**(100%).
+           *
+           * 새 답은 지금 읽으라고 온 글이라 꽉 채우는 것이 맞다(D162). 그런데
+           * 방을 다시 열 때는 "여기가 어디인가"가 먼저다 — 한 장만 크게 띄우면
+           * 둘러볼 수가 없다. 100%는 카드 설계 폭(560)이 그대로 보이는 배율이라
+           * 읽히면서 이웃도 함께 들어온다.
+           */
+          maxZoom: landing
+            ? LANDING_ZOOM
+            : clientSettings.focusZoom || NEW_NODE_ZOOM,
           minZoom: ATTACH_MIN_ZOOM,
           pad: FOCUS_PAD,
         },
       );
     flyTo(처음);
     // 여기서부터 이 카드가 자라는 것을 지켜본다 (D210 2-2).
-    growRef.current = { id: focusId, cam: 처음 };
+    growRef.current = { id: focusId2, cam: 처음 };
+    /**
+     * ⚠️ **어느 경로로 날았든 "이 방에 왔다"고 적는다.**
+     *
+     * 착지 때만 적으면, 새 답이 235%로 날아간 **직후** `clearFocus()`로
+     * focusId가 비면서 착지 조건이 다시 참이 된다 — 그래서 같은 카드로 한 번
+     * 더, 이번에는 100%로 날아가 방금의 확대를 덮었다(실측 2026-08-09: 답이
+     * 왔는데 배율이 100% 그대로였다. D162가 깨진 것으로 보였다).
+     *
+     * 착지는 **방을 열 때 한 번**이라는 뜻이므로, 첫 비행이 무엇이든 그것으로
+     * 끝난 것이 맞다.
+     */
+    if (sessionId) landedRef.current = sessionId;
+    if (landing) return; // 착지는 스트림의 초점을 건드리지 않는다
     clearFocus();
   }, [
-    focusId, layout.positions, layout.sizes, storeItems, vp, flyTo, clearFocus,
-    clientSettings.focusZoom,
+    focusId, landTarget, sessionId, layout.positions, layout.sizes, storeItems, vp,
+    flyTo, clearFocus, clientSettings.focusZoom,
   ]);
 
   /**
