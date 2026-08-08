@@ -230,7 +230,9 @@ export function FigureItem({
             color="var(--c-live)"
             getEl={() => rootRef.current}
             onCommit={(next) => onResize(item.id, next)}
-            onReset={() => onResetSize(item.id)}
+            // 도판은 잴 "가장 긴 줄"이 없다 — 기본 상한만 쓴다(D210 3-2).
+          maxW={() => 0}
+          onReset={() => onResetSize(item.id)}
           />
         )}
       </div>

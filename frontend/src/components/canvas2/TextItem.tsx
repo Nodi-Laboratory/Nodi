@@ -35,6 +35,9 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";
+import { widestLineWidth } from "@/lib/canvas2/measureWidth";
+// 좌우 패딩은 hover 박스와 같은 값이다 — 연결선도 이 상자를 쓴다(D126).
+import { PAD_X } from "@/lib/canvas2/connector";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { clearLiveLink, setLiveLink } from "@/lib/canvas2/linkBus";
 import { detachStep } from "@/lib/canvas2/detachDrag";
@@ -591,6 +594,16 @@ function TextItemImpl(props: TextItemProps) {
             window.setTimeout(settle, DROP_FALLBACK_MS);
           }}
           onReset={() => onResetSize(item.id)}
+          /**
+           * 넓힐 수 있는 한계 — **본문에서 가장 긴 줄**이 줄바꿈 없이
+           * 들어가는 폭이다 (D210 3-2). 그보다 넓히면 오른쪽이 빈 채로
+           * 늘어나기만 한다.
+           */
+          maxW={() => {
+            const body = rootRef.current?.querySelector<HTMLElement>("[data-writing], [data-body]");
+            const 글폭 = widestLineWidth(body ?? null);
+            return 글폭 ? 글폭 + PAD_X * 2 : 0;
+          }}
         />
       )}
 
@@ -619,7 +632,9 @@ function TextItemImpl(props: TextItemProps) {
       <div className="relative">
         {item.title && (
           <h3
-            className="hand mb-2.5 text-[21px] font-bold leading-snug"
+            // 크기는 폰트 실측 배율(0.744)을 이미 곱한 값이다 — globals.css의
+          // `.canvas2 .hand` 주석 참조. 21 × 0.744 ≈ 16.
+          className="hand mb-2.5 text-[16px] font-bold leading-snug"
             style={{ color: "var(--c-ink)" }}
           >
             {/* 본문과 같은 크기 보정을 받는다 (D165) — 제목에 한자가 섞이면
@@ -635,7 +650,8 @@ function TextItemImpl(props: TextItemProps) {
           // 키웠으므로(ITEM_W 560) 한 줄 글자 수는 비슷하게 유지된다.
           // `hand`가 손글씨로 바꾼다 (D164). 캔버스 위의 글에만 붙는
           // 클래스이고, 스코프는 globals.css의 `.canvas2 .hand`가 잡는다.
-          className="hand text-[18px]"
+          // 18 × 0.744 ≈ 13 (폰트 실측 배율).
+          className="hand text-[13px]"
           style={{ color: "var(--c-ink)" }}
         >
           <ItemBody

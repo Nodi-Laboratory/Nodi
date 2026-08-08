@@ -27,7 +27,8 @@
  */
 
 import { useCallback, useRef } from "react";
-import { ITEM_MIN_W } from "@/lib/canvas2/layout";
+import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";
+import { clampWidth } from "@/lib/canvas2/measureWidth";
 
 /** 여덟 방향. 문자에 방위가 들어 있어 `includes`로 판정한다. */
 export type ResizeDir = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
@@ -61,9 +62,16 @@ interface Props {
   onCommit: (next: ResizeCommit) => void;
   /** 크기를 되돌린다(자동 크기로). 손잡이 더블클릭. */
   onReset: () => void;
+  /**
+   * 넓힐 수 있는 한계 폭(world px) — **누를 때 한 번만** 잰다 (D210 3-2).
+   *
+   * 매 프레임 재면 복제·측정이 드래그마다 60번 돈다. 내용은 끄는 동안
+   * 바뀌지 않으므로 한 번이면 충분하다.
+   */
+  maxW: () => number;
 }
 
-export function ResizeHandles({ zoom, color, getEl, onCommit, onReset }: Props) {
+export function ResizeHandles({ zoom, color, getEl, onCommit, onReset, maxW }: Props) {
   const dragRef = useRef<{
     dir: ResizeDir;
     sx: number;
@@ -72,6 +80,8 @@ export function ResizeHandles({ zoom, color, getEl, onCommit, onReset }: Props) 
     h: number;
     dx: number;
     dy: number;
+    /** 이번 드래그의 한계 폭. 누를 때 한 번 잰다. */
+    max: number;
   } | null>(null);
 
   const onDown = useCallback(
@@ -92,14 +102,23 @@ export function ResizeHandles({ zoom, color, getEl, onCommit, onReset }: Props) 
         h: r.height / zoom,
         dx: 0,
         dy: 0,
+        max: maxW(),
       };
+      /**
+       * CSS 상한을 **끄는 동안만** 푼다 (D210 3-2).
+       *
+       * 평소에는 `maxWidth: ITEM_W`가 읽기 폭을 지킨다. 그런데 그게 걸려
+       * 있으면 손잡이를 아무리 끌어도 560에서 멈춘다 — 학생 눈에는 손잡이가
+       * 고장난 것으로 보인다. 실제 한계는 JS가 잰 값이므로 여기서는 푼다.
+       */
+      el.style.maxWidth = "none";
       try {
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       } catch {
         // 활성 포인터가 아니면 던진다. 캡처는 편의일 뿐이다.
       }
     },
-    [getEl, zoom],
+    [getEl, zoom, maxW],
   );
 
   const onMove = useCallback(
@@ -117,7 +136,7 @@ export function ResizeHandles({ zoom, color, getEl, onCommit, onReset }: Props) 
       if (d.dir.includes("s")) h = d.h + my;
       if (d.dir.includes("n")) h = d.h - my;
 
-      el.style.width = `${Math.max(ITEM_MIN_W, w)}px`;
+      el.style.width = `${clampWidth(w, { min: ITEM_MIN_W, content: d.max, fallback: ITEM_W })}px`;
       el.style.minHeight = `${Math.max(MIN_H, h)}px`;
 
       /**

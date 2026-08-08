@@ -1,8 +1,12 @@
 """캔버스 손글씨 폰트 빌드 — TTF → woff2 3조각 + @font-face CSS (D164).
 
     uv run --no-project --with "fonttools[woff]" python scripts/build-hand-font.py \
-        "나눔손글씨 야근하는 김주임.ttf" public/fonts \
-        src/components/canvas2/hand-font.css
+        KCC-Hanbit.otf public/fonts src/components/canvas2/hand-font.css \
+        --family "KCC Hanbit" --slug kcc-hanbit
+
+폰트 이름과 파일 접두사를 **인자로 받는다** (D210 3-3). 예전에는 코드에 박혀
+있었는데, 폰트를 갈아 끼울 때마다 스크립트를 고쳐야 했다 — 그러면 "무엇으로
+만든 조각인가"가 파일명과 어긋나기 시작한다.
 
 생성된 CSS는 **CanvasStage가 임포트한다** — globals.css에 넣으면 unicode-range
 목록(gzip 13KB)이 로그인·홈·관리자 화면까지 따라간다. 캔버스에만 쓰는 폰트이니
@@ -30,7 +34,6 @@ import sys
 from pathlib import Path
 
 HANGUL = range(0xAC00, 0xD7A4)
-FAMILY = "Nanum YaGeunHaNeunGimJuIm"
 
 
 def ks_x_1001() -> set[int]:
@@ -66,7 +69,14 @@ def to_ranges(cps: list[int]) -> str:
 def main() -> None:
     from fontTools.ttLib import TTFont
 
-    src, font_dir, css_path = (Path(a) for a in sys.argv[1:4])
+    args = sys.argv[1:]
+    def opt(name: str, default: str) -> str:
+        return args[args.index(name) + 1] if name in args else default
+
+    src, font_dir, css_path = (Path(a) for a in args[:3])
+    family = opt("--family", "Nanum YaGeunHaNeunGimJuIm")
+    slug = opt("--slug", "nanum-yageun")
+    note = opt("--note", family)
     cmap = set(TTFont(src).getBestCmap())
     ks = ks_x_1001()
     groups = {
@@ -78,34 +88,42 @@ def main() -> None:
     font_dir.mkdir(parents=True, exist_ok=True)
     faces: list[tuple[str, str]] = []
     for name, cps in groups.items():
-        dst = font_dir / f"nanum-yageun-{name}.woff2"
-        subprocess.run(
-            [
-                "fonttools", "subset", str(src),
-                "--unicodes=" + ",".join(f"U+{c:04X}" for c in cps),
-                "--layout-features=*",
-                "--flavor=woff2",
-                f"--output-file={dst}",
-            ],
-            check=True,
-            capture_output=True,
-        )
+        dst = font_dir / f"{slug}-{name}.woff2"
+        # ⚠️ 코드포인트를 **명령줄에 나열하면 안 된다.** 한글 조각은 2,350~8,822
+        # 자라 Windows의 명령줄 상한(32KB)을 넘겨 `WinError 206`으로 죽는다.
+        # fonttools가 파일로 받는 길을 열어 두었으니 그걸 쓴다.
+        listing = font_dir / f".{slug}-{name}.unicodes"
+        listing.write_text("\n".join(f"U+{c:04X}" for c in cps), encoding="utf-8")
+        try:
+            subprocess.run(
+                [
+                    "fonttools", "subset", str(src),
+                    f"--unicodes-file={listing}",
+                    "--layout-features=*",
+                    "--flavor=woff2",
+                    f"--output-file={dst}",
+                ],
+                check=True,
+                capture_output=True,
+            )
+        finally:
+            listing.unlink(missing_ok=True)
         print(f"{dst.name:26s} {len(cps):6,}자  {dst.stat().st_size / 1024:7,.0f} KB")
         faces.append((name, to_ranges(cps)))
 
     css = [
         "/* 자동 생성 — scripts/build-hand-font.py. 직접 고치지 말 것. */",
-        "/* 나눔손글씨 야근하는 김주임 (네이버, SIL OFL 1.1) — 캔버스 전용(D164). */",
+        f"/* {note} — 캔버스 전용(D164). */",
         "",
     ]
     for name, ranges in faces:
         css += [
             "@font-face {",
-            f'  font-family: "{FAMILY}";',
+            f'  font-family: "{family}";',
             "  font-style: normal;",
             "  font-weight: 400;",
             "  font-display: swap;",
-            f'  src: url("/fonts/nanum-yageun-{name}.woff2") format("woff2");',
+            f'  src: url("/fonts/{slug}-{name}.woff2") format("woff2");',
             f"  unicode-range: {ranges};",
             "}",
             "",

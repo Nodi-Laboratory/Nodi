@@ -90,9 +90,19 @@ describe("무겹침", () => {
           tag: tagPool[Math.floor(rnd() * tagPool.length)],
           seq: i,
           height: 50 + Math.floor(rnd() * 1950),
-          // 폭이 제각각이어도 겹치면 안 된다. 폭 고정이던 시절에는 이 축이
-          // 아예 없었다 — 폭을 내용에 맡긴 뒤로는 여기가 실제 위험 지점이다.
-          width: ITEM_MIN_W + Math.floor(rnd() * (ITEM_W - ITEM_MIN_W)),
+          /**
+           * 폭이 제각각이어도 겹치면 안 된다. 폭 고정이던 시절에는 이 축이
+           * 아예 없었다 — 폭을 내용에 맡긴 뒤로는 여기가 실제 위험 지점이다.
+           *
+           * **ITEM_W를 넘는 카드도 섞는다** (D210 3-2). 학생이 손잡이로
+           * 읽기 폭보다 넓게 늘릴 수 있게 되면서, 열 폭이 상수를 보면 넓힌
+           * 카드가 옆 열을 침범한다. 무겹침은 이 캔버스에서 알고리즘의
+           * 성질이지 우연이 아니다.
+           */
+          width:
+            rnd() < 0.2
+              ? ITEM_W + Math.floor(rnd() * 900)
+              : ITEM_MIN_W + Math.floor(rnd() * (ITEM_W - ITEM_MIN_W)),
           pinned: rnd() < 0.25,
           x: Math.floor(rnd() * 2000) - 500,
           y: Math.floor(rnd() * 2000) - 500,
