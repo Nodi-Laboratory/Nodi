@@ -204,3 +204,129 @@ export function midpoint(g: LinkGeometry): Point {
     y: (g.a.y + 3 * g.c1.y + 3 * g.c2.y + g.b.y) / 8,
   };
 }
+
+/* ═══════════════════ 고정 포트 연결선 (D211, D210 4단계) ═══════════════════
+ *
+ * ## 앵커를 고정한다
+ *
+ * 예전에는 앵커가 두 카드의 상대 위치를 보고 변 위를 미끄러졌다(위 `anchor`).
+ * 그러면 카드를 옮길 때마다 선이 나가는 자리가 바뀌어, 학생이 "이 카드에서
+ * 나가는 선"을 눈으로 좇기 어렵다. 이제 자리는 **둘뿐이고 안 움직인다**:
+ *
+ *     위 변 중앙   부모로 올라가는 선 — 부모는 하나뿐이라 선도 하나다
+ *     아래 변 중앙 자식으로 내려가는 선 — 자식은 여럿이고 전부 여기서 나간다
+ *
+ * 좌우 변에는 포트가 없다. 띄우지도 않는다 — 끌 수 없는 점을 보여 주면
+ * 학생이 거기서 끌어 보고 안 되는 것을 결함으로 읽는다.
+ *
+ * ## 그래서 겹침을 다시 풀어야 한다
+ *
+ * 앵커가 고정이던 시절에 정확히 이 문제가 있었다("같은 부모의 답 둘이 한 점에서
+ * 나가 선이 겹쳤다") — 그래서 상대 위치로 바꿨던 것이다. 이번에는 자리를
+ * 일부러 고정하니 그때 포기했던 문제를 다시 풀어야 한다:
+ *
+ *   1. **공유 줄기** — 아래 포트에서 수직으로 조금 내려온다. 그 구간은
+ *      모든 자식이 함께 쓴다.
+ *   2. **갈라짐** — 줄기 끝에서 각자 목적지로 벌어진다. 벌리는 폭은 자식
+ *      수에 따라 커진다(고정 각도면 많을 때 다시 겹친다).
+ */
+
+/** 아래 포트에서 수직으로 내려오는 공유 줄기의 길이(world px). */
+export const PORT_STEM = 24;
+/**
+ * 갈라질 때 이웃 사이의 가로 간격(world px).
+ *
+ * 자식이 둘이면 좁게, 넷이면 넓게 — 자식 수와 무관한 고정 각도를 쓰면 많을 때
+ * 다시 겹친다. 곱이 아니라 합으로 키우는 이유는, 곱하면 자식이 여섯쯤 될 때
+ * 부채가 카드 폭을 넘어 옆 열까지 뻗기 때문이다.
+ */
+export function fanStep(count: number): number {
+  return count <= 1 ? 0 : 26 + 8 * Math.min(count - 2, 6);
+}
+
+/** 부모의 **아래 포트** — 자식으로 내려가는 선이 나가는 유일한 자리. */
+export function portFrom(rawParent: Rect): Point {
+  const r = padded(rawParent);
+  return { x: r.x + r.w / 2, y: r.y + r.h };
+}
+
+/** 자식의 **위 포트** — 부모로 올라가는 선이 들어오는 유일한 자리. */
+export function portTo(rawChild: Rect): Point {
+  const r = padded(rawChild);
+  return { x: r.x + r.w / 2, y: r.y };
+}
+
+export interface PortLink {
+  /** 부모 아래 포트. */
+  a: Point;
+  /** 공유 줄기의 끝 — 여기서부터 갈라진다. */
+  stem: Point;
+  /** 자식 위 포트. */
+  b: Point;
+  c1: Point;
+  c2: Point;
+}
+
+/**
+ * 부모 → 자식 한 가닥.
+ *
+ * @param index 같은 부모의 자식 중 몇 번째인가(가로 순서)
+ * @param count 그 부모의 자식 수
+ */
+export function linkPath(
+  parent: Rect,
+  child: Rect,
+  index = 0,
+  count = 1,
+): PortLink {
+  const a = portFrom(parent);
+  const b = portTo(child);
+  const stem = { x: a.x, y: a.y + PORT_STEM };
+
+  // 줄기 끝에서 바로 벌어진다. 가운데를 0으로 두고 좌우 대칭으로 민다.
+  const spread = (index - (count - 1) / 2) * fanStep(count);
+  const drop = Math.max(1, b.y - stem.y);
+  return {
+    a,
+    stem,
+    b,
+    // 첫 제어점은 **줄기 방향(아래)** 을 이어받되 갈라지는 쪽으로 민다.
+    c1: { x: stem.x + spread, y: stem.y + drop * 0.4 },
+    // 끝 제어점은 자식 위 포트로 **수직으로** 들어오게 잡는다.
+    c2: { x: b.x, y: b.y - drop * 0.4 },
+  };
+}
+
+/** SVG path 문자열 — 줄기(직선) + 갈라짐(곡선). */
+export function linkPathD(g: PortLink): string {
+  return (
+    `M ${g.a.x} ${g.a.y} L ${g.stem.x} ${g.stem.y} ` +
+    `C ${g.c1.x} ${g.c1.y} ${g.c2.x} ${g.c2.y} ${g.b.x} ${g.b.y}`
+  );
+}
+
+/** 갈라진 뒤 곡선 위의 한 점(0=줄기 끝, 1=자식). 라벨·✕ 자리에 쓴다. */
+export function pointOnFan(g: PortLink, t: number): Point {
+  const u = 1 - t;
+  const w0 = u * u * u;
+  const w1 = 3 * u * u * t;
+  const w2 = 3 * u * t * t;
+  const w3 = t * t * t;
+  return {
+    x: w0 * g.stem.x + w1 * g.c1.x + w2 * g.c2.x + w3 * g.b.x,
+    y: w0 * g.stem.y + w1 * g.c1.y + w2 * g.c2.y + w3 * g.b.y,
+  };
+}
+
+/**
+ * ✕(끊기 버튼)가 앉을 자리 (D210 4-4).
+ *
+ * **자식 쪽에 치우쳐 둔다.** 자식의 위 포트에는 선이 하나뿐이라 절대 겹치지
+ * 않는다 — 거기서 집을 수 있으면 "내 카드의 부모를 끊는다"가 언제나 가능하다.
+ * 공유 줄기 구간에서는 어느 선인지 가릴 수 없으므로 절대 그쪽에 두지 않는다.
+ */
+export const CUT_AT = 0.78;
+
+export function cutPoint(g: PortLink): Point {
+  return pointOnFan(g, CUT_AT);
+}

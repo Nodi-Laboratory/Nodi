@@ -57,7 +57,7 @@ export const CLIENT_SETTINGS_FALLBACK: ClientSettings = {
   inkFigureZoomEnabled: true,
   cardMinGap: 48,
   cardPushStrength: 1,
-  cardPushSpeedMs: 160,
+  cardPushSpeedMs: 260,
 };
 
 interface Row {

@@ -766,6 +766,20 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 성립하므로(D151), 자기만 바꾸면 자식들이 그 자리에서 흩어진다 — D156이
    * 분류 변경에서 이미 겪은 그것이다.
    */
+  /**
+   * 연결선의 X를 눌렀다 — 그 카드의 부모를 끊는다 (D210 4-4).
+   *
+   * 떼기 도구(카드 수정)는 그대로 둔다. 없애는 것이 아니라 **다른 길을 하나
+   * 더** 여는 것이다 — 손으로 끌어 떼는 것이 불편하다는 의견이 있었지만,
+   * 그 길을 쓰던 학생의 손버릇을 뺏을 이유는 없다.
+   *
+   * 자리는 건드리지 않는다. 끊긴 카드가 그 자리에 그대로 있어야 "관계만
+   * 끊었다"로 읽힌다 — 튀어 나가면 무슨 일이 일어났는지 모른다.
+   */
+  const onCut = useEventCallback((childId: string) => {
+    patch(childId, { parent_item_id: null, pinned: true });
+  });
+
   const onEditEnd = useEventCallback((r: EditResult) => {
     const kids = descendants(items, r.id);
     const branch = [r.id, ...kids];
@@ -917,12 +931,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onRenameTag,
       onRemoveTag,
       onDragEnd,
+      onCut,
       onResize,
       onResetSize,
       onAsk,
       onPick,
     }),
-    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick],
+    [onCut, onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick],
   );
 
   /**

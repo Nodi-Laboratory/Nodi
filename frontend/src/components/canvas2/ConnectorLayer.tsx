@@ -33,16 +33,30 @@ import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Rect } from "@/lib/canvas2/rect";
-import { center, linkGeometry, midpoint } from "@/lib/canvas2/connector";
+import {
+  center,
+  cutPoint,
+  linkPath,
+  linkPathD,
+  pointOnFan,
+} from "@/lib/canvas2/connector";
 import { treeEdges } from "@/lib/canvas2/tree";
 import { useCollapsible } from "@/lib/canvas2/useCollapsible";
 import { getDragOffsets, subscribeDrag, type DragOffset } from "@/lib/canvas2/dragBus";
+import { getPushOffsets, subscribePush } from "@/lib/canvas2/pushBus";
 import { getLiveLink, subscribeLink, type LiveLink } from "@/lib/canvas2/linkBus";
 
 interface Props {
   items: CanvasItem[];
   positions: Map<string, Placed>;
   sizes: Map<string, Size>;
+  /**
+   * 연결을 끊는다 (D210 4-4). 없으면 ✕를 아예 그리지 않는다.
+   *
+   * 떼기 도구는 그대로 둔다 — 없애는 것이 아니라 **다른 길을 하나 더** 여는
+   * 것이다(사용자 지시).
+   */
+  onCut?: (childId: string) => void;
 }
 
 /**
@@ -53,6 +67,17 @@ interface Props {
  * 툭 옮겨 갔다. 두 곳이 같은 값을 봐야 그 움직임이 사라진다.
  */
 const FALLBACK: Size = { w: ITEM_W, h: 180 };
+
+/** 포트 경로를 화폭 원점만큼 옮겨 SVG `d`로. */
+function shiftPath(g: ReturnType<typeof linkPath>, ox: number, oy: number): string {
+  return linkPathD({
+    a: { x: g.a.x - ox, y: g.a.y - oy },
+    stem: { x: g.stem.x - ox, y: g.stem.y - oy },
+    b: { x: g.b.x - ox, y: g.b.y - oy },
+    c1: { x: g.c1.x - ox, y: g.c1.y - oy },
+    c2: { x: g.c2.x - ox, y: g.c2.y - oy },
+  });
+}
 /** 도트 반지름. */
 const DOT_R = 3.5;
 /** SVG 화폭 여유. 드래그로 선이 밖으로 나가도 `overflow:visible`이 받아 준다. */
@@ -134,12 +159,12 @@ function drawLive(
 
   const pRect = shift(parent, offsets.get(live.parentId!));
   const cRect = shift(child, offsets.get(live.childId));
-  const geo = linkGeometry(pRect, cRect);
+  const geo = linkPath(pRect, cRect);
 
   /**
    * **가까우면 곡선을 쓰지 않는다** (D180).
    *
-   * `linkGeometry`는 두 변에서 바깥으로 밀어낸 점을 잇는다. 간격이 좁아지면
+   * 포트는 아래/위 변에서 바깥으로 밀어낸 점이다. 간격이 좁아지면
    * 그 두 점이 서로를 지나쳐 **선이 거꾸로 흐르고**, 제어점이 각자 바깥을
    * 향하므로 곡선이 카드 뒤에서 매듭이 되어 사라진다(실측 2026-08-06: 간격
    * 20에서 끝점이 시작점보다 위로 갔다). 학생 눈에는 "가까이 갈수록 연결이
@@ -153,8 +178,7 @@ function drawLive(
   const d = folded
     ? `M ${center(pRect).x - ox} ${center(pRect).y - oy} ` +
       `L ${center(cRect).x - ox} ${center(cRect).y - oy}`
-    : `M ${geo.a.x - ox} ${geo.a.y - oy} C ${geo.c1.x - ox} ${geo.c1.y - oy}, ` +
-      `${geo.c2.x - ox} ${geo.c2.y - oy}, ${geo.b.x - ox} ${geo.b.y - oy}`;
+    : shiftPath(geo, ox, oy);
   path.setAttribute("d", d);
 
   if (live.broke) {
@@ -211,7 +235,7 @@ function drawLive(
   g.style.display = "";
 }
 
-export function ConnectorLayer({ items, positions, sizes }: Props) {
+export function ConnectorLayer({ items, positions, sizes, onCut }: Props) {
   /**
    * 캔버스에도 트리 선을 그릴 것인가 (D151, 사용자 지시 — 기본 켬).
    *
@@ -240,10 +264,34 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
       };
     });
 
+  /**
+   * 같은 부모의 자식들 — **가로 순서**와 개수 (D210 4-2).
+   *
+   * 부채가 벌어지는 방향과 폭이 이 둘로 정해진다. 가로로 정렬해 두면 왼쪽
+   * 자식이 왼쪽으로 갈라져 선이 서로를 가로지르지 않는다.
+   */
+  const fan = new Map<string, { index: number; count: number }>();
+  {
+    const byParent = new Map<string, typeof links>();
+    for (const l of links) {
+      const arr = byParent.get(l.parentId) ?? [];
+      arr.push(l);
+      byParent.set(l.parentId, arr);
+    }
+    for (const arr of byParent.values()) {
+      const sorted = [...arr].sort((a, b) => a.child.x - b.child.x);
+      sorted.forEach((l, i) => fan.set(l.id, { index: i, count: sorted.length }));
+    }
+  }
+  const fanOf = (id: string) => fan.get(id) ?? { index: 0, count: 1 };
+
   // 화폭 — 드래그 중에는 갱신하지 않는다(SVG는 overflow:visible이라 밖에도 그려진다).
-  const geos = links.map((l) => linkGeometry(l.parent, l.child));
-  const xs = geos.flatMap((g) => [g.a.x, g.b.x, g.c1.x, g.c2.x]);
-  const ys = geos.flatMap((g) => [g.a.y, g.b.y, g.c1.y, g.c2.y]);
+  const geos = links.map((l) => {
+    const f = fanOf(l.id);
+    return linkPath(l.parent, l.child, f.index, f.count);
+  });
+  const xs = geos.flatMap((g) => [g.a.x, g.b.x, g.c1.x, g.c2.x, g.stem.x]);
+  const ys = geos.flatMap((g) => [g.a.y, g.b.y, g.c1.y, g.c2.y, g.stem.y]);
   const minX = xs.length ? Math.min(...xs) - PAD : 0;
   const minY = ys.length ? Math.min(...ys) - PAD : 0;
   const w = xs.length ? Math.max(...xs) - minX + PAD : 0;
@@ -266,16 +314,34 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   // 드래그 콜백이 최신 링크·원점을 보게 한다(구독은 한 번만 건다).
   // **렌더 중에 ref를 쓰지 않는다** — React Compiler가 막는다(react-hooks/refs).
-  const stateRef = useRef({ links, minX, minY, rects });
+  const stateRef = useRef({ links, minX, minY, rects, fan });
   useEffect(() => {
-    stateRef.current = { links, minX, minY, rects };
+    stateRef.current = { links, minX, minY, rects, fan };
   });
 
   useEffect(() => {
-    const draw = (offsets: ReadonlyMap<string, DragOffset>) => {
+    /**
+     * 손에 들린 이동량 + **밀려난 이동량**을 합친다 (D210 4-5).
+     *
+     * 밀려나는 카드는 `dragBus`에 안 실린다(손에 들려 있지 않다). 그것만 보면
+     * 밀린 카드의 연결선이 제자리에 남아 **끊겨 보이고**, 붙기 예고 테두리가
+     * 카드와 어긋나 어디에 붙는지 알 수 없다.
+     */
+    const merged = (
+      offsets: ReadonlyMap<string, DragOffset>,
+    ): ReadonlyMap<string, DragOffset> => {
+      const push = getPushOffsets();
+      if (!push.size) return offsets;
+      const out = new Map(offsets);
+      for (const [id, d] of push) if (!out.has(id)) out.set(id, d);
+      return out;
+    };
+
+    const draw = (raw: ReadonlyMap<string, DragOffset>) => {
+      const offsets = merged(raw);
       const svg = svgRef.current;
       if (!svg) return;
-      const { links: ls, minX: ox, minY: oy, rects: rs } = stateRef.current;
+      const { links: ls, minX: ox, minY: oy, rects: rs, fan: fs } = stateRef.current;
       const live = getLiveLink();
 
       /**
@@ -307,16 +373,20 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
           to: g0.querySelector<SVGCircleElement>('[data-end="to"]'),
           label: g0.querySelector("text"),
         };
-        const g = linkGeometry(
+        const f = fs.get(l.id) ?? { index: 0, count: 1 };
+        const g = linkPath(
           shift(l.parent, offsets.get(l.parentId)),
           shift(l.child, offsets.get(l.id)),
+          f.index,
+          f.count,
         );
-        const m = midpoint(g);
-        path.setAttribute(
-          "d",
-          `M ${g.a.x - ox} ${g.a.y - oy} C ${g.c1.x - ox} ${g.c1.y - oy}, ` +
-            `${g.c2.x - ox} ${g.c2.y - oy}, ${g.b.x - ox} ${g.b.y - oy}`,
-        );
+        const m = pointOnFan(g, 0.5);
+        path.setAttribute("d", shiftPath(g, ox, oy));
+        const cut = g0.querySelector<SVGGElement>("[data-cut]");
+        if (cut) {
+          const c = cutPoint(g);
+          cut.setAttribute("transform", `translate(${c.x - ox},${c.y - oy})`);
+        }
         n.from?.setAttribute("cx", String(g.a.x - ox));
         n.from?.setAttribute("cy", String(g.a.y - oy));
         n.to?.setAttribute("cx", String(g.b.x - ox));
@@ -331,9 +401,12 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
     // **두 통로를 같은 그리기로 받는다.** 따로 그리면 한쪽만 갱신된 프레임에
     // 장력선과 카드가 어긋난다.
     const offDrag = subscribeDrag(draw);
+    // 밀림이 갱신될 때도 다시 그린다 — 그래야 밀린 카드를 따라간다.
+    const offPush = subscribePush(() => draw(getDragOffsets()));
     const offLink = subscribeLink(() => draw(getDragOffsets()));
     return () => {
       offDrag();
+      offPush();
       offLink();
     };
   }, []);
@@ -384,14 +457,12 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
       </g>
       {links.map((l, i) => {
         const g = geos[i];
-        const m = midpoint(g);
+        const m = pointOnFan(g, 0.5);
+        const cut = cutPoint(g);
         return (
           <g key={l.id} data-link={l.id} style={{ color: "var(--c-live-deep)" }}>
             <path
-              d={
-                `M ${g.a.x - minX} ${g.a.y - minY} C ${g.c1.x - minX} ${g.c1.y - minY}, ` +
-                `${g.c2.x - minX} ${g.c2.y - minY}, ${g.b.x - minX} ${g.b.y - minY}`
-              }
+              d={shiftPath(g, minX, minY)}
               fill="none"
               stroke="currentColor"
               // 1.1/0.28이었다 — 카드가 커지니 실오라기처럼 보였다
@@ -422,6 +493,46 @@ export function ConnectorLayer({ items, positions, sizes }: Props) {
               strokeWidth={l.attach ? 1.4 : 2}
               opacity={l.attach ? 0.6 : l.tree ? 0.9 : 0.95}
             />
+            {/**
+             * 끊기 버튼 (D210 4-4).
+             *
+             * **자식 쪽 끝 구간**에 둔다 — 자식의 위 포트에는 선이 하나뿐이라
+             * 절대 겹치지 않는다. 공유 줄기에서는 어느 선인지 가릴 수 없으므로
+             * 거기에는 절대 두지 않는다(`cutPoint`가 그 자리를 정한다).
+             *
+             * 평소에는 안 보이고 선이나 ✕에 손이 닿을 때만 뜬다 — 카드마다
+             * ✕가 상시로 떠 있으면 캔버스가 버튼밭이 된다.
+             */}
+            {onCut && !l.attach && (
+              <g
+                data-cut
+                data-no-pan
+                transform={`translate(${cut.x - minX},${cut.y - minY})`}
+                style={{ cursor: "pointer" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCut(l.id);
+                }}
+              >
+                <title>연결 끊기</title>
+                {/* 손이 닿는 자리는 넉넉하게, 보이는 것은 작게. */}
+                <circle r={13} fill="transparent" style={{ pointerEvents: "all" }} />
+                <circle
+                  className="c2-cut-dot"
+                  r={7.5}
+                  fill="var(--c-paper)"
+                  stroke="currentColor"
+                  strokeWidth={1.6}
+                />
+                <path
+                  className="c2-cut-dot"
+                  d="M -3 -3 L 3 3 M 3 -3 L -3 3"
+                  stroke="currentColor"
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                />
+              </g>
+            )}
             {/* 트리 간선에는 라벨을 달지 않는다 — 카드마다 하나씩이라
                 "AI 응답"이 캔버스를 뒤덮는다 (D151). 첨부도 마찬가지다(D163). */}
             {!l.tree && !l.attach && (

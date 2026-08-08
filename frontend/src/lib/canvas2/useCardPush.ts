@@ -27,6 +27,7 @@
 
 import { useEffect, useRef } from "react";
 import { subscribeDrag, type DragOffset } from "./dragBus";
+import { clearPushOffsets, setPushOffsets } from "./pushBus";
 import { pushAway, type Displacement, type PushCandidate } from "./pushAway";
 import type { Rect } from "./rect";
 
@@ -138,6 +139,7 @@ export function useCardPush({
           pushedRef.current = new Map();
           clearMarks(false);
         }
+        clearPushOffsets();
         endDrag();
         return;
       }
@@ -182,13 +184,22 @@ export function useCardPush({
         // transition은 **처음 한 번만** 건다. 매 프레임 다시 쓰면 그때마다
         // 스타일 재계산이 돌고, 값이 같아도 브라우저는 그걸 모른다.
         if (!easedRef.current.has(id)) {
-          node.style.transition = `transform ${a.speedMs}ms cubic-bezier(.22,1,.36,1)`;
+          /**
+             * 감속 곡선 (D210 4-5b, 사용자 지시: "너무 빠르다").
+             *
+             * `cubic-bezier(.16,1,.3,1)`은 처음에 빠르게 나가고 **끝에서 길게
+             * 미끄러진다** — 비켜 주는 동작은 그 편이 자연스럽다. 앞이 느리면
+             * 손을 따라오지 못하는 것처럼 보이고, 끝이 급하면 튄다.
+             */
+            node.style.transition = `transform ${a.speedMs}ms cubic-bezier(.16,1,.3,1)`;
           node.setAttribute(MARK, "1");
           easedRef.current.add(id);
         }
         node.style.transform = `translate(${d.dx}px, ${d.dy}px)`;
       }
       pushedRef.current = next;
+      // 연결선·붙기 예고 테두리가 밀린 카드를 따라오게 한다 (D210 4-5).
+      setPushOffsets(next);
     };
 
     const off = subscribeDrag(apply);

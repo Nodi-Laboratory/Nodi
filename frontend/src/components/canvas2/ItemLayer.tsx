@@ -40,6 +40,8 @@ interface Props {
   pickedId: string | null;
   measure: (id: string, el: HTMLElement | null) => void;
   handlers: {
+    /** 연결선의 X를 눌렀다 — 그 카드의 부모를 끊는다 (D210 4-4). */
+    onCut: (childId: string) => void;
     onSelect: (id: string | null, additive?: boolean) => void;
     onStartEdit: (id: string) => void;
     onCommitEdit: (id: string, body: string) => void;
@@ -106,7 +108,12 @@ export function ItemLayer({
   return (
     <>
       <ColumnLabels items={items} positions={positions} tagOrder={tagOrder} />
-      <ConnectorLayer items={items} positions={positions} sizes={sizes} />
+      <ConnectorLayer
+        items={items}
+        positions={positions}
+        sizes={sizes}
+        onCut={handlers.onCut}
+      />
       {items.map((item) => {
         const p = positions.get(item.id);
         if (!p) return null;

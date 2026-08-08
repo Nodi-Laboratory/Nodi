@@ -656,3 +656,18 @@ a {
     animation: none;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────
+   연결선 끊기 버튼 (D210 4-4)
+
+   평소에는 안 보인다. 카드마다 X가 상시로 떠 있으면 캔버스가 버튼밭이 되고,
+   무엇을 읽는 화면인지 흐려진다. 선이나 버튼에 손이 닿을 때만 나타난다.
+   ────────────────────────────────────────────────────────────── */
+.canvas2 [data-cut] .c2-cut-dot {
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+.canvas2 [data-link]:hover [data-cut] .c2-cut-dot,
+.canvas2 [data-cut]:hover .c2-cut-dot {
+  opacity: 1;
+}
