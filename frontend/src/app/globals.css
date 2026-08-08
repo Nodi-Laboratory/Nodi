@@ -671,3 +671,52 @@ a {
 .canvas2 [data-cut]:hover .c2-cut-dot {
   opacity: 1;
 }
+
+/* ──────────────────────────────────────────────────────────────
+   도구바 접기·펼치기 (D210 5-3)
+
+   **두 방향이 같은 시간·같은 곡선이어야 한다.** 나올 때만 부드럽고 들어갈 때
+   툭 끊기면 그게 더 눈에 띈다. 나가는 쪽은 CSS만으로는 못 잡으므로(요소가
+   사라진다) 두 애니메이션을 같은 값으로 맞춰 둔다.
+
+   모션 축소를 켠 사용자에게는 애니메이션 없이 즉시 바뀐다.
+   ────────────────────────────────────────────────────────────── */
+.canvas2 .c2-rail-in {
+  animation: c2-rail-slide 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.canvas2 .c2-rail-tab {
+  animation: c2-tab-slide 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/**
+ * ⚠️ **`transform`으로 세로 가운데를 다시 잡으면 안 된다.** Tailwind v4의
+ * `-translate-y-1/2`는 `transform`이 아니라 **`translate` 속성**으로 나간다.
+ * 둘은 겹쳐서 곱해지므로 여기서 `translate(0, -50%)`를 또 쓰면 -100%가 되어
+ * 도구바가 화면 위로 올라가 지도 버튼을 덮는다(2026-08-08에 실제로 그랬다).
+ * 가로로만 민다 — 세로는 Tailwind가 이미 잡아 놨다.
+ */
+@keyframes c2-rail-slide {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes c2-tab-slide {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas2 .c2-rail-in,
+  .canvas2 .c2-rail-tab {
+    animation: none;
+  }
+}

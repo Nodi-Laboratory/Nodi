@@ -47,6 +47,7 @@ import { backOffCamera, focusCamera, type Camera } from "@/lib/canvas2/focusCame
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
+import { MiniMapOverlay } from "@/components/canvas2/MiniMapOverlay";
 import { useCardPush } from "@/lib/canvas2/useCardPush";
 import { usePortLink } from "@/lib/canvas2/usePortLink";
 import { descendants, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
@@ -1373,18 +1374,40 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 의존하는데(ResizeObserver) 지도 페이지에는 카드가 없다 — 거기서 다시
    * 계산하면 캔버스와 다른 자리에 점이 찍힌다.
    */
+  /**
+   * 지도를 **이 화면 위에** 띄운다 (D210 5-1).
+   *
+   * D205는 지도를 별도 페이지로 뺐다. 캔버스가 넓어진 것은 얻었지만 이동
+   * 자체가 불편하다는 의견이 왔다 — 잠깐 보려고 화면을 통째로 바꾸는 것은
+   * 값이 크다. 페이지는 남겨 둔다(주소로 들어오는 길). 같은 `SessionMap`을
+   * 쓰므로 둘이 갈라지지 않는다.
+   */
+  const [mapOpen, setMapOpen] = useState(false);
   const openMap = useCallback(() => {
-    if (!sessionId) return;
-    setMapSnapshot({
-      spaceId,
-      sessionId,
-      items,
-      positions: [...layout.positions].map(([id, p]) => [id, { x: p.x, y: p.y }]),
-      sizes: [...layout.sizes].map(([id, sz]) => [id, { w: sz.w, h: sz.h }]),
-      tagOrder: [...layout.tagOrder],
-    });
-    router.push(`/space/${spaceId}/map`);
-  }, [items, layout.positions, layout.sizes, layout.tagOrder, router, sessionId, setMapSnapshot, spaceId]);
+    // 페이지 쪽도 살아 있으므로 배치 사진은 계속 남긴다.
+    if (sessionId) {
+      setMapSnapshot({
+        spaceId,
+        sessionId,
+        items,
+        positions: [...layout.positions].map(([id, p]) => [id, { x: p.x, y: p.y }]),
+        sizes: [...layout.sizes].map(([id, sz]) => [id, { w: sz.w, h: sz.h }]),
+        tagOrder: [...layout.tagOrder],
+      });
+    }
+    setMapOpen((v) => !v);
+  }, [items, layout.positions, layout.sizes, layout.tagOrder, sessionId, setMapSnapshot, spaceId]);
+
+  /** 지도에서 노드를 끌어 옮겼다 — 캔버스 좌표를 그대로 옮긴다. */
+  const moveFromMap = useEventCallback((id: string, x: number, y: number) => {
+    store.moveMany([{ id, x, y }], "지도에서 옮김");
+  });
+
+  /** 지도에서 노드를 눌렀다 — 그 카드로 날아간다. */
+  const openFromMap = useEventCallback((id: string) => {
+    setMapOpen(false);
+    goToNode(id);
+  });
 
   const handleTool = useCallback(
     (tool: ToolName) => {
@@ -1882,6 +1905,16 @@ export function CanvasWorkspace({ spaceId }: Props) {
               중에 이것만 화면을 바꾸는 문이라 다른 아이콘과 같은 크기면
               찾기 어렵다. */}
           <MapDoor onOpen={openMap} />
+          <MiniMapOverlay
+            items={items}
+            positions={layout.positions}
+            sizes={layout.sizes}
+            tagOrder={layout.tagOrder}
+            open={mapOpen}
+            onClose={() => setMapOpen(false)}
+            onOpenNode={openFromMap}
+            onMoveNode={moveFromMap}
+          />
           <div
             className="ui absolute left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
             // 펜 입력판이 펴진 만큼 비킨다 (D176) — 안 비키면 판 위에 겹쳐 뜬다.

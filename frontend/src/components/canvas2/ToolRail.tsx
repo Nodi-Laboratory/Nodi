@@ -13,6 +13,7 @@
 
 import {
   ArrowUpRight,
+  ChevronLeft,
   Circle,
   Eraser,
   Hand,
@@ -207,22 +208,38 @@ export function ToolRail({ active, onSelect, setDrawStyle, paused = false }: Pro
   if (!open) {
     const cur = ALL.find((d) => d.tool === active) ?? ALL[0];
     const Icon = cur.icon;
+    /**
+     * 접힌 상태 — **세로로 긴 탭** (D210 5-3, 사용자 지시 2026-08-08).
+     *
+     * 정사각형 버튼이었다. 도구바는 세로로 긴데 접으면 정사각형이 되니
+     * "여기서 그게 나온다"가 안 읽혔다. 탭이 세로로 길면 형태 자체가
+     * 나올 것의 모양을 말해 준다.
+     *
+     * 오른쪽 변에 **붙인다**(right: 0, 모서리는 왼쪽만 둥글다) — 화면 밖에서
+     * 미끄러져 나오는 인상이라 붙어 있어야 그 방향이 읽힌다.
+     */
     return (
       <button
         type="button"
         data-no-pan
+        data-rail-tab
         onClick={() => setOpen(true)}
         aria-label={`도구 펼치기 (지금: ${cur.label})`}
         title={`도구 펼치기 — 지금 ${cur.label}`}
-        className="ui absolute right-4 top-1/2 z-30 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-xl border transition-colors"
+        className="ui c2-rail-tab absolute right-0 top-1/2 z-30 flex w-8 -translate-y-1/2 flex-col items-center justify-center gap-1 border py-4"
         style={{
+          height: 92,
           background: "var(--c-raised)",
           borderColor: "var(--c-rule)",
+          borderRight: "none",
+          borderTopLeftRadius: 10,
+          borderBottomLeftRadius: 10,
           color: "var(--c-ink)",
           boxShadow: "var(--c-shadow-md)",
         }}
       >
-        <Icon size={18} strokeWidth={1.9} />
+        <ChevronLeft size={14} strokeWidth={2} aria-hidden />
+        <Icon size={16} strokeWidth={1.9} />
       </button>
     );
   }
@@ -231,7 +248,7 @@ export function ToolRail({ active, onSelect, setDrawStyle, paused = false }: Pro
     // 오른쪽 **아래** — 사용자 지시. 하단 입력창은 가운데라 부딪히지 않는다.
     // 색 팔레트는 레일 **왼쪽**에 붙인다. 레일 안에 넣으면 세로로 더 길어져
     // 좁은 화면(교실 태블릿)에서 상단바까지 닿는다.
-    <div className="absolute right-4 top-1/2 z-30 flex -translate-y-1/2 items-center gap-2">
+    <div className="c2-rail-in absolute right-4 top-1/2 z-30 flex -translate-y-1/2 items-center gap-2">
       {isColorableTool(active) && (
         <Palette
           colors={colors}
