@@ -618,3 +618,25 @@ def test_카탈로그와_레지스트리가_일치한다():
     from app.ai.catalog import ALL_DECLARED
 
     assert set(ai.get_orchestrator().registry.names()) == set(ALL_DECLARED)
+
+
+def test_학생_글이_있을_때만_글_스킬이_열린다():
+    """파일 스킬과 **같은 규칙**이다 — 없는데 보여 주면 모델이 부르고 빈
+    결과로 군더더기를 붙인다(2026-08-09)."""
+    없음 = skills_for("personal", "student", has_concepts=True)
+    있음 = skills_for("personal", "student", has_concepts=True, has_notes=True)
+    assert "read_my_notes" not in 없음
+    assert "read_my_notes" in 있음
+
+
+def test_글만_있어도_카탈로그가_열린다():
+    """글이 있으면 그 도구는 나온다 — 빈 세션 규칙은 "줄 것이 없을 때"의
+    이야기이지, 글이 있는데 감추라는 뜻이 아니다."""
+    names = skills_for("personal", "student", has_notes=True)
+    assert "read_my_notes" in names
+    # 계획 도구는 조합할 것이 둘 이상일 때만(D109) — 하나뿐이면 안 나온다.
+    assert "think" not in names
+
+
+def test_아무것도_없으면_여전히_도구가_없다():
+    assert skills_for("personal", "student") == []

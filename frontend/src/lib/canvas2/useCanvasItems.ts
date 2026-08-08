@@ -15,7 +15,7 @@
  * 화면에 남고 편집도 계속 된다. 다만 실패 사실은 배너로 보인다.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ItemPatch } from "@/lib/api/canvas";
 import {
   createItems as apiCreate,
@@ -116,8 +116,24 @@ function undoLabel(p: ItemPatch, before: CanvasItem): string | null {
   return null;
 }
 
-export function useCanvasItems(): CanvasItemsApi {
+export function useCanvasItems(sessionId: string | null): CanvasItemsApi {
   const [items, setItems] = useState<CanvasItem[]>([]);
+  /**
+   * 지금 열려 있는 방 (2026-08-09).
+   *
+   * 스트리밍은 **보낸 방**을 기억한 채 끝까지 돈다(그게 맞다 — 답은 물어본
+   * 방의 것이다). 그런데 화면 스토어는 하나뿐이라, 답이 오는 중에 방을 바꾸면
+   * 그 카드가 **새 방 화면에 얹혔다** — 실측 2026-08-09: B 방에 A의 '광합성'
+   * 카드가 떴다. 서버에는 A에 저장되므로 새로고침하면 사라지는 **유령**이고,
+   * 그 상태에서 끌면 승격 경로가 B에 행을 만들 수도 있다(D147의 복제 경고).
+   *
+   * ref로 두는 이유: 콜백들의 신원을 바꾸지 않기 위해서다. 신원이 바뀌면
+   * 스트리밍 중 매 글자마다 `send`가 새로 만들어진다.
+   */
+  const sessionRef = useRef<string | null>(sessionId);
+  useEffect(() => {
+    sessionRef.current = sessionId;
+  }, [sessionId]);
   const [error, setError] = useState<string | null>(null);
   const [undo, setUndo] = useState<UndoEntry | null>(null);
   const undoTimer = useRef<number | null>(null);
@@ -147,9 +163,13 @@ export function useCanvasItems(): CanvasItemsApi {
   const replaceAll = useCallback((next: CanvasItem[]) => setItems(next), []);
 
   const upsertLocal = useCallback((incoming: CanvasItem[]) => {
+    // **다른 방의 것은 화면에 얹지 않는다** (위 `sessionRef` 주석).
+    const here = sessionRef.current;
+    const mine = here ? incoming.filter((i) => i.sessionId === here) : incoming;
+    if (!mine.length) return;
     setItems((prev) => {
       const byId = new Map(prev.map((i) => [i.id, i]));
-      for (const it of incoming) byId.set(it.id, { ...byId.get(it.id), ...it });
+      for (const it of mine) byId.set(it.id, { ...byId.get(it.id), ...it });
       return [...byId.values()];
     });
   }, []);
@@ -161,6 +181,11 @@ export function useCanvasItems(): CanvasItemsApi {
    * 스트리밍이 끝나는 순간 아이템들이 자리를 바꾼다.
    */
   const replaceTemp = useCallback((tempIds: string[], saved: CanvasItem[]) => {
+    // 저장이 끝나 서버 행이 오는 자리 — 여기도 방이 맞아야 한다.
+    const here = sessionRef.current;
+    if (here && saved.length && saved[0]?.sessionId && saved[0].sessionId !== here) {
+      return;
+    }
     setItems((prev) => {
       const map = new Map(tempIds.map((t, i) => [t, saved[i]]));
       const out: CanvasItem[] = [];

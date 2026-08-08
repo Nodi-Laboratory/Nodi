@@ -40,6 +40,13 @@ _TEACHER_ONLY = ["list_class_materials", "summarize_class_questions"]
 # 붙인다(학생은 파일 얘기를 꺼낸 적도 없다).
 _SESSION_FILES = ["list_session_files", "read_session_file"]
 
+# 학생이 캔버스에 **직접 쓴 글** — 글이 실제로 있을 때만 (2026-08-09).
+#
+# 캔버스는 읽기만 하는 화면이 아니다. 학생이 쓴 글은 지금까지 AI에게 가는
+# 경로가 하나도 없었다(트리는 AI 카드만, 세션 파일은 올린 파일만). "내가
+# 정리한 거 맞아?"에 답할 수가 없었다.
+_NOTES = ["read_my_notes"]
+
 # 계획 수립 도구. **조합할 대상이 2개 이상일 때만** 넣는다.
 #
 # 실측(2026-07-28): 개인 세션은 실도구가 0개인데 think만 노출하니 모델이
@@ -53,7 +60,15 @@ _PLANNER_MIN_TOOLS = 2
 # 오타 하나로 스킬이 **조용히 사라지는** 것을 막는다(레지스트리는 모르는 이름을
 # 그냥 건너뛴다).
 ALL_DECLARED: frozenset[str] = frozenset(
-    [*_CLASS_ONLY, *_CONCEPTS, *_TEACHER_ONLY, *_SESSION_FILES, _PLANNER, _MEDIA_INTENT]
+    [
+        *_CLASS_ONLY,
+        *_CONCEPTS,
+        *_TEACHER_ONLY,
+        *_SESSION_FILES,
+        *_NOTES,
+        _PLANNER,
+        _MEDIA_INTENT,
+    ]
 )
 
 
@@ -63,6 +78,7 @@ def skills_for(
     *,
     has_session_files: bool = False,
     has_concepts: bool = False,
+    has_notes: bool = False,
 ) -> list[str]:
     """(공간 종류, 앱 역할, 세션 상태) → 노출할 스킬 이름 목록.
 
@@ -76,6 +92,8 @@ def skills_for(
             names += _TEACHER_ONLY
     if has_session_files:
         names += _SESSION_FILES
+    if has_notes:
+        names += _NOTES
     if len(names) >= _PLANNER_MIN_TOOLS:
         names.append(_PLANNER)
     # 의도 판정은 **학급 밖에서도** 연다 (D211 11).

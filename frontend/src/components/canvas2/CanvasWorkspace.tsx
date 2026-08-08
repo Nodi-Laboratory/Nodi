@@ -221,7 +221,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
       growRef.current = null;
     }, []),
   });
-  const store = useCanvasItems();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   // 교차 연결 이동 (D176) — 공간·세션을 함께 옮기고, 도착 후 초점을 맞춘다.
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
@@ -232,6 +231,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const setPendingFocusItem = useWorkspaceStore((s) => s.setPendingFocusItem);
   const router = useRouter();
   const { sessionId, dropSession } = useSessionBinding(spaceId);
+  // 스토어는 **지금 방**을 알아야 한다 — 다른 방의 답이 화면에 얹히지 않게(2026-08-09).
+  const store = useCanvasItems(sessionId);
 
   /**
    * 선택된 아이템들. **집합이다** — 예전에는 하나뿐이라 올가미로 여럿을 잡아도

@@ -19,6 +19,7 @@ from .orchestrator import Orchestrator, TurnOutcome
 from .registry import SkillRegistry
 from .skills.concepts import GetConceptSkill, ListSessionConceptsSkill
 from .skills.media_intent import MediaIntentSkill
+from .skills.notes import ReadMyNotesSkill
 from .skills.search_class_material import SearchClassMaterialSkill
 from .skills.search_lecture_clip import SearchLectureClip
 from .skills.search_textbook_figure import SearchTextbookFigureSkill
@@ -51,6 +52,7 @@ def get_orchestrator() -> Orchestrator:
     registry.register(SearchTextbookFigureSkill())
     registry.register(SearchLectureClip())
     registry.register(MediaIntentSkill())
+    registry.register(ReadMyNotesSkill())
     registry.register(ListSessionConceptsSkill())
     registry.register(GetConceptSkill())
     registry.register(ListSessionFilesSkill())

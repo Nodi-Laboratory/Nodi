@@ -196,6 +196,7 @@ async def chat_stream(
 
     react_role = "student"
     react_has_files = False
+    react_has_notes = False
     legacy_figures: list[dict] = []
     if react_on:
         rag_result = None
@@ -227,6 +228,22 @@ async def chat_stream(
             react_has_files = bool(frows)
         except Exception:  # noqa: BLE001 - 확인 실패는 "없음"으로 강등
             logger.warning("세션 파일 확인 실패 — 파일 스킬 미노출", exc_info=True)
+        try:
+            # 학생이 캔버스에 직접 쓴 글 (2026-08-09). 파일과 **같은 이유**로
+            # 있을 때만 노출한다 — 없는데 보여 주면 모델이 부르고 빈 결과로
+            # 군더더기를 붙인다.
+            nrows = await client.select(
+                "canvas_items",
+                {
+                    "session_id": f"eq.{body.session_id}",
+                    "kind": "eq.note",
+                    "select": "id",
+                    "limit": "1",
+                },
+            )
+            react_has_notes = bool(nrows)
+        except Exception:  # noqa: BLE001 - 확인 실패는 "없음"으로 강등
+            logger.warning("학생 글 확인 실패 — 글 스킬 미노출", exc_info=True)
     else:
         # D111: 도판 검색도 여기서 한다. 예전에는 **프론트가** SSE 전에
         # /retrieve를 따로 불렀는데, 그러면 검색 오케스트레이션이 클라이언트에
@@ -400,6 +417,7 @@ async def chat_stream(
                         has_session_files=react_has_files,
                         # 이미 읽어 둔 세션 노드로 판단 — 추가 조회 없음.
                         has_concepts=bool(nodes),
+                        has_notes=react_has_notes,
                     )
                     async for kind, payload in ai.get_orchestrator().run(
                         ctx=ctx,
