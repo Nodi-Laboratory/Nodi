@@ -571,3 +571,46 @@ a {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────
+   수식 (D210 3-1)
+
+   **wipe의 예외다.** 글자 단위 애니메이션(.c2-ink)은 KaTeX가 만든 DOM을
+   찢으므로 쓸 수 없다. 대신 덩어리째 짧게 페이드인한다 — 나타나는 방식이
+   달라도 "지금 나왔다"는 신호는 같다.
+
+   손글씨 폰트를 물려받지 않게 한다. 수식에 손글씨를 씌우면 기호가 뭉개져
+   읽히지 않는다 — 여기만은 KaTeX가 자기 폰트를 쓰는 것이 맞다.
+   ────────────────────────────────────────────────────────────── */
+.canvas2 .c2-math {
+  font-family: KaTeX_Main, "Times New Roman", serif;
+}
+.canvas2 .c2-math[data-math="block"] {
+  display: block;
+  margin: 0.35em 0;
+  text-align: center;
+}
+.canvas2 .c2-math-in {
+  animation: c2-math-fade 0.22s ease-out both;
+}
+@keyframes c2-math-fade {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* 못 읽은 수식 — 원문 그대로. 고장이 아니라 "이건 수식이 아니었다"로 읽히게
+   본문과 같은 색을 쓴다. */
+.canvas2 .c2-math-raw {
+  font-family: var(--font-label), monospace;
+  font-size: 0.94em;
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas2 .c2-math-in {
+    animation: none;
+  }
+}

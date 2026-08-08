@@ -15,6 +15,7 @@ import { INK_TAIL, splitRun, toInkDoc, type InkBlock, type InkRun } from "@/lib/
 import { tuneOf } from "@/lib/canvas2/handScript";
 import { useTypewriter } from "@/lib/canvas2/useTypewriter";
 import { TunedText } from "./TunedText";
+import { MathSpan } from "./MathSpan";
 
 interface Props {
   body: string;
@@ -96,6 +97,13 @@ function BodyView({ body, streaming }: { body: string; streaming?: boolean }) {
  */
 function RunContent({ run, tailFrom }: { run: InkRun; tailFrom: number }) {
   const { dry, wet } = splitRun(run, tailFrom);
+  /**
+   * 수식은 한 덩어리다 (D210 3-1). 아직 안 써진 자리면 짧게 페이드인한다 —
+   * 글자 wipe와 달리 쪼갤 수 없어서 나타나는 방식이 다르다.
+   */
+  if (run.m) {
+    return <MathSpan tex={run.text} display={run.m === "b"} animate={wet.length > 0} />;
+  }
   return (
     <>
       {dry && (
@@ -159,6 +167,14 @@ function Block({
       {last && <Caret />}
     </>
   );
+
+  /**
+   * 블록 수식은 문단이 아니라 **가운데 놓인 한 덩어리**다 (D210 3-1).
+   * 런 하나뿐이므로 그대로 그린다.
+   */
+  if (block.type === "math") {
+    return <div className="mt-3 first:mt-0">{content}</div>;
+  }
 
   if (block.type === "li") {
     return (

@@ -17,6 +17,7 @@
     "@excalidraw/excalidraw": "0.18.1",
     "@tanstack/react-query": "^5.101.1",
     "d3": "^7.9.0",
+    "katex": "^0.16.47",
     "lucide-react": "^1.21.0",
     "next": "16.2.9",
     "react": "19.2.4",

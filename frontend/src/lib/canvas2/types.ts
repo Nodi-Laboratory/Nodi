@@ -235,9 +235,20 @@ export interface MarkToken {
   b?: boolean;
   /** ==형광펜== */
   h?: boolean;
+  /**
+   * 수식이다 (D210 3-1). `ch`가 글자 하나가 아니라 **LaTeX 원문 전체**다.
+   *
+   *   "i" 인라인 ($…$ · \(…\))
+   *   "b" 블록   ($$…$$ · \[…\])
+   *
+   * 글자 단위로 쪼갤 수 없는 유일한 토큰이다 — KaTeX가 만든 DOM을 글자
+   * span으로 찢으면 수식이 깨진다. `ink.ts`가 이 표식을 보고 통째로 둔다.
+   */
+  m?: "i" | "b";
 }
 
 export interface RenderBlock {
-  type: "p" | "li";
+  /** `math`는 블록 수식 한 덩어리다 — 토큰이 정확히 하나다. */
+  type: "p" | "li" | "math";
   tokens: MarkToken[];
 }
