@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, Map as MapIcon } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { ConceptMap } from "@/components/home/ConceptMap";
 import { MapSessionTree } from "@/components/home/MapSessionTree";
 import { useProfile } from "@/lib/hooks";
@@ -26,29 +25,21 @@ import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import type { ConceptNode } from "@/lib/api/conceptMap";
 
 /**
- * 개념이 아직 없을 때 (D189).
+ * 개념이 없어 대화방으로 보내는 중 (D210 2-1).
  *
- * 빈 지도는 **고장난 화면과 구분되지 않는다** — 회색 판만 남는다. 무엇을 하면
- * 여기가 채워지는지 말해 주는 것이 빈 상태의 역할이다(D100과 같은 태도).
+ * 예전에는 여기서 **빈 지도 안내**를 그렸다(D189의 `EmptyMap`). 그런데 갓
+ * 가입한 학생에게 처음 보이는 화면이 "여기는 비어 있습니다"라는 것은 좋은
+ * 첫인상이 아니다 — 할 일을 알려 주는 것보다 **할 수 있는 자리로 데려다
+ * 주는 것**이 낫다(사용자 지시 2026-08-08).
+ *
+ * 그래서 이 화면은 이제 목적지가 아니라 **지나가는 자리**다. 안내문 대신
+ * 이동 중이라는 것만 말한다.
  */
-function EmptyMap() {
+function GoingToCanvas() {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
-      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent-soft text-accent-fg">
-        <MapIcon size={22} aria-hidden />
-      </span>
-      <div>
-        <p className="text-sm font-medium text-fg">아직 지도에 올릴 개념이 없습니다</p>
-        <p className="mt-1 text-xs text-fg-muted">
-          질문을 하면 개념 카드가 쌓이고, 비슷한 개념끼리 여기서 뭉칩니다.
-        </p>
-      </div>
-      <Link
-        href="/space/personal"
-        className="mt-1 rounded-lg bg-accent-deep px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep"
-      >
-        첫 대화 시작하기
-      </Link>
+    <div className="flex h-full w-full items-center justify-center gap-2 text-sm text-fg-muted">
+      <Loader2 size={16} className="animate-spin" aria-hidden />
+      대화방을 여는 중…
     </div>
   );
 }
@@ -68,6 +59,26 @@ export default function HomePage() {
   const setPendingFocusItem = useWorkspaceStore((s) => s.setPendingFocusItem);
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
+
+  /**
+   * **보여 줄 개념이 없으면 홈을 건너뛴다** (D210 2-1, 사용자 지시).
+   *
+   * 판정 기준이 "세션 없음"이 아니라 **"개념 카드 0개"**인 것이 요점이다.
+   * 홈은 개념 지도이고, 인사만 하고 나간 학생은 세션은 있지만 지도에 올릴
+   * 것이 없어 똑같이 빈 화면을 본다 — 세션 유무로 가르면 그 경우를 놓친다.
+   *
+   * `replace`여야 한다. `push`면 뒤로 가기가 다시 이 빈 홈으로 데려오고,
+   * 거기서 또 튕겨 나가 뒤로 가기가 먹지 않는 것처럼 보인다.
+   *
+   * 목적지에 세션이 없으면 캔버스가 알아서 만든다(`useSessionBinding`).
+   * 빈 대화가 쌓이지도 않는다 — 만들기 창구가 이미 있는 빈 대화를 돌려주므로
+   * (D202) 홈에 몇 번을 들러도 방은 하나다.
+   */
+  const 개념없음 =
+    !isLoading && !isError && (!map || map.nodes.length === 0);
+  useEffect(() => {
+    if (개념없음) router.replace("/space/personal");
+  }, [개념없음, router]);
 
   const displayName = profile?.display_name ?? profile?.email ?? null;
   const spaceIds = (summary?.spaces ?? []).map((s) =>
@@ -190,10 +201,10 @@ export default function HomePage() {
               잠시 뒤 다시 열어 보세요. 대화 기록은 그대로 있습니다.
             </p>
           </div>
-        ) : !map || map.nodes.length === 0 ? (
-          <div className="h-full w-full">
-            <EmptyMap />
-          </div>
+        ) : 개념없음 || !map ? (
+          /* 판정이 끝나기 전에는 이 자리에 아무 안내도 그리지 않는다 —
+             빈 지도가 잠깐 스쳤다 사라지면 깜빡임으로 보인다. */
+          <GoingToCanvas />
         ) : (
           <>
             {/* 목록은 **오른쪽**이다(사용자 지시 2026-08-06) — 지도가 왼쪽 끝에서 시작한다. */}

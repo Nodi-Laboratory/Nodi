@@ -43,7 +43,7 @@ import { intersects, union, type Rect } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
-import { focusCamera } from "@/lib/canvas2/focusCamera";
+import { backOffCamera, focusCamera, type Camera } from "@/lib/canvas2/focusCamera";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
@@ -108,6 +108,24 @@ const NEW_NODE_ZOOM = 2.35;
  * 1.15배는 카드 하나 + 클립 셋이 들어오면서 본문이 기본 크기보다 큰 지점이다.
  */
 const ATTACH_MIN_ZOOM = 1.15;
+/**
+ * 자라는 카드에서 물러날 때 **아래에 남길 화면 비율** (D210 2-2).
+ *
+ * 꽉 맞추면 다 보여도 답답하고, 스트리밍 중에는 곧 이어질 문단이 들어설
+ * 자리가 없어 보인다.
+ */
+const GROW_HEADROOM = 0.18;
+/** 물러날 때 카드 위에 남길 여백(px). 위쪽은 화면에 붙인다. */
+const GROW_TOP_PAD = 40;
+/**
+ * 물러남의 하한 (D210 2-2).
+ *
+ * 아주 긴 답에서 무한히 축소되면 글자를 못 읽는다. 여기 닿으면 그만 줄이고
+ * 카드 **위쪽**을 화면에 붙인 채로 둔다 — 읽기는 위에서 시작하므로 잘리는
+ * 쪽은 아래여야 한다.
+ */
+const GROW_MIN_ZOOM = 0.75;
+
 /** 묶음 둘레 여백(px). 화면 가장자리에 딱 붙으면 잘린 것처럼 보인다. */
 const FOCUS_PAD = 72;
 /**
@@ -177,7 +195,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const bridge = useExcalidrawBridge();
   // 스프링은 아이템으로 카메라를 옮길 때 쓴다(전체 보기·확대/축소).
   // 초기 카메라는 여기 쓰지 않는다 — ExcalidrawLayer의 initialData가 맡는다.
-  const spring = useCameraSpring(bridge);
+  /**
+   * 자라는 카드를 따라가는 중인지 (D210 2-2).
+   *
+   * `cam`은 **우리가 마지막으로 정한 목표**다. 살아 있는 카메라로 넘침을
+   * 재면 날아가는 도중의 중간 배율로 판정해 목표가 계속 흔들린다 — 목표끼리
+   * 견주면 배율이 단조 감소라 흔들릴 자리가 없다.
+   */
+  const growRef = useRef<{ id: string; cam: Camera } | null>(null);
+  const spring = useCameraSpring(bridge, {
+    // 학생이 직접 확대·이동했으면 자동 조정을 멈춘다. 읽으려고 당겨 놓은
+    // 화면을 카메라가 되돌리면 그게 더 큰 방해다(사용자 지시).
+    onHijack: useCallback(() => {
+      growRef.current = null;
+    }, []),
+  });
   const store = useCanvasItems();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   // 교차 연결 이동 (D176) — 공간·세션을 함께 옮기고, 도착 후 초점을 맞춘다.
@@ -1643,8 +1675,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
     if (attached.some((a) => !layout.positions.has(a.id) || !layout.sizes.has(a.id))) return;
 
     const size = layout.sizes.get(focusId) ?? { w: ITEM_W, h: FALLBACK_H };
-    flyTo(
-      focusCamera(
+    const 처음 = focusCamera(
         { x: p.x, y: p.y, w: size.w, h: size.h },
         attached.map((a) => {
           const ap = layout.positions.get(a.id) as Placed;
@@ -1665,13 +1696,43 @@ export function CanvasWorkspace({ spaceId }: Props) {
           minZoom: ATTACH_MIN_ZOOM,
           pad: FOCUS_PAD,
         },
-      ),
-    );
+      );
+    flyTo(처음);
+    // 여기서부터 이 카드가 자라는 것을 지켜본다 (D210 2-2).
+    growRef.current = { id: focusId, cam: 처음 };
     clearFocus();
   }, [
     focusId, layout.positions, layout.sizes, storeItems, vp, flyTo, clearFocus,
     clientSettings.focusZoom,
   ]);
+
+  /**
+   * **자란 카드가 화면을 넘기면 그때 물러난다** (D210 2-2, 사용자 지시).
+   *
+   * 처음에는 지금처럼 235%로 당긴다(위 이펙트). 그 뒤 스트리밍으로 글이
+   * 자라 실제로 넘칠 때만 배율을 낮춘다 — "긴 답이 예상되니 미리 줄인다"와
+   * 다르다. 앞의 것은 짧은 답까지 작게 만든다.
+   *
+   * 카드 높이는 이미 `layout.sizes`가 ResizeObserver로 재고 있다. 관찰자를
+   * 하나 더 두지 않고 그 값이 바뀔 때만 판정한다 — 매 프레임 배율을 다시
+   * 계산하면 카메라가 끊임없이 흔들린다.
+   */
+  useEffect(() => {
+    const g = growRef.current;
+    if (!g) return;
+    const p = layout.positions.get(g.id);
+    const size = layout.sizes.get(g.id);
+    if (!p || !size) return;
+    const next = backOffCamera(
+      { x: p.x, y: p.y, w: size.w, h: size.h },
+      g.cam,
+      { w: vp.w, h: vp.h, left: UI_LEFT, right: UI_RIGHT, top: UI_TOP, bottom: UI_BOTTOM },
+      { minZoom: GROW_MIN_ZOOM, headroom: GROW_HEADROOM, topPad: GROW_TOP_PAD },
+    );
+    if (!next) return;
+    growRef.current = { id: g.id, cam: next };
+    flyTo(next);
+  }, [layout.positions, layout.sizes, vp, flyTo]);
 
   const banner =
     drawError ??

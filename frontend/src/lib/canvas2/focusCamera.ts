@@ -159,3 +159,73 @@ export function visibleWorld(cam: Camera, vp: { w: number; h: number }): Rect {
     h: vp.h / cam.zoom,
   };
 }
+
+/* ────────────────────── 자라는 카드에서 물러나기 (D210 2-2) ────────────── */
+
+export interface BackOffOpts {
+  /** 더 낮출 수 있는 하한. 여기 닿으면 그만 줄이고 위쪽을 붙인다. */
+  minZoom: number;
+  /**
+   * 카드 아래에 남길 화면 비율(0.15~0.20).
+   *
+   * 꽉 맞추면 다 보여도 답답하고, **다음 문단이 이어질 자리가 없어 보인다** —
+   * 스트리밍 중에는 실제로 곧 이어지므로 그 자리가 있어야 한다.
+   */
+  headroom: number;
+  /** 카드 위에 남길 화면 여백(px). */
+  topPad: number;
+}
+
+/**
+ * **자라는 카드가 화면 아래로 넘치면** 그만큼 물러난 카메라 (D210 2-2).
+ *
+ * ## 이것은 "세로는 재지 않는다"를 뒤집는 것이 아니다
+ *
+ * 위 `focusCamera`에는 그 결정이 근거와 함께 적혀 있다 — 높이까지 맞추려
+ * 들면 **긴 답일수록 축소되어** 처음부터 크게 보여 주려던 이유(D162)가
+ * 뒤집힌다는 것이다. 그 판단은 지금도 옳다.
+ *
+ * 바뀐 것은 **시점**이다. 처음에는 여전히 높이를 안 본다(235%로 당긴다).
+ * 그 뒤 스트리밍으로 글이 자라 **실제로 화면을 넘길 때만** 물러난다.
+ * "긴 답이 예상되니 미리 줄인다"와 "지금 잘리고 있으니 줄인다"는 다르다 —
+ * 앞의 것은 짧은 답까지 작게 만들고, 뒤의 것은 잘릴 때만 값을 치른다.
+ *
+ * ## 넘치지 않으면 아무 일도 하지 않는다
+ *
+ * `null`을 돌려준다. 매 프레임 배율을 다시 계산해 밀어 넣으면 카메라가
+ * 끊임없이 흔들린다 — 넘침이 감지된 순간에만 목표를 새로 정하고, 그리로
+ * 가는 일은 스프링에게 맡긴다.
+ */
+export function backOffCamera(
+  card: Rect,
+  cam: Camera,
+  vp: FocusViewport,
+  { minZoom, headroom, topPad }: BackOffOpts,
+): Camera | null {
+  const box = usable(vp);
+  // 카드 아래 끝이 쓸 수 있는 자리를 넘었나 (화면 px).
+  const topOnScreen = (card.y + cam.scrollY) * cam.zoom;
+  const bottomOnScreen = topOnScreen + card.h * cam.zoom;
+  if (bottomOnScreen <= box.y + box.h) return null;
+
+  /**
+   * 목표 배율 — "딱 들어가는 배율"에서 한 단계 더 물러난 값이다.
+   *
+   * 남길 자리(headroom)를 뺀 높이에 맞춘다. **절대 더 키우지 않는다**:
+   * 넘쳤다는 것은 지금 배율이 크다는 뜻이므로 목표는 언제나 지금 이하다.
+   */
+  const want = (box.h * (1 - headroom)) / Math.max(1, card.h);
+  const zoom = Math.min(cam.zoom, Math.max(minZoom, want));
+
+  /**
+   * 카드 **위쪽**을 화면에 붙인다.
+   *
+   * 하한에 닿아 다 담지 못할 때 어느 쪽을 자를지의 문제다. 읽기는 위에서
+   * 시작하므로 잘리는 쪽은 아래여야 한다 — 위가 잘리면 첫 문장을 못 읽는다.
+   */
+  return {
+    zoom,
+    scrollX: (box.x + box.w / 2) / zoom - (card.x + card.w / 2),
+    scrollY: (box.y + topPad) / zoom - card.y,
+  };
+}
