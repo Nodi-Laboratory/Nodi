@@ -95,14 +95,23 @@ describe("갈라짐은 자식 수에 따라 벌어진다", () => {
 });
 
 describe("끊기 버튼 자리", () => {
-  it("공유 줄기가 아니라 **자식 쪽**에 앉는다", () => {
+  it("공유 줄기 **밖**에 앉는다", () => {
+    /**
+     * 자리는 갈라진 구간의 **한가운데**다(D211 3, 사용자 지시 2026-08-08).
+     *
+     * 0.78(자식 쪽)이었던 근거는 "자식의 위 포트에는 선이 하나뿐이라 안
+     * 겹친다"였다. 그건 **히트 판정이 선 자체일 때**의 이야기고, 지금은 줄기를
+     * 뺀 넓은 히트 선이 어느 연결인지 가른다. 지켜야 할 것은 하나만 남는다 —
+     * **줄기 위에는 절대 앉지 않는다**(거기서는 형제가 겹친다).
+     */
     const g = linkPath(box(0, 0), box(0, 900));
     const 점 = cutPoint(g);
-    expect(CUT_AT).toBeGreaterThan(0.5);
-    // 줄기보다 자식에 훨씬 가깝다.
-    const 줄기까지 = Math.abs(점.y - g.stem.y);
-    const 자식까지 = Math.abs(점.y - g.b.y);
-    expect(자식까지).toBeLessThan(줄기까지);
+    expect(CUT_AT).toBeGreaterThan(0);
+    expect(CUT_AT).toBeLessThan(1);
+    // `pointOnFan`은 0이 줄기 끝이다 — 0보다 크면 이미 갈라진 뒤다.
+    expect(점.y).toBeGreaterThan(g.stem.y);
+    // 부모의 포트보다는 확실히 아래다(줄기 구간을 지났다).
+    expect(점.y).toBeGreaterThan(g.a.y + PORT_STEM);
   });
 
   it("형제가 셋이어도 세 ✕가 서로 떨어져 있다", () => {
