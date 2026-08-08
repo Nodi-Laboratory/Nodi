@@ -36,6 +36,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";
 import { widestLineWidth } from "@/lib/canvas2/measureWidth";
+import { PortHandles, type PortDragStart } from "./PortHandles";
 // 좌우 패딩은 hover 박스와 같은 값이다 — 연결선도 이 상자를 쓴다(D126).
 import { PAD_X } from "@/lib/canvas2/connector";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
@@ -141,6 +142,10 @@ export interface TextItemProps {
    * 드래그는 절대 이걸 부르지 않는다(사용자 지시).
    */
   onPick: (id: string) => void;
+  /** 포트에서 끌기 시작 (D210 4-3). */
+  onPortDrag?: (start: PortDragStart, e: React.PointerEvent) => void;
+  /** 이 카드가 이미 부모를 갖고 있나 — 위 포트를 띄울지 정한다. */
+  hasParent?: boolean;
   /** 손잡이로 상자 크기를 바꿨다 (D142). */
   onResize: (id: string, next: ResizeCommit) => void;
   /** 상자를 자동 크기로 되돌린다. */
@@ -182,6 +187,8 @@ function TextItemImpl(props: TextItemProps) {
     onDragEnd,
     onAsk,
     onPick,
+    onPortDrag,
+    hasParent = false,
     onResize,
     onResetSize,
     cardEdit = false,
@@ -580,6 +587,22 @@ function TextItemImpl(props: TextItemProps) {
           boxShadow: dragging ? "var(--c-shadow-lg)" : "none",
         }}
       />
+
+      {/**
+       * 연결 포트 (D210 4-3) — 손이 올라갔거나 골라 둔 카드에만.
+       *
+       * 상시로 띄우면 카드마다 점 둘이 떠 캔버스가 점밭이 된다. 손이 닿은
+       * 카드에만 보이면 "여기서 끌 수 있다"가 그 순간에만 말해진다.
+       */}
+      {onPortDrag && (hover || selected) && !editing && (
+        <PortHandles
+          id={item.id}
+          zoom={zoom}
+          color={accent}
+          hasParent={hasParent}
+          onStart={onPortDrag}
+        />
+      )}
 
       {/* 고른 상자는 도형과 같은 모습이어야 한다 — 테두리 + 여덟 손잡이 (D142) */}
       {selected && !editing && !dragging && (

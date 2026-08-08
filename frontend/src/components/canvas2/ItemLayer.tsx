@@ -17,6 +17,7 @@ import { treeEdges } from "@/lib/canvas2/tree";
 import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import { ClipItem } from "./ClipItem";
 import { ConnectorLayer } from "./ConnectorLayer";
+import type { PortDragStart } from "./PortHandles";
 import { FigureItem } from "./FigureItem";
 import type { ResizeCommit } from "./ResizeHandles";
 import { TextItem } from "./TextItem";
@@ -42,6 +43,8 @@ interface Props {
   handlers: {
     /** 연결선의 X를 눌렀다 — 그 카드의 부모를 끊는다 (D210 4-4). */
     onCut: (childId: string) => void;
+    /** 포트에서 끌기 시작 (D210 4-3). */
+    onPortDrag: (start: PortDragStart, e: React.PointerEvent) => void;
     onSelect: (id: string | null, additive?: boolean) => void;
     onStartEdit: (id: string) => void;
     onCommitEdit: (id: string, body: string) => void;
@@ -155,6 +158,8 @@ export function ItemLayer({
             item={item}
             x={p.x}
             y={p.y}
+            // 부모 유무는 아이템마다 다르다 — 위 포트를 띄울지 정한다 (D210 4-3).
+            hasParent={!!item.parentItemId}
             zoom={zoom}
             selected={selectedIds.has(item.id)}
             editing={editingId === item.id}

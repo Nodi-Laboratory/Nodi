@@ -390,6 +390,7 @@ export function InkLabTab() {
               measure={layout.measure}
               handlers={{
                 onCut: NOOP,
+                onPortDrag: NOOP,
                 onSelect: NOOP,
                 onStartEdit: NOOP,
                 onCommitEdit: NOOP,

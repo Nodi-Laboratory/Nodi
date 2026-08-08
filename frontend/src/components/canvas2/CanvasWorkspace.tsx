@@ -48,6 +48,7 @@ import type { Size } from "@/lib/canvas2/useItemLayout";
 import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
 import { useCardPush } from "@/lib/canvas2/useCardPush";
+import { usePortLink } from "@/lib/canvas2/usePortLink";
 import { descendants, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
 import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
 import { useQuestionCoach } from "@/lib/canvas2/useQuestionCoach";
@@ -780,6 +781,51 @@ export function CanvasWorkspace({ spaceId }: Props) {
     patch(childId, { parent_item_id: null, pinned: true });
   });
 
+  /**
+   * 포트에서 끌어 이었다 (D210 4-3).
+   *
+   * 저장 규칙은 카드 수정 도구와 **같다** — 자식 가지 전체가 새 부모의 분류를
+   * 따라간다(6-3). 두 길이 다른 결과를 내면 학생이 어느 쪽을 썼는지에 따라
+   * 캔버스가 달라진다.
+   */
+  const linkCards = useEventCallback((parentId: string, childId: string) => {
+    const parent = items.find((i) => i.id === parentId);
+    const branch = [childId, ...descendants(items, childId)];
+    const tag = parent?.tag ?? null;
+    patchMany(
+      branch.map((id) => ({
+        id,
+        patch: id === childId ? { parent_item_id: parentId, tag } : { tag },
+      })),
+      "카드를 이었습니다",
+    );
+  });
+
+  /** 순환을 만들지 않는다 — 자기 자신이나 자기 자손을 부모로 삼을 수 없다. */
+  const canLink = useEventCallback((parentId: string, childId: string) => {
+    if (parentId === childId) return false;
+    return !descendants(items, childId).includes(parentId);
+  });
+
+  const portLink = usePortLink({
+    toWorld: (cx, cy) => {
+      const root = document.querySelector(".canvas2");
+      return bridge.toWorld(cx, cy, root?.getBoundingClientRect() ?? new DOMRect());
+    },
+    cardAt: (w) => {
+      for (const [id, at] of layout.positions) {
+        const sz = layout.sizes.get(id);
+        if (!sz) continue;
+        if (w.x >= at.x && w.x <= at.x + sz.w && w.y >= at.y && w.y <= at.y + sz.h) {
+          return id;
+        }
+      }
+      return null;
+    },
+    onLink: linkCards,
+    canLink,
+  });
+
   const onEditEnd = useEventCallback((r: EditResult) => {
     const kids = descendants(items, r.id);
     const branch = [r.id, ...kids];
@@ -932,12 +978,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onRemoveTag,
       onDragEnd,
       onCut,
+      onPortDrag: portLink.begin,
       onResize,
       onResetSize,
       onAsk,
       onPick,
     }),
-    [onCut, onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick],
+    [onCut, portLink.begin, onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick],
   );
 
   /**
