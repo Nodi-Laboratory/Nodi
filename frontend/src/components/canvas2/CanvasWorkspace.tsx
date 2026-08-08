@@ -49,7 +49,8 @@ import { useEventCallback } from "@/lib/canvas2/useEventCallback";
 import { MiniMapOverlay } from "@/components/canvas2/MiniMapOverlay";
 import { useCardPush } from "@/lib/canvas2/useCardPush";
 import { usePortLink } from "@/lib/canvas2/usePortLink";
-import { descendants, groupSizes, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
+import { descendants, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
+import { autoTagFor } from "@/lib/canvas2/autoTag";
 import { slowMove } from "@/lib/canvas2/moveEase";
 import { dropSpots as dropSpotsAt, type Rect as DropRect } from "@/lib/canvas2/dropSpot";
 import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
@@ -494,15 +495,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [store.items],
   );
 
-  /**
-   * 카드마다 **이어진 묶음이 몇 장인가** (D210 6-2).
-   *
-   * 새 분류를 만들 수 있는지가 여기서 갈린다 — 한 장짜리는 아직 "다른 갈래"가
-   * 아니라 그냥 옮긴 카드다. 배치가 쓰는 것과 **같은 목록**으로 센다: 화면에
-   * 선이 보이는데 "혼자"라고 판정하면 그건 학생 눈에 고장이다.
-   */
-  const groupSize = useMemo(() => groupSizes(layoutSources), [layoutSources]);
-
   const layout = useItemLayout(sessionId, layoutSources, bridge.getObstacles);
 
   /**
@@ -904,15 +896,27 @@ export function CanvasWorkspace({ spaceId }: Props) {
       label = "가지를 이어 붙였습니다";
     } else if (r.detached) {
       /**
-       * 떼어낸 가지는 **분류가 없다**(사용자 결정 2026-08-05).
+       * 떼어낸 가지는 **자기 분류를 갖는다** (D211 10 = D210 6-2).
        *
        * 부모 연결만 끊으면 같은 분류 열에 새 뿌리로 남아 "떼어냈다"가 화면에
-       * 안 드러난다. 분류를 비우면 자기 열로 빠지고, 그러고도 가지 안쪽
-       * 연결은 살아 있다(D180: 분류 없는 가지도 트리다).
+       * 안 드러난다. 그래서 예전에는 분류를 비웠는데(2026-08-05), 그러면
+       * 떼어낸 것들이 전부 "분류 없음" 한 열에 쌓인다 — 갈래를 나눈 뜻이
+       * 사라진다.
+       *
+       * **이어진 카드가 2장 이상일 때만** 새 분류를 만든다. 한 장은 아직
+       * 다른 갈래가 아니라 그냥 옮긴 카드이고, 한 장마다 분류를 만들면 열이
+       * 카드 수만큼 생긴다(D135가 겪은 파편화).
        */
       patchOf(r.id).parent_item_id = null;
-      for (const mid of branch) patchOf(mid).tag = null;
-      label = "가지를 떼어냈습니다";
+      const 새분류 = autoTagFor({
+        rootTitle: items.find((i) => i.id === r.id)?.title ?? null,
+        groupSize: branch.length,
+        taken: store.tagOptions,
+      });
+      for (const mid of branch) patchOf(mid).tag = 새분류;
+      label = 새분류 ? `가지를 떼어내 '${새분류}'로 묶었습니다` : "가지를 떼어냈습니다";
+      // 열을 건너간다 — 감속하며 가야 무슨 일이 있었는지 보인다 (D210 6-3).
+      slowMove();
     }
 
     /**
@@ -2015,7 +2019,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
         positions={layout.positions}
         sizes={layout.sizes}
         tagOptions={store.tagOptions}
-        groupSize={groupSize}
         cardEdit={bridge.activeTool === "cardedit"}
         beginEdit={beginEdit}
         onEditEnd={onEditEnd}

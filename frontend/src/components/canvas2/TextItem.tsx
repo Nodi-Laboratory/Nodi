@@ -134,8 +134,6 @@ export interface TextItemProps {
   onTagChange: (id: string, tag: string | null) => void;
   onRenameTag: (from: string, to: string) => void;
   onRemoveTag: (tag: string) => void;
-  /** 새 분류를 만들 수 있나 — 이어진 카드가 2장 이상일 때만 (D210 6-2). */
-  canCreateTag: boolean;
   /** 이동량도 함께 준다 — 여럿이 선택돼 있으면 호출부가 전부에 같은 양을 적용한다. */
   onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
   /** "다시 질문하기" — 이 답을 골라 둔다 (D149 → D151). */
@@ -187,7 +185,6 @@ function TextItemImpl(props: TextItemProps) {
     onTagChange,
     onRenameTag,
     onRemoveTag,
-    canCreateTag,
     onDragEnd,
     onAsk,
     onPick,
@@ -757,7 +754,6 @@ function TextItemImpl(props: TextItemProps) {
             onTagChange={(t) => onTagChange(item.id, t)}
             onRenameTag={onRenameTag}
             onRemoveTag={onRemoveTag}
-            canCreateTag={canCreateTag}
             resized={!!size}
             onResetSize={() => onResetSize(item.id)}
             onOpenChange={setMenuOpen}

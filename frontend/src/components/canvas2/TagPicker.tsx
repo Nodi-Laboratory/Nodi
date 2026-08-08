@@ -32,15 +32,6 @@ interface Props {
   onRenameTag: (from: string, to: string) => void;
   /** 태그 삭제(세션 전역, D147) — 그 태그를 단 카드가 모두 분류 없음이 된다. */
   onRemoveTag: (tag: string) => void;
-  /**
-   * 새 분류를 만들 수 있나 (D210 6-2).
-   *
-   * **이어진 카드가 2장 이상인 묶음에만** 새 분류를 만들 수 있다. 카드 한 장은
-   * 아직 "다른 갈래"가 아니라 그냥 옮긴 카드다 — 한 장마다 분류를 만들게 두면
-   * 열이 카드 수만큼 생겨 배치가 무의미해진다(예전에 개념 18개가 태그 10종으로
-   * 흩어진 적이 있다). 기존 분류 고르기는 언제나 열려 있다.
-   */
-  canCreateTag: boolean;
   onClose: () => void;
 }
 
@@ -53,7 +44,6 @@ export function TagPicker({
   onPick,
   onRenameTag,
   onRemoveTag,
-  canCreateTag,
   onClose,
 }: Props) {
   const [adding, setAdding] = useState(false);
@@ -257,7 +247,7 @@ export function TagPicker({
             <X size={15} />
           </button>
         </div>
-      ) : canCreateTag ? (
+      ) : (
         <button
           type="button"
           onClick={() => setAdding(true)}
@@ -266,19 +256,6 @@ export function TagPicker({
         >
           <Plus size={14} />새 분류 추가
         </button>
-      ) : (
-        /**
-         * 못 누르는 버튼 대신 **왜 안 되는지**를 적는다. 회색 버튼만 두면
-         * 학생이 눌러 보고 아무 일도 안 일어나는 것을 겪는다 — 4-3에서
-         * 이미 부모 자리가 찬 포트를 아예 안 띄우기로 한 것과 같은 태도다.
-         */
-        <p
-          data-tag-solo
-          className="px-3 pb-1.5 pt-0.5 text-[11px] leading-snug"
-          style={{ color: "var(--c-ink-faint)" }}
-        >
-          새 분류는 <b>이어진 카드가 2장 이상</b>일 때 만들 수 있어요.
-        </p>
       )}
     </div>
   );
