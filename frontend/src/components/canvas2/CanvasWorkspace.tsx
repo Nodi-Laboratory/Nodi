@@ -45,7 +45,6 @@ import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
 import { backOffCamera, focusCamera, type Camera } from "@/lib/canvas2/focusCamera";
 import type { Size } from "@/lib/canvas2/useItemLayout";
-import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
 import { MiniMapOverlay } from "@/components/canvas2/MiniMapOverlay";
 import { useCardPush } from "@/lib/canvas2/useCardPush";
@@ -1120,40 +1119,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     patch,
   });
 
-  /**
-   * 재배치 — 태그 무리를 최소한으로 움직여 서로 갈라 놓는다 (D143).
-   *
-   * 열 배치를 다시 돌리는 것이 아니다. 지금 자리를 출발점으로 삼으므로
-   * 학생이 정리해 둔 모양이 남고, **이미 잘 나뉘어 있으면 아무것도 움직이지
-   * 않는다.** 옮긴 자리는 학생이 정한 것과 같은 취급(pinned)이다.
-   *
-   * 그림(캔버스 도구) 요소는 보지 않는다(사용자 지시).
-   *
-   * @returns 실제로 옮겼나. 호출부가 "이미 나뉘어 있다"를 알려 준다.
-   */
-  const handleRegroup = useCallback((): boolean => {
-    const input: RegroupItem[] = items.map((i) => {
-      const p = layout.positions.get(i.id);
-      const size = layout.sizes.get(i.id);
-      return {
-        id: i.id,
-        tag: i.tag,
-        parentItemId: i.parentItemId,
-        x: p?.x ?? i.x,
-        y: p?.y ?? i.y,
-        w: size?.w ?? ITEM_W,
-        h: size?.h ?? FALLBACK_H,
-      };
-    });
-    const { moves } = regroup(input);
-    if (!moves.size) return false;
-    moveMany(
-      [...moves].map(([id, at]) => ({ id, x: at.x, y: at.y })),
-      "재배치했습니다",
-    );
-    return true;
-  }, [items, layout, moveMany]);
-
   const handleFit = useCallback(() => {
     /**
      * **화면에 그려진 상자를 잰다** — 배치 맵이 아니라.
@@ -1909,7 +1874,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
             onOpenSessions={() => setDrawerOpen(true)}
             onZoom={handleZoom}
             onFit={handleFit}
-            onRegroup={handleRegroup}
           />
           <SessionDrawer
             open={drawerOpen}

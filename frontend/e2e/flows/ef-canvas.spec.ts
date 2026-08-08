@@ -99,7 +99,8 @@ test("F59 전체 보기를 누르면 캔버스가 반응한다", async ({ page }
   await loginAndOpenCanvas(page);
   const zoom = page.getByText(/^\d+%$/).first();
   const before = await zoom.textContent();
-  await page.getByRole("button", { name: /재배치|전체/ }).first().click();
+  // "재배치"는 걷어냈다(2026-08-08) — 남은 것은 전체 보기다.
+  await page.getByRole("button", { name: /전체/ }).first().click();
   await page.waitForTimeout(1500);
   const after = await zoom.textContent();
   // 배율이든 위치든 **무언가** 바뀌어야 한다. 아무 일도 없으면 죽은 버튼이다.
