@@ -60,11 +60,18 @@ interface Props {
    */
   initialCamera?: { scrollX: number; scrollY: number; zoom: number };
   /**
-   * 마운트 시점의 도구 (D208).
+   * 시작 도구 (D208 → D209).
    *
-   * 손가락 기기는 **화면 이동**으로 시작한다. 마운트 뒤에 `setActiveTool`로
-   * 바꾸면 저쪽이 initialData를 적용하며 되돌려 놓는다 — 위 주석이 카메라에
-   * 대해 적어 둔 경합과 똑같은 일이다(실측: 태블릿 기본 도구가 계속 선택).
+   * 손가락 기기는 **화면 이동**으로 시작한다.
+   *
+   * ⚠️ 마운트 뒤에 `setActiveTool`을 부르면 안 된다 — initialData가 적용되며
+   * 되돌려 놓는다. API 준비 콜백(`excalidrawAPI`)도 마찬가지로 이르다(둘 다
+   * 실측: 태블릿 기본 도구가 계속 선택이었다). 확실한 자리는 initialData
+   * 하나뿐이다.
+   *
+   * 대신 **리마운트하지 않는다** — 호출부가 기기 종류가 정해질 때까지 이
+   * 컴포넌트를 아예 안 그린다(D209). `ssr: false`라 어차피 하이드레이션
+   * 뒤에 마운트되므로 기다리는 비용이 없다.
    */
   initialTool?: "selection" | "hand";
 }
@@ -161,8 +168,8 @@ export function ExcalidrawLayer({
           files: (initialScene?.files ?? {}) as never,
           appState: {
             viewBackgroundColor: "transparent",
-            // Excalidraw의 `activeTool`은 내부 필드가 더 있는 타입이라
-            // 부분 지정이 안 된다. 런타임은 type만 봐도 되므로 캐스팅한다
+            // Excalidraw의 `activeTool`은 내부 필드가 더 있는 타입이라 부분
+            // 지정이 안 된다. 런타임은 type만 봐도 되므로 캐스팅한다
             // (zoom의 NormalizedZoomValue와 같은 처지다).
             ...(initialTool
               ? { activeTool: { type: initialTool } as unknown as never }

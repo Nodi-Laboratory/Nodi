@@ -35,6 +35,11 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";
+import { widestLineWidth } from "@/lib/canvas2/measureWidth";
+import { followerEls } from "@/lib/canvas2/followers";
+import { PortHandles, type PortDragStart } from "./PortHandles";
+// 좌우 패딩은 hover 박스와 같은 값이다 — 연결선도 이 상자를 쓴다(D126).
+import { PAD_X } from "@/lib/canvas2/connector";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { clearLiveLink, setLiveLink } from "@/lib/canvas2/linkBus";
 import { detachStep } from "@/lib/canvas2/detachDrag";
@@ -45,7 +50,6 @@ import { ItemBody } from "./ItemBody";
 import { ItemMenu } from "./ItemMenu";
 import { QuestionTip } from "./QuestionTip";
 import { ResizeHandles, type ResizeCommit } from "./ResizeHandles";
-import { ReflowButton } from "./ReflowButton";
 import { TunedText } from "./TunedText";
 
 /** 드래그로 인정하는 최소 이동(화면 px). 이보다 작으면 클릭이다. */
@@ -132,8 +136,6 @@ export interface TextItemProps {
   onRemoveTag: (tag: string) => void;
   /** 이동량도 함께 준다 — 여럿이 선택돼 있으면 호출부가 전부에 같은 양을 적용한다. */
   onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
-  onReflow: (id: string) => void;
-  onDismissReflow: (id: string) => void;
   /** "다시 질문하기" — 이 답을 골라 둔다 (D149 → D151). */
   onAsk: (id: string) => void;
   /**
@@ -141,6 +143,10 @@ export interface TextItemProps {
    * 드래그는 절대 이걸 부르지 않는다(사용자 지시).
    */
   onPick: (id: string) => void;
+  /** 포트에서 끌기 시작 (D210 4-3). */
+  onPortDrag?: (start: PortDragStart, e: React.PointerEvent) => void;
+  /** 이 카드가 이미 부모를 갖고 있나 — 위 포트를 띄울지 정한다. */
+  hasParent?: boolean;
   /** 손잡이로 상자 크기를 바꿨다 (D142). */
   onResize: (id: string, next: ResizeCommit) => void;
   /** 상자를 자동 크기로 되돌린다. */
@@ -180,10 +186,10 @@ function TextItemImpl(props: TextItemProps) {
     onRenameTag,
     onRemoveTag,
     onDragEnd,
-    onReflow,
-    onDismissReflow,
     onAsk,
     onPick,
+    onPortDrag,
+    hasParent = false,
     onResize,
     onResetSize,
     cardEdit = false,
@@ -246,8 +252,27 @@ function TextItemImpl(props: TextItemProps) {
     el.style.transform = "";
     void el.offsetHeight; // 강제 리플로우 — transition:none을 이 프레임에 확정
     el.style.transition = prev;
+
+    /**
+     * 딸린 것과 연결선도 **여기서** 놓는다 (사용자 보고 2026-08-08).
+     *
+     * 손을 뗀 자리(`finishDrag`)에서 놓으면 안 된다. 그 순간에는 React가 아직
+     * 새 좌표를 안 냈으므로, 이동량을 걷는 즉시 연결선이 **옛 자리로 한 프레임
+     * 돌아갔다가** 새 자리로 뛴다 — "놓을 때 연결선이 과거 위치에서 깜빡거린다"가
+     * 그것이다.
+     *
+     * 이 함수는 새 좌표가 도착한 프레임에 불린다(`useLayoutEffect [x, y]`).
+     * 아이템의 transform을 여기서 걷는 이유와 **똑같은 이유**다.
+     */
+    for (const fel of followerEls(new Set([item.id]))) {
+      fel.style.transition = "none";
+      fel.style.transform = "";
+      void fel.offsetHeight;
+      fel.style.transition = "";
+    }
+    clearDragOffsets();
     setDragging(false);
-  }, []);
+  }, [item.id]);
 
   // 새 좌표가 도착한 프레임에 정리한다(페인트 전이라 중간 상태가 안 보인다).
   useLayoutEffect(() => {
@@ -382,6 +407,19 @@ function TextItemImpl(props: TextItemProps) {
         el.style.transition = "none";
         el.style.transform = shift;
       }
+      /**
+       * 딸린 것도 같이 간다 (D211 6) — 도판·클립·코치 말풍선.
+       *
+       * 상자만 가고 붙어 있던 것이 남으면 관계가 끊겨 보인다. 연결선을
+       * 따라가게 만든 것과 같은 이유이고, **같은 목록**(`followerEls`)을
+       * 밀어내기도 쓴다.
+       */
+      for (const el of followerEls(
+        new Set(peers.map((e) => e.getAttribute("data-canvas-item") ?? "")),
+      )) {
+        el.style.transition = "none";
+        el.style.transform = shift;
+      }
       // 연결선도 같이 움직여야 한다 — 상자만 가고 선이 남으면 관계가 끊겨
       // 보인다(사용자 지적). 역시 React를 거치지 않는다.
       setDragOffsets(
@@ -409,8 +447,13 @@ function TextItemImpl(props: TextItemProps) {
       if (!d) return;
 
       const peers = peerEls(d.group, rootRef.current);
-      // 연결선은 이제 React가 낸 최종 좌표를 쓴다.
-      clearDragOffsets();
+      /**
+       * ⚠️ **여기서 이동량을 걷지 않는다** (사용자 보고 2026-08-08).
+       *
+       * 이 순간 React는 아직 새 좌표를 안 냈다. 걷으면 연결선과 딸린 것이
+       * 옛 자리로 한 프레임 돌아갔다가 새 자리로 뛴다 — 깜빡임의 정체다.
+       * 새 좌표가 도착한 프레임에 `settle()`이 함께 놓는다.
+       */
       clearLiveLink();
       if (!d.moved) {
         // 움직이지 않은 클릭. 선택은 pointerdown에서 이미 정해졌고, 남은 경우는
@@ -471,7 +514,6 @@ function TextItemImpl(props: TextItemProps) {
     dragRef.current = null;
   }, []);
 
-  const showReflow = item._needsReflow && !item.data.reflowDismissed && !editing;
   /**
    * "다시 질문하기"는 **AI가 쓴 답에만** 붙인다 (D149, 사용자 지시).
    *
@@ -519,10 +561,16 @@ function TextItemImpl(props: TextItemProps) {
         cursor: editing ? "auto" : dragging ? "grabbing" : "grab",
         // 본문을 잡으면 이동이므로 글자가 딸려 선택되지 않게 막는다.
         userSelect: editing ? "auto" : "none",
-        // 배치가 옮길 때는 부드럽게, 드래그 중에는 즉시.
+        /**
+         * 배치가 옮길 때는 부드럽게, 드래그 중에는 즉시.
+         *
+         * 시간을 `--c2-move`에서 읽는다 — 분류가 바뀌어 **열을 건너는** 이동은
+         * 0.28초로는 순간이동으로 보인다(D210 6-3, `lib/canvas2/moveEase.ts`).
+         * 인라인이라 클래스로는 못 이기므로 값 자체를 변수로 연다.
+         */
         transition: dragging
           ? "none"
-          : "left .28s cubic-bezier(.22,.9,.24,1), top .28s cubic-bezier(.22,.9,.24,1)",
+          : "left var(--c2-move, .28s) cubic-bezier(.22,.9,.24,1), top var(--c2-move, .28s) cubic-bezier(.22,.9,.24,1)",
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -584,6 +632,22 @@ function TextItemImpl(props: TextItemProps) {
         }}
       />
 
+      {/**
+       * 연결 포트 (D210 4-3) — 손이 올라갔거나 골라 둔 카드에만.
+       *
+       * 상시로 띄우면 카드마다 점 둘이 떠 캔버스가 점밭이 된다. 손이 닿은
+       * 카드에만 보이면 "여기서 끌 수 있다"가 그 순간에만 말해진다.
+       */}
+      {onPortDrag && (hover || selected) && !editing && (
+        <PortHandles
+          id={item.id}
+          zoom={zoom}
+          color={accent}
+          hasParent={hasParent}
+          onStart={onPortDrag}
+        />
+      )}
+
       {/* 고른 상자는 도형과 같은 모습이어야 한다 — 테두리 + 여덟 손잡이 (D142) */}
       {selected && !editing && !dragging && (
         <ResizeHandles
@@ -597,6 +661,26 @@ function TextItemImpl(props: TextItemProps) {
             window.setTimeout(settle, DROP_FALLBACK_MS);
           }}
           onReset={() => onResetSize(item.id)}
+          /**
+           * 넓힐 수 있는 한계 — **본문에서 가장 긴 줄**이 줄바꿈 없이
+           * 들어가는 폭이다 (D210 3-2). 그보다 넓히면 오른쪽이 빈 채로
+           * 늘어나기만 한다.
+           */
+          maxW={() => {
+            /**
+             * ⚠️ **`[data-writing]`을 재면 안 된다** (실측 2026-08-08).
+             *
+             * 그 표식은 **스트리밍 중에만** 붙는다(`ItemBody`). 글이 다 써진
+             * 카드에는 없으니 조회가 빈손이 되고, 그러면 상한이 조용히
+             * `ITEM_W`로 떨어져 **3-2가 아무 일도 안 한 것처럼 보인다.**
+             * 학생이 겪는 것은 "손잡이를 끌어도 560에서 멈춘다"이다.
+             *
+             * 본문 상자에는 언제나 `data-item-text`가 있다.
+             */
+            const body = rootRef.current?.querySelector<HTMLElement>("[data-item-text]");
+            const 글폭 = widestLineWidth(body ?? null);
+            return 글폭 ? 글폭 + PAD_X * 2 : 0;
+          }}
         />
       )}
 
@@ -625,8 +709,20 @@ function TextItemImpl(props: TextItemProps) {
       <div className="relative">
         {item.title && (
           <h3
-            className="hand mb-2.5 text-[21px] font-bold leading-snug"
-            style={{ color: "var(--c-ink)" }}
+            /**
+             * ⚠️ 크기 클래스(`text-[16px]`) 대신 **인라인 calc**다 (D210 8-1).
+             *
+             * 21px은 폰트 실측 배율을 곱하기 **전**의 값이다. 기본 폰트에서는
+             * `--hand-base`가 0.744라 21 × 0.744 ≈ 16으로 종전과 같고,
+             * 관리자가 폰트를 바꾸면 `--hand-scale`이 함께 곱해진다 — 배율은
+             * 폰트마다 실측한 값이라(D164·D165) 코드에 고정할 수 없다.
+             * Tailwind 클래스로는 런타임 값을 못 곱한다.
+             */
+            className="hand mb-2.5 font-bold leading-snug"
+            style={{
+              color: "var(--c-ink)",
+              fontSize: "calc(21px * var(--hand-base, 0.744) * var(--hand-scale, 1))",
+            }}
           >
             {/* 본문과 같은 크기 보정을 받는다 (D165) — 제목에 한자가 섞이면
                 본문보다 더 눈에 띈다. 보정할 글자가 없으면 원문 그대로다. */}
@@ -641,8 +737,12 @@ function TextItemImpl(props: TextItemProps) {
           // 키웠으므로(ITEM_W 560) 한 줄 글자 수는 비슷하게 유지된다.
           // `hand`가 손글씨로 바꾼다 (D164). 캔버스 위의 글에만 붙는
           // 클래스이고, 스코프는 globals.css의 `.canvas2 .hand`가 잡는다.
-          className="hand text-[18px]"
-          style={{ color: "var(--c-ink)" }}
+          // 18 × 0.744 ≈ 13 (폰트 실측 배율). 배율이 변수인 이유는 위 h3 주석에.
+          className="hand"
+          style={{
+            color: "var(--c-ink)",
+            fontSize: "calc(18px * var(--hand-base, 0.744) * var(--hand-scale, 1))",
+          }}
         >
           <ItemBody
             body={item.body}
@@ -653,15 +753,9 @@ function TextItemImpl(props: TextItemProps) {
           />
         </div>
 
-        {(showReflow || showAsk) && (
+        {showAsk && (
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
-            {showReflow && (
-              <ReflowButton
-                onReflow={() => onReflow(item.id)}
-                onDismiss={() => onDismissReflow(item.id)}
-              />
-            )}
-            {showAsk && <AskAgainButton picked={picked} onAsk={() => onAsk(item.id)} />}
+            <AskAgainButton picked={picked} onAsk={() => onAsk(item.id)} />
           </div>
         )}
 

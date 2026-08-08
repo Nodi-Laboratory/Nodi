@@ -15,9 +15,7 @@ import { INK_TAIL, splitRun, toInkDoc, type InkBlock, type InkRun } from "@/lib/
 import { tuneOf } from "@/lib/canvas2/handScript";
 import { useTypewriter } from "@/lib/canvas2/useTypewriter";
 import { TunedText } from "./TunedText";
-
-/** 이 블록 수를 넘으면 접는다. 열이 화면 몇 개 높이로 길어지는 걸 막는다. */
-const FOLD_AFTER = 6;
+import { MathSpan } from "./MathSpan";
 
 interface Props {
   body: string;
@@ -49,11 +47,15 @@ function BodyView({ body, streaming }: { body: string; streaming?: boolean }) {
 
   // 매 프레임 파싱을 피한다 — toBlocks는 글자당 토큰 객체를 만든다.
   const doc = useMemo(() => toInkDoc(toBlocks(visible)), [visible]);
+  /**
+   * **카드는 본문을 전부 보여 준다** (D210, 사용자 지시 2026-08-08).
+   *
+   * 예전에는 6블록이 넘으면 접고 "+N문단 더 보기"를 달았다. 열이 화면 몇 개
+   * 높이로 길어지는 걸 막으려던 것인데, 학생이 읽으려면 결국 눌러야 하고
+   * 그때마다 카드 높이가 튀어 배치가 다시 흔들렸다. 길이 문제는 접기가
+   * 아니라 카메라(D210 2-2)와 카드 폭으로 푼다.
+   */
   const blocks = doc.blocks;
-  const [open, setOpen] = useState(false);
-  // 스트리밍 중에는 접지 않는다 — 글이 자라는 걸 보는 게 이 화면의 재미다.
-  const folded = !open && !streaming && blocks.length > FOLD_AFTER;
-  const shownBlocks = folded ? blocks.slice(0, FOLD_AFTER) : blocks;
 
   /**
    * 이 색인부터가 "지금 써지는" 글자다 (D164).
@@ -74,30 +76,14 @@ function BodyView({ body, streaming }: { body: string; streaming?: boolean }) {
      * 것이 구분되지 않는다. 스타일은 붙이지 않는다.
      */
     <div data-writing={writing ? "1" : undefined}>
-      {shownBlocks.map((b, i) => (
+      {blocks.map((b, i) => (
         <Block
           key={b.start}
           block={b}
           tailFrom={tailFrom}
-          last={(typing || streaming) && i === shownBlocks.length - 1}
+          last={(typing || streaming) && i === blocks.length - 1}
         />
       ))}
-      {folded && (
-        <button
-          type="button"
-          data-no-pan
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpen(true);
-          }}
-          className="label mt-2 rounded px-1.5 py-1 transition-colors"
-          style={{ color: "var(--c-ink-faint)" }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = "var(--c-ink)")}
-          onMouseLeave={(e) => (e.currentTarget.style.color = "var(--c-ink-faint)")}
-        >
-          + {blocks.length - FOLD_AFTER}문단 더 보기
-        </button>
-      )}
     </div>
   );
 }
@@ -111,6 +97,13 @@ function BodyView({ body, streaming }: { body: string; streaming?: boolean }) {
  */
 function RunContent({ run, tailFrom }: { run: InkRun; tailFrom: number }) {
   const { dry, wet } = splitRun(run, tailFrom);
+  /**
+   * 수식은 한 덩어리다 (D210 3-1). 아직 안 써진 자리면 짧게 페이드인한다 —
+   * 글자 wipe와 달리 쪼갤 수 없어서 나타나는 방식이 다르다.
+   */
+  if (run.m) {
+    return <MathSpan tex={run.text} display={run.m === "b"} animate={wet.length > 0} />;
+  }
   return (
     <>
       {dry && (
@@ -174,6 +167,14 @@ function Block({
       {last && <Caret />}
     </>
   );
+
+  /**
+   * 블록 수식은 문단이 아니라 **가운데 놓인 한 덩어리**다 (D210 3-1).
+   * 런 하나뿐이므로 그대로 그린다.
+   */
+  if (block.type === "math") {
+    return <div className="mt-3 first:mt-0">{content}</div>;
+  }
 
   if (block.type === "li") {
     return (

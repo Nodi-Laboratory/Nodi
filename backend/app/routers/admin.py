@@ -38,6 +38,7 @@ from ..services import (
     app_settings,
     clip_thumbnails,
     gemini,
+    hand_fonts,
     ink_marks,
     solar,
 )
@@ -52,6 +53,14 @@ settings = get_settings()
 # ---------------------------------------------------------------------------
 # Users + roles
 # ---------------------------------------------------------------------------
+class HandFontTune(BaseModel):
+    """폰트 보정값 (D210 8-1). 상한을 둔다 — 0.2배짜리 글씨는 읽을 수 없다."""
+
+    letter_spacing: float | None = Field(default=None, ge=-0.2, le=0.4)
+    size_scale: float | None = Field(default=None, ge=0.6, le=1.6)
+    ideograph_scale: float | None = Field(default=None, ge=0.6, le=1.4)
+
+
 @router.get("/users")
 async def list_users(
     user: CurrentUser = Depends(get_current_user),
@@ -1219,6 +1228,93 @@ async def delete_clip_thumbnail(
     _: Profile = Depends(require_admin),
 ) -> None:
     await clip_thumbnails.remove_thumbnail(UserClient.from_user(user), thumb_id)
+
+
+# ── 손글씨 폰트 (D210 8-1) ───────────────────────────────────────────
+#
+# 지금 폰트는 저장소에 박혀 있어서 바꾸려면 배포를 해야 한다. 관리자가 올려
+# 두고 골라 쓴다. **적용 범위는 캔버스 손글씨뿐이다** — 앱 전체를 갈아 끼우게
+# 하면 읽을 수 없는 폰트를 고르는 순간 관리자 페이지 자신도 망가진다.
+
+
+@router.get("/hand-fonts")
+async def list_hand_fonts(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    return await hand_fonts.list_fonts(UserClient.from_user(user))
+
+
+@router.post("/hand-fonts", status_code=status.HTTP_201_CREATED)
+async def add_hand_font(
+    file: UploadFile = File(...),
+    label: str = Form(""),
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """폰트 한 벌 등록. 통짜(시험용)와 서브셋(운영용)을 둘 다 저장한다."""
+    return await hand_fonts.add_font(
+        UserClient.from_user(user),
+        owner_id=user.id,
+        label=label or (file.filename or "손글씨"),
+        filename=file.filename or "",
+        mime=file.content_type,
+        data=await file.read(),
+    )
+
+
+@router.post("/hand-fonts/{font_id}/activate")
+async def activate_hand_font(
+    font_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    return await hand_fonts.activate(UserClient.from_user(user), font_id)
+
+
+@router.post("/hand-fonts/reset")
+async def reset_hand_font(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """기본 폰트로 되돌린다. **되돌리는 길이 반드시 있어야 한다.**"""
+    await hand_fonts.deactivate_all(UserClient.from_user(user))
+    return {"active": None}
+
+
+@router.patch("/hand-fonts/{font_id}")
+async def tune_hand_font(
+    font_id: str,
+    body: HandFontTune,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """보정값을 손으로 고친다 (D210 8-1).
+
+    업로드 때 재는 값은 **글리프 bbox**이지 브라우저의 렌더가 아니다. D164에서
+    폰트를 바꿀 때도 최종 판단은 화면에서 했다 — 눈으로 보고 고칠 자리가 있어야
+    한다.
+    """
+    patch = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    if not patch:
+        return {}
+    rows = await UserClient.from_user(user).update(
+        "hand_fonts", {"id": f"eq.{font_id}"}, patch
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="폰트를 찾을 수 없습니다."
+        )
+    return rows[0]
+
+
+@router.delete("/hand-fonts/{font_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_hand_font(
+    font_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> None:
+    await hand_fonts.remove_font(UserClient.from_user(user), font_id)
 
 
 @router.post("/backups/import", status_code=status.HTTP_201_CREATED)

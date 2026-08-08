@@ -531,4 +531,26 @@ async def client_settings() -> dict[str, Any]:
             )
         else:
             out[key] = default
+
+    #: 지금 쓰는 손글씨 폰트 (D210 8-1). 없으면 저장소에 박힌 기본 폰트다.
+    #:
+    #: **이 경로가 죽으면 캔버스가 안 뜬다** — 폰트를 못 읽는 것은 폰트가
+    #: 기본으로 도는 것으로 끝나야지 화면을 막으면 안 된다.
+    out["handFont"] = None
+    try:
+        from . import hand_fonts
+
+        svc = get_service_client()
+        if svc is not None:
+            row = await hand_fonts.active_font(svc)
+            if row:
+                out["handFont"] = {
+                    "family": row["family"],
+                    "url": f"/api/hand-fonts/{row['slug']}/web",
+                    "letterSpacing": float(row["letter_spacing"]),
+                    "sizeScale": float(row["size_scale"]),
+                    "ideographScale": float(row["ideograph_scale"]),
+                }
+    except Exception:  # noqa: BLE001 - 폰트를 못 읽어도 캔버스는 뜬다
+        logger.warning("활성 손글씨 폰트 조회 실패 — 기본 폰트로 간다", exc_info=True)
     return out

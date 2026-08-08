@@ -19,9 +19,25 @@
  *
  * `**굵게**` · `==형광펜==`. 상태 기계로 벗겨낸다 — 정규식으로 하면 짝이
  * 안 맞는 마커(모델이 흔히 흘린다)에서 본문이 통째로 사라진다.
+ *
+ * ## 수식 (D210 3-1)
+ *
+ * 인라인 `$…$` · `\(…\)`, 블록 `$$…$$` · `\[…\]`를 모두 받는다. 백엔드
+ * 프롬프트가 표기를 하나로 지시하지만 **지시가 안 지켜지는 턴이 반드시
+ * 나온다** — 프론트는 둘 다 받는다.
+ *
+ * ⚠️ **닫히지 않은 수식은 원문으로 둔다.** 스트리밍 중에는 `$`가 하나만 와
+ * 있는 순간이 매 턴 생긴다. 그때 렌더를 시도하면 화면이 깜빡인다. 닫는
+ * 기호를 찾은 뒤에야 토큰을 만든다.
  */
 
 import type { MarkToken, RenderBlock } from "./types";
+
+/** 인라인 수식의 여는 기호와 그 짝. */
+const INLINE_MATH: readonly [string, string][] = [
+  ["\\(", "\\)"],
+  ["$", "$"],
+];
 
 /** 한 줄을 토큰으로. 마커는 제거하고 상태만 남긴다. */
 function scanLine(text: string, out: MarkToken[]): void {
@@ -29,6 +45,31 @@ function scanLine(text: string, out: MarkToken[]): void {
   let hl = false;
   let i = 0;
   while (i < text.length) {
+    /**
+     * 인라인 수식 (D210 3-1).
+     *
+     * `$$`는 여기서 처리하지 않는다 — 블록 수식이라 `toBlocks`가 먼저
+     * 걷어낸다. 한 줄 안에 남은 `$$`는 짝이 안 맞는 것이므로 원문으로 둔다.
+     */
+    let 수식 = false;
+    for (const [open, close] of INLINE_MATH) {
+      if (!text.startsWith(open, i)) continue;
+      if (open === "$" && text.startsWith("$$", i)) break; // 블록 기호는 건너뛴다
+      const from = i + open.length;
+      const end = text.indexOf(close, from);
+      // 닫히지 않았거나 빈 수식이면 렌더하지 않는다 — 원문 그대로 흐른다.
+      if (end < 0 || end === from) break;
+      const tex = text.slice(from, end);
+      const t: MarkToken = { ch: tex, m: "i" };
+      if (bold) t.b = true;
+      if (hl) t.h = true;
+      out.push(t);
+      i = end + close.length;
+      수식 = true;
+      break;
+    }
+    if (수식) continue;
+
     if (text.startsWith("**", i)) {
       bold = !bold;
       i += 2;
@@ -57,6 +98,46 @@ function scanLine(text: string, out: MarkToken[]): void {
  */
 const LI_RE = /^\s*[-*•](?:\s+|$)/;
 
+/**
+ * 블록 수식의 여는/닫는 기호. 여러 줄에 걸칠 수 있다.
+ *
+ * 모델은 보통 `$$`를 제 줄에 따로 쓴다. 그래서 줄 단위 파서가 만나기 전에
+ * **먼저 걷어내야** 한다 — 안 그러면 여는 줄과 닫는 줄이 각각 문단이 된다.
+ */
+const BLOCK_MATH: readonly [string, string][] = [
+  ["$$", "$$"],
+  ["\\[", "\\]"],
+];
+
+/** 본문을 (평문 | 블록 수식) 조각으로 가른다. 닫히지 않은 것은 평문이다. */
+function splitBlockMath(body: string): { text: string; math?: string }[] {
+  const out: { text: string; math?: string }[] = [];
+  let i = 0;
+  let plain = "";
+  while (i < body.length) {
+    let 잡음 = false;
+    for (const [open, close] of BLOCK_MATH) {
+      if (!body.startsWith(open, i)) continue;
+      const from = i + open.length;
+      const end = body.indexOf(close, from);
+      if (end < 0 || !body.slice(from, end).trim()) break;
+      if (plain) {
+        out.push({ text: plain });
+        plain = "";
+      }
+      out.push({ text: "", math: body.slice(from, end).trim() });
+      i = end + close.length;
+      잡음 = true;
+      break;
+    }
+    if (잡음) continue;
+    plain += body[i];
+    i += 1;
+  }
+  if (plain) out.push({ text: plain });
+  return out;
+}
+
 export function toBlocks(body: string): RenderBlock[] {
   const blocks: RenderBlock[] = [];
   let para: MarkToken[] | null = null;
@@ -66,7 +147,19 @@ export function toBlocks(body: string): RenderBlock[] {
     para = null;
   };
 
-  for (const rawLine of body.split("\n")) {
+  for (const 조각 of splitBlockMath(body)) {
+    if (조각.math !== undefined) {
+      flushPara();
+      blocks.push({ type: "math", tokens: [{ ch: 조각.math, m: "b" }] });
+      continue;
+    }
+    scanPlain(조각.text);
+  }
+  flushPara();
+  return blocks;
+
+  function scanPlain(text: string): void {
+  for (const rawLine of text.split("\n")) {
     const line = rawLine.replace(/\s+$/, "");
 
     if (!line.trim()) {
@@ -88,8 +181,7 @@ export function toBlocks(body: string): RenderBlock[] {
     else para = [];
     scanLine(line, para);
   }
-  flushPara();
-  return blocks;
+  }
 }
 
 /** 블록 → 평문(미리보기·검색용). */
@@ -107,6 +199,8 @@ export interface Run {
   text: string;
   b: boolean;
   h: boolean;
+  /** 수식 런이면 그 종류. `text`가 LaTeX 원문이다 (D210 3-1). */
+  m?: "i" | "b";
 }
 
 export function toRuns(tokens: readonly MarkToken[]): Run[] {
@@ -114,8 +208,14 @@ export function toRuns(tokens: readonly MarkToken[]): Run[] {
   for (const t of tokens) {
     const b = !!t.b;
     const h = !!t.h;
+    // **수식은 절대 이웃과 합치지 않는다.** 합치면 LaTeX 원문이 옆 글자와
+    // 한 문자열이 되어 어디까지가 수식인지 사라진다.
+    if (t.m) {
+      runs.push({ text: t.ch, b, h, m: t.m });
+      continue;
+    }
     const last = runs[runs.length - 1];
-    if (last && last.b === b && last.h === h) last.text += t.ch;
+    if (last && !last.m && last.b === b && last.h === h) last.text += t.ch;
     else runs.push({ text: t.ch, b, h });
   }
   return runs;

@@ -381,14 +381,15 @@ export function InkLabTab() {
               items={items}
               positions={layout.positions}
               sizes={layout.sizes}
-              tagOrder={layout.tagOrder}
-              tagOptions={layout.tagOrder}
+                    tagOptions={layout.tagOrder}
               zoom={bridge.camera.zoom}
               selectedIds={NO_SELECTION}
               editingId={null}
               pickedId={null}
               measure={layout.measure}
               handlers={{
+                onCut: NOOP,
+                onPortDrag: NOOP,
                 onSelect: NOOP,
                 onStartEdit: NOOP,
                 onCommitEdit: NOOP,
@@ -398,8 +399,6 @@ export function InkLabTab() {
                 onRenameTag: NOOP,
                 onRemoveTag: NOOP,
                 onDragEnd: NOOP,
-                onReflow: NOOP,
-                onDismissReflow: NOOP,
                 onAsk: NOOP,
                 onPick: NOOP,
                 onResize: NOOP,

@@ -68,16 +68,6 @@ export interface CanvasItemsApi {
   patchMany: (
     entries: readonly { id: string; patch: ItemPatch }[],
     label: string,
-    opts?: {
-      /**
-       * "재배치" 배지를 달 것인가 (기본 true).
-       *
-       * 분류를 바꾸면 자리가 어색해지므로 권할 만하다. 그런데 **학생이 직접
-       * 끌어다 놓은 경우**에는 방금 정한 자리에 대고 "다시 배치할까요"를
-       * 묻는 셈이라 어색하고, 가지 전체에 배지가 우수수 뜬다(D180).
-       */
-      reflow?: boolean;
-    },
   ) => void;
   remove: (id: string) => void;
   /**
@@ -400,11 +390,11 @@ export function useCanvasItems(): CanvasItemsApi {
       setItems((prev) =>
         prev.map((i) =>
           touched.has(i.id) && !i._legacy && !i._pending
-            ? { ...i, tag, _needsReflow: true }
+            ? { ...i, tag }
             : i,
         ),
       );
-      for (const b of special) patch(b.id, { tag }, { _needsReflow: true });
+      for (const b of special) patch(b.id, { tag });
 
       const rollback = () =>
         setItems((prev) => prev.map((i) => before.get(i.id) ?? i));
@@ -438,9 +428,7 @@ export function useCanvasItems(): CanvasItemsApi {
     (
       entries: readonly { id: string; patch: ItemPatch }[],
       label: string,
-      opts?: { reflow?: boolean },
     ) => {
-      const reflow = opts?.reflow ?? true;
       const before = new Map<string, CanvasItem>();
       for (const e of entries) {
         const it = items.find((i) => i.id === e.id);
@@ -463,10 +451,10 @@ export function useCanvasItems(): CanvasItemsApi {
       setItems((prev) =>
         prev.map((i) => {
           const p = byId.get(i.id);
-          return p ? { ...i, ...toLocal(p), _needsReflow: reflow } : i;
+          return p ? { ...i, ...toLocal(p) } : i;
         }),
       );
-      for (const e of special) patch(e.id, e.patch, { _needsReflow: reflow });
+      for (const e of special) patch(e.id, e.patch);
 
       const rollback = () =>
         setItems((prev) => prev.map((i) => before.get(i.id) ?? i));

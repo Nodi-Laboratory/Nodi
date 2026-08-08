@@ -26,6 +26,7 @@ import { useTouchNavigate } from "@/lib/canvas2/useTouchNavigate";
 // 목록이 gzip 13KB이기 때문이다 — globals.css에 넣으면 로그인·홈·관리자 화면도
 // 그걸 받는다. 폰트가 캔버스 전용이니 CSS도 캔버스 라우트 청크에만 둔다.
 import "./hand-font.css";
+import { HandFontStyle } from "./HandFontStyle";
 import type { DrawingScene } from "@/lib/api/canvas";
 import type { Camera, ToolName } from "@/lib/canvas2/types";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
@@ -65,6 +66,17 @@ const SELECTION_SETTLE_MS = 90;
 const GRAB_TOLERANCE_PX = 10;
 
 interface Props {
+  /** 미니맵이 붙어 있는 모서리 — 도구바가 비켜설지 정한다 (D211 9). */
+  mapCorner?: "tl" | "tr" | "bl" | "br" | null;
+  /**
+   * 도구를 **알아서** 바꾸는 중인가 (사용자 지시 2026-08-08).
+   *
+   * 기본 도구는 화면 이동이다. 글을 누르면 선택으로 바뀌고, 배경을 누르면
+   * 다시 화면 이동으로 돌아온다. 학생이 도구바에서 **선택을 직접 골랐다면**
+   * 이 값이 거짓이고, 그때는 배경을 눌러도 안 바뀐다 — 직접 고른 것을
+   * 시스템이 되돌리면 그 버튼을 누른 뜻이 사라진다.
+   */
+  autoSelect?: boolean;
   bridge: Bridge;
   initialScene: DrawingScene | null;
   /** 씬이 도착한 시점을 나타내는 키. 바뀌면 그리기 레이어만 리마운트된다. */
@@ -149,11 +161,35 @@ export function CanvasStage({
   onToolSelect,
   chrome,
   children,
+  mapCorner = null,
+  autoSelect = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const { activeTool, overlayInteractive, subscribeFrame, panByScreen } = bridge;
+
+  /**
+   * 글을 누르면 선택으로 (사용자 지시 2026-08-08).
+   *
+   * 캡처 단계에서 본다 — 아이템의 자기 핸들러(`TextItem`)가 돌기 **전에**
+   * 도구가 바뀌어 있어야 그 클릭이 선택으로 읽힌다.
+   */
+  const setTool = bridge.setTool;
+  const onOverlayDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (!autoSelect || activeTool !== "hand") return;
+      if (!(e.target as HTMLElement).closest("[data-canvas-item]")) return;
+      setTool("selection");
+    },
+    [autoSelect, activeTool, setTool],
+  );
+
+  /** 배경을 누르면 화면 이동으로 돌아온다. 직접 고른 선택은 안 건드린다. */
+  const backToHand = useCallback(() => {
+    if (autoSelect && activeTool === "selection") setTool("hand");
+    onBackgroundClick?.();
+  }, [autoSelect, activeTool, setTool, onBackgroundClick]);
 
   useWheelForwarding(overlayRef, overlayInteractive);
   useMiddleDragPan(rootRef, panByScreen);
@@ -166,15 +202,12 @@ export function CanvasStage({
    * 그때 한 번 돈다.
    */
   /**
-   * 손가락 기기는 **화면 이동 도구로 시작한다** (D208, 사용자 지시).
+   * 손가락 기기는 **화면 이동 도구로 시작한다** (D208).
    *
-   * ⚠️ 마운트 뒤에 `setTool("hand")`을 부르면 안 된다. Excalidraw가
-   * initialData를 적용하며 선택 도구로 되돌려 놓는다 — 실측으로 확인했다
-   * (태블릿에서 계속 선택이었다). `ExcalidrawLayer`의 initialData에 실어
-   * 마운트 시점에 확정한다.
-   *
-   * `coarse`는 첫 렌더에 false이고 붙은 뒤 true가 된다(hydration 보호).
-   * 그 변화가 `sceneKey`를 바꾸지는 않으므로 리마운트를 따로 태운다.
+   * 도구는 Excalidraw의 initialData로만 확실히 정해진다. 그래서 기기 종류가
+   * **정해질 때까지 그 레이어를 아예 안 그린다**(D209) — 리마운트로 고치면
+   * 캔버스를 통째로 다시 세우는 비용을 문다. `ssr: false`라 어차피
+   * 하이드레이션 뒤에 마운트되므로 기다리는 비용은 없다.
    */
   const coarse = useCoarsePointer();
 
@@ -311,7 +344,7 @@ export function CanvasStage({
          */
         if (e.shiftKey || e.metaKey || e.ctrlKey) return;
         window.setTimeout(() => {
-          if (!hasElementSelection()) onBackgroundClick?.();
+          if (!hasElementSelection()) backToHand();
         }, SELECTION_SETTLE_MS);
         return;
       }
@@ -336,13 +369,13 @@ export function CanvasStage({
       window.removeEventListener("pointermove", onShapeMove, { capture: true });
       window.removeEventListener("pointerup", onUp, { capture: true });
     };
-  }, [activeTool, coarse, onCanvasClick, onBackgroundClick, onMarquee, toWorld, hasElementSelection, elementAtPoint, cameraRef, onShapeDrag]);
+  }, [activeTool, coarse, onCanvasClick, backToHand, onMarquee, toWorld, hasElementSelection, elementAtPoint, cameraRef, onShapeDrag]);
 
   /** 손가락: 끌면 이동, 길게 누르면 선택 상자 (D208). */
   useTouchNavigate({
     rootRef,
     activeTool,
-    enabled: coarse,
+    enabled: coarse === true,
     panByScreen,
     toWorld,
     onMarquee,
@@ -364,17 +397,27 @@ export function CanvasStage({
       data-session={sessionId ?? ""}
       style={{ cursor: cursorFor(activeTool) }}
     >
+      {/* 관리자가 고른 손글씨 폰트 (D210 8-1). 없으면 아무것도 안 그린다 —
+          위에서 임포트한 기본 폰트가 그대로 돈다. **범위가 여기까지인 것이
+          안전장치다**: 읽을 수 없는 폰트를 골라도 관리자 페이지는 멀쩡하다. */}
+      <HandFontStyle />
       {/* 격자는 변환 평면 **밖**에 두고 background-position으로 흉내 낸다 —
           평면 안에 두면 scale(z)에 따라 점 자체가 커져 줌아웃에서 뭉개진다.
           위치·간격은 useCameraFrame이 DOM에 직접 쓴다. */}
       <div ref={gridRef} className="canvas2-grid" />
 
+      {coarse === null ? null : (
       <ExcalidrawLayer
         // 손가락 기기는 화면 이동으로 시작한다 (D208).
-        initialTool={coarse ? "hand" : "selection"}
-        // 기기 종류가 정해진 뒤 한 번 다시 마운트해 그 도구를 확정한다 —
-        // 첫 렌더는 언제나 PC로 그려지기 때문이다(hydration).
-        key={`${sceneKey ?? "none"}-${coarse ? "touch" : "mouse"}`}
+        /**
+         * 기본은 **화면 이동**이다 (사용자 지시 2026-08-08).
+         *
+         * 예전에는 마우스면 선택, 터치면 이동이었다. 학생이 캔버스에서 제일
+         * 많이 하는 일은 읽으려고 화면을 옮기는 것이라, 처음부터 그 손이
+         * 맞는다 — 글을 누르면 선택으로 알아서 바뀐다.
+         */
+        initialTool="hand"
+        key={sceneKey ?? "none"}
         onApi={bridge.setApi}
         initialScene={initialScene}
         onSceneCommit={onSceneCommit}
@@ -382,6 +425,7 @@ export function CanvasStage({
         viewOnly={viewOnly}
         initialCamera={initialCamera}
       />
+      )}
 
       <div
         ref={overlayRef}
@@ -403,8 +447,16 @@ export function CanvasStage({
            */
           zIndex: 3,
           // 자식(아이템)이 pointer-events:auto를 켤지 여기서 정한다.
-          ["--c2-item-events" as string]: overlayInteractive ? "auto" : "none",
+          /**
+           * 화면 이동 중에도 **글은 눌린다** (사용자 지시 2026-08-08).
+           *
+           * 그래야 "글을 누르면 선택으로 바뀐다"가 성립한다. 배경은 그대로
+           * Excalidraw가 받아 화면을 옮긴다 — 글 위에서만 우리가 가져온다.
+           */
+          ["--c2-item-events" as string]:
+            overlayInteractive || (autoSelect && activeTool === "hand") ? "auto" : "none",
         }}
+        onPointerDownCapture={onOverlayDown}
       >
         {children}
       </div>
@@ -413,6 +465,7 @@ export function CanvasStage({
 
       {!viewOnly && (
         <ToolRail
+          mapCorner={mapCorner}
           paused={penWriting}
           active={activeTool}
           onSelect={onToolSelect ?? bridge.setTool}

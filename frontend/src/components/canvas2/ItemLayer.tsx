@@ -8,15 +8,14 @@
  * 한 파일에 뒀기 때문이다.
  */
 
-import { ITEM_W } from "@/lib/canvas2/layout";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Placed } from "@/lib/canvas2/layout";
-import { UNTAGGED } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { treeEdges } from "@/lib/canvas2/tree";
 import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import { ClipItem } from "./ClipItem";
 import { ConnectorLayer } from "./ConnectorLayer";
+import type { PortDragStart } from "./PortHandles";
 import { FigureItem } from "./FigureItem";
 import type { ResizeCommit } from "./ResizeHandles";
 import { TextItem } from "./TextItem";
@@ -25,7 +24,6 @@ interface Props {
   items: CanvasItem[];
   positions: Map<string, Placed>;
   sizes: Map<string, Size>;
-  tagOrder: readonly string[];
   tagOptions: readonly string[];
   /** 카드 수정 도구가 켜졌나 (D180). */
   cardEdit?: boolean;
@@ -40,6 +38,10 @@ interface Props {
   pickedId: string | null;
   measure: (id: string, el: HTMLElement | null) => void;
   handlers: {
+    /** 연결선의 X를 눌렀다 — 그 카드의 부모를 끊는다 (D210 4-4). */
+    onCut: (childId: string) => void;
+    /** 포트에서 끌기 시작 (D210 4-3). */
+    onPortDrag: (start: PortDragStart, e: React.PointerEvent) => void;
     onSelect: (id: string | null, additive?: boolean) => void;
     onStartEdit: (id: string) => void;
     onCommitEdit: (id: string, body: string) => void;
@@ -49,8 +51,6 @@ interface Props {
     onRenameTag: (from: string, to: string) => void;
     onRemoveTag: (tag: string) => void;
     onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
-    onReflow: (id: string) => void;
-    onDismissReflow: (id: string) => void;
     onAsk: (id: string) => void;
     onPick: (id: string) => void;
     onResize: (id: string, next: ResizeCommit) => void;
@@ -62,7 +62,6 @@ export function ItemLayer({
   items,
   positions,
   sizes,
-  tagOrder,
   tagOptions,
   cardEdit = false,
   beginEdit,
@@ -107,8 +106,18 @@ export function ItemLayer({
 
   return (
     <>
-      <ColumnLabels items={items} positions={positions} tagOrder={tagOrder} />
-      <ConnectorLayer items={items} positions={positions} sizes={sizes} />
+      {/**
+       * 열 머리의 분류 라벨은 **걷어냈다** (사용자 지시 2026-08-08).
+       *
+       * 캔버스 위에 회색 글씨가 열마다 떠 있는데, 정작 읽는 것은 카드다.
+       * 태그는 카드 메뉴와 지도에 그대로 있으므로 알 길이 사라지지 않는다.
+       */}
+      <ConnectorLayer
+        items={items}
+        positions={positions}
+        sizes={sizes}
+        onCut={handlers.onCut}
+      />
       {items.map((item) => {
         const p = positions.get(item.id);
         if (!p) return null;
@@ -150,6 +159,8 @@ export function ItemLayer({
             item={item}
             x={p.x}
             y={p.y}
+            // 부모 유무는 아이템마다 다르다 — 위 포트를 띄울지 정한다 (D210 4-3).
+            hasParent={!!item.parentItemId}
             zoom={zoom}
             selected={selectedIds.has(item.id)}
             editing={editingId === item.id}
@@ -169,83 +180,3 @@ export function ItemLayer({
   );
 }
 
-/**
- * 열 머리의 분류 라벨.
- *
- * 그 태그에서 **가장 위에 있는 글** 위에 붙인다. 열의 y=0에 고정하면
- * pinned 아이템 때문에 열이 아래에서 시작할 때 라벨만 허공에 뜬다.
- *
- * ## x를 열 시작과 비교하면 안 된다 (D161)
- *
- * 예전에는 `columnX.get(tag) === p.x`인 글만 기준으로 삼았다. 세로로 쌓던
- * 시절에는 그게 "열의 본류"를 고르는 방법이었다. **tidy tree(D159)에서는
- * 뿌리가 자식들 위 가운데에 놓이므로 그 조건에 맞는 글이 하나도 없다** —
- * 라벨이 통째로 사라졌다. 지금은 가장 위에 있는 글을 그냥 고르고, 라벨도
- * 그 글의 왼쪽 위에 붙인다.
- */
-function ColumnLabels({
-  items,
-  positions,
-  tagOrder,
-}: {
-  items: CanvasItem[];
-  positions: Map<string, Placed>;
-  tagOrder: readonly string[];
-}) {
-  /** 태그별로 가장 위에 있는 글의 자리. 라벨은 그 위에 붙는다. */
-  const topByTag = new Map<string, Placed>();
-  for (const it of items) {
-    const p = positions.get(it.id);
-    if (!p) continue;
-    const tag = it.tag || UNTAGGED;
-    const cur = topByTag.get(tag);
-    if (cur === undefined || p.y < cur.y) topByTag.set(tag, p);
-  }
-
-  return (
-    <>
-      {tagOrder.map((tag) => {
-        if (tag === UNTAGGED) return null;
-        const at = topByTag.get(tag);
-        if (!at) return null;
-        /**
-         * 라벨은 **자기 태그의 맨 위 글**을 따라간다. 열 시작(`columnX`)은
-         * 안 본다.
-         *
-         * 예전에는 `Math.max(columnX, at.x)`였는데, 그 max가 실제로 값을
-         * 바꾸는 경우는 `at.x < columnX` 하나뿐이다 — 학생이 카드를 자기 열
-         * **왼쪽으로 끌어다 놓았을 때**(pinned, D122). 그때 라벨만 열 자리에
-         * 남아 **엉뚱한 카드 위에 뜬다**(사용자 보고 2026-08-05: "생명공학
-         * 카드 위에 천문학이라는 글자가 있다"). 뿌리가 자식들 위 가운데에
-         * 놓이는 tidy tree(D159)에서는 `at.x >= columnX`라 max가 어차피
-         * `at.x`를 골랐다 — 없애도 그쪽은 그대로다.
-         */
-        const x = at.x;
-        const y = at.y;
-        return (
-          <div
-            key={tag}
-            className="label pointer-events-none absolute flex select-none items-center gap-2"
-            style={{
-              left: x - 16,
-              top: y - 34,
-              maxWidth: ITEM_W,
-              color: "var(--c-ink-faint)",
-              // 한글에 letter-spacing을 주면 자모가 벌어져 보인다. 라벨은
-              // .label의 고정폭만 쓰고 자간은 되돌린다.
-              letterSpacing: 0,
-            }}
-          >
-            <span className="truncate">{tag}</span>
-            {/* 열의 폭만큼 가로선을 그어 어디까지가 이 열인지 보이게 한다 */}
-            <span
-              aria-hidden
-              className="h-px flex-1"
-              style={{ background: "var(--c-rule)" }}
-            />
-          </div>
-        );
-      })}
-    </>
-  );
-}

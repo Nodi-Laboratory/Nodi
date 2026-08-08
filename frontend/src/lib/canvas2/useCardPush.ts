@@ -27,6 +27,8 @@
 
 import { useEffect, useRef } from "react";
 import { subscribeDrag, type DragOffset } from "./dragBus";
+import { clearPushOffsets, setPushOffsets } from "./pushBus";
+import { FOLLOWS, followerEls } from "./followers";
 import { pushAway, type Displacement, type PushCandidate } from "./pushAway";
 import type { Rect } from "./rect";
 
@@ -84,8 +86,6 @@ export function useCardPush({
   const baseRef = useRef<Map<string, Rect> | null>(null);
   /** 요소 조회 캐시. `querySelector`를 프레임마다 부르지 않는다. */
   const elCacheRef = useRef<Map<string, HTMLElement | null>>(new Map());
-  /** transition을 이미 건 요소. 매 프레임 다시 쓰면 스타일 재계산이 돈다. */
-  const easedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     /** 화면에서 밀림을 걷어낸다. 손을 뗀 뒤·확정 뒤에 부른다. */
@@ -114,7 +114,6 @@ export function useCardPush({
     const endDrag = () => {
       baseRef.current = null;
       elCacheRef.current = new Map();
-      easedRef.current = new Set();
     };
 
     const apply = (moving: ReadonlyMap<string, DragOffset>) => {
@@ -138,6 +137,7 @@ export function useCardPush({
           pushedRef.current = new Map();
           clearMarks(false);
         }
+        clearPushOffsets();
         endDrag();
         return;
       }
@@ -155,8 +155,23 @@ export function useCardPush({
       const statics: PushCandidate[] = [];
       for (const [id, r] of rects) {
         const off = moving.get(id);
-        if (off) movingRects.push({ x: r.x + off.dx, y: r.y + off.dy, w: r.w, h: r.h });
-        else statics.push({ id, rect: r });
+        if (off) {
+          movingRects.push({ x: r.x + off.dx, y: r.y + off.dy, w: r.w, h: r.h });
+          continue;
+        }
+        /**
+         * **끌리는 카드에 딸린 것은 밀 대상이 아니다** (D211 6).
+         *
+         * 도판·클립은 주인 카드와 함께 움직인다. 그런데 밀어내기도 같은
+         * `transform`을 쓰므로, 밀 대상에 남겨 두면 **두 값이 같은 프레임에
+         * 겹쳐 쓰이고 나중 것(밀림)이 이긴다** — 실측 2026-08-08: 카드를
+         * 오른쪽 아래로 끌었는데 딸린 클립은 오른쪽으로만(Δ86,0) 갔다.
+         * 따라가는 것과 밀리는 것 중 하나만 골라야 하고, 주인을 따라가는 것이
+         * 맞다.
+         */
+        const owner = el(id)?.getAttribute(FOLLOWS);
+        if (owner && moving.has(owner)) continue;
+        statics.push({ id, rect: r });
       }
       if (!movingRects.length || !statics.length) return;
 
@@ -170,25 +185,46 @@ export function useCardPush({
       // 자연스럽게 돌아와야 한다").
       for (const id of pushedRef.current.keys()) {
         if (next.has(id)) continue;
-        const node = el(id);
-        if (node) {
+        for (const node of [el(id), ...followerEls([id])]) {
+          if (!node) continue;
           node.style.transform = "";
           node.removeAttribute(MARK);
         }
       }
       for (const [id, d] of next) {
-        const node = el(id);
+        /**
+         * 카드와 **딸린 것들**을 같은 양만큼 민다 (D211 6).
+         *
+         * 도판·강의 클립·코치 말풍선은 그 카드 옆에 붙어 있는 것들이라,
+         * 카드만 비키면 붙어 있던 것이 제자리에 남아 관계가 끊겨 보인다 —
+         * 연결선을 따라가게 만든 것과 같은 이유다(사용자 지적 2026-08-08).
+         * 목록은 드래그와 **같은 것**(`followerEls`)을 쓴다.
+         */
+        for (const node of [el(id), ...followerEls([id])]) {
         if (!node) continue;
         // transition은 **처음 한 번만** 건다. 매 프레임 다시 쓰면 그때마다
         // 스타일 재계산이 돌고, 값이 같아도 브라우저는 그걸 모른다.
-        if (!easedRef.current.has(id)) {
-          node.style.transition = `transform ${a.speedMs}ms cubic-bezier(.22,1,.36,1)`;
+        //
+        // 건 적이 있나를 **요소의 표식**으로 본다 — id로 세던 캐시는 카드
+        // 하나에 딸린 것이 여럿일 때(도판 셋 + 말풍선) 첫 요소만 전이를
+        // 받고 나머지는 툭 튀었다 (D211 6).
+        if (!node.hasAttribute(MARK)) {
+          /**
+             * 감속 곡선 (D210 4-5b, 사용자 지시: "너무 빠르다").
+             *
+             * `cubic-bezier(.16,1,.3,1)`은 처음에 빠르게 나가고 **끝에서 길게
+             * 미끄러진다** — 비켜 주는 동작은 그 편이 자연스럽다. 앞이 느리면
+             * 손을 따라오지 못하는 것처럼 보이고, 끝이 급하면 튄다.
+             */
+            node.style.transition = `transform ${a.speedMs}ms cubic-bezier(.16,1,.3,1)`;
           node.setAttribute(MARK, "1");
-          easedRef.current.add(id);
         }
         node.style.transform = `translate(${d.dx}px, ${d.dy}px)`;
+        }
       }
       pushedRef.current = next;
+      // 연결선·붙기 예고 테두리가 밀린 카드를 따라오게 한다 (D210 4-5).
+      setPushOffsets(next);
     };
 
     const off = subscribeDrag(apply);

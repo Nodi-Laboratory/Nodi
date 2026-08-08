@@ -21,6 +21,11 @@ from __future__ import annotations
 # 실제로 데이터를 가져오는 도구 — 스코프가 결정한다.
 _CLASS_ONLY = ["search_class_material", "search_textbook_figure", "search_lecture_clip"]
 
+# 추천 의도 선언 (D210 7-1). **곁들이 검색이 있는 곳에서만** 뜻이 있다 —
+# 개인 세션에는 도판·클립 도구가 없으므로 의도를 선언해 봐야 찾을 것이 없다.
+_MEDIA_INTENT = "set_media_intent"
+
+
 # 이 세션에서 만든 개념 조회 — 어디서나 가능하지만 **카드가 있을 때만** 넣는다.
 # 첫 질문(카드 0장)에 노출하면 모델이 부르고 빈 목록을 받는다. think가 도구
 # 0개인 세션에서 헛돌던 것과 같은 낭비다(2026-07-28 실측).
@@ -48,7 +53,7 @@ _PLANNER_MIN_TOOLS = 2
 # 오타 하나로 스킬이 **조용히 사라지는** 것을 막는다(레지스트리는 모르는 이름을
 # 그냥 건너뛴다).
 ALL_DECLARED: frozenset[str] = frozenset(
-    [*_CLASS_ONLY, *_CONCEPTS, *_TEACHER_ONLY, *_SESSION_FILES, _PLANNER]
+    [*_CLASS_ONLY, *_CONCEPTS, *_TEACHER_ONLY, *_SESSION_FILES, _PLANNER, _MEDIA_INTENT]
 )
 
 
@@ -73,4 +78,19 @@ def skills_for(
         names += _SESSION_FILES
     if len(names) >= _PLANNER_MIN_TOOLS:
         names.append(_PLANNER)
+    # 의도 판정은 **학급 밖에서도** 연다 (D211 11).
+    #
+    # 학급에만 노출했더니 개인 세션에서 "이미지만 추천해줘"가 평소 답으로
+    # 흘렀다 — 판정 자체가 없으니 갈래가 안 생긴다. 그런데 **학생이 쓰는 곳은
+    # 대개 개인 세션**이라, 기능이 있는데 없는 것처럼 보였다. 개인 세션에는
+    # 찾을 자료가 없지만 **그 사실을 말해 주는 것**이 조용히 평소 답을 내는
+    # 것보다 낫다(오케스트레이터가 그 말을 만든다).
+    #
+    # ⚠️ 다만 **빈 세션 규칙은 안 깬다** — 줄 도구가 하나도 없는 첫 턴에는
+    # 여기도 안 얹는다. 카탈로그가 비면 판단 단계 자체를 건너뛰므로 인사 한
+    # 마디에 LLM 왕복이 통째로 사라진다(위 `_PLANNER` 주석과 같은 근거).
+    # `_PLANNER` 판정 **뒤에** 얹는 이유도 같다: 이것 때문에 계획 도구가
+    # 딸려 나오면 도구 0개 세션에서 헛도는 그 낭비가 되살아난다.
+    if names:
+        names.append(_MEDIA_INTENT)
     return names

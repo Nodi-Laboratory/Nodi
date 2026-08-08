@@ -60,7 +60,21 @@ export interface CameraSpring {
   cancel: () => void;
 }
 
-export function useCameraSpring(bridge: Bridge): CameraSpring {
+export interface CameraSpringOpts {
+  /**
+   * 사람이 화면을 만져 추종이 취소됐다 (D210 2-2).
+   *
+   * 스프링은 이미 그 순간을 안다(우리가 쓴 값과 실제가 어긋났나). 그걸 밖에
+   * 알려 주지 않으면 **자동 조정이 학생과 싸운다** — 읽으려고 당겨 놓은
+   * 화면을 카드가 자랄 때마다 되돌리게 된다.
+   */
+  onHijack?: () => void;
+}
+
+export function useCameraSpring(
+  bridge: Bridge,
+  opts: CameraSpringOpts = {},
+): CameraSpring {
   // **bridge 객체 전체에 의존하면 안 된다.**
   //
   // bridge는 카메라가 바뀔 때마다 새 객체가 된다. 그걸 의존성에 넣으면
@@ -101,6 +115,12 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
     },
     [applyCamera, cancel],
   );
+
+  /** 콜백을 ref로 — deps에 넣으면 rAF 루프가 매번 다시 걸린다. */
+  const hijackRef = useRef(opts.onHijack);
+  useEffect(() => {
+    hijackRef.current = opts.onHijack;
+  }, [opts.onHijack]);
 
   const flyTo = useCallback((target: Camera) => {
     targetRef.current = target;
@@ -154,6 +174,7 @@ export function useCameraSpring(bridge: Bridge): CameraSpring {
           Math.abs(wrote.zoom - actual.zoom) > EPS_ZOOM * 20 + Math.abs(step0.z))
       ) {
         cancel();
+        hijackRef.current?.();
         lastTsRef.current = ts;
         return;
       }

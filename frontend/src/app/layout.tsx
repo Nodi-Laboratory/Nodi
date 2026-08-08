@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
 import "./globals.css";
+import { UI_SCALE } from "@/lib/ui/scale";
 import { Providers } from "./providers";
 
 /**
@@ -96,7 +97,14 @@ export default function RootLayout({
           href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css"
         />
       </head>
-      <body className="min-h-full bg-bg text-fg antialiased">
+      <body
+        className="min-h-full bg-bg text-fg antialiased"
+        /**
+         * 크롬 배율 (사용자 지시 2026-08-08) — 값의 출처는 `lib/ui/scale.ts`다.
+         * CSS에 숫자를 또 적으면 언젠가 둘이 갈린다.
+         */
+        style={{ ["--ui-scale" as string]: String(UI_SCALE) }}
+      >
         <Providers>{children}</Providers>
       </body>
     </html>

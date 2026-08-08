@@ -106,6 +106,14 @@ export interface SessionMapProps {
   tagOrder: readonly string[];
   /** 지도 상자의 화면 크기(px). 페이지가 잰 값을 넘긴다. */
   box: { w: number; h: number };
+  /**
+   * 좁은 상자(미니맵)인가 (D211 7).
+   *
+   * 같은 컴포넌트가 미니맵·팝업·페이지 셋에 쓰인다(D210 5-2). 상자가 작아지면
+   * 크롬도 같이 작아져야 지도 볼 자리가 남는다 — 셋이 갈라지지 않게 **크기만**
+   * 프롭으로 받고 규칙은 여기 한 곳에 둔다.
+   */
+  compact?: boolean;
   /** 노드를 눌렀다 — 캔버스로 돌아가 그 카드를 본다. */
   onOpen: (itemId: string) => void;
   /** 노드를 끌어 옮겼다 — **실제 카드 좌표**가 바뀐다. */
@@ -118,6 +126,7 @@ export function SessionMap({
   sizes,
   tagOrder,
   box,
+  compact = false,
   onOpen,
   onMoveNode,
 }: SessionMapProps) {
@@ -153,8 +162,19 @@ export function SessionMap({
   const nodeElAt = (id: string) =>
     document.querySelector<SVGGElement>(`[data-map-node="${CSS.escape(id)}"]`);
 
-  const W = Math.max(200, box.w);
-  const H = Math.max(200, box.h);
+  /**
+   * ⚠️ **하한이 미니맵을 넘치게 했다** (실측 2026-08-08).
+   *
+   * 200px 하한은 페이지·팝업에서 "너무 납작한 지도"를 막으려던 것인데,
+   * 미니맵의 지도 자리는 176px이라 그 하한이 이겨 상자가 **24px 넘쳤다.**
+   * 미니맵은 `overflow: hidden`이라 넘친 만큼이 잘렸고, 하필 그 자리에
+   * 배율 버튼이 있어 "테두리에 잘린다"로 보고됐다.
+   *
+   * 좁은 상자에서는 하한을 낮춘다 — 준 자리를 넘지 않는 것이 먼저다.
+   */
+  const FLOOR = compact ? 110 : 200;
+  const W = Math.max(FLOOR, box.w);
+  const H = Math.max(FLOOR, box.h);
 
   const model = useMemo(() => {
     // id → 아이템. 예전에는 노드마다 `items.find(...)`를 돌아 카드 수의
@@ -488,43 +508,60 @@ export function SessionMap({
         </g>
       </svg>
 
-      {/* 축척 — 상자 오른쪽 아래. 확대해야 낱개 노드가 보인다는 것을 글로도 알린다. */}
+      {/**
+       * 축척 — 상자 오른쪽 아래. 확대해야 낱개 노드가 보인다는 것을 글로도 알린다.
+       *
+       * ⚠️ 미니맵에서는 **더 띄워야 한다**(사용자 보고 2026-08-08: "테두리에
+       * 잘린다"). 미니맵의 테두리가 3px이고 지도 상자 자체가 작아 `bottom-3`
+       * 으로는 버튼이 테두리에 물린다. 좁은 상자에서만 여백을 키운다 — 팝업·
+       * 페이지에서 괜히 떠 있으면 그것도 어색하다.
+       */}
       <div
         data-no-pan
-        className="ui absolute bottom-3 right-3 flex items-center gap-1 rounded-lg border px-1 py-1"
+        className="ui absolute flex items-center gap-1 rounded-lg border px-1 py-1"
         style={{
+          right: compact ? 10 : 12,
+          bottom: compact ? 12 : 12,
           background: "var(--c-raised)",
           borderColor: "var(--c-rule)",
           boxShadow: "var(--c-shadow-sm)",
         }}
       >
-        <MapBtn label="축소" onClick={() => zoomBy(1 / ZOOM_STEP)}>
-          <Minus size={15} />
+        <MapBtn label="축소" small={compact} onClick={() => zoomBy(1 / ZOOM_STEP)}>
+          <Minus size={compact ? 12 : 15} />
         </MapBtn>
         <span
-          className="label min-w-11 text-center text-[11px]"
-          style={{ color: "var(--c-ink-soft)" }}
+          className="label text-center"
+          style={{
+            color: "var(--c-ink-soft)",
+            fontSize: compact ? 9 : 11,
+            minWidth: compact ? 30 : 44,
+          }}
         >
           {Math.round(zoom * 100)}%
         </span>
-        <MapBtn label="확대" onClick={() => zoomBy(ZOOM_STEP)}>
-          <Plus size={15} />
+        <MapBtn label="확대" small={compact} onClick={() => zoomBy(ZOOM_STEP)}>
+          <Plus size={compact ? 12 : 15} />
         </MapBtn>
         <MapBtn
           label="전체 보기"
+          small={compact}
           onClick={() => {
             setZoom(1);
             setPan(null);
           }}
         >
-          <Maximize2 size={14} />
+          <Maximize2 size={compact ? 11 : 14} />
         </MapBtn>
       </div>
 
       {!nodeView && (
         <p
-          className="ui pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full px-3 py-1 text-[12px]"
+          className="ui pointer-events-none absolute left-1/2 -translate-x-1/2 rounded-full"
           style={{
+            top: compact ? 6 : 12,
+            padding: compact ? "2px 8px" : "4px 12px",
+            fontSize: compact ? 9.5 : 12,
             background: "var(--c-raised)",
             color: "var(--c-ink-soft)",
             border: "1px solid var(--c-rule)",
@@ -565,10 +602,13 @@ function MapBtn({
   label,
   onClick,
   children,
+  small = false,
 }: {
   label: string;
   onClick: () => void;
   children: React.ReactNode;
+  /** 미니맵에서는 손가락이 아니라 마우스로 누른다 — 작아도 된다 (D211 7). */
+  small?: boolean;
 }) {
   return (
     <button
@@ -576,8 +616,12 @@ function MapBtn({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="flex h-7 w-7 items-center justify-center rounded transition-colors"
-      style={{ color: "var(--c-ink-soft)" }}
+      className="flex items-center justify-center rounded transition-colors"
+      style={{
+        color: "var(--c-ink-soft)",
+        width: small ? 20 : 28,
+        height: small ? 20 : 28,
+      }}
     >
       {children}
     </button>

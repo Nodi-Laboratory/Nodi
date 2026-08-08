@@ -127,6 +127,12 @@ export function IconSidebar() {
   return (
     <nav
       aria-label="주 메뉴"
+      /**
+       * 크롬 배율 (사용자 지시 2026-08-08). `zoom`은 이 안에 좌표 계산이 없을
+       * 때만 안전하다 — 사이드바는 버튼뿐이라 괜찮다(캔버스에는 절대 못 건다,
+       * `lib/ui/scale.ts` 참조).
+       */
+      style={{ zoom: "var(--ui-scale, 1)" }}
       className="flex h-full w-16 shrink-0 flex-col items-center gap-3 border-r border-accent-border/40 bg-bg-sidebar py-3"
     >
       {/* 브랜드 마크 */}

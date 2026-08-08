@@ -39,6 +39,23 @@ export interface ClientSettings {
   cardPushStrength: number;
   /** 비키고 되돌아오는 시간(ms). */
   cardPushSpeedMs: number;
+  /**
+   * 관리자가 고른 손글씨 폰트 (D210 8-1). null이면 저장소에 박힌 기본 폰트다.
+   *
+   * 보정값이 함께 오는 이유: 자간·크기 배율은 **폰트마다 실측한 값**이다
+   * (D164·D165). 코드에 고정해 두면 어떤 폰트를 골라도 한 폰트에만 맞는다.
+   */
+  handFont: HandFont | null;
+}
+
+export interface HandFont {
+  /** CSS font-family 이름. 서버가 `nodi-<slug>`로 만든다. */
+  family: string;
+  /** 우리 백엔드의 공개 경로. 인증 없이 받는다 — @font-face는 헤더를 못 싣는다. */
+  url: string;
+  letterSpacing: number;
+  sizeScale: number;
+  ideographScale: number;
 }
 
 export const CLIENT_SETTINGS_FALLBACK: ClientSettings = {
@@ -57,10 +74,14 @@ export const CLIENT_SETTINGS_FALLBACK: ClientSettings = {
   inkFigureZoomEnabled: true,
   cardMinGap: 48,
   cardPushStrength: 1,
-  cardPushSpeedMs: 160,
+  cardPushSpeedMs: 260,
+  // 기본은 **없음**이다 — 저장소에 박힌 폰트로 돈다.
+  handFont: null,
 };
 
 interface Row {
+  /** D210 8-1 — 서버가 카멜케이스로 준다(스칼라 노브와 달리 조립한 값이다). */
+  handFont?: HandFont | null;
   canvas_cards_per_turn?: number;
   canvas_type_chars_per_frame?: number;
   canvas_focus_zoom?: number;
@@ -106,6 +127,7 @@ function toSettings(row: Row): ClientSettings {
         ? f.cardPushStrength
         : row.card_push_strength / 100,
     cardPushSpeedMs: row.card_push_speed_ms ?? f.cardPushSpeedMs,
+    handFont: row.handFont ?? null,
   };
 }
 

@@ -139,6 +139,9 @@ export function FigureItem({
           measure(item.id, el);
         }}
         data-canvas-item={item.id}
+        // 주인 카드가 움직이면 함께 간다 (D211 6). 도판은 트리 노드가
+        // 아니라 `data-tree-parent`로는 안 잡힌다.
+        data-follows={item.parentItemId ?? undefined}
         // E2E가 도판을 집는 손잡이 (D163, ClipItem의 data-canvas-clip과 대칭).
         data-canvas-figure={item.data.figure?.figureId}
         onPointerDown={(e) => {
@@ -230,7 +233,9 @@ export function FigureItem({
             color="var(--c-live)"
             getEl={() => rootRef.current}
             onCommit={(next) => onResize(item.id, next)}
-            onReset={() => onResetSize(item.id)}
+            // 도판은 잴 "가장 긴 줄"이 없다 — 기본 상한만 쓴다(D210 3-2).
+          maxW={() => 0}
+          onReset={() => onResetSize(item.id)}
           />
         )}
       </div>

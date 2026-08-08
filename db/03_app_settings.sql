@@ -48,7 +48,7 @@ insert into public.app_settings (key, value) values
     -- D207 카드 밀어내기
     ('card_min_gap',                    '48'),
     ('card_push_strength',              '100'),
-    ('card_push_speed_ms',              '160'),
+    ('card_push_speed_ms',              '260'),
     ('lecture_atom_enabled',            'true'),
     ('lecture_atom_max_distance',       '0.45'),
     ('lecture_atoms_per_clip',          '4'),

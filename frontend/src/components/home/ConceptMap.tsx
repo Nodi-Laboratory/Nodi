@@ -167,6 +167,16 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
    * 숨김 집합에 그런 키가 없어 **언제나 보인다** — 끌 수단이 없는 것을 꺼진
    * 것처럼 세면 "전부 숨겼습니다"가 거짓말이 된다.
    */
+  /**
+   * 배치가 아직 식는 중인가 (D211 1).
+   *
+   * d3 힘 시뮬레이션은 200틱 남짓 돌면서 매 틱 다시 그린다 — 학생이 보는 것은
+   * 노드가 꿈틀대며 자리를 찾는 장면이고, 그게 "렉"으로 읽힌다(사용자 보고
+   * 2026-08-08). 계산을 멈추지 않고 **가리기만** 한다: 멈췄다 한 번에 보여
+   * 주면 그동안 계산이 안 돌아 오히려 더 오래 걸린다.
+   */
+  const [settling, setSettling] = useState(true);
+
   const visibleCount = useMemo(
     () =>
       data.nodes.reduce(
@@ -482,6 +492,8 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
       const b = boundsOf(shown.length ? shown : nodesRef.current);
       if (!b) return;
       fitted = true;
+      // 자리가 잡힌 그 순간이 곧 보여 줄 때다 — 따로 재지 않는다.
+      setSettling(false);
       const pad = 48;
       const k = Math.min(
         6,
@@ -601,6 +613,22 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
       />
 
       <MapZoomControls onZoomIn={zoomIn} onZoomOut={zoomOut} onFit={fit} />
+
+      {/**
+       * 식는 동안 덮는다 (D211 1).
+       *
+       * 노드가 흔들리는 것을 보여 주는 것보다 잠깐 가리는 편이 낫다 — 흔들림은
+       * 학생 눈에 고장으로 읽힌다. 배율 맞추기가 끝나는 순간에 걷힌다.
+       */}
+      {settling && (
+        <div
+          data-map-settling
+          className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-bg-elevated/85"
+        >
+          <span className="text-sm font-medium text-fg">지도를 그리는 중…</span>
+          <span className="text-xs text-fg-muted">개념들이 자리를 잡고 있어요</span>
+        </div>
+      )}
 
       {/*
         전부 껐을 때 빈 캔버스로 두지 않는다 — 빈 화면은 고장과 구분되지

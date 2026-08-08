@@ -98,6 +98,15 @@ export function splitRun(run: InkRun, tailFrom: number): RunSplit {
   if (!Number.isFinite(tailFrom) || run.start + run.text.length <= tailFrom) {
     return { dry: run.text, wet: [] };
   }
+  /**
+   * **수식은 쪼개지 않는다** (D210 3-1).
+   *
+   * KaTeX가 만든 DOM을 글자 span으로 찢으면 수식이 통째로 깨진다. 한 덩어리로
+   * 두고, 차례가 오면 호출부가 짧게 페이드인시킨다. `dry`로 돌려주면 "이미
+   * 다 써진 글"로 취급돼 아무 연출도 안 붙으므로 `wet`에 통째로 싣는다 —
+   * 호출부는 조각 수가 1이면 수식임을 안다.
+   */
+  if (run.m) return { dry: "", wet: [[run.start, run.text]] };
   const wet: Array<[number, string]> = [];
   let dryEnd = 0;
   let i = 0;

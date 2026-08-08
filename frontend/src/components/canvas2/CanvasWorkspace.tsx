@@ -43,12 +43,17 @@ import { intersects, union, type Rect } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
-import { focusCamera } from "@/lib/canvas2/focusCamera";
+import { backOffCamera, focusCamera, type Camera } from "@/lib/canvas2/focusCamera";
 import type { Size } from "@/lib/canvas2/useItemLayout";
-import { regroup, type RegroupItem } from "@/lib/canvas2/regroup";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
+import { MiniMapOverlay } from "@/components/canvas2/MiniMapOverlay";
 import { useCardPush } from "@/lib/canvas2/useCardPush";
+import { usePortLink } from "@/lib/canvas2/usePortLink";
 import { descendants, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
+import { autoTagFor } from "@/lib/canvas2/autoTag";
+import { scaled } from "@/lib/ui/scale";
+import { slowMove } from "@/lib/canvas2/moveEase";
+import { dropSpots as dropSpotsAt, type Rect as DropRect } from "@/lib/canvas2/dropSpot";
 import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
 import { useQuestionCoach } from "@/lib/canvas2/useQuestionCoach";
 import { CoachBubble } from "./CoachBubble";
@@ -91,6 +96,9 @@ interface Props {
 
 const FALLBACK_H = 180;
 
+/** 스스로 사라지는 안내가 머무는 시간(ms) — 사용자 지시 2026-08-08. */
+const FLASH_MS = 5000;
+
 /**
  * 새 답이 생겼을 때의 배율 **상한** (D162, 사용자 지시: 235%).
  *
@@ -108,6 +116,24 @@ const NEW_NODE_ZOOM = 2.35;
  * 1.15배는 카드 하나 + 클립 셋이 들어오면서 본문이 기본 크기보다 큰 지점이다.
  */
 const ATTACH_MIN_ZOOM = 1.15;
+/**
+ * 자라는 카드에서 물러날 때 **아래에 남길 화면 비율** (D210 2-2).
+ *
+ * 꽉 맞추면 다 보여도 답답하고, 스트리밍 중에는 곧 이어질 문단이 들어설
+ * 자리가 없어 보인다.
+ */
+const GROW_HEADROOM = 0.18;
+/** 물러날 때 카드 위에 남길 여백(px). 위쪽은 화면에 붙인다. */
+const GROW_TOP_PAD = 40;
+/**
+ * 물러남의 하한 (D210 2-2).
+ *
+ * 아주 긴 답에서 무한히 축소되면 글자를 못 읽는다. 여기 닿으면 그만 줄이고
+ * 카드 **위쪽**을 화면에 붙인 채로 둔다 — 읽기는 위에서 시작하므로 잘리는
+ * 쪽은 아래여야 한다.
+ */
+const GROW_MIN_ZOOM = 0.75;
+
 /** 묶음 둘레 여백(px). 화면 가장자리에 딱 붙으면 잘린 것처럼 보인다. */
 const FOCUS_PAD = 72;
 /**
@@ -177,7 +203,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const bridge = useExcalidrawBridge();
   // 스프링은 아이템으로 카메라를 옮길 때 쓴다(전체 보기·확대/축소).
   // 초기 카메라는 여기 쓰지 않는다 — ExcalidrawLayer의 initialData가 맡는다.
-  const spring = useCameraSpring(bridge);
+  /**
+   * 자라는 카드를 따라가는 중인지 (D210 2-2).
+   *
+   * `cam`은 **우리가 마지막으로 정한 목표**다. 살아 있는 카메라로 넘침을
+   * 재면 날아가는 도중의 중간 배율로 판정해 목표가 계속 흔들린다 — 목표끼리
+   * 견주면 배율이 단조 감소라 흔들릴 자리가 없다.
+   */
+  const growRef = useRef<{ id: string; cam: Camera } | null>(null);
+  const spring = useCameraSpring(bridge, {
+    // 학생이 직접 확대·이동했으면 자동 조정을 멈춘다. 읽으려고 당겨 놓은
+    // 화면을 카메라가 되돌리면 그게 더 큰 방해다(사용자 지시).
+    onHijack: useCallback(() => {
+      growRef.current = null;
+    }, []),
+  });
   const store = useCanvasItems();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   // 교차 연결 이동 (D176) — 공간·세션을 함께 옮기고, 도착 후 초점을 맞춘다.
@@ -206,6 +246,30 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
+  /**
+   * 잠깐 띄웠다 **스스로 사라지는** 안내 (사용자 지시 2026-08-08).
+   *
+   * 끌어 잇기가 빗나갔을 때의 안내는 그 순간에만 쓸모가 있다. 남겨 두면
+   * 학생이 다음에 무엇을 해도 그 문구가 화면에 붙어 있어 고장처럼 보인다.
+   * 오류(그리기 실패·OCR 실패)는 그대로 둔다 — 그건 학생이 읽고 조치해야
+   * 하는 것이라 스스로 사라지면 안 된다.
+   */
+  const flashTimer = useRef<number | null>(null);
+  const flashError = useEventCallback((msg: string) => {
+    setDrawError(msg);
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => {
+      flashTimer.current = null;
+      // 그 사이에 다른 안내가 떴으면 그것을 지우지 않는다.
+      setDrawError((cur) => (cur === msg ? null : cur));
+    }, FLASH_MS);
+  });
+  useEffect(
+    () => () => {
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    },
+    [],
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   /** 가지 한가운데를 떼어내려는 중 — 아래를 어떻게 할지 묻는다 (D156). */
@@ -439,16 +503,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
   // `send`의 신원이 바뀐다.
   const getItems = useEventCallback(() => store.items);
 
-  const stream = useCanvasStream({
-    sessionId,
-    getItems,
-    onSessionGone: dropSession,
-    upsertLocal,
-    onPersisted,
-    nextSeq,
-    hasFigure,
-    hasClip,
-  });
 
   // --- 배치 ------------------------------------------------------------------
 
@@ -470,6 +524,37 @@ export function CanvasWorkspace({ spaceId }: Props) {
   );
 
   const layout = useItemLayout(sessionId, layoutSources, bridge.getObstacles);
+
+  /**
+   * 딸릴 카드가 없을 때 자료를 놓을 자리 (D210 7-1 C).
+   *
+   * 좌표와 크기는 **배치 엔진이 소유한다** — 스트림은 모른다. 그래서 여기서
+   * 지금 화면 가운데를 월드 좌표로 풀고 배치가 아는 상자들을 넘긴다.
+   */
+  const dropSpots = useEventCallback((count: number) => {
+    const root = document.querySelector(".canvas2");
+    const box = root?.getBoundingClientRect() ?? new DOMRect(0, 0, 1440, 900);
+    const center = bridge.toWorld(box.width / 2, box.height / 2, box);
+    const rects: DropRect[] = [];
+    for (const [id, at] of layout.positions) {
+      const sz = layout.sizes.get(id);
+      if (sz) rects.push({ x: at.x, y: at.y, w: sz.w, h: sz.h });
+    }
+    return dropSpotsAt(center, count, { w: 320, h: 240 }, rects);
+  });
+
+  const stream = useCanvasStream({
+    sessionId,
+    getItems,
+    onSessionGone: dropSession,
+    upsertLocal,
+    onPersisted,
+    nextSeq,
+    hasFigure,
+    hasClip,
+    // 배치가 정한 좌표를 읽는다 — 그래서 이 호출이 배치 아래에 있다.
+    dropSpots,
+  });
 
   // 그림을 그린 직후 배치를 다시 돌린다 — 새 선이 장애물이 됐을 수 있다.
   const { invalidate } = layout;
@@ -514,7 +599,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
     // 내용이 그대로면 아무 일도 하지 않는다 — "위치 정리" 버튼이 괜히 뜬다.
     const cur = items.find((i) => i.id === id);
     if (!cur || cur.body === body) return;
-    patch(id, { body }, { _needsReflow: true });
+    patch(id, { body });
   });
 
   const onDelete = useEventCallback((id: string) => {
@@ -538,9 +623,11 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 셈이다. 가지째 옮기면 그 부분 트리가 통째로 새 트리가 된다.
    */
   const onTagChange = useEventCallback((id: string, tag: string | null) => {
+    // 열이 바뀐다 — 감속하며 건너가야 무슨 일이 있었는지 보인다 (D210 6-3).
+    slowMove();
     const kids = descendants(items, id);
     if (!kids.length) {
-      patch(id, { tag }, { _needsReflow: true });
+      patch(id, { tag });
       return;
     }
     /**
@@ -560,6 +647,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   /** "자식 노드들도 같이 끊기" — 가지 전체가 새 트리가 된다. */
   const splitAll = useCallback(() => {
     if (!split) return;
+    slowMove();
     const kids = descendants(items, split.id);
     tagMany([split.id, ...kids], split.tag, `가지 ${kids.length + 1}개의 분류를 바꿨습니다`);
     setSplit(null);
@@ -573,6 +661,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
    */
   const splitReattach = useCallback(() => {
     if (!split) return;
+    slowMove();
     const edges = treeEdges(items);
     const grandparent = edges.find((e) => e.to === split.id)?.from ?? null;
     const kids = edges.filter((e) => e.from === split.id).map((e) => e.to);
@@ -734,6 +823,73 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 성립하므로(D151), 자기만 바꾸면 자식들이 그 자리에서 흩어진다 — D156이
    * 분류 변경에서 이미 겪은 그것이다.
    */
+  /**
+   * 연결선의 X를 눌렀다 — 그 카드의 부모를 끊는다 (D210 4-4).
+   *
+   * 떼기 도구(카드 수정)는 그대로 둔다. 없애는 것이 아니라 **다른 길을 하나
+   * 더** 여는 것이다 — 손으로 끌어 떼는 것이 불편하다는 의견이 있었지만,
+   * 그 길을 쓰던 학생의 손버릇을 뺏을 이유는 없다.
+   *
+   * 자리는 건드리지 않는다. 끊긴 카드가 그 자리에 그대로 있어야 "관계만
+   * 끊었다"로 읽힌다 — 튀어 나가면 무슨 일이 일어났는지 모른다.
+   */
+  const onCut = useEventCallback((childId: string) => {
+    patch(childId, { parent_item_id: null, pinned: true });
+  });
+
+  /**
+   * 포트에서 끌어 이었다 (D210 4-3).
+   *
+   * 저장 규칙은 카드 수정 도구와 **같다** — 자식 가지 전체가 새 부모의 분류를
+   * 따라간다(6-3). 두 길이 다른 결과를 내면 학생이 어느 쪽을 썼는지에 따라
+   * 캔버스가 달라진다.
+   */
+  const linkCards = useEventCallback((parentId: string, childId: string) => {
+    slowMove();
+    const parent = items.find((i) => i.id === parentId);
+    const branch = [childId, ...descendants(items, childId)];
+    const tag = parent?.tag ?? null;
+    patchMany(
+      branch.map((id) => ({
+        id,
+        patch: id === childId ? { parent_item_id: parentId, tag } : { tag },
+      })),
+      "카드를 이었습니다",
+    );
+  });
+
+  /** 순환을 만들지 않는다 — 자기 자신이나 자기 자손을 부모로 삼을 수 없다. */
+  const canLink = useEventCallback((parentId: string, childId: string) => {
+    if (parentId === childId) return false;
+    return !descendants(items, childId).includes(parentId);
+  });
+
+  const portLink = usePortLink({
+    toWorld: (cx, cy) => {
+      const root = document.querySelector(".canvas2");
+      return bridge.toWorld(cx, cy, root?.getBoundingClientRect() ?? new DOMRect());
+    },
+    cardAt: (w) => {
+      for (const [id, at] of layout.positions) {
+        const sz = layout.sizes.get(id);
+        if (!sz) continue;
+        if (w.x >= at.x && w.x <= at.x + sz.w && w.y >= at.y && w.y <= at.y + sz.h) {
+          return id;
+        }
+      }
+      return null;
+    },
+    onLink: linkCards,
+    canLink,
+    /**
+     * 빗나갔을 때 **왜인지** 말한다 (D211 2).
+     *
+     * 조용히 끝나면 "연결 드래그가 안 된다"와 구분이 안 된다 — 실제로 그렇게
+     * 보고됐다. 이미 있는 안내 자리를 쓴다(새 창을 띄우지 않는다).
+     */
+    onNothing: (reason) => flashError(reason),
+  });
+
   const onEditEnd = useEventCallback((r: EditResult) => {
     const kids = descendants(items, r.id);
     const branch = [r.id, ...kids];
@@ -757,6 +913,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
     };
 
     let label = "가지를 옮겼습니다";
+    // 이어 붙이거나 떼어내면 가지 전체의 분류가 바뀐다 = 열을 건넌다 (6-3).
+    if (r.attachTo || r.detached) slowMove();
     if (r.attachTo) {
       const parent = items.find((i) => i.id === r.attachTo);
       const tag = parent?.tag ?? null;
@@ -766,15 +924,27 @@ export function CanvasWorkspace({ spaceId }: Props) {
       label = "가지를 이어 붙였습니다";
     } else if (r.detached) {
       /**
-       * 떼어낸 가지는 **분류가 없다**(사용자 결정 2026-08-05).
+       * 떼어낸 가지는 **자기 분류를 갖는다** (D211 10 = D210 6-2).
        *
        * 부모 연결만 끊으면 같은 분류 열에 새 뿌리로 남아 "떼어냈다"가 화면에
-       * 안 드러난다. 분류를 비우면 자기 열로 빠지고, 그러고도 가지 안쪽
-       * 연결은 살아 있다(D180: 분류 없는 가지도 트리다).
+       * 안 드러난다. 그래서 예전에는 분류를 비웠는데(2026-08-05), 그러면
+       * 떼어낸 것들이 전부 "분류 없음" 한 열에 쌓인다 — 갈래를 나눈 뜻이
+       * 사라진다.
+       *
+       * **이어진 카드가 2장 이상일 때만** 새 분류를 만든다. 한 장은 아직
+       * 다른 갈래가 아니라 그냥 옮긴 카드이고, 한 장마다 분류를 만들면 열이
+       * 카드 수만큼 생긴다(D135가 겪은 파편화).
        */
       patchOf(r.id).parent_item_id = null;
-      for (const mid of branch) patchOf(mid).tag = null;
-      label = "가지를 떼어냈습니다";
+      const 새분류 = autoTagFor({
+        rootTitle: items.find((i) => i.id === r.id)?.title ?? null,
+        groupSize: branch.length,
+        taken: store.tagOptions,
+      });
+      for (const mid of branch) patchOf(mid).tag = 새분류;
+      label = 새분류 ? `가지를 떼어내 '${새분류}'로 묶었습니다` : "가지를 떼어냈습니다";
+      // 열을 건너간다 — 감속하며 가야 무슨 일이 있었는지 보인다 (D210 6-3).
+      slowMove();
     }
 
     /**
@@ -797,7 +967,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
      * 것은 어색하고, 가지가 크면 배지가 우수수 뜬다(사용자 2026-08-06:
      * "ui가 너무 많이 깨져").
      */
-    patchMany(entries, label, { reflow: false });
+    patchMany(entries, label);
   });
 
   /**
@@ -832,30 +1002,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     const rest = { ...cur.data };
     delete rest.size;
     patch(id, { data: rest });
-  });
-
-  /**
-   * "위치 정리" — **고정을 푼다** (D161).
-   *
-   * 예전에는 빈 자리를 직접 찾아 그 좌표에 다시 고정했다(`reflowOne`). 그
-   * 함수는 열이 고정 피치라는 전제 위에 있었는데, tidy tree(D159)에서 열 x는
-   * **누적**이라 그 계산이 엉뚱한 자리를 냈다.
-   *
-   * 지금은 배치 엔진이 트리 모양을 스스로 만든다. 그러니 "정리"의 뜻은
-   * 하나뿐이다 — **엔진에게 맡긴다.** 고정을 풀면 다음 배치에서 제자리를
-   * 찾아간다. 계산이 두 곳에 있지 않으니 어긋날 자리도 없다.
-   */
-  const onReflow = useEventCallback((id: string) => {
-    patch(id, { pinned: false }, { _needsReflow: false });
-  });
-
-  const onDismissReflow = useEventCallback((id: string) => {
-    const cur = items.find((i) => i.id === id);
-    patch(
-      id,
-      { data: { ...cur?.data, reflowDismissed: true } },
-      { _needsReflow: false },
-    );
   });
 
   /**
@@ -909,14 +1055,14 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onRenameTag,
       onRemoveTag,
       onDragEnd,
+      onCut,
+      onPortDrag: portLink.begin,
       onResize,
       onResetSize,
-      onReflow,
-      onDismissReflow,
       onAsk,
       onPick,
     }),
-    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onPick],
+    [onCut, portLink.begin, onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick],
   );
 
   /**
@@ -1011,40 +1157,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     pickedId,
     patch,
   });
-
-  /**
-   * 재배치 — 태그 무리를 최소한으로 움직여 서로 갈라 놓는다 (D143).
-   *
-   * 열 배치를 다시 돌리는 것이 아니다. 지금 자리를 출발점으로 삼으므로
-   * 학생이 정리해 둔 모양이 남고, **이미 잘 나뉘어 있으면 아무것도 움직이지
-   * 않는다.** 옮긴 자리는 학생이 정한 것과 같은 취급(pinned)이다.
-   *
-   * 그림(캔버스 도구) 요소는 보지 않는다(사용자 지시).
-   *
-   * @returns 실제로 옮겼나. 호출부가 "이미 나뉘어 있다"를 알려 준다.
-   */
-  const handleRegroup = useCallback((): boolean => {
-    const input: RegroupItem[] = items.map((i) => {
-      const p = layout.positions.get(i.id);
-      const size = layout.sizes.get(i.id);
-      return {
-        id: i.id,
-        tag: i.tag,
-        parentItemId: i.parentItemId,
-        x: p?.x ?? i.x,
-        y: p?.y ?? i.y,
-        w: size?.w ?? ITEM_W,
-        h: size?.h ?? FALLBACK_H,
-      };
-    });
-    const { moves } = regroup(input);
-    if (!moves.size) return false;
-    moveMany(
-      [...moves].map(([id, at]) => ({ id, x: at.x, y: at.y })),
-      "재배치했습니다",
-    );
-    return true;
-  }, [items, layout, moveMany]);
 
   const handleFit = useCallback(() => {
     /**
@@ -1305,21 +1417,63 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 의존하는데(ResizeObserver) 지도 페이지에는 카드가 없다 — 거기서 다시
    * 계산하면 캔버스와 다른 자리에 점이 찍힌다.
    */
+  /**
+   * 지도를 **이 화면 위에** 띄운다 (D210 5-1).
+   *
+   * D205는 지도를 별도 페이지로 뺐다. 캔버스가 넓어진 것은 얻었지만 이동
+   * 자체가 불편하다는 의견이 왔다 — 잠깐 보려고 화면을 통째로 바꾸는 것은
+   * 값이 크다. 페이지는 남겨 둔다(주소로 들어오는 길). 같은 `SessionMap`을
+   * 쓰므로 둘이 갈라지지 않는다.
+   */
+  const [mapOpen, setMapOpen] = useState(false);
+  /**
+   * 미니맵이 붙은 모서리 — 도구바가 비켜설지 정한다 (D211 9).
+   *
+   * 처음 값은 미니맵이 읽어 알려 준다(저장된 자리가 있다). 여기서 다시 읽으면
+   * 두 곳이 같은 것을 저장하게 되고, 언젠가 갈린다.
+   */
+  const [mapCorner, setMapCorner] = useState<"tl" | "tr" | "bl" | "br" | null>(null);
   const openMap = useCallback(() => {
-    if (!sessionId) return;
-    setMapSnapshot({
-      spaceId,
-      sessionId,
-      items,
-      positions: [...layout.positions].map(([id, p]) => [id, { x: p.x, y: p.y }]),
-      sizes: [...layout.sizes].map(([id, sz]) => [id, { w: sz.w, h: sz.h }]),
-      tagOrder: [...layout.tagOrder],
-    });
-    router.push(`/space/${spaceId}/map`);
-  }, [items, layout.positions, layout.sizes, layout.tagOrder, router, sessionId, setMapSnapshot, spaceId]);
+    // 페이지 쪽도 살아 있으므로 배치 사진은 계속 남긴다.
+    if (sessionId) {
+      setMapSnapshot({
+        spaceId,
+        sessionId,
+        items,
+        positions: [...layout.positions].map(([id, p]) => [id, { x: p.x, y: p.y }]),
+        sizes: [...layout.sizes].map(([id, sz]) => [id, { w: sz.w, h: sz.h }]),
+        tagOrder: [...layout.tagOrder],
+      });
+    }
+    setMapOpen((v) => !v);
+  }, [items, layout.positions, layout.sizes, layout.tagOrder, sessionId, setMapSnapshot, spaceId]);
+
+  /** 지도에서 노드를 끌어 옮겼다 — 캔버스 좌표를 그대로 옮긴다. */
+  const moveFromMap = useEventCallback((id: string, x: number, y: number) => {
+    store.moveMany([{ id, x, y }], "지도에서 옮김");
+  });
+
+  /** 지도에서 노드를 눌렀다 — 그 카드로 날아간다. */
+  const openFromMap = useEventCallback((id: string) => {
+    setMapOpen(false);
+    goToNode(id);
+  });
+
+  /**
+   * 도구를 **알아서** 바꾸는 중인가 (사용자 지시 2026-08-08).
+   *
+   * 기본은 화면 이동이고, 글을 누르면 선택으로 바뀐다. 학생이 도구바에서
+   * 선택을 **직접 골랐다면** 배경을 눌러도 안 돌아온다 — 직접 고른 것을
+   * 시스템이 되돌리면 그 버튼을 누른 뜻이 사라진다.
+   */
+  const [autoSelect, setAutoSelect] = useState(true);
 
   const handleTool = useCallback(
     (tool: ToolName) => {
+      // 손으로 고른 순간 자동 전환은 그 도구에서 멈춘다. 화면 이동을 다시
+      // 고르면 자동 전환도 되살아난다 — 그게 "평소 상태"다.
+      if (tool === "selection") setAutoSelect(false);
+      else if (tool === "hand") setAutoSelect(true);
       setInkRecognized(false);
       setInkCount(0);
       // 도구를 바꾸면 방금 읽은 표시도 버린다 — 그 표시는 지워진 획의 것이고,
@@ -1669,8 +1823,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
     if (attached.some((a) => !layout.positions.has(a.id) || !layout.sizes.has(a.id))) return;
 
     const size = layout.sizes.get(focusId) ?? { w: ITEM_W, h: FALLBACK_H };
-    flyTo(
-      focusCamera(
+    const 처음 = focusCamera(
         { x: p.x, y: p.y, w: size.w, h: size.h },
         attached.map((a) => {
           const ap = layout.positions.get(a.id) as Placed;
@@ -1691,13 +1844,43 @@ export function CanvasWorkspace({ spaceId }: Props) {
           minZoom: ATTACH_MIN_ZOOM,
           pad: FOCUS_PAD,
         },
-      ),
-    );
+      );
+    flyTo(처음);
+    // 여기서부터 이 카드가 자라는 것을 지켜본다 (D210 2-2).
+    growRef.current = { id: focusId, cam: 처음 };
     clearFocus();
   }, [
     focusId, layout.positions, layout.sizes, storeItems, vp, flyTo, clearFocus,
     clientSettings.focusZoom,
   ]);
+
+  /**
+   * **자란 카드가 화면을 넘기면 그때 물러난다** (D210 2-2, 사용자 지시).
+   *
+   * 처음에는 지금처럼 235%로 당긴다(위 이펙트). 그 뒤 스트리밍으로 글이
+   * 자라 실제로 넘칠 때만 배율을 낮춘다 — "긴 답이 예상되니 미리 줄인다"와
+   * 다르다. 앞의 것은 짧은 답까지 작게 만든다.
+   *
+   * 카드 높이는 이미 `layout.sizes`가 ResizeObserver로 재고 있다. 관찰자를
+   * 하나 더 두지 않고 그 값이 바뀔 때만 판정한다 — 매 프레임 배율을 다시
+   * 계산하면 카메라가 끊임없이 흔들린다.
+   */
+  useEffect(() => {
+    const g = growRef.current;
+    if (!g) return;
+    const p = layout.positions.get(g.id);
+    const size = layout.sizes.get(g.id);
+    if (!p || !size) return;
+    const next = backOffCamera(
+      { x: p.x, y: p.y, w: size.w, h: size.h },
+      g.cam,
+      { w: vp.w, h: vp.h, left: UI_LEFT, right: UI_RIGHT, top: UI_TOP, bottom: UI_BOTTOM },
+      { minZoom: GROW_MIN_ZOOM, headroom: GROW_HEADROOM, topPad: GROW_TOP_PAD },
+    );
+    if (!next) return;
+    growRef.current = { id: g.id, cam: next };
+    flyTo(next);
+  }, [layout.positions, layout.sizes, vp, flyTo]);
 
   const banner =
     drawError ??
@@ -1709,6 +1892,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   return (
     <CanvasStage
+      // 미니맵이 같은 변에 붙으면 도구바가 비켜선다 (D211 9).
+      mapCorner={mapOpen ? mapCorner : null}
+      autoSelect={autoSelect}
       bridge={bridge}
       sceneKey={sceneKey}
       initialCamera={INITIAL_CAMERA}
@@ -1750,7 +1936,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
             onOpenSessions={() => setDrawerOpen(true)}
             onZoom={handleZoom}
             onFit={handleFit}
-            onRegroup={handleRegroup}
           />
           <SessionDrawer
             open={drawerOpen}
@@ -1784,7 +1969,24 @@ export function CanvasWorkspace({ spaceId }: Props) {
               크기를 두 배로 키웠다(사용자 지시 2026-08-07) — 캔버스 위의 크롬
               중에 이것만 화면을 바꾸는 문이라 다른 아이콘과 같은 크기면
               찾기 어렵다. */}
-          <MapDoor onOpen={openMap} />
+          {/**
+           * 지도 버튼은 **미니맵이 떠 있으면 숨는다** (D211 9, 사용자 지시).
+           *
+           * 같은 것을 여는 버튼이 남아 있으면 닫는 버튼으로 오해된다 —
+           * 닫기는 미니맵 자신의 ✕가 맡는다.
+           */}
+          {!mapOpen && <MapDoor onOpen={openMap} />}
+          <MiniMapOverlay
+            items={items}
+            positions={layout.positions}
+            sizes={layout.sizes}
+            tagOrder={layout.tagOrder}
+            open={mapOpen}
+            onClose={() => setMapOpen(false)}
+            onOpenNode={openFromMap}
+            onMoveNode={moveFromMap}
+            onCornerChange={setMapCorner}
+          />
           <div
             className="ui absolute left-1/2 z-30 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
             // 펜 입력판이 펴진 만큼 비킨다 (D176) — 안 비키면 판 위에 겹쳐 뜬다.
@@ -1846,6 +2048,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
       {coach.card && coach.box && (
         <CoachBubble
           advice={coach.card.data.coach!.advice!}
+          cardId={coach.card.id}
           x={coach.box.x}
           y={coach.box.y}
           width={coach.box.w}
@@ -1857,7 +2060,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
         items={store.items}
         positions={layout.positions}
         sizes={layout.sizes}
-        tagOrder={layout.tagOrder}
         tagOptions={store.tagOptions}
         cardEdit={bridge.activeTool === "cardedit"}
         beginEdit={beginEdit}
@@ -1955,16 +2157,19 @@ function MapDoor({ onOpen }: { onOpen: () => void }) {
       onClick={onOpen}
       aria-label="개념 지도 열기"
       title="개념 지도"
-      className="ui absolute right-4 top-4 z-30 flex h-[72px] w-[72px] flex-col items-center
+      /* 크롬 배율 (사용자 지시 2026-08-08) — `lib/ui/scale.ts`. */
+      className="ui absolute right-4 top-4 z-30 flex flex-col items-center
                  justify-center gap-1 rounded-2xl border-2 transition-colors"
       style={{
+        width: scaled(72),
+        height: scaled(72),
         background: "var(--c-raised)",
         borderColor: "var(--c-rule)",
         color: "var(--c-live)",
         boxShadow: "var(--c-shadow-md)",
       }}
     >
-      <MapIcon size={26} />
+      <MapIcon size={scaled(26)} />
       <span className="label text-[10px]" style={{ color: "var(--c-ink-soft)" }}>
         지도
       </span>
