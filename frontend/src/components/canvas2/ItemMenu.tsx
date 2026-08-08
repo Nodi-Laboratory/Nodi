@@ -26,6 +26,8 @@ interface Props {
   onRenameTag: (from: string, to: string) => void;
   /** 태그 삭제 — 그 태그를 단 모든 카드가 분류 없음이 된다 (D147). */
   onRemoveTag: (tag: string) => void;
+  /** 새 분류를 만들 수 있나 — 이어진 카드가 2장 이상일 때만 (D210 6-2). */
+  canCreateTag: boolean;
   /** 손잡이로 크기를 바꾼 상태인가 — 그때만 되돌리기를 보여 준다 (D142). */
   resized?: boolean;
   onResetSize?: () => void;
@@ -41,6 +43,7 @@ export function ItemMenu({
   onTagChange,
   onRenameTag,
   onRemoveTag,
+  canCreateTag,
   resized,
   onResetSize,
   onOpenChange,
@@ -186,6 +189,7 @@ export function ItemMenu({
           }}
           onRenameTag={onRenameTag}
           onRemoveTag={onRemoveTag}
+          canCreateTag={canCreateTag}
           onClose={() => {
             setTagOpen(false);
             setOpen(false);

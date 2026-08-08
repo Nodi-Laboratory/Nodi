@@ -56,6 +56,7 @@ import { C } from "./ui";
 
 /** 실험실은 붙박이 캔버스라 이 값들이 안 바뀐다 — ItemLayer가 요구한다. */
 const NO_SELECTION: ReadonlySet<string> = new Set();
+const EMPTY_GROUPS: ReadonlyMap<string, number> = new Map();
 const NOOP = () => {};
 
 export function InkLabTab() {
@@ -382,6 +383,8 @@ export function InkLabTab() {
               positions={layout.positions}
               sizes={layout.sizes}
               tagOrder={layout.tagOrder}
+              // 실험실은 태그를 안 쓴다 — 빈 판이면 새 분류 만들기가 잠긴다.
+              groupSize={EMPTY_GROUPS}
               tagOptions={layout.tagOrder}
               zoom={bridge.camera.zoom}
               selectedIds={NO_SELECTION}

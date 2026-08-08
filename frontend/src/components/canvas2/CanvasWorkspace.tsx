@@ -50,7 +50,8 @@ import { useEventCallback } from "@/lib/canvas2/useEventCallback";
 import { MiniMapOverlay } from "@/components/canvas2/MiniMapOverlay";
 import { useCardPush } from "@/lib/canvas2/useCardPush";
 import { usePortLink } from "@/lib/canvas2/usePortLink";
-import { descendants, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
+import { descendants, groupSizes, isTreeNode, nextFocus, treeEdges } from "@/lib/canvas2/tree";
+import { slowMove } from "@/lib/canvas2/moveEase";
 import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
 import { useQuestionCoach } from "@/lib/canvas2/useQuestionCoach";
 import { CoachBubble } from "./CoachBubble";
@@ -503,6 +504,15 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [store.items],
   );
 
+  /**
+   * 카드마다 **이어진 묶음이 몇 장인가** (D210 6-2).
+   *
+   * 새 분류를 만들 수 있는지가 여기서 갈린다 — 한 장짜리는 아직 "다른 갈래"가
+   * 아니라 그냥 옮긴 카드다. 배치가 쓰는 것과 **같은 목록**으로 센다: 화면에
+   * 선이 보이는데 "혼자"라고 판정하면 그건 학생 눈에 고장이다.
+   */
+  const groupSize = useMemo(() => groupSizes(layoutSources), [layoutSources]);
+
   const layout = useItemLayout(sessionId, layoutSources, bridge.getObstacles);
 
   // 그림을 그린 직후 배치를 다시 돌린다 — 새 선이 장애물이 됐을 수 있다.
@@ -572,6 +582,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 셈이다. 가지째 옮기면 그 부분 트리가 통째로 새 트리가 된다.
    */
   const onTagChange = useEventCallback((id: string, tag: string | null) => {
+    // 열이 바뀐다 — 감속하며 건너가야 무슨 일이 있었는지 보인다 (D210 6-3).
+    slowMove();
     const kids = descendants(items, id);
     if (!kids.length) {
       patch(id, { tag });
@@ -594,6 +606,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   /** "자식 노드들도 같이 끊기" — 가지 전체가 새 트리가 된다. */
   const splitAll = useCallback(() => {
     if (!split) return;
+    slowMove();
     const kids = descendants(items, split.id);
     tagMany([split.id, ...kids], split.tag, `가지 ${kids.length + 1}개의 분류를 바꿨습니다`);
     setSplit(null);
@@ -607,6 +620,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
    */
   const splitReattach = useCallback(() => {
     if (!split) return;
+    slowMove();
     const edges = treeEdges(items);
     const grandparent = edges.find((e) => e.to === split.id)?.from ?? null;
     const kids = edges.filter((e) => e.from === split.id).map((e) => e.to);
@@ -790,6 +804,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 캔버스가 달라진다.
    */
   const linkCards = useEventCallback((parentId: string, childId: string) => {
+    slowMove();
     const parent = items.find((i) => i.id === parentId);
     const branch = [childId, ...descendants(items, childId)];
     const tag = parent?.tag ?? null;
@@ -850,6 +865,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
     };
 
     let label = "가지를 옮겼습니다";
+    // 이어 붙이거나 떼어내면 가지 전체의 분류가 바뀐다 = 열을 건넌다 (6-3).
+    if (r.attachTo || r.detached) slowMove();
     if (r.attachTo) {
       const parent = items.find((i) => i.id === r.attachTo);
       const tag = parent?.tag ?? null;
@@ -1989,6 +2006,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
         sizes={layout.sizes}
         tagOrder={layout.tagOrder}
         tagOptions={store.tagOptions}
+        groupSize={groupSize}
         cardEdit={bridge.activeTool === "cardedit"}
         beginEdit={beginEdit}
         onEditEnd={onEditEnd}

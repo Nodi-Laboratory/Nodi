@@ -28,6 +28,11 @@ interface Props {
   sizes: Map<string, Size>;
   tagOrder: readonly string[];
   tagOptions: readonly string[];
+  /**
+   * 카드별 **이어진 묶음 크기** (D210 6-2). 2 이상이어야 새 분류를 만들 수 있다.
+   * 카드마다 다시 세면 카드 수의 제곱이라 한 번에 만든 판을 받는다.
+   */
+  groupSize: ReadonlyMap<string, number>;
   /** 카드 수정 도구가 켜졌나 (D180). */
   cardEdit?: boolean;
   /** 별 포인터로 누를 때 맥락을 만든다. */
@@ -67,6 +72,7 @@ export function ItemLayer({
   sizes,
   tagOrder,
   tagOptions,
+  groupSize,
   cardEdit = false,
   beginEdit,
   onEditEnd,
@@ -167,6 +173,7 @@ export function ItemLayer({
             treeParentId={treeParentOf.get(item.id) ?? null}
             question={questionOf.get(item.id) ?? null}
             tagOptions={tagOptions}
+            canCreateTag={(groupSize.get(item.id) ?? 1) >= 2}
             measure={measure}
             cardEdit={cardEdit}
             beginEdit={beginEdit}

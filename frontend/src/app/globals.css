@@ -720,3 +720,28 @@ a {
     animation: none;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────
+   열을 건너는 이동 (D210 6-3)
+
+   분류가 바뀌면 가지 전체가 다른 열로 간다. 그때만 연결선도 카드와 **같은
+   시간**으로 따라간다 — 상시로 켜면 드래그 중 선이 늦게 따라와 고무줄이 된다.
+   `d` 전이를 못 하는 브라우저에서는 지금처럼 즉시 맞춰진다(나빠지지 않는다).
+   ────────────────────────────────────────────────────────────── */
+.canvas2[data-c2-retag] [data-link] path,
+.canvas2[data-c2-retag] [data-link] circle,
+.canvas2[data-c2-retag] [data-link] text {
+  transition:
+    d var(--c2-move, 0.28s) cubic-bezier(0.22, 0.9, 0.24, 1),
+    cx var(--c2-move, 0.28s) cubic-bezier(0.22, 0.9, 0.24, 1),
+    cy var(--c2-move, 0.28s) cubic-bezier(0.22, 0.9, 0.24, 1),
+    x var(--c2-move, 0.28s) cubic-bezier(0.22, 0.9, 0.24, 1),
+    y var(--c2-move, 0.28s) cubic-bezier(0.22, 0.9, 0.24, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas2[data-c2-retag] [data-link] path,
+  .canvas2[data-c2-retag] [data-link] circle,
+  .canvas2[data-c2-retag] [data-link] text {
+    transition: none;
+  }
+}

@@ -133,6 +133,8 @@ export interface TextItemProps {
   onTagChange: (id: string, tag: string | null) => void;
   onRenameTag: (from: string, to: string) => void;
   onRemoveTag: (tag: string) => void;
+  /** 새 분류를 만들 수 있나 — 이어진 카드가 2장 이상일 때만 (D210 6-2). */
+  canCreateTag: boolean;
   /** 이동량도 함께 준다 — 여럿이 선택돼 있으면 호출부가 전부에 같은 양을 적용한다. */
   onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
   /** "다시 질문하기" — 이 답을 골라 둔다 (D149 → D151). */
@@ -184,6 +186,7 @@ function TextItemImpl(props: TextItemProps) {
     onTagChange,
     onRenameTag,
     onRemoveTag,
+    canCreateTag,
     onDragEnd,
     onAsk,
     onPick,
@@ -523,10 +526,16 @@ function TextItemImpl(props: TextItemProps) {
         cursor: editing ? "auto" : dragging ? "grabbing" : "grab",
         // 본문을 잡으면 이동이므로 글자가 딸려 선택되지 않게 막는다.
         userSelect: editing ? "auto" : "none",
-        // 배치가 옮길 때는 부드럽게, 드래그 중에는 즉시.
+        /**
+         * 배치가 옮길 때는 부드럽게, 드래그 중에는 즉시.
+         *
+         * 시간을 `--c2-move`에서 읽는다 — 분류가 바뀌어 **열을 건너는** 이동은
+         * 0.28초로는 순간이동으로 보인다(D210 6-3, `lib/canvas2/moveEase.ts`).
+         * 인라인이라 클래스로는 못 이기므로 값 자체를 변수로 연다.
+         */
         transition: dragging
           ? "none"
-          : "left .28s cubic-bezier(.22,.9,.24,1), top .28s cubic-bezier(.22,.9,.24,1)",
+          : "left var(--c2-move, .28s) cubic-bezier(.22,.9,.24,1), top var(--c2-move, .28s) cubic-bezier(.22,.9,.24,1)",
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -704,6 +713,7 @@ function TextItemImpl(props: TextItemProps) {
             onTagChange={(t) => onTagChange(item.id, t)}
             onRenameTag={onRenameTag}
             onRemoveTag={onRemoveTag}
+            canCreateTag={canCreateTag}
             resized={!!size}
             onResetSize={() => onResetSize(item.id)}
             onOpenChange={setMenuOpen}
