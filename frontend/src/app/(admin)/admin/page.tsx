@@ -5,6 +5,7 @@ import {
   Archive,
   Clapperboard,
   Images,
+  Type,
   Link2,
   FlaskConical,
   GitBranch,
@@ -31,6 +32,7 @@ import { ConversationsTab } from "@/components/admin/ConversationsTab";
 import { DocumentsTab } from "@/components/admin/DocumentsTab";
 import { RagLabTab } from "@/components/admin/RagLabTab";
 import { DataTab } from "@/components/admin/DataTab";
+import { HandFontsTab } from "@/components/admin/HandFontsTab";
 import { ClipThumbnailsTab } from "@/components/admin/ClipThumbnailsTab";
 import { LecturePackagesTab } from "@/components/admin/LecturePackagesTab";
 import { CrossLinksTab } from "@/components/admin/CrossLinksTab";
@@ -57,6 +59,7 @@ type Tab =
   | "data"
   | "lectures"
   | "clipthumbs"
+  | "handfonts"
   | "crosslinks"
   | "inklab"
   | "users";
@@ -74,6 +77,8 @@ const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: "lectures", label: "강의 패키지", icon: Clapperboard },
   // D190: 클립 카드에 붙일 그림 창고 — EBS 썸네일을 못 가져와서 우리가 든다.
   { id: "clipthumbs", label: "클립 썸네일", icon: Images },
+  // D210 8-1: 캔버스 손글씨 폰트 — 적용 범위는 캔버스뿐이다(이 화면은 안 바뀐다).
+  { id: "handfonts", label: "손글씨 폰트", icon: Type },
   // D172: 교차 연결이 왜 떴는지/왜 안 떴는지를 보는 자리.
   { id: "crosslinks", label: "개념 연결", icon: Link2 },
   // D178: 펜 표시가 어느 카드를 가리키는지 — 결과가 화면에 안 보이는
@@ -141,6 +146,7 @@ function AdminConsole() {
         {tab === "data" && <DataTab />}
         {tab === "lectures" && <LecturePackagesTab />}
         {tab === "clipthumbs" && <ClipThumbnailsTab />}
+        {tab === "handfonts" && <HandFontsTab />}
         {tab === "crosslinks" && <CrossLinksTab />}
         {tab === "inklab" && <InkLabTab />}
         {tab === "users" && <UsersTab currentUserId={profile?.id ?? ""} />}

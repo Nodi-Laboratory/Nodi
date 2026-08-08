@@ -664,10 +664,20 @@ function TextItemImpl(props: TextItemProps) {
       <div className="relative">
         {item.title && (
           <h3
-            // 크기는 폰트 실측 배율(0.744)을 이미 곱한 값이다 — globals.css의
-          // `.canvas2 .hand` 주석 참조. 21 × 0.744 ≈ 16.
-          className="hand mb-2.5 text-[16px] font-bold leading-snug"
-            style={{ color: "var(--c-ink)" }}
+            /**
+             * ⚠️ 크기 클래스(`text-[16px]`) 대신 **인라인 calc**다 (D210 8-1).
+             *
+             * 21px은 폰트 실측 배율을 곱하기 **전**의 값이다. 기본 폰트에서는
+             * `--hand-base`가 0.744라 21 × 0.744 ≈ 16으로 종전과 같고,
+             * 관리자가 폰트를 바꾸면 `--hand-scale`이 함께 곱해진다 — 배율은
+             * 폰트마다 실측한 값이라(D164·D165) 코드에 고정할 수 없다.
+             * Tailwind 클래스로는 런타임 값을 못 곱한다.
+             */
+            className="hand mb-2.5 font-bold leading-snug"
+            style={{
+              color: "var(--c-ink)",
+              fontSize: "calc(21px * var(--hand-base, 0.744) * var(--hand-scale, 1))",
+            }}
           >
             {/* 본문과 같은 크기 보정을 받는다 (D165) — 제목에 한자가 섞이면
                 본문보다 더 눈에 띈다. 보정할 글자가 없으면 원문 그대로다. */}
@@ -682,9 +692,12 @@ function TextItemImpl(props: TextItemProps) {
           // 키웠으므로(ITEM_W 560) 한 줄 글자 수는 비슷하게 유지된다.
           // `hand`가 손글씨로 바꾼다 (D164). 캔버스 위의 글에만 붙는
           // 클래스이고, 스코프는 globals.css의 `.canvas2 .hand`가 잡는다.
-          // 18 × 0.744 ≈ 13 (폰트 실측 배율).
-          className="hand text-[13px]"
-          style={{ color: "var(--c-ink)" }}
+          // 18 × 0.744 ≈ 13 (폰트 실측 배율). 배율이 변수인 이유는 위 h3 주석에.
+          className="hand"
+          style={{
+            color: "var(--c-ink)",
+            fontSize: "calc(18px * var(--hand-base, 0.744) * var(--hand-scale, 1))",
+          }}
         >
           <ItemBody
             body={item.body}

@@ -26,6 +26,7 @@ import { useTouchNavigate } from "@/lib/canvas2/useTouchNavigate";
 // 목록이 gzip 13KB이기 때문이다 — globals.css에 넣으면 로그인·홈·관리자 화면도
 // 그걸 받는다. 폰트가 캔버스 전용이니 CSS도 캔버스 라우트 청크에만 둔다.
 import "./hand-font.css";
+import { HandFontStyle } from "./HandFontStyle";
 import type { DrawingScene } from "@/lib/api/canvas";
 import type { Camera, ToolName } from "@/lib/canvas2/types";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
@@ -361,6 +362,10 @@ export function CanvasStage({
       data-session={sessionId ?? ""}
       style={{ cursor: cursorFor(activeTool) }}
     >
+      {/* 관리자가 고른 손글씨 폰트 (D210 8-1). 없으면 아무것도 안 그린다 —
+          위에서 임포트한 기본 폰트가 그대로 돈다. **범위가 여기까지인 것이
+          안전장치다**: 읽을 수 없는 폰트를 골라도 관리자 페이지는 멀쩡하다. */}
+      <HandFontStyle />
       {/* 격자는 변환 평면 **밖**에 두고 background-position으로 흉내 낸다 —
           평면 안에 두면 scale(z)에 따라 점 자체가 커져 줌아웃에서 뭉개진다.
           위치·간격은 useCameraFrame이 DOM에 직접 쓴다. */}

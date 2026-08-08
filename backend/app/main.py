@@ -21,6 +21,7 @@ from .routers import (
     clip_thumbnails,
     coach,
     files,
+    hand_fonts,
     health,
     home,
     ink,
@@ -99,6 +100,9 @@ for _router in (
     # D178: 손글씨 + 펜 표시를 함께 읽는다. ocr.router와 **나란히** 둔다 —
     # 저쪽은 카드 없이 쓴 경우의 경로이자 이쪽이 죽었을 때의 폴백이다.
     ink.router,
+    # D210 8-1: 손글씨 폰트 서빙 — **인증 없이** 준다(@font-face는 헤더를
+    # 못 싣는다). 담긴 것은 글자 모양뿐이다.
+    hand_fonts.router,
 ):
     app.include_router(_router, prefix="/api")
 

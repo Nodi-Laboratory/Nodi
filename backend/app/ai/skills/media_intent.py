@@ -94,7 +94,11 @@ class MediaIntentSkill(SkillBase):
         topic = (args.get("topic") or "").strip()[:100]
         raw = args.get("kinds")
         kinds = [k for k in raw if k in ("figure", "clip")] if isinstance(raw, list) else []
-        label = "설명과 함께 자료를 곁들입니다." if mode == "with_answer" else "설명 없이 자료만 찾습니다."
+        label = (
+            "설명과 함께 자료를 곁들입니다."
+            if mode == "with_answer"
+            else "설명 없이 자료만 찾습니다."
+        )
         return SkillResult(
             ok=True,
             message=label,
