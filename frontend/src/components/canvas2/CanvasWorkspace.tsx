@@ -1459,8 +1459,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
     goToNode(id);
   });
 
+  /**
+   * 도구를 **알아서** 바꾸는 중인가 (사용자 지시 2026-08-08).
+   *
+   * 기본은 화면 이동이고, 글을 누르면 선택으로 바뀐다. 학생이 도구바에서
+   * 선택을 **직접 골랐다면** 배경을 눌러도 안 돌아온다 — 직접 고른 것을
+   * 시스템이 되돌리면 그 버튼을 누른 뜻이 사라진다.
+   */
+  const [autoSelect, setAutoSelect] = useState(true);
+
   const handleTool = useCallback(
     (tool: ToolName) => {
+      // 손으로 고른 순간 자동 전환은 그 도구에서 멈춘다. 화면 이동을 다시
+      // 고르면 자동 전환도 되살아난다 — 그게 "평소 상태"다.
+      if (tool === "selection") setAutoSelect(false);
+      else if (tool === "hand") setAutoSelect(true);
       setInkRecognized(false);
       setInkCount(0);
       // 도구를 바꾸면 방금 읽은 표시도 버린다 — 그 표시는 지워진 획의 것이고,
@@ -1881,6 +1894,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
     <CanvasStage
       // 미니맵이 같은 변에 붙으면 도구바가 비켜선다 (D211 9).
       mapCorner={mapOpen ? mapCorner : null}
+      autoSelect={autoSelect}
       bridge={bridge}
       sceneKey={sceneKey}
       initialCamera={INITIAL_CAMERA}

@@ -68,6 +68,15 @@ const GRAB_TOLERANCE_PX = 10;
 interface Props {
   /** 미니맵이 붙어 있는 모서리 — 도구바가 비켜설지 정한다 (D211 9). */
   mapCorner?: "tl" | "tr" | "bl" | "br" | null;
+  /**
+   * 도구를 **알아서** 바꾸는 중인가 (사용자 지시 2026-08-08).
+   *
+   * 기본 도구는 화면 이동이다. 글을 누르면 선택으로 바뀌고, 배경을 누르면
+   * 다시 화면 이동으로 돌아온다. 학생이 도구바에서 **선택을 직접 골랐다면**
+   * 이 값이 거짓이고, 그때는 배경을 눌러도 안 바뀐다 — 직접 고른 것을
+   * 시스템이 되돌리면 그 버튼을 누른 뜻이 사라진다.
+   */
+  autoSelect?: boolean;
   bridge: Bridge;
   initialScene: DrawingScene | null;
   /** 씬이 도착한 시점을 나타내는 키. 바뀌면 그리기 레이어만 리마운트된다. */
@@ -153,11 +162,34 @@ export function CanvasStage({
   chrome,
   children,
   mapCorner = null,
+  autoSelect = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const { activeTool, overlayInteractive, subscribeFrame, panByScreen } = bridge;
+
+  /**
+   * 글을 누르면 선택으로 (사용자 지시 2026-08-08).
+   *
+   * 캡처 단계에서 본다 — 아이템의 자기 핸들러(`TextItem`)가 돌기 **전에**
+   * 도구가 바뀌어 있어야 그 클릭이 선택으로 읽힌다.
+   */
+  const setTool = bridge.setTool;
+  const onOverlayDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (!autoSelect || activeTool !== "hand") return;
+      if (!(e.target as HTMLElement).closest("[data-canvas-item]")) return;
+      setTool("selection");
+    },
+    [autoSelect, activeTool, setTool],
+  );
+
+  /** 배경을 누르면 화면 이동으로 돌아온다. 직접 고른 선택은 안 건드린다. */
+  const backToHand = useCallback(() => {
+    if (autoSelect && activeTool === "selection") setTool("hand");
+    onBackgroundClick?.();
+  }, [autoSelect, activeTool, setTool, onBackgroundClick]);
 
   useWheelForwarding(overlayRef, overlayInteractive);
   useMiddleDragPan(rootRef, panByScreen);
@@ -312,7 +344,7 @@ export function CanvasStage({
          */
         if (e.shiftKey || e.metaKey || e.ctrlKey) return;
         window.setTimeout(() => {
-          if (!hasElementSelection()) onBackgroundClick?.();
+          if (!hasElementSelection()) backToHand();
         }, SELECTION_SETTLE_MS);
         return;
       }
@@ -337,7 +369,7 @@ export function CanvasStage({
       window.removeEventListener("pointermove", onShapeMove, { capture: true });
       window.removeEventListener("pointerup", onUp, { capture: true });
     };
-  }, [activeTool, coarse, onCanvasClick, onBackgroundClick, onMarquee, toWorld, hasElementSelection, elementAtPoint, cameraRef, onShapeDrag]);
+  }, [activeTool, coarse, onCanvasClick, backToHand, onMarquee, toWorld, hasElementSelection, elementAtPoint, cameraRef, onShapeDrag]);
 
   /** 손가락: 끌면 이동, 길게 누르면 선택 상자 (D208). */
   useTouchNavigate({
@@ -377,7 +409,14 @@ export function CanvasStage({
       {coarse === null ? null : (
       <ExcalidrawLayer
         // 손가락 기기는 화면 이동으로 시작한다 (D208).
-        initialTool={coarse ? "hand" : "selection"}
+        /**
+         * 기본은 **화면 이동**이다 (사용자 지시 2026-08-08).
+         *
+         * 예전에는 마우스면 선택, 터치면 이동이었다. 학생이 캔버스에서 제일
+         * 많이 하는 일은 읽으려고 화면을 옮기는 것이라, 처음부터 그 손이
+         * 맞는다 — 글을 누르면 선택으로 알아서 바뀐다.
+         */
+        initialTool="hand"
         key={sceneKey ?? "none"}
         onApi={bridge.setApi}
         initialScene={initialScene}
@@ -408,8 +447,16 @@ export function CanvasStage({
            */
           zIndex: 3,
           // 자식(아이템)이 pointer-events:auto를 켤지 여기서 정한다.
-          ["--c2-item-events" as string]: overlayInteractive ? "auto" : "none",
+          /**
+           * 화면 이동 중에도 **글은 눌린다** (사용자 지시 2026-08-08).
+           *
+           * 그래야 "글을 누르면 선택으로 바뀐다"가 성립한다. 배경은 그대로
+           * Excalidraw가 받아 화면을 옮긴다 — 글 위에서만 우리가 가져온다.
+           */
+          ["--c2-item-events" as string]:
+            overlayInteractive || (autoSelect && activeTool === "hand") ? "auto" : "none",
         }}
+        onPointerDownCapture={onOverlayDown}
       >
         {children}
       </div>
