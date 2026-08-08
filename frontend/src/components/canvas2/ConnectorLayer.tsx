@@ -28,7 +28,7 @@
  * 오버레이 안에 있으므로 좌표는 그대로 world다 — 팬/줌은 부모 변환이 처리한다.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { CanvasItem } from "@/lib/canvas2/types";
@@ -327,7 +327,22 @@ export function ConnectorLayer({ items, positions, sizes, onCut }: Props) {
   // 드래그 콜백이 최신 링크·원점을 보게 한다(구독은 한 번만 건다).
   // **렌더 중에 ref를 쓰지 않는다** — React Compiler가 막는다(react-hooks/refs).
   const stateRef = useRef({ links, minX, minY, rects, fan });
-  useEffect(() => {
+  /**
+   * ⚠️ **layout effect여야 한다** (사용자 보고 2026-08-09).
+   *
+   * 이 ref는 명령형 그리기(`draw`)가 읽는 기하다. 끌기가 끝나는 순간의
+   * 그리기는 아이템의 `settle`이 부르는데 그것도 layout effect다 — 여기가
+   * passive effect(`useEffect`)면 그때 **아직 옛 좌표**라서, 방금 React가
+   * 낸 선을 옛 자리로 덮어썼다.
+   *
+   * 실측: 카드를 끌어 놓으면 자식 쪽 끝점이 옛 y에 남았고, `d` 문자열이
+   * 우연히 같아 React가 DOM을 안 고치는 경우에는 **x가 두 배로 밀렸다**
+   * (SVG 원점만 움직였다).
+   *
+   * `ConnectorLayer`는 `ItemLayer` 안에서 글보다 **먼저** 그려지므로 이
+   * 이펙트도 먼저 돈다 — 그래서 `settle` 시점에는 이미 새 값이다.
+   */
+  useLayoutEffect(() => {
     stateRef.current = { links, minX, minY, rects, fan };
   });
 
