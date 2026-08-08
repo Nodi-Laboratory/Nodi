@@ -67,14 +67,28 @@ export function PortHandles({ id, zoom, color, hasParent, onStart }: Props) {
       className="c2-port absolute"
       style={{
         left: "50%",
-        // 포트는 **패딩 상자**의 변에 앉는다 — 연결선이 붙는 자리와 같아야
-        // "저 점에서 나온 선"으로 읽힌다(connector.padded와 같은 값).
-        [role === "parent" ? "bottom" : "top"]: `-${PAD_Y / zoom + d / 2}px`,
+        /**
+         * ⚠️ **`PAD_Y`를 줌으로 나누면 안 된다** (실측 2026-08-08).
+         *
+         * `PAD_Y`는 `connector.padded()`가 쓰는 **월드 값**이고, 이 요소는
+         * 이미 월드 공간(오버레이가 scale)에 있다. 나누면 축소할수록 멀어져,
+         * 24% 배율에서 포트가 카드 아래 **50px 허공**에 떴다. 그 사이는 카드도
+         * 포트도 아니라 손을 옮기는 동안 `mouseleave`가 뜨고 **포트가 사라진다** —
+         * 학생이 겪은 "연결 드래그가 안 된다"가 이것이다.
+         *
+         * 자동 검증은 좌표로 순간이동해서 이 결함을 통과시켰다(D210 4-3).
+         * 손이 지나가는 경로를 태워야 잡힌다.
+         *
+         * 나누는 것은 **화면에서 크기가 일정해야 하는 값**(점·손닿는 자리)뿐이다.
+         */
+        [role === "parent" ? "bottom" : "top"]: -PAD_Y,
         width: hit,
         height: hit,
         marginLeft: -hit / 2,
-        marginBottom: role === "parent" ? -hit / 2 + d / 2 : undefined,
-        marginTop: role === "child" ? -hit / 2 + d / 2 : undefined,
+        // 손닿는 자리는 점을 가운데 두고 **절반이 카드 쪽**에 걸치게 한다 —
+        // 카드와 포트 사이에 빈틈이 없어야 hover가 안 끊긴다.
+        marginBottom: role === "parent" ? -hit / 2 : undefined,
+        marginTop: role === "child" ? -hit / 2 : undefined,
         display: "grid",
         placeItems: "center",
         cursor: "crosshair",

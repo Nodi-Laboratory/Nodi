@@ -37,6 +37,7 @@ import {
   center,
   cutPoint,
   linkPath,
+  hitPathD,
   linkPathD,
   pointOnFan,
 } from "@/lib/canvas2/connector";
@@ -69,6 +70,17 @@ interface Props {
 const FALLBACK: Size = { w: ITEM_W, h: 180 };
 
 /** 포트 경로를 화폭 원점만큼 옮겨 SVG `d`로. */
+/** 히트 선도 같은 오프셋으로 옮긴다 — 그리는 것과 잡히는 것이 어긋나면 안 된다. */
+function shiftHit(g: ReturnType<typeof linkPath>, ox: number, oy: number): string {
+  return hitPathD({
+    a: { x: g.a.x - ox, y: g.a.y - oy },
+    stem: { x: g.stem.x - ox, y: g.stem.y - oy },
+    b: { x: g.b.x - ox, y: g.b.y - oy },
+    c1: { x: g.c1.x - ox, y: g.c1.y - oy },
+    c2: { x: g.c2.x - ox, y: g.c2.y - oy },
+  });
+}
+
 function shiftPath(g: ReturnType<typeof linkPath>, ox: number, oy: number): string {
   return linkPathD({
     a: { x: g.a.x - ox, y: g.a.y - oy },
@@ -382,6 +394,9 @@ export function ConnectorLayer({ items, positions, sizes, onCut }: Props) {
         );
         const m = pointOnFan(g, 0.5);
         path.setAttribute("d", shiftPath(g, ox, oy));
+        // 히트 선도 같이 옮긴다 — 안 옮기면 끌고 난 뒤 ✕가 **엉뚱한 자리**에서
+        // 잡힌다(보이는 선과 잡히는 선이 갈린다).
+        g0.querySelector("[data-link-hit]")?.setAttribute("d", shiftHit(g, ox, oy));
         const cut = g0.querySelector<SVGGElement>("[data-cut]");
         if (cut) {
           const c = cutPoint(g);
@@ -461,6 +476,29 @@ export function ConnectorLayer({ items, positions, sizes, onCut }: Props) {
         const cut = cutPoint(g);
         return (
           <g key={l.id} data-link={l.id} style={{ color: "var(--c-live-deep)" }}>
+            {/**
+             * 손이 닿는 자리 (D211 3) — 보이지 않고 넓다.
+             *
+             * 그려진 선은 2.6px이라 그것만으로는 hover가 사실상 안 잡힌다
+             * (사용자 보고: "연결선에 가져가도 ✕가 안 뜬다"). 같은 곡선을
+             * 굵게 한 번 더 그리고 투명하게 둔다. 첨부(점선)에는 ✕가 없으므로
+             * 히트 선도 없다.
+             */}
+            {onCut && !l.attach && (
+              <path
+                data-link-hit
+                d={shiftHit(g, minX, minY)}
+                fill="none"
+                stroke="transparent"
+                strokeWidth={22}
+                strokeLinecap="round"
+                style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCut(l.id);
+                }}
+              />
+            )}
             <path
               d={shiftPath(g, minX, minY)}
               fill="none"

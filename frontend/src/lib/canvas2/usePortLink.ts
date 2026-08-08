@@ -20,6 +20,13 @@ export interface PortLinkArgs {
   onLink: (parentId: string, childId: string) => void;
   /** 이 카드에 저 카드를 부모로 붙일 수 있나(순환·자기 자신 방지). */
   canLink: (parentId: string, childId: string) => boolean;
+  /**
+   * 아무 일도 안 일어났을 때 **왜인지** 알린다 (D211 2).
+   *
+   * 빈 곳에 놓거나 순환이 되는 곳에 놓으면 조용히 끝났다. 학생 눈에는
+   * "연결 드래그가 안 된다"와 구분이 안 된다 — 실제로 그렇게 보고됐다.
+   */
+  onNothing?: (reason: string) => void;
 }
 
 export interface PortLinkResult {
@@ -56,18 +63,30 @@ function dropGhost(): void {
   document.querySelector("[data-port-ghost]")?.remove();
 }
 
+/** 지금 노리고 있는 카드를 밝힌다. 끌기가 끝나면 걷는다. */
+function aim(id: string | null): void {
+  for (const el of document.querySelectorAll("[data-port-aim]")) {
+    if (el.getAttribute("data-canvas-item") !== id) el.removeAttribute("data-port-aim");
+  }
+  if (!id) return;
+  document
+    .querySelector(`[data-canvas-item="${CSS.escape(id)}"]`)
+    ?.setAttribute("data-port-aim", "1");
+}
+
 export function usePortLink({
   toWorld,
   cardAt,
   onLink,
   canLink,
+  onNothing,
 }: PortLinkArgs): PortLinkResult {
   /** 콜백을 ref로 — 창구는 한 번만 만들고 최신 값을 읽는다. */
-  const argsRef = useRef({ toWorld, cardAt, onLink, canLink });
+  const argsRef = useRef({ toWorld, cardAt, onLink, canLink, onNothing });
   // 렌더 중 ref 쓰기는 React Compiler가 막는다 — 이펙트에서 맞춘다.
   useEffect(() => {
-    argsRef.current = { toWorld, cardAt, onLink, canLink };
-  }, [toWorld, cardAt, onLink, canLink]);
+    argsRef.current = { toWorld, cardAt, onLink, canLink, onNothing };
+  }, [toWorld, cardAt, onLink, canLink, onNothing]);
 
   const begin = useCallback((start: PortDragStart, e: React.PointerEvent) => {
     const from = { x: e.clientX, y: e.clientY };
@@ -80,16 +99,32 @@ export function usePortLink({
         "d",
         `M ${from.x} ${from.y} C ${from.x} ${mid}, ${ev.clientX} ${mid}, ${ev.clientX} ${ev.clientY}`,
       );
+      /**
+       * **놓을 자리를 미리 밝힌다** (D211 2).
+       *
+       * 놓기 전에는 어디에 붙을지 알 수 없었다 — 빗나간 채로 놓고 "안 된다"고
+       * 읽는 일이 그래서 생긴다. 붙을 수 없는 카드는 밝히지 않는다: 밝은데
+       * 안 되는 것이 안 밝은 것보다 나쁘다.
+       */
+      const a = argsRef.current;
+      const over = a.cardAt(a.toWorld(ev.clientX, ev.clientY));
+      const p = start.role === "parent" ? start.id : over;
+      const c = start.role === "parent" ? over : start.id;
+      aim(over && over !== start.id && p && c && a.canLink(p, c) ? over : null);
     };
 
     const up = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", move, true);
       window.removeEventListener("pointerup", up, true);
       dropGhost();
+      aim(null);
       const a = argsRef.current;
       const world = a.toWorld(ev.clientX, ev.clientY);
       const hit = a.cardAt(world);
-      if (!hit || hit === start.id) return;
+      if (!hit || hit === start.id) {
+        a.onNothing?.("빈 곳에 놓았어요. 이을 카드 위에 놓아 주세요.");
+        return;
+      }
       /**
        * 끈 쪽이 어느 자리였나가 방향을 정한다.
        *
@@ -98,7 +133,10 @@ export function usePortLink({
        */
       const parentId = start.role === "parent" ? start.id : hit;
       const childId = start.role === "parent" ? hit : start.id;
-      if (!a.canLink(parentId, childId)) return;
+      if (!a.canLink(parentId, childId)) {
+        a.onNothing?.("그렇게는 이을 수 없어요(자기 자신이나 아래 가지예요).");
+        return;
+      }
       a.onLink(parentId, childId);
     };
 

@@ -861,6 +861,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
     },
     onLink: linkCards,
     canLink,
+    /**
+     * 빗나갔을 때 **왜인지** 말한다 (D211 2).
+     *
+     * 조용히 끝나면 "연결 드래그가 안 된다"와 구분이 안 된다 — 실제로 그렇게
+     * 보고됐다. 이미 있는 안내 자리를 쓴다(새 창을 띄우지 않는다).
+     */
+    onNothing: (reason) => setDrawError(reason),
   });
 
   const onEditEnd = useEventCallback((r: EditResult) => {
