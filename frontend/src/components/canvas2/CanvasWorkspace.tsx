@@ -514,7 +514,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
     // 내용이 그대로면 아무 일도 하지 않는다 — "위치 정리" 버튼이 괜히 뜬다.
     const cur = items.find((i) => i.id === id);
     if (!cur || cur.body === body) return;
-    patch(id, { body }, { _needsReflow: true });
+    patch(id, { body });
   });
 
   const onDelete = useEventCallback((id: string) => {
@@ -540,7 +540,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const onTagChange = useEventCallback((id: string, tag: string | null) => {
     const kids = descendants(items, id);
     if (!kids.length) {
-      patch(id, { tag }, { _needsReflow: true });
+      patch(id, { tag });
       return;
     }
     /**
@@ -797,7 +797,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
      * 것은 어색하고, 가지가 크면 배지가 우수수 뜬다(사용자 2026-08-06:
      * "ui가 너무 많이 깨져").
      */
-    patchMany(entries, label, { reflow: false });
+    patchMany(entries, label);
   });
 
   /**
@@ -832,30 +832,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     const rest = { ...cur.data };
     delete rest.size;
     patch(id, { data: rest });
-  });
-
-  /**
-   * "위치 정리" — **고정을 푼다** (D161).
-   *
-   * 예전에는 빈 자리를 직접 찾아 그 좌표에 다시 고정했다(`reflowOne`). 그
-   * 함수는 열이 고정 피치라는 전제 위에 있었는데, tidy tree(D159)에서 열 x는
-   * **누적**이라 그 계산이 엉뚱한 자리를 냈다.
-   *
-   * 지금은 배치 엔진이 트리 모양을 스스로 만든다. 그러니 "정리"의 뜻은
-   * 하나뿐이다 — **엔진에게 맡긴다.** 고정을 풀면 다음 배치에서 제자리를
-   * 찾아간다. 계산이 두 곳에 있지 않으니 어긋날 자리도 없다.
-   */
-  const onReflow = useEventCallback((id: string) => {
-    patch(id, { pinned: false }, { _needsReflow: false });
-  });
-
-  const onDismissReflow = useEventCallback((id: string) => {
-    const cur = items.find((i) => i.id === id);
-    patch(
-      id,
-      { data: { ...cur?.data, reflowDismissed: true } },
-      { _needsReflow: false },
-    );
   });
 
   /**
@@ -911,12 +887,10 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onDragEnd,
       onResize,
       onResetSize,
-      onReflow,
-      onDismissReflow,
       onAsk,
       onPick,
     }),
-    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onReflow, onDismissReflow, onAsk, onPick],
+    [onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick],
   );
 
   /**

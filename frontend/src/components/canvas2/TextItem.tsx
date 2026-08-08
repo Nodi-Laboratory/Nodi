@@ -45,7 +45,6 @@ import { ItemBody } from "./ItemBody";
 import { ItemMenu } from "./ItemMenu";
 import { QuestionTip } from "./QuestionTip";
 import { ResizeHandles, type ResizeCommit } from "./ResizeHandles";
-import { ReflowButton } from "./ReflowButton";
 import { TunedText } from "./TunedText";
 
 /** 드래그로 인정하는 최소 이동(화면 px). 이보다 작으면 클릭이다. */
@@ -132,8 +131,6 @@ export interface TextItemProps {
   onRemoveTag: (tag: string) => void;
   /** 이동량도 함께 준다 — 여럿이 선택돼 있으면 호출부가 전부에 같은 양을 적용한다. */
   onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
-  onReflow: (id: string) => void;
-  onDismissReflow: (id: string) => void;
   /** "다시 질문하기" — 이 답을 골라 둔다 (D149 → D151). */
   onAsk: (id: string) => void;
   /**
@@ -180,8 +177,6 @@ function TextItemImpl(props: TextItemProps) {
     onRenameTag,
     onRemoveTag,
     onDragEnd,
-    onReflow,
-    onDismissReflow,
     onAsk,
     onPick,
     onResize,
@@ -471,7 +466,6 @@ function TextItemImpl(props: TextItemProps) {
     dragRef.current = null;
   }, []);
 
-  const showReflow = item._needsReflow && !item.data.reflowDismissed && !editing;
   /**
    * "다시 질문하기"는 **AI가 쓴 답에만** 붙인다 (D149, 사용자 지시).
    *
@@ -653,15 +647,9 @@ function TextItemImpl(props: TextItemProps) {
           />
         </div>
 
-        {(showReflow || showAsk) && (
+        {showAsk && (
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
-            {showReflow && (
-              <ReflowButton
-                onReflow={() => onReflow(item.id)}
-                onDismiss={() => onDismissReflow(item.id)}
-              />
-            )}
-            {showAsk && <AskAgainButton picked={picked} onAsk={() => onAsk(item.id)} />}
+            <AskAgainButton picked={picked} onAsk={() => onAsk(item.id)} />
           </div>
         )}
 

@@ -191,7 +191,6 @@ function toPayload(it: CanvasItem): NewItemInput {
           ? { clip: it.data.clip }
           : {
               ...(it.data.askedQuestion ? { askedQuestion: it.data.askedQuestion } : {}),
-              ...(it.data.reflowDismissed ? { reflowDismissed: true } : {}),
             },
   };
 }

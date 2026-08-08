@@ -65,7 +65,6 @@ export interface ItemData {
    */
   askedQuestion?: string;
   /** "위치 정리" 버튼을 ×로 지웠나. 수정/태그변경 후에만 뜬다. */
-  reflowDismissed?: boolean;
   /**
    * 손잡이로 정한 도판 상자 크기 (D142 → D147: 도판 전용).
    *
@@ -116,7 +115,6 @@ export interface CanvasItem {
   /** 스트리밍 중이라 아직 저장되지 않았다. */
   _pending?: boolean;
   /** 수정/태그변경 직후 — "위치 정리" 버튼을 띄울 상태. */
-  _needsReflow?: boolean;
   /** 구 세션에서 파싱만 해 온 아이템(아직 DB에 없다). 첫 편집 때 승격한다. */
   _legacy?: boolean;
 }
