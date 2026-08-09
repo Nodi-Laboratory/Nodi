@@ -28,9 +28,18 @@ test("B11 홈은 비어 있어도 말이 되게 보인다", async ({ page }) => 
   await loginAndOpenCanvas(page);
   await page.goto("/home");
   await expect(page.locator("main")).toBeVisible();
-  // 빈 화면이면 안 된다 — 무엇을 하면 되는지 글이 있어야 한다.
-  const text = await page.locator("main").innerText();
-  expect(text.trim().length).toBeGreaterThan(10);
+  /**
+   * 빈 화면이면 안 된다 — 무엇을 하면 되는지 글이 있어야 한다.
+   *
+   * 홈은 개념이 없으면 캔버스로 보내므로(D210 2-1) 둘 중 하나에 도달한다:
+   * 인사말이 뜨거나, 대화방으로 옮겨 가거나. **"불러오는 중"에서 재면 안 된다** —
+   * 그 문구가 딱 열 글자라 실측에서 경계에 걸렸다.
+   */
+  await expect
+    .poll(async () => (await page.locator("main").innerText()).trim().length, {
+      timeout: 30_000,
+    })
+    .toBeGreaterThan(20);
 });
 
 /**
@@ -53,9 +62,11 @@ test("B12b 세션 선택 화면이 학급을 자료·강의·분류와 함께 �
   await loginAndOpenCanvas(page);
   await page.goto("/sessions");
   await expect(page.getByRole("heading", { level: 1 })).toContainText("세션");
-  // 학급 코드로 들어가는 자리 — 제목 아래 가운데.
-  await expect(page.getByLabel("학급 코드")).toBeVisible();
-  await expect(page.getByLabel("학급 추가")).toBeVisible();
+  // 학급 코드로 들어가는 자리 — 칸 여섯 + [추가하기](사용자 지시 2026-08-09).
+  await expect(page.getByText("내 학급 추가하기")).toBeVisible();
+  await expect(page.getByLabel("학급 코드 1번째 자리")).toBeVisible();
+  await expect(page.getByLabel("학급 코드 6번째 자리")).toBeVisible();
+  await expect(page.getByRole("button", { name: "추가하기" })).toBeVisible();
   // 카드가 최소 하나(개인 세션)는 늘 있다.
   await expect(page.getByRole("button", { name: /개인 세션/ }).first()).toBeVisible();
 });

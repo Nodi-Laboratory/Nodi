@@ -26,7 +26,11 @@ test("홈에 개념 지도가 그려지고, 개념을 누르면 그 대화로 �
   await login(page);
   await page.goto("/home");
 
-  await expect(page.getByRole("heading", { name: /개념 지도/ })).toBeVisible();
+  // 페이지 제목은 걷어냈다(사용자 지시 2026-08-09) — 지금 이 화면의 머리말은
+  // 인사말이다.
+  await expect(
+    page.getByRole("heading", { name: /무엇을 배우고 싶으신가요/ }),
+  ).toBeVisible({ timeout: 30_000 });
 
   const canvas = page.locator("canvas");
   await expect(canvas).toBeVisible({ timeout: 30_000 });
@@ -167,7 +171,8 @@ test("'내 세션 보기'는 세션 선택 화면으로 간다 (D217)", async ({
   await page.goto("/home");
   await page.getByRole("button", { name: "내 세션 보기" }).click();
   await page.waitForURL(/\/sessions/, { timeout: 30_000 });
-  await expect(page.getByLabel("학급 코드")).toBeVisible({ timeout: 30_000 });
+  // 학급 코드는 **칸 여섯**이다(사용자 지시 2026-08-09 재디자인) — 첫 칸으로 잰다.
+  await expect(page.getByLabel("학급 코드 1번째 자리")).toBeVisible({ timeout: 30_000 });
 });
 
 /**

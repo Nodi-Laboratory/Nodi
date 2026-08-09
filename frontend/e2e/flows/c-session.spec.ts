@@ -10,7 +10,7 @@ import { loginAndOpenCanvas, openFreshSession } from "../helpers";
 test.describe.configure({ mode: "serial" });
 
 async function openDrawer(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "기록" }).click();
+  await page.getByRole("button", { name: "지난 대화" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
 }
 

@@ -50,7 +50,7 @@ test("도판은 저장 뒤에도 · 새로고침 뒤에도 그림이 보인다",
   await login(page);
   await page.goto(`/space/${CLASS_ID}`);
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
-  await page.getByRole("button", { name: "기록" }).click();
+  await page.getByRole("button", { name: "지난 대화" }).click();
   await page.getByTitle("새 대화").click();
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
   await expect(page.locator("[data-canvas-item]")).toHaveCount(0, { timeout: 20_000 });

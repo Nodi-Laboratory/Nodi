@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Locator } from "@playwright/test";
 import {
+  bringIntoView,
   createNote,
   loginAndOpenCanvas,
   noteByText,
@@ -20,6 +21,8 @@ test.describe.configure({ mode: "serial" });
 
 /** 이 노트의 분류 선택창(TagPicker)을 연다. */
 async function openTagPicker(page: Page, note: Locator): Promise<void> {
+  // 새로고침 뒤 배치가 카드를 도구 레일 밑에 놓을 수 있다 — 먼저 꺼내 온다.
+  await bringIntoView(page, note);
   await note.hover();
   await note.getByLabel("이 글의 메뉴").click();
   await page.getByRole("menuitem", { name: "분류 변경" }).click();
