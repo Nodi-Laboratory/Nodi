@@ -104,7 +104,6 @@ class TurnOutcome:
     media_topic: str = ""
 
 
-
 # 전용 렌더가 이미 담는 키 — 일반 렌더에서 중복으로 싣지 않는다.
 _HANDLED_KEYS = frozenset({"sources", "figures", "captions", "chunks", "clips"})
 
@@ -154,8 +153,19 @@ _SKILL_KIND = {"search_textbook_figure": "figure", "search_lecture_clip": "clip"
 #: 입에 담지도 않았으면 only는 성립할 수 없다. `with_answer`에는 거부권을 걸지
 #: 않는다 — 헛발이어도 곁들이가 하나 더 뜰 뿐이다.
 _MEDIA_WORDS = (
-    "그림", "이미지", "사진", "도판", "도표", "그래프", "삽화",
-    "영상", "동영상", "비디오", "강의", "클립", "유튜브",
+    "그림",
+    "이미지",
+    "사진",
+    "도판",
+    "도표",
+    "그래프",
+    "삽화",
+    "영상",
+    "동영상",
+    "비디오",
+    "강의",
+    "클립",
+    "유튜브",
 )
 
 #: 찾을 자료가 없는 곳(개인 대화방)용 밀어주기.
@@ -231,6 +241,7 @@ class Orchestrator:
         answer_system_prompt: str,
         max_steps: int,
         tag_hint: str | None = None,
+        concept_hint: str | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """`(kind, payload)`를 yield.
 
@@ -248,6 +259,19 @@ class Orchestrator:
         # 판단 단계 대화 — 히스토리는 짧게(최근 몇 턴)만 준다. 도구 판단에
         # 긴 맥락이 필요하지 않고, 입력이 커지면 그만큼 느려진다.
         messages: list[dict[str, Any]] = [{"role": "system", "content": _DECIDE_SYSTEM}]
+
+        # 이 방의 캔버스에 무엇이 있는지 **미리 알려 준다** (D216).
+        #
+        # 판단 단계는 캔버스를 못 본다 — 히스토리와 질문뿐이다. 그래서 학생이
+        # "아까 그거"라고 하면 모델은 먼저 목록을 부르고, 답을 보고, 그제야
+        # 본문을 불렀다. 왕복 하나가 통째로 **우리가 이미 아는 것을 되묻는 데**
+        # 쓰였다(실측 2026-08-09, 5회 전부 `list → get`. 턴 5.3~8.0초).
+        #
+        # 제목은 라우터가 카탈로그를 좁히려고 어차피 읽는 행에서 나온다 —
+        # 질의가 늘지 않는다.
+        if concept_hint:
+            messages.append({"role": "system", "content": concept_hint})
+
         for q, a in history[-3:]:
             if q:
                 messages.append({"role": "user", "content": q})
@@ -275,16 +299,12 @@ class Orchestrator:
         if catalog:
             for step in range(max_steps):
                 try:
-                    completion = await solar.complete(
-                        messages, tools=catalog, max_tokens=512
-                    )
+                    completion = await solar.complete(messages, tools=catalog, max_tokens=512)
                 except Exception:  # noqa: BLE001 - 판단 실패가 턴을 죽이지 않는다
                     logger.exception("도구 판단 호출 실패 — 도구 없이 진행한다")
                     break
                 msg = completion.message
-                outcome.llm_calls.append(
-                    {"stage": "decide", "step": step, **completion.usage}
-                )
+                outcome.llm_calls.append({"stage": "decide", "step": step, **completion.usage})
 
                 tool_calls = msg.get("tool_calls") or []
                 if not tool_calls:
@@ -395,9 +415,7 @@ class Orchestrator:
         # 개념 카드가 없는 턴이라 아래 곁들이 보장(개념 카드 유무로 판정)에는
         # 안 걸리므로, 여기서 직접 부른다.
         if outcome.media_mode == "only" and not any(w in question for w in _MEDIA_WORDS):
-            logger.info(
-                "only 선언을 되돌린다 — 질문에 그림·영상 얘기가 없다: %r", question[:60]
-            )
+            logger.info("only 선언을 되돌린다 — 질문에 그림·영상 얘기가 없다: %r", question[:60])
             outcome.media_mode = ""
 
         searchable = any(
@@ -534,7 +552,7 @@ class Orchestrator:
                 outcome.skill_traces.append(
                     {
                         "skill": name,
-                        "step": -1,      # 모델이 아니라 시스템이 부른 호출
+                        "step": -1,  # 모델이 아니라 시스템이 부른 호출
                         "args": {"query": q},
                         "ok": result.ok,
                         "message": result.message,
@@ -652,9 +670,7 @@ class Orchestrator:
             for c in outcome.clips:
                 title = c.get("title")
                 if title:
-                    clip_lines.append(
-                        f"- 강의 클립: {title} ({c.get('timeline_label', '')})"
-                    )
+                    clip_lines.append(f"- 강의 클립: {title} ({c.get('timeline_label', '')})")
             if clip_lines:
                 parts.append(
                     "아래 강의 클립이 학생 화면에 함께 추천됩니다. 설명할 때 "

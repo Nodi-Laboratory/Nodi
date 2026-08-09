@@ -11,10 +11,7 @@ from typing import Any
 
 from app.ai.base import SkillContext
 from app.ai.skills import search_class_material as scm
-from app.ai.skills.concepts import (
-    GetConceptSkill,
-    ListSessionConceptsSkill,
-)
+from app.ai.skills.concepts import GetConceptSkill
 from app.ai.skills.search_class_material import SearchClassMaterialSkill
 from app.ai.skills.session_files import (
     ListSessionFilesSkill,
@@ -80,26 +77,16 @@ def _ctx(client) -> SkillContext:
 # 원문을 읽으면 그 셋 중 무엇도 안 보인다.
 
 
-async def test_카드가_없으면_새로_지어도_된다고_알려준다():
-    res = await ListSessionConceptsSkill().run({}, _ctx(_Client()))
+async def test_카드가_없으면_없다고_알려준다():
+    res = await GetConceptSkill().run({"title": "광합성"}, _ctx(_Client()))
     assert res.ok
-    assert res.data["concepts"] == []
-    assert "새 분류" in res.message
-
-
-async def test_개념_목록과_분류_목록을_돌려준다():
-    c = _Client(items=CARDS)
-    res = await ListSessionConceptsSkill().run({}, _ctx(c))
-    assert res.ok
-    assert [x["title"] for x in res.data["concepts"]] == ["광합성", "세포호흡", "엽록체"]
-    # 분류는 **중복 제거 + 첫 등장 순서** — 태그 재사용의 근거다.
-    assert res.data["clusters"] == ["식물의 생명 활동", "세포 소기관"]
+    assert res.data["found"] is False
 
 
 async def test_AI_개념_카드만_읽는다():
     """도판·클립·학생 글이 섞이면 모델이 "이미 있는 개념"으로 오해한다."""
     c = _Client(items=CARDS)
-    await ListSessionConceptsSkill().run({}, _ctx(c))
+    await GetConceptSkill().run({"title": "광합성"}, _ctx(c))
     table, params = c.calls[0]
     assert table == "canvas_items"
     assert params["kind"] == "eq.concept"
@@ -152,11 +139,15 @@ async def test_빈_제목은_거절한다():
     assert res.error_code == "bad_args"
 
 
-async def test_제목이_빈_카드는_목록에_안_낀다():
-    """도판처럼 제목 없는 행이 섞여 들어오면 빈 항목이 목록에 뜬다."""
+async def test_제목이_빈_카드는_안_집힌다():
+    """제목 없는 행(도판 등)이 섞이면 **무엇을 찾든** 그게 걸린다.
+
+    부분 일치가 `want in c["title"] or c["title"] in want`인데 빈 문자열은
+    어떤 문자열에도 들어 있다 — 거르지 않으면 본문 없는 카드가 답이 된다.
+    """
     섞임 = [*CARDS, _card("", "", "제목 없는 무엇", 4)]
-    res = await ListSessionConceptsSkill().run({}, _ctx(_Client(items=섞임)))
-    assert all(x["title"] for x in res.data["concepts"])
+    res = await GetConceptSkill().run({"title": "엽록체"}, _ctx(_Client(items=섞임)))
+    assert res.data["title"] == "엽록체"
 
 
 # --- 세션 파일 -------------------------------------------------------------
@@ -166,9 +157,7 @@ async def test_파일_목록은_이름과_분량만_준다():
     """본문은 주지 않는다 — 목록은 싸야 한다."""
     c = _Client(files=[{"id": "f1", "name": "노트.pdf", "context_chars": 12000}])
     res = await ListSessionFilesSkill().run({}, _ctx(c))
-    assert res.data["files"] == [
-        {"file_id": "f1", "name": "노트.pdf", "chars": 12000}
-    ]
+    assert res.data["files"] == [{"file_id": "f1", "name": "노트.pdf", "chars": 12000}]
     assert "text" not in res.data
 
 
@@ -199,9 +188,7 @@ async def test_이어읽기가_동작한다():
         files=[{"id": "f1", "name": "긴글.txt", "context_chars": 4000}],
         chunks=[{"seq": 0, "chunk_text": "".join(str(i % 10) for i in range(4000))}],
     )
-    res = await ReadSessionFileSkill().run(
-        {"file_id": "f1", "from_char": 3000}, _ctx(c)
-    )
+    res = await ReadSessionFileSkill().run({"file_id": "f1", "from_char": 3000}, _ctx(c))
     assert res.data["from_char"] == 3000
     assert res.data["eof"] is True
     assert len(res.data["text"]) == 1000

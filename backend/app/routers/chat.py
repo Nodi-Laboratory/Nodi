@@ -64,6 +64,7 @@ class RetrievedFigureItem(BaseModel):
     화석화 방지). 재수화는 figure_id로 GET /files/figures/{id}에서 재발급한다.
     프론트가 url을 실어 보내도 extra 무시(기본 모델 설정)로 저장되지 않는다.
     """
+
     figure_id: str
     file_id: str
     page: int | None = None
@@ -77,6 +78,7 @@ class RetrievedBody(BaseModel):
     D94: EBS·아트 제거 — 프론트 구버전이 ebs/art 키를 실어 보내도 extra 무시
     (기본 모델 설정)로 버려진다.
     """
+
     figures: list[RetrievedFigureItem] = Field(default_factory=list)
 
 
@@ -121,7 +123,9 @@ def _sse(event: str, data: dict) -> str:
 
 
 async def _patch_canvas_unified(
-    client: UserClient, node_id: str, retrieved: RetrievedBody | None = None,
+    client: UserClient,
+    node_id: str,
+    retrieved: RetrievedBody | None = None,
 ) -> None:
     """nodes.attachments.canvas에 figures만 저장(카드 좌표는 프론트 소유 — 저장 안 함).
 
@@ -147,6 +151,143 @@ async def _patch_canvas_unified(
         await client.update("nodes", {"id": f"eq.{node_id}"}, {"attachments": attachments})
     except Exception:  # noqa: BLE001
         logger.warning("attachments.canvas(figures) 저장 실패 node=%s", node_id, exc_info=True)
+
+
+async def _has_row(client: UserClient, what: str, table: str, params: dict) -> bool:
+    """행이 하나라도 있나. **실패는 "없음"으로 강등한다.**
+
+    카탈로그를 좁히는 판단은 best-effort다 — 여기서 예외가 나가면 학생의 질문
+    자체가 죽는다. 도구 하나를 못 보여 주는 것이 훨씬 싸다.
+    """
+    try:
+        return bool(await client.select(table, params))
+    except Exception:  # noqa: BLE001 - 위 docstring 참조
+        logger.warning("%s 확인 실패 - 해당 스킬 미노출", what, exc_info=True)
+        return False
+
+
+#: 판단 단계 안내에 실을 개념 제목 수 상한. 넘치면 최근 것부터 남긴다 —
+#: 못 실린 제목은 `get_concept`이 빗나갈 때 `available`로 돌려준다(회복 경로).
+_HINT_TITLES = 40
+
+
+def _concept_hint(titles: list[str]) -> str | None:
+    """판단 단계에 넘길 "이 방에 뭐가 있나" 한 덩어리 (D216).
+
+    도구가 아니라 **안내**인 이유는 D135와 같다 — 모델이 부를지 말지 정하는
+    선택지로 두면 보장이 권유가 되고, 실제로 매번 왕복 하나를 더 쓴다.
+    """
+    seen: list[str] = []
+    for t in titles:
+        t = (t or "").strip()
+        if t and t not in seen:
+            seen.append(t)
+    if not seen:
+        return None
+    return (
+        "[이 학습 지도에 이미 있는 개념 카드]\n"
+        + ", ".join(seen[-_HINT_TITLES:])
+        + "\n학생이 '아까 그거'처럼 앞의 설명을 가리키면 위 제목으로"
+        " get_concept을 부른다. 목록에 없으면 부르지 않는다."
+    )
+
+
+async def _react_probes(
+    client: UserClient, user_id: str, session_id: str
+) -> tuple[str, bool, bool, list[str]]:
+    """카탈로그를 좁히는 네 가지를 **한꺼번에** 확인한다 (2026-08-09).
+
+    `(역할, 세션 파일 있나, 학생 글 있나, 개념 카드 제목들)`.
+
+    ## 왜 동시에 도나
+
+    넷은 서로를 안 본다. 그런데 하나씩 `await`했더니 넷이 **줄을 섰다** —
+    각각 풀에서 커넥션을 따로 얻고 트랜잭션을 열고 닫으므로(`user_conn`),
+    첫 글자가 나오기 전에 그 왕복이 전부 쌓인다. 커넥션이 각자라 동시에 돌아도
+    안전하다.
+
+    ## 개념 카드는 `nodes`로 세지 않는다
+
+    예전에는 `has_concepts=bool(nodes)`였다. `nodes`는 **턴이 있었나**이지
+    카드가 있나가 아니다 — 인사 한 마디에도 노드가 생기고, 학생이 카드를 전부
+    지워도 노드는 남는다. 그래서 카드가 0장인 방인데 2턴째부터 개념 스킬 둘이
+    열리고, 둘이 열리니 `think`까지 딸려 나오고(도구 2개 이상이면 붙는다),
+    카탈로그가 비지 않으니 **판단 단계가 통째로 돈다.**
+
+    실측 2026-08-09(개인 방, 카드 0장, 인사만 세 번):
+      1턴 1030ms -> 2턴 1770ms · 3턴 1730ms — 매 턴 **+720ms**가 헛돌았다.
+
+    출처는 `canvas_items`다. D215가 `get_concept`에 대해 이미 내린 결론과 같다 —
+    화면의 글이 정본이고 `nodes.answer`는 AI가 처음 쓴 글이다.
+
+    ## 개념은 "있나"가 아니라 **제목까지** 읽는다
+
+    같은 행을 읽으면서 제목을 함께 가져오면 판단 단계 안내(D216)가 공짜로
+    나온다. `limit=1`로 존재만 확인하고 모델에게 목록을 다시 묻게 하면 왕복
+    하나가 더 든다.
+    """
+
+    async def _titles() -> list[str]:
+        try:
+            rows = await client.select(
+                "canvas_items",
+                {
+                    "session_id": f"eq.{session_id}",
+                    "kind": "eq.concept",
+                    "source": "eq.ai",
+                    "select": "title",
+                    "order": "seq.asc",
+                    "limit": str(_HINT_TITLES),
+                },
+            )
+            return [r.get("title") or "" for r in rows]
+        except Exception:  # noqa: BLE001 - 확인 실패는 "없음"으로 강등
+            logger.warning("개념 카드 확인 실패 - 개념 스킬 미노출", exc_info=True)
+            return []
+
+    async def _role() -> str:
+        try:
+            rows = await client.select(
+                "profiles", {"id": f"eq.{user_id}", "select": "role", "limit": "1"}
+            )
+            return (rows[0].get("role") or "student") if rows else "student"
+        except Exception:  # noqa: BLE001 - 역할 조회 실패는 학생으로 강등
+            logger.warning("역할 조회 실패 - student 카탈로그로 진행", exc_info=True)
+            return "student"
+
+    role, has_files, has_notes, titles = await asyncio.gather(
+        _role(),
+        # 파일이 없는데 파일 스킬을 노출하면, 모델이 부르고 빈 목록을 받고
+        # "올리신 파일이 없네요" 같은 군더더기를 답에 붙인다.
+        _has_row(
+            client,
+            "세션 파일",
+            "files",
+            {
+                "session_id": f"eq.{session_id}",
+                "kind": "eq.user_upload",
+                "status": "eq.indexed",
+                "select": "id",
+                "limit": "1",
+            },
+        ),
+        # 학생이 캔버스에 직접 쓴 글. 파일과 **같은 이유**로 있을 때만 연다.
+        _has_row(
+            client,
+            "학생 글",
+            "canvas_items",
+            {
+                "session_id": f"eq.{session_id}",
+                "kind": "eq.note",
+                "select": "id",
+                "limit": "1",
+            },
+        ),
+        # AI 개념 카드. `source=ai`까지 봐야 한다 - 학생이 쓴 글은 위에서
+        # 따로 센다.
+        _titles(),
+    )
+    return role, has_files, has_notes, titles
 
 
 @router.post("/stream")
@@ -190,60 +331,24 @@ async def chat_stream(
     # 마디에도 질의 임베딩 + Qdrant 검색 + 최대 15만 자 주입이 나갔다.
     overlay = await app_settings.get_overlay()
     react_on = app_settings.as_bool(overlay, "react_enabled", settings.react_enabled)
-    react_steps = app_settings.as_int(
-        overlay, "react_max_steps", settings.react_max_steps, 1, 8
-    )
+    react_steps = app_settings.as_int(overlay, "react_max_steps", settings.react_max_steps, 1, 8)
 
     react_role = "student"
     react_has_files = False
     react_has_notes = False
+    react_concepts: list[str] = []
     legacy_figures: list[dict] = []
     if react_on:
         rag_result = None
         session_file_result = None
-        # 카탈로그가 역할·세션 상태로 갈리므로 두 가지를 미리 확인한다. 둘 다
-        # 인덱스 조회 한 번이고, ReAct가 꺼져 있으면 아예 돌지 않는다.
-        try:
-            rows = await client.select(
-                "profiles",
-                {"id": f"eq.{user.id}", "select": "role", "limit": "1"},
-            )
-            if rows:
-                react_role = rows[0].get("role") or "student"
-        except Exception:  # noqa: BLE001 - 역할 조회 실패는 학생으로 강등
-            logger.warning("역할 조회 실패 — student 카탈로그로 진행", exc_info=True)
-        try:
-            # 파일이 없는데 파일 스킬을 노출하면, 모델이 부르고 빈 목록을 받고
-            # "올리신 파일이 없네요" 같은 군더더기를 답에 붙인다.
-            frows = await client.select(
-                "files",
-                {
-                    "session_id": f"eq.{body.session_id}",
-                    "kind": "eq.user_upload",
-                    "status": "eq.indexed",
-                    "select": "id",
-                    "limit": "1",
-                },
-            )
-            react_has_files = bool(frows)
-        except Exception:  # noqa: BLE001 - 확인 실패는 "없음"으로 강등
-            logger.warning("세션 파일 확인 실패 — 파일 스킬 미노출", exc_info=True)
-        try:
-            # 학생이 캔버스에 직접 쓴 글 (2026-08-09). 파일과 **같은 이유**로
-            # 있을 때만 노출한다 — 없는데 보여 주면 모델이 부르고 빈 결과로
-            # 군더더기를 붙인다.
-            nrows = await client.select(
-                "canvas_items",
-                {
-                    "session_id": f"eq.{body.session_id}",
-                    "kind": "eq.note",
-                    "select": "id",
-                    "limit": "1",
-                },
-            )
-            react_has_notes = bool(nrows)
-        except Exception:  # noqa: BLE001 - 확인 실패는 "없음"으로 강등
-            logger.warning("학생 글 확인 실패 — 글 스킬 미노출", exc_info=True)
+        # 카탈로그가 역할·세션 상태로 갈린다. 넷을 한꺼번에 확인한다
+        # (`_react_probes` docstring에 왜 동시인지, 왜 nodes가 아닌지 적었다).
+        (
+            react_role,
+            react_has_files,
+            react_has_notes,
+            react_concepts,
+        ) = await _react_probes(client, str(user.id), body.session_id)
     else:
         # D111: 도판 검색도 여기서 한다. 예전에는 **프론트가** SSE 전에
         # /retrieve를 따로 불렀는데, 그러면 검색 오케스트레이션이 클라이언트에
@@ -415,8 +520,7 @@ async def chat_stream(
                         ctx.space_kind,
                         ctx.role,
                         has_session_files=react_has_files,
-                        # 이미 읽어 둔 세션 노드로 판단 — 추가 조회 없음.
-                        has_concepts=bool(nodes),
+                        has_concepts=bool(react_concepts),
                         has_notes=react_has_notes,
                     )
                     async for kind, payload in ai.get_orchestrator().run(
@@ -430,6 +534,9 @@ async def chat_stream(
                         # 먼저 쓰인 분류를 쓴다.
                         tag_hint=(body.focus_tag or "").strip()
                         or (used_tags[0] if used_tags else None),
+                        # D216: 판단 단계는 캔버스를 못 본다 — 제목을 넘겨야
+                        # "아까 그거"에 목록 왕복 없이 답한다.
+                        concept_hint=_concept_hint(react_concepts),
                         max_steps=react_steps,
                     ):
                         if kind == "sse":
@@ -515,13 +622,9 @@ async def chat_stream(
                     provenance["rag_sources"] = rag_sources
                 if provenance:
                     try:
-                        await client.update(
-                            "nodes", {"id": f"eq.{node['id']}"}, provenance
-                        )
+                        await client.update("nodes", {"id": f"eq.{node['id']}"}, provenance)
                     except Exception:  # noqa: BLE001
-                        logger.warning(
-                            "provenance persist failed node=%s", node["id"]
-                        )
+                        logger.warning("provenance persist failed node=%s", node["id"])
 
                 yield _sse(
                     "done",
@@ -562,9 +665,7 @@ async def chat_stream(
                         ]
                     )
                 if retrieved is not None:
-                    asyncio.create_task(
-                        _patch_canvas_unified(client, node["id"], retrieved)
-                    )
+                    asyncio.create_task(_patch_canvas_unified(client, node["id"], retrieved))
 
             except Exception:  # noqa: BLE001 - details to logs, not the client
                 logger.exception("Persisting node failed")
@@ -583,4 +684,3 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
-

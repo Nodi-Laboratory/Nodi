@@ -1,7 +1,10 @@
-"""이 세션의 개념 카드 조회 스킬 (D109 2단계 → D215에서 출처 교체).
+"""이 세션의 개념 카드 본문 조회 스킬 (D109 2단계 → D215 출처 교체 → D216).
 
-  list_session_concepts  지금까지 만든 개념의 제목·분류 목록 (태그 재사용의 근거)
-  get_concept            특정 개념의 본문 (이어지는 질문에 답할 때)
+  get_concept  특정 개념의 본문 (학생이 "아까 그거"라고 가리킬 때)
+
+원래는 `list_session_concepts`가 짝으로 있었다. 2026-08-09에 걷어냈다 —
+**목록은 도구가 아니라 안내로 준다**(D216, `catalog.py` 주석). 모델은 매번
+`list`로 제목을 찾고 나서 `get`을 불렀는데, 그 제목은 서버가 이미 알고 있다.
 
 ## ⚠️ 출처는 `canvas_items`다 — `nodes.answer`가 아니다
 
@@ -64,43 +67,6 @@ async def _session_cards(ctx: SkillContext) -> list[dict[str, Any]]:
     return [r for r in rows if (r.get("title") or "").strip()]
 
 
-class ListSessionConceptsSkill(SkillBase):
-    name = "list_session_concepts"
-    description = (
-        "이 학습 지도에 지금까지 만든 개념 카드의 제목과 분류를 본다. "
-        "새 개념의 분류를 정하기 전에 확인하면 같은 주제가 다른 태그로 흩어지는 "
-        "것을 막을 수 있다. 첫 질문이거나 분류가 자명하면 부르지 않아도 된다."
-    )
-    parameters = {"type": "object", "properties": {}}
-
-    async def run(self, args: dict[str, Any], ctx: SkillContext) -> SkillResult:
-        cards = await _session_cards(ctx)
-        if not cards:
-            return SkillResult(
-                ok=True,
-                message="아직 만든 개념이 없습니다. 새 분류를 지어도 됩니다.",
-                data={"concepts": [], "clusters": []},
-            )
-        recent = cards[-_MAX_LIST:]
-        clusters: list[str] = []
-        for c in cards:
-            cl = (c.get("tag") or "").strip()
-            if cl and cl not in clusters:
-                clusters.append(cl)
-        return SkillResult(
-            ok=True,
-            message=f"개념 {len(cards)}개, 분류 {len(clusters)}종.",
-            data={
-                "concepts": [
-                    {"title": c["title"], "cluster": (c.get("tag") or "")}
-                    for c in recent
-                ],
-                # 태그 재사용의 핵심 — 이 목록에 있으면 글자 그대로 다시 쓰게 한다.
-                "clusters": clusters,
-            },
-        )
-
-
 class GetConceptSkill(SkillBase):
     name = "get_concept"
     description = (
@@ -121,21 +87,15 @@ class GetConceptSkill(SkillBase):
     async def run(self, args: dict[str, Any], ctx: SkillContext) -> SkillResult:
         want = (args.get("title") or "").strip()
         if not want:
-            return SkillResult(
-                ok=False, message="개념 제목이 필요합니다.", error_code="bad_args"
-            )
+            return SkillResult(ok=False, message="개념 제목이 필요합니다.", error_code="bad_args")
         cards = await _session_cards(ctx)
         if not cards:
-            return SkillResult(
-                ok=True, message="아직 만든 개념이 없습니다.", data={"found": False}
-            )
+            return SkillResult(ok=True, message="아직 만든 개념이 없습니다.", data={"found": False})
 
         # 정확 일치 → 부분 일치 순. 모델이 제목을 조금 다르게 기억할 수 있다.
         hit = next((c for c in cards if c["title"] == want), None)
         if hit is None:
-            hit = next(
-                (c for c in cards if want in c["title"] or c["title"] in want), None
-            )
+            hit = next((c for c in cards if want in c["title"] or c["title"] in want), None)
         if hit is None:
             return SkillResult(
                 ok=True,

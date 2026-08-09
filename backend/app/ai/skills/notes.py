@@ -7,7 +7,7 @@
 
   · `tree_guide`는 **AI 개념 카드만** 노드로 친다(`_tree_lines`) — 트리 모양을
     지키려면 그게 맞다.
-  · `list_session_concepts`도 개념 카드만 본다.
+  · `get_concept`도 개념 카드만 본다.
   · 세션 파일 전문(D83)은 **올린 파일**이지 캔버스에 쓴 글이 아니다.
 
 그래서 학생이 "내가 정리한 거 맞아?", "내가 쓴 것도 같이 봐 줘"라고 하면
@@ -43,7 +43,7 @@ class ReadMyNotesSkill(SkillBase):
         "학생이 캔버스에 **직접 쓴 글**을 읽는다. "
         "'내가 쓴 것', '내가 정리한 거', '내 메모'처럼 학생 자신의 글을 가리킬 때, "
         "또는 학생의 정리가 맞는지 봐 달라고 할 때 부른다. "
-        "AI가 만든 개념 카드는 여기 없다(그건 list_session_concepts·get_concept이다)."
+        "AI가 만든 개념 카드는 여기 없다(그건 get_concept이다)."
     )
     parameters = {"type": "object", "properties": {}}
 
