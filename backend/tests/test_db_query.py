@@ -50,6 +50,24 @@ def test_is_null():
     assert args == []
 
 
+def test_not_is_null():
+    """`not.is.null` — "답이 있는 노드만"을 고르는 데 쓴다(캔버스 복구)."""
+    where, args, _ = Q.build_where({"answer": "not.is.null"})
+    assert where == " WHERE answer IS NOT NULL"
+    assert args == []
+
+
+def test_not_is_bool():
+    where, _, _ = Q.build_where({"pinned": "not.is.true"})
+    assert where == " WHERE pinned IS NOT true"
+
+
+def test_not은_is만_부정한다():
+    """부정을 일반 연산자로 열지 않는다 — 조합이 늘면 잘못 읽을 여지도 는다."""
+    with pytest.raises(Q.UnsupportedQuery):
+        Q.build_where({"seq": "not.eq.3"})
+
+
 def test_no_filters_gives_empty_where():
     where, args, _ = Q.build_where({"select": "id", "limit": "1"})
     assert where == ""

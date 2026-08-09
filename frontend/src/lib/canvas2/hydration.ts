@@ -30,6 +30,10 @@
  * **수화는 세션당 한 번이다.** 그 뒤로 화면의 글이 정본이고(모든 편집은
  * 즉시 서버로 나간다), 뒤늦게 도착한 쿼리가 그것을 덮을 수 없다.
  *
+ * (2026-08-10: `detail` 의존성 자체가 사라졌다 — 되살릴 답은 스냅샷이 함께
+ * 싣고 온다. 그래도 "세션당 한 번" 규칙은 그대로 필요하다: 스냅샷 하나만으로도
+ * 재진입 때 늦게 도착해 화면을 덮을 수 있다.)
+ *
  * 판정만 순수 함수로 떼어 둔다 — 이 결함은 눈으로 못 잡는다(화면에는 글이
  * 그대로 있고, 잘못된 것은 그 글의 **정체**다). 테스트로 잡는다.
  */
@@ -39,31 +43,34 @@ export interface HydrationState {
   sessionId: string | null;
   /** 이미 채워 넣은 세션 id. 화면의 글이 이 세션 것이라는 뜻이다. */
   hydratedFor: string | null;
-  /** 서버 스냅샷의 글 수. **스냅샷이 아직 안 왔으면 null**(0과 구별한다). */
-  snapshotCount: number | null;
   /**
-   * 세션 상세(nodes)를 아직 기다리는 중인가.
+   * 서버 스냅샷의 글 수. **스냅샷이 아직 안 왔으면 null**(0과 구별한다).
    *
-   * 스냅샷이 비었을 때 "v2 이전 세션이라 파싱해야 한다"와 "정말 빈
-   * 세션이다"는 nodes를 봐야 갈린다. 기다리지 않고 빈 것으로 단정하면
-   * 구 세션이 빈 캔버스로 뜬다.
+   * 0이어도 이제는 그대로 채운다 — 정말 빈 세션이면 빈 화면이 맞고, 되살릴
+   * 답이 있으면 스냅샷이 그것까지 싣고 왔다.
    */
-  detailPending: boolean;
+  snapshotCount: number | null;
 }
 
 export interface HydrationPlan {
   /** 화면의 글을 먼저 비운다 — 세션이 바뀌었는데 이전 글이 남아 있다. */
   clear: boolean;
-  /** 무엇으로 채우나. null이면 **이번에는 채우지 않는다**(기다린다). */
-  fill: "items" | "nodes" | null;
+  /**
+   * 스냅샷으로 채우나. false면 **이번에는 채우지 않는다**(기다린다).
+   *
+   * 예전에는 `"items" | "nodes"` 둘이었다 — 카드가 0장이면 세션 상세를 따로
+   * 받아 `nodes.answer`를 파싱하는 갈래가 있었다. 이제 되살릴 답은 스냅샷이
+   * 함께 실어 오므로(`orphan_nodes`) 기다릴 두 번째 쿼리가 없다.
+   */
+  fill: boolean;
 }
 
-const NOTHING: HydrationPlan = { clear: false, fill: null };
+const NOTHING: HydrationPlan = { clear: false, fill: false };
 
 export function planHydration(s: HydrationState): HydrationPlan {
   // 세션이 사라졌다(로그아웃·삭제) — 남은 글은 남의 것이 된다.
   if (!s.sessionId) {
-    return s.hydratedFor ? { clear: true, fill: null } : NOTHING;
+    return s.hydratedFor ? { clear: true, fill: false } : NOTHING;
   }
   // 이미 이 세션을 채웠다. **화면이 정본이다** — 늦게 온 쿼리는 무시한다.
   if (s.hydratedFor === s.sessionId) return NOTHING;
@@ -72,8 +79,6 @@ export function planHydration(s: HydrationState): HydrationPlan {
 
   // 스냅샷을 기다리는 중. 이전 세션 글은 지금 비운다 — 새 세션의 화면에
   // 남의 글이 잠시라도 떠 있으면 학생이 그걸 옮기거나 지울 수 있다.
-  if (s.snapshotCount === null) return { clear, fill: null };
-  if (s.snapshotCount > 0) return { clear, fill: "items" };
-  if (s.detailPending) return { clear, fill: null };
-  return { clear, fill: "nodes" };
+  if (s.snapshotCount === null) return { clear, fill: false };
+  return { clear, fill: true };
 }

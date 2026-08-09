@@ -51,9 +51,24 @@ export interface DrawingScene {
   files: Record<string, unknown>;
 }
 
+/** 카드가 하나도 안 달린 답. 되살릴 것이 있을 때만 채워져 온다. */
+export interface OrphanNode {
+  id: string;
+  answer: string | null;
+  created_at?: string;
+}
+
 export interface CanvasSnapshot {
   items: CanvasItem[];
   drawing: DrawingScene;
+  /**
+   * **잃어버린 답** (2026-08-10).
+   *
+   * 카드는 화면이 스트림을 다 받은 뒤에 저장한다. 그 전에 브라우저가 사라지면
+   * 답만 남고 카드가 없다 — 학생 눈에는 답이 통째로 날아간 것이다. 서버가
+   * 여기에 실어 주고 화면이 되살린다(`canvas_items._orphan_answers` 머리말).
+   */
+  orphanNodes: OrphanNode[];
 }
 
 export async function getCanvas(sessionId: string): Promise<CanvasSnapshot> {
@@ -62,10 +77,15 @@ export async function getCanvas(sessionId: string): Promise<CanvasSnapshot> {
       headers: await authHeaders(),
     }),
   );
-  const body = (await res.json()) as { items: ItemRow[]; drawing: DrawingScene };
+  const body = (await res.json()) as {
+    items: ItemRow[];
+    drawing: DrawingScene;
+    orphan_nodes?: OrphanNode[];
+  };
   return {
     items: (body.items ?? []).map(toItem),
     drawing: body.drawing ?? { elements: [], files: {} },
+    orphanNodes: body.orphan_nodes ?? [],
   };
 }
 

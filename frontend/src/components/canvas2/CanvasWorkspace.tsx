@@ -29,7 +29,7 @@ import { useCameraSpring } from "@/lib/canvas2/useCameraSpring";
 import { useItemLayout, type LayoutSource } from "@/lib/canvas2/useItemLayout";
 import { useCanvasItems } from "@/lib/canvas2/useCanvasItems";
 import { sanitizeScene } from "@/lib/canvas2/sanitizeScene";
-import { itemsFromNodes } from "@/lib/canvas2/legacyItems";
+import { itemsFromAnswers } from "@/lib/canvas2/recoveredItems";
 import { planHydration } from "@/lib/canvas2/hydration";
 import { useCanvasStream } from "@/lib/canvas2/useCanvasStream";
 import type { ItemPatch } from "@/lib/api/canvas";
@@ -38,7 +38,7 @@ import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem, ToolName } from "@/lib/canvas2/types";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import { spaceTargetFromId } from "@/lib/api";
-import { useSessionDetail, useSessions } from "@/lib/queries";
+import { useSessions } from "@/lib/queries";
 import { useMyClasses } from "@/lib/hooks";
 import { intersects, type Rect } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
@@ -403,27 +403,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     };
   }, [sessionId, queryClient]);
 
-  // 구 세션 폴백 — v2 이전 세션에는 canvas_items가 한 행도 없다. 폴백이
-  // 없으면 학생이 지난 대화를 열었을 때 빈 캔버스를 본다(데이터가 날아간
-  // 것처럼 보인다). nodes.answer를 파싱해 읽기용으로 그리고, 첫 편집 때
-  // 서버로 승격한다(legacyItems.ts 참조).
-  /**
-   * 구 세션 폴백은 **캔버스가 비었을 때만** 부른다 (2026-08-09).
-   *
-   * 이 쿼리는 대화의 **모든 답 원문**을 받아 온다(`NODE_SELECT`에 answer가
-   * 있다). 그런데 쓰이는 곳은 v2 이전 세션 하나뿐이고, 카드가 있는 세션에서는
-   * 받자마자 버린다 — 방을 바꿀 때마다 대화 길이에 비례한 payload가 오간
-   * 셈이다.
-   *
-   * `planHydration`이 이미 "카드가 있으면 detail을 안 기다린다"로 되어 있으니
-   * (`snapshotCount > 0` → `fill: "items"`), 여기서 요청 자체를 막아도
-   * 폴백 경로는 그대로다 — 카드가 0장일 때만 부른다.
-   */
-  const needsLegacy = !!snapshot && snapshot.items.length === 0;
-  const { data: detail, isPending: detailPending } = useSessionDetail(
-    needsLegacy ? sessionId : null,
-  );
-
   /**
    * 이미 채워 넣은 세션 — **수화는 세션당 한 번이다** (D147).
    *
@@ -439,7 +418,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
       sessionId,
       hydratedFor: hydratedFor.current,
       snapshotCount: snapshot ? snapshot.items.length : null,
-      detailPending,
     });
     if (plan.clear) {
       hydratedFor.current = null;
@@ -447,12 +425,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
     }
     if (!plan.fill || !sessionId || !snapshot) return;
     hydratedFor.current = sessionId;
-    replaceAll(
-      plan.fill === "items"
-        ? snapshot.items
-        : itemsFromNodes(sessionId, detail?.nodes ?? []),
+    /**
+     * 저장된 카드 **+ 카드가 없는 답** (2026-08-10).
+     *
+     * 후자는 답을 기다리다 브라우저가 사라진 턴이다 — 답은 DB에 있는데
+     * 카드만 없다(`recoveredItems.ts` 머리말). 예전에는 캔버스가 통째로 빈
+     * 세션에서만 되살렸기 때문에, 카드가 한 장이라도 있으면 그 턴은 영영
+     * 안 보였다. 이제 섞어 넣는다.
+     */
+    const recovered = itemsFromAnswers(
+      sessionId,
+      snapshot.orphanNodes,
+      snapshot.items.length,
     );
-  }, [sessionId, snapshot, detail, detailPending, replaceAll]);
+    replaceAll(recovered.length ? [...snapshot.items, ...recovered] : snapshot.items);
+  }, [sessionId, snapshot, replaceAll]);
 
   // 그림은 마운트 시 1회만 밀어 넣는다(`initialData`가 그때만 읽힌다).
   // sceneKey는 씬이 도착한 뒤에야 생긴다 — sessionId로 키를 잡으면 세션 전환
@@ -1897,10 +1884,10 @@ export function CanvasWorkspace({ spaceId }: Props) {
       : (myClasses ?? []).find((m) => m.class_id === spaceId)?.classes?.name ?? "학급";
 
   const sessionList = useSessions(target);
+  // 두 번째 폴백(`detail.session.title`)이 있었는데, 그 쿼리는 **구 세션일
+  // 때만** 켜져 있어서 평소엔 언제나 null이었다. 죽은 가지였다.
   const sessionTitle =
-    sessionList.data?.find((s) => s.id === sessionId)?.title?.trim() ||
-    detail?.session?.title?.trim() ||
-    "제목 없는 대화";
+    sessionList.data?.find((s) => s.id === sessionId)?.title?.trim() || "제목 없는 대화";
 
   // 세션 컨텍스트 파일 첨부 (D83) — 업로드 후 칩 바가 상태를 보여 준다.
   const handleAttach = useCallback(

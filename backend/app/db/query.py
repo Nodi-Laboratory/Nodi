@@ -135,12 +135,22 @@ def build_where(
             idx += 1
             continue
 
-        if op == "is":
+        if op in ("is", "not"):
+            # `is.null` / `is.true` / `is.false`, 그리고 그 부정 `not.is.…`.
+            #
+            # `not`은 **`is`의 부정만** 받는다. 부정을 일반 연산자로 열면
+            # (`not.eq.…`, `not.in.…`) 조합이 늘어나는 만큼 변환기를 잘못
+            # 읽을 여지도 늘어난다 — 필요한 것 하나만 연다.
             token = val.strip().lower()
+            if op == "not":
+                if not token.startswith("is."):
+                    raise UnsupportedQuery(f"not은 is만 부정한다: {raw!r}")
+                token = token[3:]
+            negate = op == "not"
             if token == "null":
-                clauses.append(f"{col} IS NULL")
+                clauses.append(f"{col} IS {'NOT ' if negate else ''}NULL")
             elif token in ("true", "false"):
-                clauses.append(f"{col} IS {token}")
+                clauses.append(f"{col} IS {'NOT ' if negate else ''}{token}")
             else:
                 raise UnsupportedQuery(f"is 대상이 아니다: {raw!r}")
             continue

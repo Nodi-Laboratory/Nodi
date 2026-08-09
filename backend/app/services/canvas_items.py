@@ -28,6 +28,7 @@ ai.skills.concepts._parse_cards)이고 관용도가 서로 다르다. 네 번째
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -90,8 +91,52 @@ async def _assert_session(client: UserClient, session_id: str) -> None:
         )
 
 
+async def _orphan_answers(
+    client: UserClient, session_id: str, items: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """**카드가 하나도 안 달린 답**을 찾아 원문째 돌려준다.
+
+    카드를 만드는 것은 화면이다(D125 — 좌표·트리는 화면이 소유한다). 서버는
+    답을 받아 `nodes`에 적고, 화면이 스트림을 다 받은 **뒤에** 카드를 저장한다.
+    그 사이에 브라우저가 사라지면 — 학생이 탭을 닫거나, 새로고침하거나,
+    지하철에서 신호가 끊기면 — **답은 DB에 남고 카드만 없다.**
+
+    그러면 학생은 답을 잃는다. 지도에는 개념이 생기고 다음 질문의 문맥으로도
+    쓰이는데 캔버스만 비어 있으니, 화면이 거짓말을 하는 상태다(실측
+    2026-08-10: 세 턴이 이 꼴이었다 — 315·498·408자가 카드 0장으로 떠 있었다).
+
+    끊김 자체는 막을 수 없다. **불러올 때 되살리는 것**이 유일하게 미더운
+    처방이다. 겸사겸사 v2 이전 세션(카드 개념이 아예 없던 시절)도 같은 길로
+    복구된다 — 그쪽 전용 폴백을 따로 둘 이유가 사라졌다.
+
+    비용: 평소엔 id만 세는 가벼운 조회 한 번이고, 고아가 없으면 거기서 끝난다.
+    원문은 **되살릴 것이 있을 때만** 받는다.
+    """
+    covered = {i["node_id"] for i in items if i.get("node_id")}
+    ids = await client.select(
+        "nodes",
+        {
+            "select": "id",
+            "session_id": f"eq.{session_id}",
+            "answer": "not.is.null",
+            "order": "created_at.asc",
+        },
+    )
+    missing = [r["id"] for r in ids if r["id"] not in covered]
+    if not missing:
+        return []
+    return await client.select(
+        "nodes",
+        {
+            "select": "id,answer,created_at",
+            "id": f"in.({','.join(missing)})",
+            "order": "created_at.asc",
+        },
+    )
+
+
 async def list_canvas(client: UserClient, session_id: str) -> dict[str, Any]:
-    """아이템 + 그림을 한 번에. 재수화의 유일한 입구다.
+    """아이템 + 그림 + 되살릴 답을 한 번에. 재수화의 유일한 입구다.
 
     두 번 왕복하지 않는 이유: 아이템만 먼저 오면 그림 없는 캔버스가 한 프레임
     보였다가 그림이 튀어 들어온다.
@@ -105,13 +150,23 @@ async def list_canvas(client: UserClient, session_id: str) -> dict[str, Any]:
             "order": "seq.asc",
         },
     )
-    drawings = await client.select(
-        "canvas_drawings",
-        {"select": "elements,files,updated_at", "session_id": f"eq.{session_id}", "limit": "1"},
+    # 그림과 고아 조회는 서로 기다릴 이유가 없다 — 함께 돌려 왕복 하나를 줄인다.
+    drawings, orphans = await asyncio.gather(
+        client.select(
+            "canvas_drawings",
+            {
+                "select": "elements,files,updated_at",
+                "session_id": f"eq.{session_id}",
+                "limit": "1",
+            },
+        ),
+        _orphan_answers(client, session_id, items),
     )
     return {
         "items": items,
         "drawing": drawings[0] if drawings else {"elements": [], "files": {}},
+        # 카드 없는 답. 평소엔 빈 배열이다 (`_orphan_answers` 머리말).
+        "orphan_nodes": orphans,
     }
 
 
