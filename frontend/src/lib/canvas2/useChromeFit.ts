@@ -19,7 +19,13 @@ import { SNAP_MARGIN } from "./cornerSnap";
 /** 크롬끼리 남길 틈(px). 붙어 있으면 한 덩어리로 보인다. */
 const GAP = 14;
 
-const NONE: ChromeFit = { railMode: "center", railShift: 0, mapDx: 0, askDx: 0 };
+const NONE: ChromeFit = {
+  railMode: "center",
+  railShift: 0,
+  mapDx: 0,
+  askDx: 0,
+  askMaxW: null,
+};
 
 type Listener = (f: ChromeFit) => void;
 const listeners = new Set<Listener>();
@@ -39,7 +45,8 @@ function publish(next: ChromeFit): void {
     next.railMode === current.railMode &&
     Math.abs(next.railShift - current.railShift) < 0.5 &&
     Math.abs(next.mapDx - current.mapDx) < 0.5 &&
-    Math.abs(next.askDx - current.askDx) < 0.5
+    Math.abs(next.askDx - current.askDx) < 0.5 &&
+    next.askMaxW === current.askMaxW
   ) {
     return;
   }
@@ -106,7 +113,8 @@ export function useChromeFit(
       next.railMode === fitRef.current.railMode &&
       Math.abs(next.railShift - fitRef.current.railShift) < 0.5 &&
       Math.abs(next.mapDx - fitRef.current.mapDx) < 0.5 &&
-      Math.abs(next.askDx - fitRef.current.askDx) < 0.5
+      Math.abs(next.askDx - fitRef.current.askDx) < 0.5 &&
+      next.askMaxW === fitRef.current.askMaxW
     ) {
       return;
     }

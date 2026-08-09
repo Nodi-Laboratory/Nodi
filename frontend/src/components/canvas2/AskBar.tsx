@@ -171,8 +171,27 @@ export function AskBar({
        */
       style={{
         zoom: "var(--ui-scale, 1)",
-        transform: chrome.askDx ? `translateX(${-chrome.askDx}px)` : undefined,
-        transition: "transform .34s cubic-bezier(.22,.9,.24,1)",
+        /**
+         * ⚠️ **미는 양도 배율로 나눈다** (2026-08-09).
+         *
+         * 이 상자는 `zoom`으로 확대돼 있어서 안쪽의 `translateX`가 그대로
+         * 배율만큼 커진다 — 290px을 밀라고 준 값이 화면에서는 406px이 됐고
+         * 입력창 왼쪽 변이 **−117px**로 나갔다. `askMaxW`와 같은 보정이다.
+         */
+        transform: chrome.askDx
+          ? `translateX(calc(${-chrome.askDx}px / var(--ui-scale, 1)))`
+          : undefined,
+        /**
+         * 우하단 지도 옆에서는 **줄어들기도 한다** (2026-08-09).
+         *
+         * `askMaxW`는 **화면 px**인데 이 상자는 `zoom`으로 확대돼 있어 안쪽
+         * 단위가 그만큼 작다 — 그대로 넣으면 배율만큼 넓게 잡힌다. 나누는
+         * 일을 CSS에 맡겨 배율의 출처를 하나로 둔다.
+         */
+        maxWidth: chrome.askMaxW
+          ? `calc(${chrome.askMaxW}px / var(--ui-scale, 1))`
+          : undefined,
+        transition: "transform .34s cubic-bezier(.22,.9,.24,1), max-width .34s ease",
       }}
       className="ui absolute bottom-[52px] left-1/2 z-50 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
     >
