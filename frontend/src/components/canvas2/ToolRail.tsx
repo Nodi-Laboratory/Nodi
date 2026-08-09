@@ -51,6 +51,7 @@ import { SNAP_MARGIN } from "@/lib/canvas2/cornerSnap";
 import { scaled } from "@/lib/ui/scale";
 import { isColorableTool } from "@/lib/canvas2/types";
 import { useCollapsible, useStickyChoice } from "@/lib/canvas2/useCollapsible";
+import { isModalOpen } from "@/lib/ui/modalLayer";
 
 interface ToolDef {
   tool: ToolName;
@@ -199,6 +200,9 @@ export function ToolRail({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (paused) return; // 펜으로 쓰는 중 (D176)
+      // 팝업이 떠 있으면 도구를 안 바꾼다 — 설정에서 'p'를 치다 자유선으로
+      // 바뀌면 닫고 나서야 알게 된다(`lib/ui/modalLayer.ts`).
+      if (isModalOpen()) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       // 한글 조합 중에는 도구를 바꾸지 않는다. IME에 따라 라틴 키가 새어
       // 들어올 수 있다.

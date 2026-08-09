@@ -91,6 +91,7 @@ import { useCrossLinks } from "@/lib/canvas2/useCrossLinks";
 import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 import type { CrossLink } from "@/lib/api";
 import { SplitPrompt } from "./SplitPrompt";
+import { isModalOpen } from "@/lib/ui/modalLayer";
 
 interface Props {
   spaceId: string;
@@ -1368,6 +1369,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      // 팝업이 떠 있으면 그쪽이 키의 주인이다(`lib/ui/modalLayer.ts`).
+      if (isModalOpen()) return;
       const t = e.target as HTMLElement | null;
       if (
         t &&
