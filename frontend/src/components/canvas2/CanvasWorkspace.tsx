@@ -1993,6 +1993,15 @@ export function CanvasWorkspace({ spaceId }: Props) {
             : clientSettings.focusZoom || NEW_NODE_ZOOM,
           minZoom: ATTACH_MIN_ZOOM,
           pad: FOCUS_PAD,
+          /**
+           * **자랄 폭까지 미리 본다** (2026-08-09).
+           *
+           * 답이 막 생긴 순간의 카드는 거의 비어 있어서, 그 폭으로 배율을
+           * 잡으면 235%가 나온다. 그 뒤 글이 스트리밍되며 카드가 `max-width`
+           * (=`ITEM_W`)까지 넓어지고, 235%에서 그건 화면 위 1316px이다.
+           * 실측 2026-08-09(1024×768): 다 자란 카드의 왼쪽 변이 −105px.
+           */
+          growW: ITEM_W,
         },
       );
     flyTo(처음);

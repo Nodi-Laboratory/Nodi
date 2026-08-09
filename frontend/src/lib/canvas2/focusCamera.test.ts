@@ -163,3 +163,43 @@ describe("좁은 화면에서도 답이 잘리지 않는다 (D166)", () => {
     expect(cam.zoom).toBeGreaterThanOrEqual(OPTS.minZoom);
   });
 });
+
+/**
+ * **자랄 폭까지 미리 본다** (2026-08-09).
+ *
+ * 답이 막 생긴 카드는 거의 비어 있다. 그 폭으로 배율을 잡으면 상한(235%)이
+ * 나오고, 글이 스트리밍되며 카드가 `max-width`까지 넓어지면 그 배율에서
+ * 화면을 넘는다 — 실측 1024×768에서 다 자란 카드의 왼쪽 변이 −105px이었다.
+ * D166은 배율을 고정값에서 상한으로 바꿨지만 **어느 폭에 맞출지**는 안 바꿨다.
+ */
+describe("자랄 폭 (growW)", () => {
+  const 좁은화면 = { w: 934, h: 768, left: 72, right: 80, top: 56, bottom: 150 };
+  const 옵션 = { maxZoom: 2.35, minZoom: 1.15, pad: 72 };
+
+  it("막 생긴 좁은 카드도 다 자란 폭으로 맞춘다", () => {
+    const 갓생긴카드 = { x: 0, y: 0, w: 200, h: 60 };
+    const 안줌 = focusCamera(갓생긴카드, [], 좁은화면, 옵션);
+    const 줌 = focusCamera(갓생긴카드, [], 좁은화면, { ...옵션, growW: 560 });
+    expect(안줌.zoom).toBeGreaterThan(줌.zoom); // 예전에는 더 당겼다
+    // 다 자란 뒤(560)에도 쓸 수 있는 자리 안에 들어온다.
+    const 왼쪽 = (0 + 줌.scrollX) * 줌.zoom;
+    const 오른쪽 = 왼쪽 + 560 * 줌.zoom;
+    expect(왼쪽).toBeGreaterThanOrEqual(좁은화면.left - 0.5);
+    expect(오른쪽).toBeLessThanOrEqual(좁은화면.w - 좁은화면.right + 0.5);
+  });
+
+  it("넓은 화면에서는 아무것도 안 바뀐다", () => {
+    const 넓은화면 = { w: 1830, h: 1000, left: 72, right: 80, top: 56, bottom: 150 };
+    const 카드 = { x: 0, y: 0, w: 200, h: 60 };
+    expect(focusCamera(카드, [], 넓은화면, { ...옵션, growW: 560 }).zoom).toBe(
+      focusCamera(카드, [], 넓은화면, 옵션).zoom,
+    );
+  });
+
+  it("학생이 더 넓게 만든 카드는 그 폭을 쓴다", () => {
+    const 넓은카드 = { x: 0, y: 0, w: 900, h: 60 };
+    expect(focusCamera(넓은카드, [], 좁은화면, { ...옵션, growW: 560 })).toEqual(
+      focusCamera(넓은카드, [], 좁은화면, 옵션),
+    );
+  });
+});
