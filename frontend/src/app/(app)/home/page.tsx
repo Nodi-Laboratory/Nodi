@@ -10,6 +10,7 @@ import { useRoutePrefetch } from "@/lib/useRoutePrefetch";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { createSession } from "@/lib/api";
 import type { ConceptNode } from "@/lib/api/conceptMap";
+import { PAGE_BG } from "@/lib/ui/surface";
 
 /** 비어 있는 집합 하나를 재사용한다 — 렌더마다 새로 만들면 지도 memo가 깨진다. */
 const NO_HIDDEN: ReadonlySet<string> = new Set<string>();
@@ -141,7 +142,7 @@ export default function HomePage() {
   return (
     /* 여백을 넉넉히 준다(사용자 지시 2026-08-09) — 상자가 화면 가장자리에
        붙어 있으면 캔버스가 페이지 전체로 번져 보인다. */
-    <div className="flex h-full flex-col px-10 py-8">
+    <div className="flex h-full flex-col px-10 py-8" style={{ background: PAGE_BG }}>
       {/**
        * 지도 박스 (D191의 그 상자다, 사용자 지시 2026-08-09로 되돌렸다).
        *
@@ -197,7 +198,7 @@ export default function HomePage() {
               aria-hidden
               data-map-veil
               className="pointer-events-none absolute inset-0"
-              style={{ background: "#f3ecdc", opacity: 0.55 }}
+              style={{ background: PAGE_BG, opacity: 0.42 }}
             />
 
             {/**
@@ -207,10 +208,10 @@ export default function HomePage() {
              * 겹친다(점은 가운데로 뭉친다).
              */}
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center px-6 pt-[8%]">
-              <div className="pointer-events-auto flex w-full max-w-2xl flex-col items-center gap-6">
+              <div className="pointer-events-auto flex w-full max-w-3xl flex-col items-center gap-8">
                 {/* 페이지 제목이 h1이므로 여기는 h2다 — 문서 구조가 뒤집히면
                   낭독기가 이 화면의 주제를 인사말로 읽는다. */}
-                <h2 className="text-center text-[26px] font-semibold leading-snug text-fg">
+                <h2 className="text-center text-[34px] font-semibold leading-snug text-fg">
                   {displayName
                     ? `${displayName}님, 안녕하세요.`
                     : "안녕하세요."}
@@ -219,7 +220,7 @@ export default function HomePage() {
                 </h2>
 
                 <form
-                  className="flex w-full items-center gap-2 rounded-full border border-accent-border bg-bg-elevated px-5 py-3 shadow-sm"
+                  className="flex w-full items-center gap-3 rounded-full border border-accent-border bg-bg-elevated px-7 py-4 shadow-sm"
                   onSubmit={(e) => {
                     e.preventDefault();
                     const q = question.trim();
@@ -233,18 +234,18 @@ export default function HomePage() {
                     placeholder="궁금한 내용을 입력하세요..."
                     aria-label="질문 입력"
                     disabled={starting}
-                    className="min-w-0 flex-1 bg-transparent text-[15px] text-fg outline-none placeholder:text-fg-muted"
+                    className="min-w-0 flex-1 bg-transparent text-[18px] text-fg outline-none placeholder:text-fg-muted"
                   />
                   <button
                     type="submit"
                     aria-label="보내기"
                     disabled={!question.trim() || starting}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-deep text-accent-fg transition-opacity disabled:opacity-40"
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent-deep text-accent-fg transition-opacity disabled:opacity-40"
                   >
                     {starting ? (
-                      <Loader2 size={16} className="animate-spin" aria-hidden />
+                      <Loader2 size={19} className="animate-spin" aria-hidden />
                     ) : (
-                      <ArrowUp size={17} />
+                      <ArrowUp size={20} />
                     )}
                   </button>
                 </form>
@@ -254,9 +255,9 @@ export default function HomePage() {
                     type="button"
                     disabled={starting}
                     onClick={() => void startChat(null)}
-                    className="flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg transition-opacity disabled:opacity-50"
+                    className="flex items-center gap-2 rounded-full bg-accent px-6 py-3.5 text-[17px] font-medium text-accent-fg transition-opacity disabled:opacity-50"
                   >
-                    <MessageSquarePlus size={16} />
+                    <MessageSquarePlus size={19} />
                     새로운 대화 하기
                   </button>
                   {/* 사용자 지시: '과거 대화 보기'가 아니라 **내 세션 보기**다 —
@@ -264,9 +265,9 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={() => router.push("/sessions")}
-                    className="flex items-center gap-2 rounded-full border border-accent-border bg-bg-elevated px-4 py-2.5 text-sm font-medium text-fg transition-colors hover:bg-accent-soft/50"
+                    className="flex items-center gap-2 rounded-full border border-accent-border bg-bg-elevated px-6 py-3.5 text-[17px] font-medium text-fg transition-colors hover:bg-accent-soft/50"
                   >
-                    <Grid2x2 size={16} />내 세션 보기
+                    <Grid2x2 size={19} />내 세션 보기
                   </button>
                 </div>
               </div>

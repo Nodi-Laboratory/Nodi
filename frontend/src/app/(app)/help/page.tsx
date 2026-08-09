@@ -1,5 +1,7 @@
 "use client";
 
+import { PAGE_BG } from "@/lib/ui/surface";
+
 /**
  * 도움말 (사용자 지시 2026-08-09).
  *
@@ -35,15 +37,18 @@ const 절 = [
     제목: "찾아다니기",
     글: [
       "오른쪽 위 **지도**를 열면 대화 전체가 한눈에 보이고, 분류나 카드를 누르면 그 자리로 갑니다.",
-      "왼쪽 **기록**에서 지난 대화방을 열거나 새 대화를 시작할 수 있어요.",
-      "왼쪽 **세션**에서 개인 세션과 학급을 고릅니다.",
+      "캔버스 위쪽 바의 **삼선**을 누르면 지난 대화방을 열거나 새 대화를 시작할 수 있어요.",
+      "왼쪽 **세션**에서 개인 세션과 학급을 고르고, 카드를 누르면 그 안의 대화방 목록이 펼쳐집니다.",
     ],
   },
 ];
 
 export default function HelpPage() {
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-6 py-10">
+    // 바닥은 홈·내 세션·설정과 같은 색이다(`lib/ui/surface.ts`).
+    <div className="min-h-full w-full" style={{ background: PAGE_BG }}>
+    {/* 레이아웃이 이미 `<main>`이다(중첩 랜드마크 금지). */}
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-6 py-10">
       <h1 className="text-2xl font-semibold text-fg">
         도움말
       </h1>
@@ -59,6 +64,7 @@ export default function HelpPage() {
           ))}
         </section>
       ))}
-    </main>
+    </div>
+    </div>
   );
 }
