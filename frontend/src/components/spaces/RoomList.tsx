@@ -40,7 +40,11 @@ function RoomRowView({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
-  const hasMenu = Boolean(onRename || onDelete);
+  /**
+   * ⋮는 **내 방에만** 붙는다. 선생님 화면에는 학생 방도 뜨는데, 이름 변경·
+   * 삭제는 주인만 되므로(RLS) 그 단추를 주면 눌러도 아무 일이 안 일어난다.
+   */
+  const hasMenu = Boolean(onRename || onDelete) && room.is_mine;
 
   // 바깥을 누르면 닫는다. 안 그러면 메뉴가 여러 줄에서 동시에 열린 채 남는다.
   useEffect(() => {

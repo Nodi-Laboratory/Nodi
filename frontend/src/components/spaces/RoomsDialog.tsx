@@ -24,6 +24,7 @@ export function RoomsDialog({
   onOpen,
   onRename,
   onDelete,
+  message,
   onClose,
 }: {
   title: string;
@@ -32,6 +33,8 @@ export function RoomsDialog({
   onOpen: (room: RoomRow) => void;
   onRename: (room: RoomRow, title: string) => void;
   onDelete: (room: RoomRow) => void;
+  /** 실패했을 때 학생에게 할 말. 없으면 아무것도 안 그린다. */
+  message?: string | null;
   onClose: () => void;
 }) {
   // Esc로 닫는다 — 팝업에 갇히면 바깥을 누를 곳을 찾아다니게 된다.
@@ -73,6 +76,12 @@ export function RoomsDialog({
             <X size={18} />
           </button>
         </header>
+
+        {message && (
+          <p className="shrink-0 border-b border-accent-border/40 px-6 py-2 text-[13px] text-danger">
+            {message}
+          </p>
+        )}
 
         <div className="min-h-0 flex-1 overflow-auto px-3 py-2">
           {loading ? (

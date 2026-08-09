@@ -165,8 +165,22 @@ async def update_session_title(
 
 
 async def delete_session(client: UserClient, session_id: str) -> None:
-    """Delete a session (nodes cascade; files.session_id -> null, see 0011)."""
-    await client.delete("sessions", {"id": f"eq.{session_id}"})
+    """Delete a session (nodes cascade; files.session_id -> null, see 0011).
+
+    ⚠️ **지웠는지 확인한다.** RLS(`sessions_delete_owner`)는 남의 방을 지우려는
+    시도에 오류를 내지 않는다 — **0행을 지우고 조용히 끝난다.** 그대로 두면
+    창구가 204를 돌려주고, 화면은 목록에서 그 줄을 지운 뒤 새로고침에서 되살아
+    난다(실측 2026-08-10의 학급 사진과 같은 부류의 결함이다).
+
+    선생님은 학급의 학생 방을 **볼 수** 있고(`sessions_select`), 그래서 목록에
+    남의 방이 뜬다 — 이 경로는 실제로 닿는다.
+    """
+    rows = await client.delete("sessions", {"id": f"eq.{session_id}"})
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or not yours.",
+        )
 
 
 async def get_session(client: UserClient, session_id: str) -> dict[str, Any]:

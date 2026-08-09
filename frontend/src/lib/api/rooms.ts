@@ -12,6 +12,13 @@ export interface RoomRow {
   space_name: string | null;
   /** 이 방에서 **많이 이야기한 순** 분류. */
   concepts: string[];
+  /**
+   * 내 방인가 — 이름 변경·삭제는 주인만 된다(RLS).
+   *
+   * 선생님은 학급의 학생 방까지 목록에서 볼 수 있어서, 이 값이 없으면 화면이
+   * **할 수 없는 일을 권하게 된다**.
+   */
+  is_mine: boolean;
 }
 
 /** 한 공간의 대화방 — 최근 순. */

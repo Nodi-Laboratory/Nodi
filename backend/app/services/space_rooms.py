@@ -74,7 +74,12 @@ async def _concepts_by_session(
     }
 
 
-def _row(s: dict[str, Any], concepts: list[str], space_name: str | None = None) -> dict[str, Any]:
+def _row(
+    s: dict[str, Any],
+    concepts: list[str],
+    space_name: str | None = None,
+    me: str | None = None,
+) -> dict[str, Any]:
     return {
         "id": str(s["id"]),
         "title": s.get("title") or "",
@@ -83,6 +88,10 @@ def _row(s: dict[str, Any], concepts: list[str], space_name: str | None = None) 
         "space_ref": str(s.get("space_ref")),
         "space_name": space_name,
         "concepts": concepts,
+        # **내 방인가.** 선생님은 학급의 학생 방까지 볼 수 있어서(RLS
+        # `sessions_select`) 목록에 남의 방이 섞인다. 이름 변경·삭제는 주인만
+        # 되므로(RLS), 화면이 그 구분을 알아야 **할 수 없는 일을 권하지 않는다**.
+        "is_mine": str(s.get("owner_id") or "") == str(me or ""),
     }
 
 
@@ -99,7 +108,7 @@ async def rooms(
         {
             "space_kind": f"eq.{space_kind}",
             "space_ref": f"eq.{ref}",
-            "select": "id,title,updated_at,space_kind,space_ref",
+            "select": "id,title,updated_at,space_kind,space_ref,owner_id",
             "order": "updated_at.desc",
             "limit": str(_ROOMS),
         },
@@ -109,7 +118,7 @@ async def rooms(
         concepts = await _concepts_by_session(client, [str(s["id"]) for s in sessions])
     except Exception:  # noqa: BLE001 - 칩이 없다고 목록을 막지 않는다
         logger.warning("방별 개념 집계 실패: %s/%s", space_kind, ref, exc_info=True)
-    return [_row(s, concepts.get(str(s["id"]), [])) for s in sessions]
+    return [_row(s, concepts.get(str(s["id"]), []), me=user_id) for s in sessions]
 
 
 async def recent(client: UserClient, user_id: str) -> list[dict[str, Any]]:
@@ -128,7 +137,7 @@ async def recent(client: UserClient, user_id: str) -> list[dict[str, Any]]:
         "sessions",
         {
             "space_ref": f"in.({','.join(refs)})",
-            "select": "id,title,updated_at,space_kind,space_ref",
+            "select": "id,title,updated_at,space_kind,space_ref,owner_id",
             "order": "updated_at.desc",
             "limit": str(_RECENT),
         },
@@ -147,6 +156,7 @@ async def recent(client: UserClient, user_id: str) -> list[dict[str, Any]]:
             "개인 세션"
             if s.get("space_kind") == "personal"
             else names.get(str(s.get("space_ref"))),
+            me=user_id,
         )
         for s in sessions
     ]

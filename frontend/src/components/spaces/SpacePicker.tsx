@@ -145,6 +145,8 @@ export function SpacePicker() {
   const [msg, setMsg] = useState<string | null>(null);
   /** 팝업으로 펼친 공간. null이면 안 펼쳤다. */
   const [picked, setPicked] = useState<SpaceOverview | null>(null);
+  /** 방을 고치다 생긴 말 — 팝업 안에 뜬다. */
+  const [roomMsg, setRoomMsg] = useState<string | null>(null);
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
 
@@ -205,20 +207,41 @@ export function SpacePicker() {
     router.push(`/space/${spaceId}`);
   };
 
-  const renameRoom = async (room: RoomRow, title: string) => {
-    await patchSession(room.id, title);
+  /**
+   * 방 목록을 다시 읽는다. 셋을 함께 — 이름·개수가 세 화면에 흩어져 있다.
+   */
+  const refreshRooms = async () => {
     await qc.invalidateQueries({ queryKey: ["spaces", "rooms"] });
     await qc.invalidateQueries({ queryKey: ["spaces", "recent"] });
+    await qc.invalidateQueries({ queryKey: ["spaces", "overview"] });
+  };
+
+  /**
+   * ⚠️ **실패를 삼키지 않는다.**
+   *
+   * 이름 변경·삭제는 주인만 된다(RLS). 화면은 이제 남의 방에 ⋮를 안 붙이지만,
+   * 그 사이에 다른 곳에서 지워졌거나 서버가 안 될 수 있다 — 그때 아무 말도
+   * 없으면 학생은 **눌렀는데 안 됐다는 것조차** 모른다.
+   */
+  const renameRoom = async (room: RoomRow, title: string) => {
+    try {
+      await patchSession(room.id, title);
+      await refreshRooms();
+    } catch {
+      setRoomMsg("이름을 바꾸지 못했어요. 잠시 뒤 다시 해 주세요.");
+    }
   };
 
   const removeRoom = async (room: RoomRow) => {
     // 지우는 것은 되돌릴 수 없다 — 방 안의 카드가 함께 사라진다.
     if (!window.confirm(`"${room.title.trim() || "제목 없는 대화"}" 대화방을 삭제할까요?`))
       return;
-    await deleteSession(room.id);
-    await qc.invalidateQueries({ queryKey: ["spaces", "rooms"] });
-    await qc.invalidateQueries({ queryKey: ["spaces", "recent"] });
-    await qc.invalidateQueries({ queryKey: ["spaces", "overview"] });
+    try {
+      await deleteSession(room.id);
+      await refreshRooms();
+    } catch {
+      setRoomMsg("대화방을 지우지 못했어요. 내가 만든 방만 지울 수 있어요.");
+    }
   };
 
   /**
@@ -355,7 +378,11 @@ export function SpacePicker() {
           onOpen={openRoom}
           onRename={renameRoom}
           onDelete={removeRoom}
-          onClose={() => setPicked(null)}
+          message={roomMsg}
+          onClose={() => {
+            setRoomMsg(null);
+            setPicked(null);
+          }}
         />
       )}
     </div>
