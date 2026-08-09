@@ -139,17 +139,9 @@ export default function HomePage() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6">
-      <header className="shrink-0">
-        <h1 className="text-2xl font-bold text-fg">
-          {displayName ? `${displayName} 님의 개념 지도` : "개념 지도"}
-        </h1>
-        <p className="mt-1 text-sm text-fg-muted">
-          지금까지 대화한 개념이 비슷한 것끼리 뭉쳐 있습니다. 확대하면 낱개가
-          보이고, 누르면 그 대화로 갑니다.
-        </p>
-      </header>
-
+    /* 여백을 넉넉히 준다(사용자 지시 2026-08-09) — 상자가 화면 가장자리에
+       붙어 있으면 캔버스가 페이지 전체로 번져 보인다. */
+    <div className="flex h-full flex-col px-10 py-8">
       {/**
        * 지도 박스 (D191의 그 상자다, 사용자 지시 2026-08-09로 되돌렸다).
        *
