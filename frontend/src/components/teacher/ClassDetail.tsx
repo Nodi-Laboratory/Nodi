@@ -6,6 +6,7 @@ import { useTeacherOverview } from "@/lib/queries";
 import { TeacherHeader } from "./TeacherHeader";
 import { StudentsTab } from "./StudentsTab";
 import { MaterialsTab } from "./MaterialsTab";
+import { ClassAvatarSetting } from "./ClassAvatarSetting";
 
 /**
  * D67: 학급 상세 — 현 TeacherPanel 본문(학생 대화 열람 / 자료실 탭) 이전.
@@ -76,7 +77,10 @@ export function ClassDetail({ classId }: { classId: string }) {
         {tab === "students" ? (
           <StudentsTab key={classId} classId={classId} />
         ) : (
-          <div className="h-full overflow-auto">
+          <div className="flex h-full flex-col gap-4 overflow-auto p-4">
+            {/* 학급 사진은 자료실에 둔다 (사용자 지시 2026-08-09) — 학생에게
+                보여 줄 것을 모아 두는 탭이라 여기가 맞다. */}
+            <ClassAvatarSetting classId={classId} />
             <MaterialsTab key={classId} classId={classId} />
           </div>
         )}

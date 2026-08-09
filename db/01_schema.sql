@@ -157,7 +157,10 @@ CREATE TABLE public.classes (
     name text NOT NULL,
     join_code text NOT NULL,
     teacher_id uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    -- 학급 프로필 사진의 Storage 경로 (사용자 지시 2026-08-09).
+    -- 서명 URL은 저장하지 않는다 — 만료되면 깨진 주소가 남는다(D87).
+    avatar_path text
 );
 
 CREATE FUNCTION public.create_class(p_name text) RETURNS public.classes

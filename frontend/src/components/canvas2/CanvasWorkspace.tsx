@@ -39,7 +39,8 @@ import type { CanvasItem, ToolName } from "@/lib/canvas2/types";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import { spaceTargetFromId } from "@/lib/api";
 import { useSessionDetail, useSessions } from "@/lib/queries";
-import { intersects, union, type Rect } from "@/lib/canvas2/rect";
+import { useMyClasses } from "@/lib/hooks";
+import { intersects, type Rect } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
@@ -59,7 +60,6 @@ import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
 import { useQuestionCoach } from "@/lib/canvas2/useQuestionCoach";
 import { CoachBubble } from "./CoachBubble";
 import { navigate, type NavDir } from "@/lib/canvas2/navigate";
-import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
 import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
@@ -287,7 +287,14 @@ export function CanvasWorkspace({ spaceId }: Props) {
     },
     [],
   );
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  /**
+   * 지난 대화 서랍은 **사이드바가 연다** (사용자 지시 2026-08-09).
+   *
+   * 예전에는 캔버스 좌상단 삼선 버튼이 자기 state로 열고 닫았다. 이제 여는
+   * 곳이 캔버스 밖이라 스토어를 함께 본다.
+   */
+  const historyOpen = useWorkspaceStore((s) => s.historyOpen);
+  const setHistoryOpen = useWorkspaceStore((s) => s.setHistoryOpen);
   const [uploadError, setUploadError] = useState<string | null>(null);
   /** 가지 한가운데를 떼어내려는 중 — 아래를 어떻게 할지 묻는다 (D156). */
   const [split, setSplit] = useState<{ id: string; tag: string | null } | null>(null);
@@ -1206,21 +1213,19 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [sessionId, createNote, nextSeq, setTool],
   );
 
-  // 화면 배율 — 뷰포트 중앙을 기준으로 확대·축소한다(커서 기준은 휠이 맡는다).
+  /**
+   * 카메라를 옮기는 데 쓰는 손잡이들.
+   *
+   * ⚠️ 화면 배율 버튼(`handleZoom`)과 전체 보기(`handleFit`)는 **2026-08-09에
+   * 걷어냈다** — 캔버스 좌상단의 `[− 000% +  ⤢]` 막대를 없애라는 지시를
+   * 따르면서 그 둘을 부르는 곳이 사라졌다. 배율은 휠·Ctrl+휠이 하고,
+   * 둘러보기는 지도가 맡는다(분류·카드를 누르면 그 자리로 간다).
+   *
+   * 되살릴 일이 생기면 git에 그대로 있다. 안 부르는 코드를 남겨 두면 다음
+   * 사람이 살아 있는 경로로 읽는다.
+   */
   const { flyTo } = spring;
-  const { cameraRef, getObstacles } = bridge;
-  const handleZoom = useCallback(
-    (factor: number) => {
-      const c = cameraRef.current;
-      const { w, h } = viewport();
-      const next = Math.min(2.5, Math.max(0.2, c.zoom * factor));
-      // 화면 중앙의 world 점을 고정한 채 배율만 바꾼다.
-      const cx = w / 2 / c.zoom - c.scrollX;
-      const cy = h / 2 / c.zoom - c.scrollY;
-      flyTo({ zoom: next, scrollX: w / 2 / next - cx, scrollY: h / 2 / next - cy });
-    },
-    [cameraRef, flyTo],
-  );
+  const { cameraRef } = bridge;
 
   /**
    * 질문 방향성 코치 (D194) — 규칙·문구·자리 계산은 훅이 가진다.
@@ -1236,47 +1241,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     pickedId,
     patch,
   });
-
-  const handleFit = useCallback(() => {
-    /**
-     * **화면에 그려진 상자를 잰다** — 배치 맵이 아니라.
-     *
-     * 예전에는 `layout.positions`·`layout.sizes`로 상자를 만들었는데, 방금
-     * 답이 끝난 카드의 크기가 아직 옛 값이라 상자가 작게 잡혔다. 그래서
-     * **한 번 눌러서는 안 맞고 세 번 눌러야 맞았다**(실측 2026-08-07:
-     * 배율 0.806 → 0.679 → 0.438, 필요한 값은 0.438). 학생 눈에는 "전체
-     * 보기를 눌렀는데 카드가 아직 화면 밖"이다 — 그러면 그 버튼을 안 믿는다.
-     *
-     * 아이템은 월드 좌표로 절대 배치되고 `offsetWidth/Height`는 transform
-     * 배율의 영향을 받지 않으므로, DOM 값이 그대로 월드 단위다.
-     */
-    const rects = items
-      .map((i) => {
-        const el = document.querySelector<HTMLElement>(
-          `[data-canvas-item="${CSS.escape(i.id)}"]`,
-        );
-        if (el) {
-          return {
-            x: parseFloat(el.style.left) || 0,
-            y: parseFloat(el.style.top) || 0,
-            w: el.offsetWidth || ITEM_W,
-            h: el.offsetHeight || FALLBACK_H,
-          };
-        }
-        // 아직 안 그려진 것(첫 프레임)은 배치 맵으로 어림한다.
-        const p = layout.positions.get(i.id);
-        if (!p) return null;
-        const s = layout.sizes.get(i.id) ?? { w: ITEM_W, h: FALLBACK_H };
-        return { x: p.x, y: p.y, w: s.w, h: s.h };
-      })
-      .filter((r): r is NonNullable<typeof r> => !!r);
-    const box = union([...rects, ...getObstacles()]);
-    if (!box) return;
-    const { w, h } = viewport();
-    const pad = 140;
-    const zoom = Math.min(1.2, Math.max(0.2, Math.min((w - pad) / box.w, (h - pad) / box.h)));
-    flyTo(cameraForRect(box, { w, h }, zoom));
-  }, [items, layout, getObstacles, flyTo]);
 
   const vp = useViewport();
 
@@ -1870,6 +1834,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 이름은 **세션 목록**에 이미 있다(사이드바가 쓰는 그 질의다). 같은 캐시를
    * 읽으므로 요청이 늘지 않고, 이름을 바꾸면 목록과 상단 바가 함께 바뀐다.
    */
+  /**
+   * 상단 바에 뜨는 **학급 이름** (사용자 지시 2026-08-09).
+   *
+   * 사이드바에서 학급 동그라미가 사라져 지금 어느 학급인지 알 길이 없어졌다.
+   * 개인 공간이면 null이고, 그때 상단 바는 "개인 세션"이라고 쓴다.
+   *
+   * 출처는 **이미 받아 둔 내 학급 목록**이다 — 이 화면 때문에 요청을 새로
+   * 내지 않는다(사이드바가 쓰던 그 질의다).
+   */
+  const { data: myClasses } = useMyClasses();
+  const spaceName =
+    spaceId === "personal"
+      ? null
+      : (myClasses ?? []).find((m) => m.class_id === spaceId)?.classes?.name ?? "학급";
+
   const sessionList = useSessions(target);
   const sessionTitle =
     sessionList.data?.find((s) => s.id === sessionId)?.title?.trim() ||
@@ -2176,16 +2155,10 @@ export function CanvasWorkspace({ spaceId }: Props) {
               원래 보던 곳으로
             </button>
           ) : null}
-          <CanvasTopBar
-            title={sessionTitle}
-            zoom={bridge.camera.zoom}
-            onOpenSessions={() => setDrawerOpen(true)}
-            onZoom={handleZoom}
-            onFit={handleFit}
-          />
+          <CanvasTopBar spaceName={spaceName} sessionTitle={sessionTitle} />
           <SessionDrawer
-            open={drawerOpen}
-            onClose={() => setDrawerOpen(false)}
+            open={historyOpen}
+            onClose={() => setHistoryOpen(false)}
             target={target}
           />
           {/* **비었다고 말하기 전에 비었는지 알아야 한다.**

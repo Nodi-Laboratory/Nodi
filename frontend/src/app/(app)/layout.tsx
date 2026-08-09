@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { IconSidebar } from "@/components/sidebar/IconSidebar";
+import IconSidebar from "@/components/sidebar/IconSidebar";
 import { StudentShellGuard } from "@/components/auth/StudentShellGuard";
 
 /**

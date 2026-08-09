@@ -1,114 +1,59 @@
 "use client";
 
 /**
- * 캔버스 좌상단 바 — 대화 목록 · 줌.
+ * 캔버스 상단 바 — **여기가 어디인지만 말한다** (사용자 지시 2026-08-09).
  *
- * v1의 `TopBar`를 대체한다. 도구는 우측 레일이 전부 가져갔으므로 여기는
- * **세션 전환**과 **화면 배율**만 남는다.
+ * 예전에는 이 자리에 [삼선 + 대화방 이름] 버튼과 [− 000% +] 줌 막대가 있었다.
+ * 둘 다 걷어냈다:
  *
- * "재배치" 버튼도 여기 있었다(D143). 사용자 지시 2026-08-08로 걷어냈다 —
- * D210 1단계가 `ReflowButton`을 없앤 것과 같은 이유다. 학생이 자리를 손으로
- * 정하는 캔버스에서 **자리를 통째로 흔드는 버튼**은 방해에 가깝다.
+ *   · 삼선(대화 목록)  → 사이드바의 **기록**이 맡는다
+ *   · 줌 막대          → 휠·Ctrl+휠로 하고, 미니맵에도 같은 버튼이 있다
  *
- * 세션 전환이 없으면 학생이 지난 대화로 돌아갈 수 없다 — 캔버스를 새로
- * 만들면서 조용히 없애면 안 되는 기능이다.
+ * 비운 이유가 중요하다. 그 자리는 **미니맵이 붙을 수 있는 네 모서리 중
+ * 하나**인데, 버튼 둘이 점유하고 있어서 좌상단만 쓸 수 없었다.
+ *
+ * 사이드바에서 학급 동그라미가 사라지면서 **지금 어느 학급의 어느 대화방인지**
+ * 알 길이 없어졌다. 그것을 여기가 말한다. 누를 수 없다 — 알려 주는 것 외에
+ * 아무 일도 하지 않는다(사용자 지시).
  */
 
-import { Maximize2, Menu, Minus, Plus } from "lucide-react";
-
 interface Props {
-  title: string;
-  zoom: number;
-  onOpenSessions: () => void;
-  onZoom: (delta: number) => void;
-  onFit: () => void;
+  /** 학급 이름. 개인 세션이면 null. */
+  spaceName: string | null;
+  /** 대화방 이름. */
+  sessionTitle: string;
 }
 
-export function CanvasTopBar({
-  title,
-  zoom,
-  onOpenSessions,
-  onZoom,
-  onFit,
-}: Props) {
+export function CanvasTopBar({ spaceName, sessionTitle }: Props) {
   return (
     <div
       data-no-pan
+      data-canvas-crumb
       /* 크롬 배율 (`lib/ui/scale.ts`). */
       style={{ zoom: "var(--ui-scale, 1)" }}
-      className="ui absolute left-4 top-4 z-30 flex items-center gap-2"
+      className="ui pointer-events-none absolute left-4 top-4 z-30 flex items-center"
     >
-      <button
-        type="button"
-        onClick={onOpenSessions}
-        // 접근 이름이 세션 제목뿐이라 무엇을 하는 버튼인지 안 읽혔다.
-        aria-label="대화 목록 열기"
-        className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-sm transition-colors"
+      <span
+        className="label max-w-[46ch] truncate rounded-lg border px-2.5 py-1.5 text-[13px]"
         style={{
           background: "var(--c-raised)",
           borderColor: "var(--c-rule)",
-          color: "var(--c-ink)",
+          color: "var(--c-ink-soft)",
           boxShadow: "var(--c-shadow-sm)",
         }}
       >
-        <Menu size={15} style={{ color: "var(--c-ink-soft)" }} />
-        <span className="max-w-40 truncate">{title}</span>
-      </button>
-
-      <div
-        className="flex items-center rounded-lg border"
-        style={{
-          background: "var(--c-raised)",
-          borderColor: "var(--c-rule)",
-          boxShadow: "var(--c-shadow-sm)",
-        }}
-      >
-        <ZoomButton label="축소" onClick={() => onZoom(1 / 1.25)}>
-          <Minus size={14} />
-        </ZoomButton>
-        <button
-          type="button"
-          onClick={onFit}
-          // 글자가 배율(42%)이라 **접근 이름이 "42%"가 된다** — 낭독기로는
-          // 이 버튼이 무엇을 하는지 알 수 없다. 이름을 따로 준다.
-          aria-label="전체 보기"
-          title="전체 보기"
-          className="label px-1.5 py-1.5 tabular-nums transition-colors hover:bg-[var(--c-sunk)]"
-          style={{ color: "var(--c-ink-soft)", minWidth: 46 }}
-        >
-          {Math.round(zoom * 100)}%
-        </button>
-        <ZoomButton label="확대" onClick={() => onZoom(1.25)}>
-          <Plus size={14} />
-        </ZoomButton>
-        <span className="my-1.5 w-px self-stretch" style={{ background: "var(--c-rule)" }} />
-        <ZoomButton label="전체 보기" onClick={onFit}>
-          <Maximize2 size={13} />
-        </ZoomButton>
-      </div>
+        {spaceName ? (
+          <>
+            <span style={{ color: "var(--c-ink)" }}>{spaceName}</span> 학급{" "}
+            <span style={{ color: "var(--c-ink)" }}>{sessionTitle}</span> 대화방
+          </>
+        ) : (
+          <>
+            <span style={{ color: "var(--c-ink)" }}>개인</span> 세션{" "}
+            <span style={{ color: "var(--c-ink)" }}>{sessionTitle}</span> 대화방
+          </>
+        )}
+      </span>
     </div>
-  );
-}
-
-function ZoomButton({
-  label,
-  onClick,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className="flex h-8 w-8 items-center justify-center transition-colors hover:bg-[var(--c-sunk)]"
-      style={{ color: "var(--c-ink-soft)" }}
-    >
-      {children}
-    </button>
   );
 }

@@ -34,13 +34,16 @@ describe("가장 가까운 모서리", () => {
     }
   });
 
-  it("좌상단은 후보에서 빠졌다 (D211 9)", () => {
-    /**
-     * 거기에는 대화 목록·배율 버튼이 있어 미니맵이 가려 버린다. 좌상단 자리에
-     * 놓아도 **다른 모서리**로 간다 — 갈 수 없는 자리는 애초에 목록에 없다.
-     */
-    expect(CORNERS).not.toContain("tl");
-    expect(nearestCorner(cornerPos("tl", VP, BOX), VP, BOX)).not.toBe("tl");
+  /**
+   * 좌상단이 **2026-08-09에 돌아왔다** (사용자 지시).
+   *
+   * D211 9에서 뺐던 이유는 거기 대화 목록·배율 버튼이 있어 미니맵이 가려
+   * 버린다는 것이었는데, 그 두 버튼을 걷어내면서 자리가 비었다. 남은 것은
+   * "어느 학급 어느 대화방" 글자 한 줄이고 `pointer-events: none`이다.
+   */
+  it("네 모서리를 다 쓴다", () => {
+    expect([...CORNERS].sort()).toEqual(["bl", "br", "tl", "tr"]);
+    expect(nearestCorner(cornerPos("tl", VP, BOX), VP, BOX)).toBe("tl");
   });
 
   it("왼쪽 가장자리 한가운데는 **왼쪽** 모서리로 간다", () => {
@@ -50,7 +53,7 @@ describe("가장 가까운 모서리", () => {
      * 재면 왼쪽 둘 중 하나가 나온다.
      */
     const 왼쪽중앙 = { x: SNAP_MARGIN, y: (VP.h - BOX.h) / 2 };
-    expect(nearestCorner(왼쪽중앙, VP, BOX)).toBe("bl");
+    expect(["tl", "bl"]).toContain(nearestCorner(왼쪽중앙, VP, BOX));
   });
 
   it("오른쪽 아래로 끌면 br", () => {
