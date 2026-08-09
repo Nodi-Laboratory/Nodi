@@ -77,3 +77,56 @@ async def test_보존_기간이_관리자_화면보다_짧지_않다():
     들어갔을 때 이미 지워져 있다."""
     assert retention.KEEP_DAYS["crosslink_runs"] >= 30
     assert retention.KEEP_DAYS["ai_logs"] >= 30
+
+
+class _BacklogSvc:
+    """밀린 표를 흉내 낸다 — 지울 것이 `남은수`만큼 있다."""
+
+    def __init__(self, 남은수: int) -> None:
+        self.남은 = {t: 남은수 for t in retention.KEEP_DAYS}
+        self.호출수 = {t: 0 for t in retention.KEEP_DAYS}
+
+    async def prune_older_than(
+        self,
+        table: str,
+        days: int,
+        *,
+        limit: int = 2000,
+        statuses: tuple[str, ...] | None = None,
+    ) -> int:
+        self.호출수[table] += 1
+        n = min(limit, self.남은[table])
+        self.남은[table] -= n
+        return n
+
+
+async def test_밀린_것을_이어서_지운다():
+    """⚠️ 한 번만 지우면 하루 유입이 BATCH를 넘는 순간부터 영영 못 따라잡는다.
+
+    아무도 오류를 안 보므로 몇 달 뒤 디스크로 알게 되는 종류다.
+    """
+    svc = _BacklogSvc(retention.BATCH * 3 + 7)
+    out = await retention.sweep(svc)
+
+    for table in retention.KEEP_DAYS:
+        assert out[table] == retention.BATCH * 3 + 7, "밀린 것을 다 못 지웠다"
+        # 마지막 한 번은 배치를 못 채운다 — 거기서 멈춘다.
+        assert svc.호출수[table] == 4
+
+
+async def test_지울_것이_없으면_한_번만_묻는다():
+    svc = _BacklogSvc(0)
+    await retention.sweep(svc)
+    assert all(n == 1 for n in svc.호출수.values())
+
+
+async def test_상한을_넘게_밀렸으면_거기서_멈춘다(caplog):
+    """한 바퀴가 표를 붙잡고 늘어지지 않게. 남은 것은 다음 바퀴가 받는다."""
+    svc = _BacklogSvc(retention.BATCH * (retention.MAX_PASSES + 5))
+    out = await retention.sweep(svc)
+
+    for table in retention.KEEP_DAYS:
+        assert svc.호출수[table] == retention.MAX_PASSES
+        assert out[table] == retention.BATCH * retention.MAX_PASSES
+    # 유입이 정리보다 빠르면 사람이 알아야 한다.
+    assert "상한" in caplog.text
