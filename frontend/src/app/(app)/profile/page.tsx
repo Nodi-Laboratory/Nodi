@@ -82,6 +82,8 @@ export default function ProfilePage() {
   };
 
   return (
+    /* 배경은 **베이지** (사용자 지시 2026-08-09) — 세션 화면과 한 벌이다. */
+    <div className="min-h-full w-full" style={{ background: "#f5efe1" }}>
     <div className="mx-auto flex max-w-2xl flex-col gap-8 p-8">
       <header className="flex items-start justify-between">
         <div>
@@ -189,6 +191,7 @@ export default function ProfilePage() {
           )}
         </div>
       </section>
+    </div>
     </div>
   );
 }
