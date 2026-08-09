@@ -222,5 +222,7 @@ test("지도 위에서 휠을 굴려도 페이지는 안 움직인다", async ({
   // 확대 손잡이가 실제로 붙어 있다 — 없으면 배율을 바꿀 표시가 화면에 없다.
   await expect(page.getByRole("button", { name: "지도 확대" })).toBeVisible();
   await expect(page.getByRole("button", { name: "지도 축소" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "지도 전체 보기" })).toBeVisible();
+  // **전체 보기(⤢)는 없다**(사용자 지시 2026-08-09) — 지도가 배경이 되면서
+  // "전부 담아 보기"의 값이 사라졌다. 처음 그릴 때 이미 담아 맞춘다.
+  await expect(page.getByRole("button", { name: "지도 전체 보기" })).toHaveCount(0);
 });

@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
-import { createNote, loginAndOpenCanvas, openFreshSession } from "./helpers";
+import { createNote, loginAndOpenCanvas, openFreshSession, setAskPen } from "./helpers";
 
 /**
  * D178 E2E — 표시가 무엇을 가리키는지 함께 보낸다.
@@ -96,12 +96,24 @@ async function captureRequest(page: Page): Promise<() => Request | null> {
   return () => seen;
 }
 
-async function pickAskPen(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "질문하는 펜" }).click();
+/**
+ * 질문하는 펜을 켜고, **그 순간의 획 수**를 돌려준다.
+ *
+ * ⚠️ 0에서 시작한다고 믿으면 안 된다. `openFreshSession`이 여는 "빈 대화"는
+ * D202로 **재사용된 방**일 수 있고, 그 방의 씬에는 앞선 스펙이 남긴 질문 획이
+ * 그대로 있다(질문 획은 `customData.nodiAsk`로 영속되는 것이 D176의 성질이다).
+ * 실측 2026-08-09: `ask-ink` 뒤에 이 스펙을 돌리면 2획이 3획으로 셌고, 혼자
+ * 돌리면 통과했다 — **순서에 기대는 초록불**이다.
+ *
+ * 그래서 이 스펙은 "몇 획인가"가 아니라 **"몇 획 늘었나"**를 잰다.
+ */
+async function pickAskPen(page: Page): Promise<number> {
+  await setAskPen(page, true);
   await expect(page.locator('[data-testid="ask-ink"]')).toHaveAttribute(
     "data-phase",
     /writing|review/,
   );
+  return Math.max(0, await strokes(page));
 }
 
 test.beforeEach(async ({ page }) => {
@@ -113,11 +125,11 @@ test("카드 옆에서 쓰면 도식과 카드 명부가 함께 나간다", asyn
   const note = await createNote(page, "지질학 설명", { x: 420, y: 300 });
   const got = await captureRequest(page);
 
-  await pickAskPen(page);
+  const base = await pickAskPen(page);
   // 카드 **바로 옆**에 쓴다 — 근접 반경(기본 120 월드px) 안이어야 한다.
   await stroke(page, 300, 300, [[0, 40]]);
   await stroke(page, 320, 320, [[40, 0]]);
-  await expect.poll(() => strokes(page)).toBe(2);
+  await expect.poll(() => strokes(page)).toBe(base + 2);
 
   await page.locator('[data-testid="ink-recognize"]').click();
   await expect(page.getByLabel("질문 입력")).toHaveValue("이거 더 설명해줘");
@@ -149,7 +161,7 @@ test("동그라미를 치면 표시 목록이 함께 나간다", async ({ page }
   const note = await createNote(page, "지질학 설명", { x: 420, y: 300 });
   const got = await captureRequest(page);
 
-  await pickAskPen(page);
+  const base = await pickAskPen(page);
   // 카드를 크게 한 바퀴 두른다 — 닫힌 고리라야 감쌈으로 읽힌다.
   const ring: [number, number][] = [];
   for (let i = 1; i <= 28; i++) {
@@ -157,7 +169,7 @@ test("동그라미를 치면 표시 목록이 함께 나간다", async ({ page }
     ring.push([Math.cos(t) * 260 - 260, Math.sin(t) * 150]);
   }
   await stroke(page, 700, 340, ring);
-  await expect.poll(() => strokes(page)).toBe(1);
+  await expect.poll(() => strokes(page)).toBe(base + 1);
 
   await page.locator('[data-testid="ink-recognize"]').click();
   await expect(page.getByLabel("질문 입력")).toHaveValue("이거 더 설명해줘");
@@ -180,11 +192,11 @@ test("동그라미를 치면 표시 목록이 함께 나간다", async ({ page }
 test("가까운 카드가 없으면 도식을 안 보낸다", async ({ page }) => {
   const got = await captureRequest(page);
 
-  await pickAskPen(page);
+  const base = await pickAskPen(page);
   // 빈 세션이라 카드가 아예 없다 — 가리킬 후보가 없으면 비전을 부를 이유가 없다.
   await stroke(page, 300, 260, [[0, 60]]);
   await stroke(page, 280, 300, [[60, 0]]);
-  await expect.poll(() => strokes(page)).toBe(2);
+  await expect.poll(() => strokes(page)).toBe(base + 2);
 
   await page.locator('[data-testid="ink-recognize"]').click();
   await expect(page.getByLabel("질문 입력")).toHaveValue("이거 더 설명해줘");
@@ -199,10 +211,10 @@ test("도식은 한 변 상한 안이고, 손글씨 그림보다 넓다", async 
   await createNote(page, "천문학 설명", { x: 420, y: 300 });
   const got = await captureRequest(page);
 
-  await pickAskPen(page);
+  const base = await pickAskPen(page);
   await stroke(page, 300, 300, [[0, 40]]);
   await stroke(page, 320, 320, [[40, 0]]);
-  await expect.poll(() => strokes(page)).toBe(2);
+  await expect.poll(() => strokes(page)).toBe(base + 2);
   await page.locator('[data-testid="ink-recognize"]').click();
   await expect(page.getByLabel("질문 입력")).toHaveValue("이거 더 설명해줘");
 

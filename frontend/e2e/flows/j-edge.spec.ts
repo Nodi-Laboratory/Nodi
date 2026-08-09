@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { loginAndOpenCanvas } from "../helpers";
+import { loginAndOpenCanvas, setAskPen } from "../helpers";
 
 /**
  * 플로우 J91–J100 — 경계·회복·접근성 (docs/TEST-FLOWS.md).
@@ -31,7 +31,7 @@ test("J93 교실 노트북(1366×768)에서 UI가 서로 안 겹친다", async (
 
   const bar = (await page.getByLabel("질문 입력").boundingBox())!;
   const rail = (await page
-    .getByRole("button", { name: "선택", exact: true })
+    .getByRole("button", { name: "선택·이동", exact: true })
     .boundingBox())!;
   // 입력창과 도구 레일이 겹치면 둘 중 하나를 못 쓴다.
   expect(bar.x + bar.width).toBeLessThan(rail.x + rail.width);
@@ -73,8 +73,8 @@ test("J98 주요 흐름에서 콘솔 오류가 0건이다", async ({ page }) => 
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));
 
   await loginAndOpenCanvas(page);
-  await page.getByRole("button", { name: "질문하는 펜" }).click();
-  await page.getByRole("button", { name: "선택", exact: true }).click();
+  await setAskPen(page, true);
+  await page.getByRole("button", { name: "선택·이동", exact: true }).click();
   await page.getByRole("button", { name: "지난 대화" }).click();
   await page.keyboard.press("Escape");
   await page.goto("/home");

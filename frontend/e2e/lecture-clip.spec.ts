@@ -64,9 +64,15 @@ async function openFreshSession(page: Page) {
   await page.getByTitle("새 대화").click();
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
   await expect(page.locator("[data-canvas-item]")).toHaveCount(0, { timeout: 20_000 });
-  // 서랍이 캔버스를 가리면 클릭·스크린샷이 어긋난다. 닫고 시작한다.
-  const close = page.getByRole("button", { name: "닫기" }).first();
-  if (await close.isVisible().catch(() => false)) await close.click();
+  /**
+   * 서랍이 캔버스를 가리면 클릭·스크린샷이 어긋난다. 닫고 시작한다.
+   *
+   * ⚠️ [닫기]를 **누르지 않는다.** 대화를 고르면 서랍이 스스로 닫히므로(D173)
+   * 그 버튼은 눌리기 전에 사라진다 — 실측 2026-08-09: "element was detached
+   * from the DOM"으로 180초를 기다렸다. Esc는 이미 닫힌 뒤에 눌러도 무해하다.
+   */
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden({ timeout: 10_000 });
 }
 
 test.describe("EBS 강의 클립 추천", () => {

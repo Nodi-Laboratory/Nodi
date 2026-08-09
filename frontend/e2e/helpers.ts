@@ -91,6 +91,36 @@ export async function openFreshSession(page: Page): Promise<void> {
 }
 
 /**
+ * 도구를 고른다 — **묶음은 펼쳐야 나온다** (사용자 지시 2026-08-09).
+ *
+ * 도구바가 짧아지면서 펜(연필·형광펜·글 쓰기)과 도형(네모·세모·별·화살표·선)이
+ * 각각 한 단추 뒤로 접혔다. 스펙마다 "먼저 펴고 고른다"를 적어 두면 다음에
+ * 묶음이 바뀔 때 전부 고쳐야 하므로 여기 한곳에 둔다.
+ */
+const PEN_GROUP = ["자유선", "형광펜", "글 쓰기"];
+const SHAPE_GROUP = ["네모", "세모", "별", "화살표", "선"];
+
+export async function selectTool(page: Page, label: string): Promise<void> {
+  const group = PEN_GROUP.includes(label)
+    ? "펜"
+    : SHAPE_GROUP.includes(label)
+      ? "도형"
+      : null;
+  if (group) await page.getByRole("button", { name: group, exact: true }).click();
+  await page.getByRole("button", { name: label, exact: true }).click();
+}
+
+/**
+ * 질문하는 펜을 켜고 끈다 — **입력창 왼쪽 토글**이다 (사용자 지시 2026-08-09).
+ *
+ * 도구 레일에서 뺐다. 자판으로 물을지 손으로 써서 물을지는 "무엇을 그릴까"가
+ * 아니라 "어떻게 물을까"라, 물음이 시작되는 자리에 있어야 한다.
+ */
+export async function setAskPen(page: Page, on: boolean): Promise<void> {
+  await page.getByLabel(on ? "펜으로 써서 묻기" : "자판으로 묻기").click();
+}
+
+/**
  * 손으로 글 노트를 하나 만들고 텍스트를 저장한 뒤, **서버에 저장(진짜 id)**
  * 될 때까지 기다려 그 노트 Locator를 돌려준다.
  *
@@ -103,7 +133,7 @@ export async function createNote(
   pos: { x: number; y: number } = { x: 380, y: 280 },
 ): Promise<Locator> {
   // 글쓰기 도구 선택 후 빈 캔버스를 클릭 → 그 자리에 편집 중인 빈 노트가 생긴다.
-  await page.getByRole("button", { name: "글 쓰기" }).click();
+  await selectTool(page, "글 쓰기");
   await page.locator(".canvas2").click({ position: pos });
 
   const editor = page.getByLabel("본문 수정");

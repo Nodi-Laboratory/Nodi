@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { loginAndOpenCanvas, openFreshSession } from "./helpers";
+import { loginAndOpenCanvas, openFreshSession, selectTool, setAskPen } from "./helpers";
 
 /**
  * D176 E2E — 손으로 써서 묻기.
@@ -21,9 +21,9 @@ import { loginAndOpenCanvas, openFreshSession } from "./helpers";
  */
 test.describe.configure({ mode: "serial" });
 
-/** 도구 레일에서 **질문하는 펜**을 골라 캔버스를 종이로 만든다. */
+/** **입력창 왼쪽 토글**로 질문하는 펜을 켠다 (사용자 지시 2026-08-09). */
 async function pickAskPen(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "질문하는 펜" }).click();
+  await setAskPen(page, true);
   await expect(page.locator('[data-testid="ask-ink"]')).toHaveAttribute(
     "data-phase",
     /writing|review/,
@@ -204,7 +204,7 @@ test("일반 펜 획은 질문에 안 섞이고, 도구를 오가도 질문 획�
   await expect.poll(() => strokes(page)).toBe(1);
 
   // 일반 펜으로 그림을 하나 그린다 — 이건 질문이 아니다.
-  await page.getByRole("button", { name: "자유선", exact: true }).click();
+  await selectTool(page, "자유선");
   await stroke(page, 500, 260, [[60, 0], [60, 60]]);
   await page.waitForTimeout(600);
 
@@ -215,7 +215,7 @@ test("일반 펜 획은 질문에 안 섞이고, 도구를 오가도 질문 획�
   // **질문 획만 둘.** 일반 펜 획이 섞이면 3이 되고, 앞 획을 잃으면 1이 된다.
   await expect.poll(() => strokes(page)).toBe(2);
 
-  await page.getByRole("button", { name: "선택", exact: true }).click();
+  await page.getByRole("button", { name: "선택·이동", exact: true }).click();
 });
 
 test("보내는 그림은 획의 bbox만 잘라 담는다 — 흰 종이에 검은 획", async ({ page }) => {
@@ -322,7 +322,10 @@ test("어느 화면에서도 글자가 안 잡히고, 입력칸에서만 잡힌�
 
 test("펜으로 쓰는 동안 도구 레일이 손날에 안 바뀐다", async ({ page }) => {
   // 사용자 보고 2026-08-04: "펜으로 쓰니까 오른쪽의 도구 바가 계속 선택된다".
-  const rect = page.getByRole("button", { name: "사각형" });
+  //
+  // 겨냥은 **지우개**다 — 묶음(펜·도형) 안의 단추는 고르는 순간 접히므로
+  // 눌린 뒤의 상태를 그 자리에서 볼 수 없다(2026-08-09 도구바 재편).
+  const rect = page.getByRole("button", { name: "지우개", exact: true });
   await expect(rect).toHaveAttribute("aria-pressed", "false");
 
   const penMoves = () =>
