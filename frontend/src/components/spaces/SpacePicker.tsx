@@ -214,6 +214,15 @@ export function SpacePicker() {
     await qc.invalidateQueries({ queryKey: ["spaces", "rooms"] });
     await qc.invalidateQueries({ queryKey: ["spaces", "recent"] });
     await qc.invalidateQueries({ queryKey: ["spaces", "overview"] });
+    /**
+     * ⚠️ **캔버스 쪽 목록도 함께 턴다.**
+     *
+     * 방 이름은 세 곳에 나온다: 여기 팝업 · 캔버스 상단 바 · 지난 대화 서랍.
+     * 뒤의 둘은 `["sessions", …]` 캐시를 보는데, 그것을 안 털면 이름을 바꾸고
+     * 그 방에 들어갔을 때 **옛 이름이 그대로** 있다(캐시가 살아 있는 동안).
+     * 학생 눈에는 "바꿨는데 안 바뀌었다"이고, 다시 눌러 보게 만든다.
+     */
+    await qc.invalidateQueries({ queryKey: ["sessions"] });
   };
 
   /**
