@@ -38,7 +38,7 @@ import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem, ToolName } from "@/lib/canvas2/types";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import { spaceTargetFromId } from "@/lib/api";
-import { useSessionDetail } from "@/lib/queries";
+import { useSessionDetail, useSessions } from "@/lib/queries";
 import { intersects, union, type Rect } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
@@ -61,6 +61,7 @@ import { navigate, type NavDir } from "@/lib/canvas2/navigate";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
+import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
 import { uploadFile } from "@/lib/api";
 import { checkUploadFile } from "@/lib/uploadLimits";
 import { sessionFilesKey } from "@/lib/queries";
@@ -1785,7 +1786,22 @@ export function CanvasWorkspace({ spaceId }: Props) {
   );
 
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
-  const sessionTitle = detail?.session?.title?.trim() || "제목 없는 대화";
+  /**
+   * 상단 바에 뜨는 방 이름.
+   *
+   * ⚠️ **세션 상세(`detail`)에서 읽으면 안 된다** — 그 질의는 캔버스 스냅샷이
+   * 빈 옛 방에서만 돈다(2026-08-09에 건 게이트). 현대 방에서는 `detail`이
+   * 늘 없으므로 이름이 통째로 "제목 없는 대화"로 굳었다. 게이트를 넣은 그
+   * 커밋에서 같이 깨졌고, 요청이 하나 줄었다는 사실만 재느라 못 봤다.
+   *
+   * 이름은 **세션 목록**에 이미 있다(사이드바가 쓰는 그 질의다). 같은 캐시를
+   * 읽으므로 요청이 늘지 않고, 이름을 바꾸면 목록과 상단 바가 함께 바뀐다.
+   */
+  const sessionList = useSessions(target);
+  const sessionTitle =
+    sessionList.data?.find((s) => s.id === sessionId)?.title?.trim() ||
+    detail?.session?.title?.trim() ||
+    "제목 없는 대화";
 
   // 세션 컨텍스트 파일 첨부 (D83) — 업로드 후 칩 바가 상태를 보여 준다.
   const handleAttach = useCallback(
@@ -2281,10 +2297,22 @@ function UndoToast({ label, onUndo }: { label: string; onUndo: () => void }) {
  * 무언가를 하지만 이것만 화면을 바꾼다. 같은 크기로 두면 그 차이가 안 보인다.
  */
 function MapDoor({ onOpen }: { onOpen: () => void }) {
+  /**
+   * **문도 도구바를 피한다** (2026-08-09).
+   *
+   * 화면이 낮으면 규칙이 2단계로 넘어가 도구바가 지도와 같은 높이대에 서고,
+   * 지도가 `mapDx`만큼 왼쪽으로 물러난다(사용자 지시 2026-08-08: "도구 막대를
+   * 지도의 오른쪽에"). 미니맵은 그 값을 받아 쓰는데 **문은 안 받고 있었다** —
+   * 실측 2026-08-09(1280×620): 도구바가 `top` 모드로 올라온 뒤에도 문 x
+   * 1163..1264 · 도구바 x 1200..1264로 그대로 겹쳤다.
+   */
+  const chrome = useChromeFitValue();
   return (
     <button
       type="button"
       data-no-pan
+      /* 도구바가 피해 갈 대상이다 — `useChromeFit`이 이 표시를 찾는다. */
+      data-map-door
       onClick={onOpen}
       aria-label="개념 지도 열기"
       title="개념 지도"
@@ -2298,6 +2326,7 @@ function MapDoor({ onOpen }: { onOpen: () => void }) {
         borderColor: "var(--c-rule)",
         color: "var(--c-live)",
         boxShadow: "var(--c-shadow-md)",
+        transform: chrome.mapDx ? `translateX(${-chrome.mapDx}px)` : undefined,
       }}
     >
       <MapIcon size={scaled(26)} />
