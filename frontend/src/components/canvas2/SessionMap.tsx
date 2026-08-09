@@ -187,13 +187,16 @@ export function SessionMap({
       return { x: p.x, y: p.y, w: s.w, h: s.h };
     };
 
-    const byTag = new Map<string, { rects: Rect[] }>();
+    // `ids`는 **누를 때 갈 곳**을 위해 함께 모은다 (사용자 지시 2026-08-09).
+    // `items`가 seq 순서라 첫 id가 그 트리의 시작이다.
+    const byTag = new Map<string, { rects: Rect[]; ids: string[] }>();
     for (const it of items) {
       const r = rectOf(it.id);
       if (!r) continue;
       const tag = it.tag || UNTAGGED;
-      const cur = byTag.get(tag) ?? { rects: [] };
+      const cur = byTag.get(tag) ?? { rects: [], ids: [] };
       cur.rects.push(r);
+      cur.ids.push(it.id);
       byTag.set(tag, cur);
     }
     if (!byTag.size) return null;
@@ -277,6 +280,15 @@ export function SessionMap({
         cx: px(b.x + b.w / 2),
         cy: py(b.y + b.h / 2),
         r: radius(g.rects.length),
+        /**
+         * 이 분류를 누르면 갈 카드 (사용자 지시 2026-08-09).
+         *
+         * 축소 상태에서는 노드가 아니라 **분류 점**만 보이는데 그 점에는
+         * 누를 것이 아예 없었다 — 학생 눈에는 "지도에서 눌러도 아무 일이
+         * 없다"다. 점 하나는 트리 하나이므로 **그 트리의 뿌리**로 간다
+         * (`byTag`가 seq 순서를 지키므로 첫 카드가 대화의 시작이다).
+         */
+        goTo: g.ids[0] ?? null,
       };
     });
 
@@ -466,8 +478,21 @@ export function SessionMap({
           </>
         ) : (
           model.dots.map((d) => (
-            <g key={d.tag} transform={`translate(${d.cx},${d.cy})`}>
-              <title>{`${d.label} — 글 ${d.count}개`}</title>
+            <g
+              key={d.tag}
+              transform={`translate(${d.cx},${d.cy})`}
+              style={{ cursor: d.goTo ? "pointer" : "default" }}
+              onClick={() => {
+                if (!movedRef.current && d.goTo) onOpen(d.goTo);
+              }}
+            >
+              <title>
+                {d.goTo
+                  ? `${d.label} — 글 ${d.count}개 · 눌러서 이동`
+                  : `${d.label} — 글 ${d.count}개`}
+              </title>
+              {/* 글자·원 어디를 눌러도 잡히게 넉넉한 투명 원을 깔아 둔다. */}
+              <circle r={d.r + 12} fill="transparent" style={{ pointerEvents: "all" }} />
               <circle
                 r={d.r}
                 fill={d.color}

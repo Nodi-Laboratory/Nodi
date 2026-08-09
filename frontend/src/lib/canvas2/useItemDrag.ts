@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { clearDragOffsets, setDragOffsets } from "./dragBus";
+import { clampDy } from "./parentGuard";
 import { clearLiveLink, setLiveLink } from "./linkBus";
 import {
   detachStep,
@@ -126,6 +127,16 @@ export interface UseItemDragArgs {
   beginEdit?: (id: string) => EditContext | null;
   /** 손을 뗐을 때. 관계 변경은 여기서 저장한다. */
   onEditEnd?: (r: EditResult) => void;
+  /**
+   * **자식은 부모보다 위로 못 간다** (사용자 지시 2026-08-09).
+   *
+   * 지금 끌고 있는 id들을 주면 세로 이동량의 허용 범위를 돌려준다
+   * (`lib/canvas2/parentGuard.ts`). 없으면 제한이 없다.
+   *
+   * 여기서 부르는 이유는 **끄는 동안 손이 벽에 닿는 느낌**이 나야 하기
+   * 때문이다. 놓을 때만 바로잡으면 카드가 손을 떠난 뒤 툭 튄다.
+   */
+  dyLimitsFor?: (movingIds: readonly string[]) => { min: number; max: number };
 }
 
 export interface UseItemDragResult {
@@ -153,6 +164,7 @@ export function useItemDrag({
   editing = false,
   beginEdit,
   onEditEnd,
+  dyLimitsFor,
 }: UseItemDragArgs): UseItemDragResult {
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{
@@ -291,10 +303,25 @@ export function useItemDrag({
         });
       }
 
-      const shift = `translate(${wx}px, ${wy}px)`;
       const peers = d.edit
         ? branchEls(d.edit.moving)
         : peerEls(d.group, rootRef.current);
+
+      /**
+       * 부모·자식 세로 규칙 (사용자 지시 2026-08-09).
+       *
+       * **자석·장력 뒤에** 건다 — 자석이 끌어당긴 자리도 규칙을 지켜야 한다.
+       * 가로는 안 건드린다: 규칙이 말하는 것은 세로 순서뿐이고, 가로까지
+       * 잠그면 열을 옮기는 평범한 이동이 막힌다.
+       */
+      if (dyLimitsFor) {
+        const ids = peers
+          .map((el) => el.getAttribute("data-canvas-item") ?? "")
+          .filter(Boolean);
+        wy = clampDy(wy, dyLimitsFor(ids));
+      }
+
+      const shift = `translate(${wx}px, ${wy}px)`;
       for (const el of peers) {
         el.style.transition = "none";
         el.style.transform = shift;
@@ -307,7 +334,7 @@ export function useItemDrag({
         wy,
       );
     },
-    [id, zoom, rootRef],
+    [id, zoom, rootRef, dyLimitsFor],
   );
 
   const finishDrag = useCallback(
@@ -366,12 +393,21 @@ export function useItemDrag({
       }
 
       const dx = rawX;
-      const dy = rawY;
+      // 화면에서 막힌 만큼 저장도 막힌다 — 안 그러면 손을 뗀 순간 규칙을
+      // 어긴 자리로 튄다(끄는 동안 보이던 자리와 저장되는 자리가 갈린다).
+      const dy = dyLimitsFor
+        ? clampDy(
+            rawY,
+            dyLimitsFor(
+              peers.map((el) => el.getAttribute("data-canvas-item") ?? "").filter(Boolean),
+            ),
+          )
+        : rawY;
       onDragEnd(id, x + dx, y + dy, dx, dy);
       // 좌표가 끝내 안 바뀌는 경우(같은 자리 재배치)의 안전망.
       window.setTimeout(settle, DROP_FALLBACK_MS);
     },
-    [id, onDragEnd, onEditEnd, onSelect, settle, x, y, zoom, rootRef],
+    [id, onDragEnd, onEditEnd, onSelect, settle, x, y, zoom, rootRef, dyLimitsFor],
   );
 
   // 언마운트 시 남은 드래그 상태를 정리한다.

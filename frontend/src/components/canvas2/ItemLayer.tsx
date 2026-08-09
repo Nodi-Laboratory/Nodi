@@ -40,6 +40,11 @@ interface Props {
   handlers: {
     /** 연결선의 X를 눌렀다 — 그 카드의 부모를 끊는다 (D210 4-4). */
     onCut: (childId: string) => void;
+    /**
+     * 세로 이동 허용 범위 — **자식은 부모보다 위로 못 간다**
+     * (사용자 지시 2026-08-09, `lib/canvas2/parentGuard.ts`).
+     */
+    dyLimitsFor: (movingIds: readonly string[]) => { min: number; max: number };
     /** 포트에서 끌기 시작 (D210 4-3). */
     onPortDrag: (start: PortDragStart, e: React.PointerEvent) => void;
     onSelect: (id: string | null, additive?: boolean) => void;
@@ -134,6 +139,7 @@ export function ItemLayer({
               onSelect={handlers.onSelect}
               onDragEnd={handlers.onDragEnd}
               onDelete={handlers.onDelete}
+              dyLimitsFor={handlers.dyLimitsFor}
             />
           );
         }

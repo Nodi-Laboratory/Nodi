@@ -43,6 +43,7 @@ import { intersects, union, type Rect } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
+import { dyLimits } from "@/lib/canvas2/parentGuard";
 import { backOffCamera, focusCamera, type Camera } from "@/lib/canvas2/focusCamera";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
@@ -154,6 +155,17 @@ const FOCUS_PAD = 72;
  * 개념 지도(오른쪽 위)는 빼지 않는다 — 접을 수 있고, 폭이 340이라 빼기
  * 시작하면 쓸 수 있는 자리가 확 줄어 오히려 더 축소된다.
  */
+/**
+ * 연결선을 놓을 때 카드 상자를 얼마나 부풀려 보나 (world px, 사용자 지시
+ * 2026-08-09).
+ *
+ * 카드는 글 높이만큼만 차지해서 한 줄짜리는 50px 남짓이다. 그 안에 정확히
+ * 떨어뜨려야만 이어지니 조준이 까다롭고, 빗나가면 학생 눈에는 "연결이 안
+ * 된다"로 보인다. 사람이 겨눈 곳과 실제로 놓이는 곳의 차이를 덮을 만큼만
+ * 준다 — 더 키우면 옆 카드가 먼저 잡힌다.
+ */
+const LINK_PAD = 56;
+
 const UI_LEFT = 72;
 const UI_TOP = 56;
 const UI_RIGHT = 80;
@@ -889,15 +901,40 @@ export function CanvasWorkspace({ spaceId }: Props) {
       const root = document.querySelector(".canvas2");
       return bridge.toWorld(cx, cy, root?.getBoundingClientRect() ?? new DOMRect());
     },
+    /**
+     * 놓은 자리의 카드. **상자보다 넉넉하게 본다** (사용자 지시 2026-08-09).
+     *
+     * 정확히 글자 상자 안에 떨어뜨려야만 이어졌다. 카드는 글 높이만큼만
+     * 차지해서(한 줄이면 50px 남짓) 조준이 까다롭고, 빗나가면 "연결이 안
+     * 된다"로 읽힌다 — 실제로 그렇게 보고됐다(D211 2가 사유 안내를 붙인 것도
+     * 같은 뿌리다).
+     *
+     * 그래서 상자를 `LINK_PAD`만큼 부풀려 본다. 다만 **먼저 정확히 들어간
+     * 카드를 찾는다** — 부풀린 상자끼리는 겹치므로, 정확히 위에 놓았는데
+     * 옆 카드가 잡히면 그게 더 나쁘다. 정확한 것이 없을 때만 부풀린 상자를
+     * 보고, 그중에서는 **가운데가 가장 가까운** 카드를 고른다.
+     */
     cardAt: (w) => {
+      let near: { id: string; d2: number } | null = null;
       for (const [id, at] of layout.positions) {
         const sz = layout.sizes.get(id);
         if (!sz) continue;
         if (w.x >= at.x && w.x <= at.x + sz.w && w.y >= at.y && w.y <= at.y + sz.h) {
-          return id;
+          return id; // 정확히 위 — 더 볼 것 없다
+        }
+        if (
+          w.x >= at.x - LINK_PAD &&
+          w.x <= at.x + sz.w + LINK_PAD &&
+          w.y >= at.y - LINK_PAD &&
+          w.y <= at.y + sz.h + LINK_PAD
+        ) {
+          const cx = at.x + sz.w / 2;
+          const cy = at.y + sz.h / 2;
+          const d2 = (w.x - cx) ** 2 + (w.y - cy) ** 2;
+          if (!near || d2 < near.d2) near = { id, d2 };
         }
       }
-      return null;
+      return near?.id ?? null;
     },
     onLink: linkCards,
     canLink,
@@ -1064,6 +1101,27 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * camera를 deps로 가진 useMemo라 팬/줌 중 매 프레임 새 객체가 된다 —
    * v1이 정확히 그래서 느렸다(useItemLayout.ts 머리말 참조).
    */
+  /**
+   * **자식은 부모보다 위로 못 간다** (사용자 지시 2026-08-09).
+   *
+   * 규칙 자체는 `lib/canvas2/parentGuard.ts`가 갖고, 여기서는 지금 배치를
+   * 넣어 준다. 아이템이 아니라 워크스페이스가 만드는 이유는 **부모·자식이
+   * 서로 남**이기 때문이다 — 카드 하나는 자기 부모의 좌표를 모른다.
+   */
+  const dyLimitsFor = useEventCallback((movingIds: readonly string[]) =>
+    dyLimits({
+      moving: movingIds,
+      parentOf: (id) => items.find((i) => i.id === id)?.parentItemId ?? null,
+      rectOf: (id) => {
+        const p = layout.positions.get(id);
+        const s = layout.sizes.get(id);
+        return p && s ? { y: p.y, h: s.h } : null;
+      },
+      childrenOf: (id) =>
+        items.filter((i) => i.parentItemId === id).map((i) => i.id),
+    }),
+  );
+
   const handlers = useMemo(
     () => ({
       onSelect,
@@ -1081,8 +1139,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onResetSize,
       onAsk,
       onPick,
+      dyLimitsFor,
     }),
-    [onCut, portLink.begin, onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick],
+    [onCut, portLink.begin, onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick, dyLimitsFor],
   );
 
   /**
@@ -1237,10 +1296,24 @@ export function CanvasWorkspace({ spaceId }: Props) {
       const size = layout.sizes.get(id) ?? { w: ITEM_W, h: FALLBACK_H };
       const { w, h } = viewport();
       const z = cameraRef.current.zoom;
+      /**
+       * **UI를 뺀 자리의 가운데**로 간다 (사용자 지시 2026-08-09).
+       *
+       * 창 전체의 가운데로 보내면 왼쪽 레일·오른쪽 도구바·아래 질문창이
+       * 그 위에 겹쳐 있으므로, 지도에서 카드를 눌러 도착했는데 그 카드가
+       * **도구바 밑에 반쯤 깔려** 있었다. D166이 새 답에 대해 내린 결론과
+       * 같은 이유다 — 잣대는 창이 아니라 쓸 수 있는 자리다.
+       */
+      const box = {
+        x: UI_LEFT,
+        y: UI_TOP,
+        w: Math.max(1, w - UI_LEFT - UI_RIGHT),
+        h: Math.max(1, h - UI_TOP - UI_BOTTOM),
+      };
       flyTo({
         zoom: z,
-        scrollX: w / 2 / z - (p.x + size.w / 2),
-        scrollY: h / 2 / z - (p.y + size.h / 2),
+        scrollX: (box.x + box.w / 2) / z - (p.x + size.w / 2),
+        scrollY: (box.y + box.h / 2) / z - (p.y + size.h / 2),
       });
     },
     [layout, cameraRef, flyTo],

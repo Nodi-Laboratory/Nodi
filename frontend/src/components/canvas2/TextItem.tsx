@@ -43,6 +43,7 @@ import { PAD_X } from "@/lib/canvas2/connector";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { clearLiveLink, setLiveLink } from "@/lib/canvas2/linkBus";
 import { detachStep } from "@/lib/canvas2/detachDrag";
+import { clampDy } from "@/lib/canvas2/parentGuard";
 import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import { AskAgainButton } from "./AskAgainButton";
@@ -136,6 +137,11 @@ export interface TextItemProps {
   onRemoveTag: (tag: string) => void;
   /** 이동량도 함께 준다 — 여럿이 선택돼 있으면 호출부가 전부에 같은 양을 적용한다. */
   onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
+  /**
+   * 세로 이동 허용 범위 — **자식은 부모보다 위로 못 간다**
+   * (사용자 지시 2026-08-09, `lib/canvas2/parentGuard.ts`).
+   */
+  dyLimitsFor?: (movingIds: readonly string[]) => { min: number; max: number };
   /** "다시 질문하기" — 이 답을 골라 둔다 (D149 → D151). */
   onAsk: (id: string) => void;
   /**
@@ -186,6 +192,7 @@ function TextItemImpl(props: TextItemProps) {
     onRenameTag,
     onRemoveTag,
     onDragEnd,
+    dyLimitsFor,
     onAsk,
     onPick,
     onPortDrag,
@@ -401,8 +408,28 @@ function TextItemImpl(props: TextItemProps) {
         };
       }
 
-      const shift = `translate(${wx}px, ${wy}px)`;
       const peers = peerEls(d.group, rootRef.current);
+
+      /**
+       * **자식은 부모보다 위로 못 간다** (사용자 지시 2026-08-09).
+       *
+       * 규칙은 `lib/canvas2/parentGuard.ts`가 갖고 지금 배치는 워크스페이스가
+       * 준다 — 카드 하나는 자기 부모의 좌표를 모른다.
+       *
+       * ⚠️ 자석·장력 **뒤에** 건다. 자석이 끌어당긴 자리도 규칙을 지켜야 하고,
+       * 앞에 걸면 자석이 그 결과를 다시 덮는다.
+       *
+       * 가로는 안 건드린다 — 규칙이 말하는 것은 세로 순서뿐이고, 가로까지
+       * 잠그면 열을 옮기는 평범한 이동이 막힌다.
+       */
+      if (dyLimitsFor) {
+        const ids = peers
+          .map((el) => el.getAttribute("data-canvas-item") ?? "")
+          .filter(Boolean);
+        wy = clampDy(wy, dyLimitsFor(ids));
+      }
+
+      const shift = `translate(${wx}px, ${wy}px)`;
       for (const el of peers) {
         el.style.transition = "none";
         el.style.transform = shift;
@@ -437,7 +464,7 @@ function TextItemImpl(props: TextItemProps) {
        */
       if (live) setLiveLink(live);
     },
-    [item.id, zoom],
+    [item.id, zoom, dyLimitsFor],
   );
 
   const finishDrag = useCallback(
@@ -501,12 +528,21 @@ function TextItemImpl(props: TextItemProps) {
       }
 
       const dx = rawX;
-      const dy = rawY;
+      // 화면에서 막힌 만큼 저장도 막힌다 — 안 그러면 손을 뗀 순간 규칙을
+      // 어긴 자리로 튄다(끄는 동안 보이던 자리와 저장되는 자리가 갈린다).
+      const dy = dyLimitsFor
+        ? clampDy(
+            rawY,
+            dyLimitsFor(
+              peers.map((el) => el.getAttribute("data-canvas-item") ?? "").filter(Boolean),
+            ),
+          )
+        : rawY;
       onDragEnd(item.id, x + dx, y + dy, dx, dy);
       // 좌표가 끝내 안 바뀌는 경우(같은 자리 재배치)의 안전망.
       window.setTimeout(settle, DROP_FALLBACK_MS);
     },
-    [item.id, onDragEnd, onEditEnd, onPick, onSelect, settle, x, y, zoom],
+    [item.id, onDragEnd, onEditEnd, onPick, onSelect, settle, x, y, zoom, dyLimitsFor],
   );
 
   // 언마운트 시 남은 타이머의 커서·스타일 잔재를 정리한다.

@@ -389,6 +389,8 @@ export function InkLabTab() {
               measure={layout.measure}
               handlers={{
                 onCut: NOOP,
+                // 실험실에서는 카드를 끌지 않는다 — 제한도 없다.
+                dyLimitsFor: () => ({ min: -Infinity, max: Infinity }),
                 onPortDrag: NOOP,
                 onSelect: NOOP,
                 onStartEdit: NOOP,
