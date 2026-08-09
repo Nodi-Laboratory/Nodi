@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { loginAndOpenCanvas } from "../helpers";
+import { enterSpace, loginAndOpenCanvas } from "../helpers";
 
 /**
  * 플로우 B11–B20 — 홈·공간 이동 (docs/TEST-FLOWS.md).
@@ -53,7 +53,8 @@ test("B12 사이드바 -> 세션 선택 -> 개인 세션으로 들어간다", as
   await page.getByRole("link", { name: "세션" }).click();
   await page.waitForURL(/\/sessions/);
   // 개인 세션은 **언제나 첫 칸**이다(D217) — 자리가 바뀌면 손이 기억 못 한다.
-  await page.getByRole("button", { name: /개인 세션/ }).first().click();
+  // 카드는 곧장 안 들어가고 방 목록을 편다(사용자 지시 2026-08-09).
+  await enterSpace(page, /개인 세션/);
   await page.waitForURL(/\/space\/personal/);
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
 });
@@ -68,7 +69,7 @@ test("B12b 세션 선택 화면이 학급을 자료·강의·분류와 함께 �
   await expect(page.getByLabel("학급 코드 6번째 자리")).toBeVisible();
   await expect(page.getByRole("button", { name: "추가하기" })).toBeVisible();
   // 카드가 최소 하나(개인 세션)는 늘 있다.
-  await expect(page.getByRole("button", { name: /개인 세션/ }).first()).toBeVisible();
+  await expect(page.locator("[data-space-card^='personal']")).toBeVisible();
 });
 
 test("B13·B14 학급 ↔ 개인을 오가도 세션이 안 섞인다 (D148)", async ({ page }) => {
@@ -82,12 +83,14 @@ test("B13·B14 학급 ↔ 개인을 오가도 세션이 안 섞인다 (D148)", a
    * 학급으로 들어가는 길은 카드뿐이라, 카드를 눌러 도착한 주소를 쓴다.
    */
   await page.goto("/sessions");
-  await expect(page.getByRole("button", { name: /개인 세션/ }).first()).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(page.locator("[data-space-card]").first()).toBeVisible({ timeout: 30_000 });
   const cards = page.locator("main button").filter({ hasText: /자료 \d+개/ });
   if ((await cards.count()) === 0) test.skip(true, "가입한 학급이 없다");
   await cards.first().click();
+  // 팝업에서 방을 골라야 들어간다.
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  await dialog.locator("[data-room-row] button").first().click();
   await page.waitForURL(/\/space\/[0-9a-f-]{36}/, { timeout: 30_000 });
   const classHref = new URL(page.url()).pathname;
 

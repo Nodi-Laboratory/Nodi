@@ -135,6 +135,30 @@ export async function itemPos(note: Locator): Promise<{ x: number; y: number }> 
 }
 
 /**
+ * 세션 선택 화면에서 공간 카드를 눌러 **첫 대화방으로 들어간다** (사용자 지시
+ * 2026-08-09).
+ *
+ * 카드는 이제 곧장 들어가지 않고 **그 공간의 방 목록**을 팝업으로 편다.
+ * 들어가는 길이 두 걸음이 되었으므로, 그 두 걸음을 여기 한곳에 둔다 — 스펙
+ * 여럿이 각자 팝업을 알고 있으면 다음에 이 흐름이 또 바뀔 때 전부 고쳐야 한다.
+ */
+export async function enterSpace(page: Page, cardName: RegExp | string): Promise<void> {
+  /**
+   * ⚠️ **카드는 `[data-space-card]`로 잡는다.** 글자로 잡으면 아래 "최근 대화"의
+   * 줄이 먼저 걸린다 — 그 줄도 어느 공간의 방인지 말하느라 같은 이름을 달고
+   * 있고, `/spaces/overview`가 `/spaces/recent`보다 느려서 **카드가 뜨기 전에는
+   * 그 줄이 첫 번째**다(실측 2026-08-09: 그래서 팝업 대신 캔버스로 갔다).
+   */
+  await page.locator("[data-space-card]").filter({ hasText: cardName }).first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  // 방이 하나도 없는 공간은 들어갈 데가 없다 — 부르는 쪽이 알아야 한다.
+  const row = dialog.locator("[data-room-row] button").first();
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await row.click();
+}
+
+/**
  * 아이템이 **UI에 안 가린 자리**로 오게 캔버스를 민다.
  *
  * 캔버스 위에는 도구 레일(오른쪽)·입력창(아래)·상단 바(위)가 늘 떠 있다.
