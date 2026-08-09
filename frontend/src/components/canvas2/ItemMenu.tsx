@@ -16,6 +16,15 @@ import { Maximize2, MoreHorizontal, Pencil, Tag, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TagPicker } from "./TagPicker";
 
+/** 메뉴 한 줄의 높이(px, `py-1.5` + `text-sm`). 자리 계산의 눈금이다. */
+const ROW_H = 30;
+/** `⋯` 메뉴의 높이 — 수정·분류 변경·구분선·삭제. */
+const MENU_H = ROW_H * 3 + 17;
+/** 분류 목록의 높이 — 분류 수만큼 + [새 분류 추가]. 목록은 스스로 구른다. */
+function pickerHeight(options: readonly string[]): number {
+  return ROW_H * (Math.min(options.length, 7) + 1) + 17;
+}
+
 interface Props {
   tag: string | null;
   tagOptions: readonly string[];
@@ -47,6 +56,33 @@ export function ItemMenu({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
+  /**
+   * 아래로 펼칠 자리가 없으면 **위로** 펼친다.
+   *
+   * 하단 입력창은 무대에서 `z-50`이고 아이템 오버레이는 `z-3`이라(D120),
+   * 메뉴의 z-index를 아무리 올려도 **입력창을 이길 수 없다** — 겹치면 메뉴가
+   * 통째로 그 아래로 들어간다. 실측 2026-08-09(720px 화면): 아래쪽 카드의
+   * 메뉴가 [삭제] 한 줄만 남기고 입력창에 먹혀 눌리지 않았다.
+   *
+   * 캔버스 상단 바(D217)가 세로를 62px 먹으면서 자주 드러났을 뿐, 원래 있던
+   * 결함이다 — 카드는 입력창 위 어디에나 놓일 수 있다.
+   */
+  const [dropUp, setDropUp] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * 이 높이가 아래에 들어가나. 바닥은 화면이 아니라 **입력창 윗변**이다 —
+   * 입력창에 닿는 순간 가려지므로 화면 안이라는 사실은 뜻이 없다.
+   */
+  const fitsBelow = useCallback((need: number) => {
+    const anchor = rootRef.current?.getBoundingClientRect();
+    if (!anchor) return true;
+    const floor =
+      document.querySelector("[data-ask-bar]")?.getBoundingClientRect().top ??
+      window.innerHeight;
+    return floor - anchor.bottom >= need;
+  }, []);
 
   const expanded = open || tagOpen;
   useEffect(() => {
@@ -54,8 +90,6 @@ export function ItemMenu({
   }, [expanded, onOpenChange]);
   // 사라질 때도 알려 준다 — 안 그러면 상위가 "열려 있다"고 믿은 채 남는다.
   useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   /**
    * 화살표로 항목을 옮긴다.
@@ -114,6 +148,12 @@ export function ItemMenu({
         onPointerDown={(e) => e.stopPropagation()} // 드래그로 넘어가지 않게
         onClick={(e) => {
           e.stopPropagation();
+          /**
+           * 방향은 **여는 순간** 정한다. 그려 놓고 재서 뒤집으면 한 프레임
+           * 동안 엉뚱한 자리에 떴다가 튄다. 필요한 높이는 목록에서 곧장
+           * 나오므로(줄 수 × 줄 높이) 재지 않아도 된다.
+           */
+          setDropUp(!fitsBelow(MENU_H + (resized && onResetSize ? ROW_H : 0)));
           setOpen((v) => !v);
           setTagOpen(false);
         }}
@@ -131,7 +171,9 @@ export function ItemMenu({
       {open && !tagOpen && (
         <div
           ref={menuRef}
-          className="ui absolute right-0 top-8 w-36 overflow-hidden rounded-lg border py-1"
+          className={`ui absolute right-0 w-36 overflow-hidden rounded-lg border py-1 ${
+            dropUp ? "bottom-8" : "top-8"
+          }`}
           style={{
             background: "var(--c-raised)",
             borderColor: "var(--c-rule)",
@@ -150,7 +192,11 @@ export function ItemMenu({
           <MenuItem
             icon={<Tag size={14} />}
             label="분류 변경"
-            onClick={() => setTagOpen(true)}
+            onClick={() => {
+              // 분류 목록은 이 메뉴보다 길다 — 같은 자리에서 다시 잰다.
+              setDropUp(!fitsBelow(pickerHeight(tagOptions)));
+              setTagOpen(true);
+            }}
           />
           {resized && onResetSize && (
             <MenuItem
@@ -179,6 +225,7 @@ export function ItemMenu({
         <TagPicker
           current={tag}
           options={tagOptions}
+          dropUp={dropUp}
           onPick={(t) => {
             setTagOpen(false);
             setOpen(false);

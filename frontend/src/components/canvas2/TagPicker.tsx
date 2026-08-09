@@ -32,6 +32,8 @@ interface Props {
   onRenameTag: (from: string, to: string) => void;
   /** 태그 삭제(세션 전역, D147) — 그 태그를 단 카드가 모두 분류 없음이 된다. */
   onRemoveTag: (tag: string) => void;
+  /** 위로 펼치나 — 아래에 자리가 없을 때(`ItemMenu`가 정한다). */
+  dropUp?: boolean;
   onClose: () => void;
 }
 
@@ -44,6 +46,7 @@ export function TagPicker({
   onPick,
   onRenameTag,
   onRemoveTag,
+  dropUp,
   onClose,
 }: Props) {
   const [adding, setAdding] = useState(false);
@@ -92,7 +95,9 @@ export function TagPicker({
     <div
       ref={rootRef}
       data-no-pan
-      className="ui absolute right-0 top-8 z-20 w-52 overflow-hidden rounded-lg border py-1"
+      className={`ui absolute right-0 z-20 w-52 overflow-hidden rounded-lg border py-1 ${
+        dropUp ? "bottom-8" : "top-8"
+      }`}
       style={{
         background: "var(--c-raised)",
         borderColor: "var(--c-rule)",
