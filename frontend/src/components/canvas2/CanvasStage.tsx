@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useCoarsePointer } from "@/lib/canvas2/coarsePointer";
 import { useTouchNavigate } from "@/lib/canvas2/useTouchNavigate";
+import { usePolyStamp } from "@/lib/canvas2/usePolyStamp";
 // 캔버스 손글씨 @font-face (D164). **여기서** 임포트하는 이유는 unicode-range
 // 목록이 gzip 13KB이기 때문이다 — globals.css에 넣으면 로그인·홈·관리자 화면도
 // 그걸 받는다. 폰트가 캔버스 전용이니 CSS도 캔버스 라우트 청크에만 둔다.
@@ -383,10 +384,19 @@ export function CanvasStage({
   }, [activeTool, coarse, onCanvasClick, backToHand, onMarquee, toWorld, hasElementSelection, elementAtPoint, cameraRef, onShapeDrag]);
 
   /** 손가락: 끌면 이동, 길게 누르면 선택 상자 (D208). */
+  /**
+   * 세모·별은 **우리가 그린다** (사용자 지시 2026-08-09) — Excalidraw에 없는
+   * 도형이라, 끌린 상자를 받아 닫힌 선을 씬에 넣는다.
+   */
+  usePolyStamp({ rootRef, activeTool, toWorld, onStamp: bridge.stampPoly });
+
   useTouchNavigate({
     rootRef,
     activeTool,
     enabled: coarse === true,
+    // 마우스도 **합친 도구**에서는 같은 규칙이다(사용자 지시 2026-08-09):
+    // 그냥 끌면 화면 이동, 0.7초 누르고 끌면 선택 상자.
+    mouse: true,
     panByScreen,
     toWorld,
     onMarquee,

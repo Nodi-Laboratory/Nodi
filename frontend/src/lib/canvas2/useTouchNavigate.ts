@@ -8,8 +8,13 @@
  *   그냥 끌기   → **화면 이동.** 도구를 고르지 않아도 그렇게 된다.
  *   길게 누르기 → **선택 상자**가 나타나고, 그대로 끌어 담는다.
  *
- * PC는 반대다(끌기 = 올가미, 이동은 휠·중클릭). 손가락에는 휠도 중클릭도
- * 없으므로 그 규칙을 그대로 쓰면 **화면을 옮길 방법이 사실상 없다.**
+ * PC도 **합친 도구에서는 같은 규칙**이다(사용자 지시 2026-08-09) — 선택 도구와
+ * 화면 이동 도구를 하나로 합치면서, 끌기 하나가 두 뜻을 갖게 됐다. 다만 기다리는
+ * 시간은 다르다(마우스 0.7초 · 손가락 0.42초): 마우스는 누르자마자 끄는 것이
+ * 이동이라 짧게 잡으면 옮기려던 것이 자꾸 선택 상자가 된다.
+ *
+ * 손가락에 이 규칙이 필요했던 이유는 그대로다 — 휠도 중클릭도 없어서 PC의
+ * 옛 규칙(끌기 = 올가미)을 쓰면 **화면을 옮길 방법이 사실상 없다.**
  *
  * ## 왜 우리가 직접 처리하나
  *
@@ -24,8 +29,17 @@
 import { useEffect } from "react";
 import type { Rect } from "./rect";
 
-/** 이만큼 누르고 있으면 선택 상자로 바뀐다(ms). */
+/** 손가락: 이만큼 누르고 있으면 선택 상자로 바뀐다(ms). */
 const LONG_PRESS_MS = 420;
+
+/**
+ * 마우스: 이만큼(사용자 지시 2026-08-09).
+ *
+ * 손가락보다 길다. 마우스는 **누르자마자 끄는** 것이 화면 이동이라, 짧게
+ * 잡으면 옮기려던 것이 자꾸 선택 상자가 된다. 0.7초는 "일부러 기다렸다"가
+ * 되는 지점이다.
+ */
+const MOUSE_HOLD_MS = 700;
 /** 이보다 움직이면 "누르고 있는 것"이 아니다(화면 px). */
 const HOLD_SLOP = 10;
 /** 이보다 작은 상자는 선택이 아니라 탭이다. */
@@ -35,8 +49,16 @@ export interface TouchNavigateArgs {
   rootRef: React.RefObject<HTMLElement | null>;
   /** 지금 도구. 선택·화면 이동일 때만 끼어든다. */
   activeTool: string;
-  /** 이 기기가 손가락 기기인가. 아니면 아무것도 하지 않는다. */
+  /** 이 기기가 손가락 기기인가. 아니면 손가락 규칙은 안 쓴다. */
   enabled: boolean;
+  /**
+   * 마우스도 같은 규칙으로 다룰까 (사용자 지시 2026-08-09).
+   *
+   * 선택 도구와 화면 이동 도구를 **하나로 합치면서** 생긴 요구다. 도구가
+   * 하나뿐이니 끌기 하나에 두 뜻을 담아야 한다 — 그냥 끌면 이동, 잠깐
+   * 누르고 있다가 끌면 선택 상자. 손가락에서 이미 쓰던 규칙 그대로다(D208).
+   */
+  mouse?: boolean;
   /** 화면 픽셀만큼 화면을 민다. */
   panByScreen: (dx: number, dy: number) => void;
   /** 화면 좌표 → world. */
@@ -53,6 +75,7 @@ export function useTouchNavigate({
   rootRef,
   activeTool,
   enabled,
+  mouse = false,
   panByScreen,
   toWorld,
   onMarquee,
@@ -60,7 +83,8 @@ export function useTouchNavigate({
 }: TouchNavigateArgs): void {
   useEffect(() => {
     const root = rootRef.current;
-    if (!enabled || !root || !NAV_TOOLS.has(activeTool)) return;
+    if (!root || (!enabled && !mouse)) return;
+    if (!NAV_TOOLS.has(activeTool)) return;
 
     /** 지금 제스처. null이면 우리가 잡은 것이 없다. */
     let g: {
@@ -105,8 +129,18 @@ export function useTouchNavigate({
     };
 
     const onDown = (e: PointerEvent) => {
-      // 마우스는 PC 규칙 그대로다.
-      if (e.pointerType === "mouse") return;
+      const isMouse = e.pointerType === "mouse";
+      /**
+       * 마우스는 **합친 도구일 때만** 우리가 가져간다.
+       *
+       * 선택 도구가 켜져 있으면(글을 눌러 자동 전환된 상태) 끌기는 그냥
+       * 올가미다 — 그건 `CanvasStage`가 이미 처리하고, Excalidraw가 자기
+       * 도형을 같은 드래그로 잡아야 하므로 가로채면 안 된다.
+       */
+      if (isMouse && !(mouse && activeTool === "hand")) return;
+      if (!isMouse && !enabled) return;
+      // 가운데 버튼 끌기는 팬 전용이다(`useMiddleDragPan`).
+      if (isMouse && e.button !== 0) return;
       if (!e.isPrimary) return;
       const t = e.target as HTMLElement;
       // 우리 UI·아이템 위는 그쪽 일이다(버튼·카드 드래그).
@@ -123,12 +157,15 @@ export function useTouchNavigate({
         wy: w.y,
         moved: false,
         marquee: false,
-        timer: window.setTimeout(() => {
-          if (!g || g.moved) return;
-          g.marquee = true;
-          showBox();
-          moveBox(g.lx, g.ly);
-        }, LONG_PRESS_MS),
+        timer: window.setTimeout(
+          () => {
+            if (!g || g.moved) return;
+            g.marquee = true;
+            showBox();
+            moveBox(g.lx, g.ly);
+          },
+          isMouse ? MOUSE_HOLD_MS : LONG_PRESS_MS,
+        ),
       };
       // Excalidraw가 자기 팬 제스처를 시작하지 못하게 한다.
       e.stopPropagation();
@@ -193,5 +230,5 @@ export function useTouchNavigate({
       window.removeEventListener("pointerup", onUp, { capture: true });
       window.removeEventListener("pointercancel", onUp, { capture: true });
     };
-  }, [activeTool, enabled, onBackgroundClick, onMarquee, panByScreen, rootRef, toWorld]);
+  }, [activeTool, enabled, mouse, onBackgroundClick, onMarquee, panByScreen, rootRef, toWorld]);
 }
