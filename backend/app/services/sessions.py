@@ -123,6 +123,17 @@ async def _empty_session(
     return recent[0]
 
 
+#: 목록으로 한 번에 내주는 대화 수 (2026-08-10).
+#:
+#: 상한이 **없었다.** 그 공간의 대화를 전부 줬다 — 실측: 개인 공간 435건 156KB.
+#: 대화는 지우지 않는 이상 계속 쌓이므로 그 무게도 계속 는다. 한 학기 쓴 학생이
+#: 서랍을 열 때마다 그만큼을 받는 셈이다.
+#:
+#: 최근 것부터 준다. 옛 대화를 되찾는 길은 따로 있어야 하지만(검색·기간), 그때도
+#: **한 번에 전부**가 답인 적은 없다.
+_LIST_CAP = 200
+
+
 async def list_sessions(
     client: UserClient,
     space_kind: str,
@@ -143,6 +154,7 @@ async def list_sessions(
             "space_ref": f"eq.{ref}",
             "select": SESSION_SELECT,
             "order": "updated_at.desc",
+            "limit": str(_LIST_CAP),
         },
     )
 

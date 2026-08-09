@@ -7,6 +7,7 @@ import {
   MessageSquare,
   MoreVertical,
   Pencil,
+  Search,
   Trash2,
   Check,
   X,
@@ -42,6 +43,20 @@ import type { SessionRow } from "@/lib/types";
 const UNTITLED = "제목 없는 대화";
 
 /**
+ * 서버가 한 번에 주는 대화 수 (`services/sessions.py` `_LIST_CAP`).
+ *
+ * 여기서 다시 적는 이유는 **잘렸는지 알아채기 위해서**다 — 딱 이만큼 왔으면
+ * 뒤에 더 있을 수 있다. 안 알려주면 학생은 옛 대화가 지워진 줄 안다.
+ */
+const LIST_CAP = 200;
+
+/** 제목으로 거른다. 제목 없는 대화는 "제목 없는 대화"로 친다. */
+function matches(row: SessionRow, q: string): boolean {
+  if (!q) return true;
+  return (row.title?.trim() || UNTITLED).toLowerCase().includes(q.toLowerCase());
+}
+
+/**
  * 대화기록 사이드바(좌): 현재 공간의 세션 목록 + "새 대화" + 항목 ⋮(이름변경/삭제).
  * 현재 세션 클릭은 no-op(새 공간 생성 금지, D17 버그 수정).
  */
@@ -70,6 +85,14 @@ export function SessionList({
   const [menuId, setMenuId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  /**
+   * 찾기 (2026-08-10 전면 점검).
+   *
+   * 대화는 지우지 않는 이상 쌓인다 — 실측한 계정에는 435개가 있었고, 서랍은
+   * 그걸 **한 줄씩 다 그렸다**(4,830개 DOM). 그중 하나를 눈으로 찾으라는 것은
+   * 사실상 못 찾는다는 뜻이다.
+   */
+  const [q, setQ] = useState("");
 
   // 목록 로드 후 선택된 세션이 없으면 첫 "실제" 세션 자동 선택.
   // 08 F: 낙관(미확정) 행의 임시 id가 active로 잡혀 채팅/영속 경로에 새지 않도록
@@ -185,6 +208,10 @@ export function SessionList({
     }
   };
 
+  const shown = (sessions ?? []).filter((row) => matches(row, q.trim()));
+  /** 서버가 상한만큼 줬다 — 뒤에 더 있을 수 있다. */
+  const maybeMore = (sessions?.length ?? 0) >= LIST_CAP;
+
   return (
     <aside className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-between px-4 py-3">
@@ -203,6 +230,30 @@ export function SessionList({
         </button>
       </div>
 
+      {/* 찾기 — 대화가 몇십 개만 돼도 눈으로는 못 찾는다. */}
+      <div className="px-3 pb-2">
+        <div className="flex items-center gap-1.5 rounded-lg border border-accent-border/50 bg-bg px-2 py-1.5">
+          <Search size={13} className="shrink-0 text-fg-muted" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="대화 찾기"
+            aria-label="대화 찾기"
+            className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-fg-muted"
+          />
+          {q && (
+            <button
+              type="button"
+              onClick={() => setQ("")}
+              aria-label="찾기 지우기"
+              className="shrink-0 rounded p-0.5 text-fg-muted hover:bg-fg/5"
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-3">
         {isLoading ? (
           <SkeletonList rows={5} className="px-1 py-2" />
@@ -216,7 +267,7 @@ export function SessionList({
           </p>
         ) : (
           <ul className="flex flex-col gap-1">
-            {sessions.map((s) => {
+            {shown.map((s) => {
               const active = s.id === activeSessionId;
               const editing = s.id === editingId;
               // 08 F: 낙관(미확정) 행 — 반투명·비상호작용. 서버 확정 시 실행으로 교체.
@@ -236,6 +287,9 @@ export function SessionList({
                     <div className="flex items-center gap-1 rounded-lg bg-accent-soft/60 px-2 py-1.5">
                       <input
                         autoFocus
+                        // 이름표가 없었다 — 스크린리더에는 그냥 "편집란"이고,
+                        // 목록에 찾기 칸까지 생기니 어느 쪽인지 가릴 길이 없다.
+                        aria-label="새 대화 이름"
                         value={editTitle}
                         onChange={(e) => setEditTitle(e.target.value)}
                         onKeyDown={(e) => {
@@ -312,6 +366,22 @@ export function SessionList({
               );
             })}
           </ul>
+        )}
+        {sessions && sessions.length > 0 && shown.length === 0 && (
+          <p className="px-2 py-3 text-sm text-fg-muted">
+            &quot;{q.trim()}&quot;와 맞는 대화가 없어요.
+          </p>
+        )}
+        {/**
+         * **잘렸으면 잘렸다고 말한다.**
+         *
+         * 조용히 자르면 "옛 대화가 지워졌다"로 읽힌다 — 화면이 거짓말을 하는
+         * 셈이다. 지워진 게 아니라 여기 안 실렸을 뿐이라는 것을 알려 준다.
+         */}
+        {maybeMore && !q.trim() && (
+          <p className="px-2 py-3 text-xs text-fg-muted">
+            최근 {LIST_CAP}개만 보여요. 옛 대화는 지워지지 않았어요.
+          </p>
         )}
       </div>
     </aside>
