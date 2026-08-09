@@ -69,7 +69,10 @@ export async function openFreshSession(page: Page): Promise<void> {
    * **비어 있고 내 것인 대화**다 — D202가 재사용하는 대화도 그 조건을 이미
    * 만족한다(서버가 파일까지 확인하고 준다).
    */
-  await page.getByLabel("대화 목록 열기").click();
+  // 지난 대화 서랍을 여는 곳이 **사이드바의 [기록]**으로 옮겼다
+  // (사용자 지시 2026-08-09). 캔버스 좌상단의 삼선 버튼은 없앴다 — 그 자리는
+  // 이제 "어느 학급 어느 대화방"을 말하는 글자 한 줄이다.
+  await page.getByRole("button", { name: "기록" }).click();
   // 목록의 세션 행에도 "새 대화"라는 글자가 뜬다(제목 없는 세션의 기본 이름).
   // 만드는 버튼은 title 속성으로 정확히 집는다.
   await page.locator('button[title="새 대화"]').click();
@@ -158,7 +161,7 @@ export async function dragBy(page: Page, note: Locator, dx: number, dy: number):
 export async function openSeededFigureSession(page: Page): Promise<void> {
   await page.goto("/space/personal");
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
-  await page.getByLabel("대화 목록 열기").click();
+  await page.getByRole("button", { name: "기록" }).click();
   const row = page.getByRole("dialog").getByText("E2E 도판 세션").first();
   await row.waitFor({ timeout: 15_000 });
   await row.click();

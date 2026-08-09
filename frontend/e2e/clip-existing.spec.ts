@@ -27,7 +27,7 @@ test("지난 대화의 클립 카드도 정사각형 + 썸네일로 뜬다", asy
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
 
   // 지난 대화 중 클립이 있는 것을 찾는다.
-  await page.getByLabel("대화 목록 열기").click();
+  await page.getByRole("button", { name: "기록" }).click();
   const drawer = page.getByRole("dialog");
   await expect(drawer).toBeVisible({ timeout: 15_000 });
   const row = drawer.getByText("[확인] 옛 클립 카드");

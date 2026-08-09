@@ -75,7 +75,7 @@ test("J98 주요 흐름에서 콘솔 오류가 0건이다", async ({ page }) => 
   await loginAndOpenCanvas(page);
   await page.getByRole("button", { name: "질문하는 펜" }).click();
   await page.getByRole("button", { name: "선택", exact: true }).click();
-  await page.getByLabel("대화 목록 열기").click();
+  await page.getByRole("button", { name: "기록" }).click();
   await page.keyboard.press("Escape");
   await page.goto("/home");
   await page.goto("/profile");
@@ -123,7 +123,7 @@ test("J100 어느 화면에서도 버튼에 이름이 있다", async ({ page }) 
   expect(await namelessButtons(page)).toEqual([]);
 
   // 열어야 보이는 것들 — 서랍 안이 특히 잘 빠진다.
-  await page.getByLabel("대화 목록 열기").click();
+  await page.getByRole("button", { name: "기록" }).click();
   await page.waitForTimeout(500);
   expect(await namelessButtons(page)).toEqual([]);
   await page.keyboard.press("Escape");

@@ -59,7 +59,7 @@ async function login(page: Page) {
 async function openFreshSession(page: Page) {
   await page.goto(`/space/${CLASS_ID}`);
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
-  await page.getByRole("button", { name: "대화 목록 열기" }).click();
+  await page.getByRole("button", { name: "기록" }).click();
   // 목록 **항목**도 제목이 비면 "새 대화"로 보인다 — 헤더 버튼만 집는다.
   await page.getByTitle("새 대화").click();
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
