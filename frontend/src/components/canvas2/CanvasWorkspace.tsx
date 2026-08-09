@@ -1834,14 +1834,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 어디로 갈 것인가: **가장 최근 AI 개념 카드**다. 그것이 대화가 끝난
    * 자리이고, 다시 들어온 학생이 이어서 할 자리다. 전체 보기로 맞추는 길도
    * 있지만 그러면 글이 깨알같아 읽을 수가 없다(D162가 확대를 넣은 이유).
+   *
+   * **개념 카드가 없는 방도 있다** — 학생이 먼저 글을 써 놓은 방, 도판·클립만
+   * 남은 방. 개념 카드만 찾다 못 찾으면 착지가 통째로 취소되어 카메라가 **앞
+   * 방을 보던 자리**에 그대로 선다. 그건 방을 잘못 연 것처럼 보인다. 그럴
+   * 때는 종류를 안 가리고 가장 최근 것으로 간다.
    */
   const landTarget = useMemo(() => {
     let best: { id: string; seq: number } | null = null;
+    let anyItem: { id: string; seq: number } | null = null;
     for (const i of storeItems) {
+      if (!anyItem || i.seq > anyItem.seq) anyItem = { id: i.id, seq: i.seq };
       if (i.kind !== "concept" || i.source !== "ai") continue;
       if (!best || i.seq > best.seq) best = { id: i.id, seq: i.seq };
     }
-    return best?.id ?? null;
+    return (best ?? anyItem)?.id ?? null;
   }, [storeItems]);
   /**
    * 이 방에 이미 내려앉았나. **ref다** — state로 두면 이펙트 안의 setState가
