@@ -6,6 +6,14 @@ export interface AuthResult {
   token_type: string;
   user_id: string;
   email: string | null;
+  /**
+   * 토큰이 몇 초 뒤에 죽나 — **쿠키 수명은 이 값을 따른다** (2026-08-10).
+   *
+   * 예전에는 화면이 12시간을 따로 적어 뒀다. 같은 사실이 두 곳에 있으면
+   * 반드시 갈린다(D219) — 서버 `JWT_EXPIRE_MINUTES`를 줄이면 쿠키만 살아남는다.
+   * 옛 서버와도 맞물리게 optional로 둔다.
+   */
+  expires_in?: number;
 }
 
 /** 인증 요청은 토큰이 없는 상태에서 나가므로 authHeaders를 쓰지 않는다. */

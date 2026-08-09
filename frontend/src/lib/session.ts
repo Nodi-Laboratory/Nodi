@@ -23,7 +23,16 @@ export function readToken(): string | null {
   return hit ? decodeURIComponent(hit.slice(SESSION_COOKIE.length + 1)) : null;
 }
 
-/** 로그인 성공 시 저장. maxAge는 백엔드 만료와 맞춘다(기본 12시간). */
+/**
+ * 로그인 성공 시 저장.
+ *
+ * ⚠️ **수명은 서버가 정한다** — 로그인 응답의 `expires_in`을 그대로 넘긴다
+ * (2026-08-10). 여기 적힌 12시간은 그 값이 없는 옛 서버용 폴백일 뿐이다.
+ *
+ * 두 곳에 따로 적어 두면 갈린다: `JWT_EXPIRE_MINUTES`를 줄인 순간 쿠키만
+ * 살아남아 "화면은 열리는데 창구는 전부 401"이 된다. 가드가 로그인 화면으로
+ * 돌려보내 주기는 하지만(D168), 애초에 어긋날 이유가 없다.
+ */
 export function saveToken(token: string, maxAgeSeconds = 60 * 60 * 12): void {
   if (typeof document === "undefined") return;
   document.cookie =

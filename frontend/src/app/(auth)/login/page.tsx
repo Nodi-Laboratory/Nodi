@@ -39,7 +39,7 @@ function LoginContent() {
     try {
       const auth = await login(email.trim(), password);
       // 토큰을 먼저 저장해야 이어지는 프로필 조회가 인증된다.
-      saveToken(auth.access_token);
+      saveToken(auth.access_token, auth.expires_in);
       // 캐시에 이전 계정 흔적이 남지 않도록 비우고 이동한다.
       queryClient.clear();
 
