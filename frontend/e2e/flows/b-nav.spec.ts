@@ -33,24 +33,52 @@ test("B11 홈은 비어 있어도 말이 되게 보인다", async ({ page }) => 
   expect(text.trim().length).toBeGreaterThan(10);
 });
 
-test("B12 사이드바로 개인 공간에 들어간다", async ({ page }) => {
+/**
+ * 공간으로 들어가는 길이 **세션 선택 페이지**로 바뀌었다 (D217).
+ *
+ * 예전에는 사이드바에 학급마다 동그라미가 있었다. 학급이 늘수록 서로
+ * 구분이 안 돼서 걷어냈고, 지금은 [세션] -> 카드를 고르는 길 하나다.
+ */
+test("B12 사이드바 -> 세션 선택 -> 개인 세션으로 들어간다", async ({ page }) => {
   await loginAndOpenCanvas(page);
-  await page.goto("/home");
-  await page.getByRole("link", { name: /공간 전환: 개인/ }).click();
+  await page.getByRole("link", { name: "세션" }).click();
+  await page.waitForURL(/\/sessions/);
+  // 개인 세션은 **언제나 첫 칸**이다(D217) — 자리가 바뀌면 손이 기억 못 한다.
+  await page.getByRole("button", { name: /개인 세션/ }).first().click();
   await page.waitForURL(/\/space\/personal/);
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
+});
+
+test("B12b 세션 선택 화면이 학급을 자료·강의·분류와 함께 보여 준다", async ({ page }) => {
+  await loginAndOpenCanvas(page);
+  await page.goto("/sessions");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("세션");
+  // 학급 코드로 들어가는 자리 — 제목 아래 가운데.
+  await expect(page.getByLabel("학급 코드")).toBeVisible();
+  await expect(page.getByLabel("학급 추가")).toBeVisible();
+  // 카드가 최소 하나(개인 세션)는 늘 있다.
+  await expect(page.getByRole("button", { name: /개인 세션/ }).first()).toBeVisible();
 });
 
 test("B13·B14 학급 ↔ 개인을 오가도 세션이 안 섞인다 (D148)", async ({ page }) => {
   const session = watchSession(page);
   await loginAndOpenCanvas(page);
 
-  // `hasNot`은 **자손**을 보므로 링크 자신을 거를 수 없다 — href로 고른다.
-  const hrefs = await page.locator('nav a[href^="/space/"]').evaluateAll((els) =>
-    els.map((e) => e.getAttribute("href") ?? "").filter((h) => h !== "/space/personal"),
-  );
-  if (!hrefs.length) test.skip(true, "가입한 학급이 없다");
-  const classHref = hrefs[0];
+  /**
+   * 학급을 **세션 선택 페이지**에서 찾는다 (D217).
+   *
+   * 예전에는 사이드바의 space 링크로 골랐는데 그 링크가 없어졌다. 지금
+   * 학급으로 들어가는 길은 카드뿐이라, 카드를 눌러 도착한 주소를 쓴다.
+   */
+  await page.goto("/sessions");
+  await expect(page.getByRole("button", { name: /개인 세션/ }).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  const cards = page.locator("main button").filter({ hasText: /자료 \d+개/ });
+  if ((await cards.count()) === 0) test.skip(true, "가입한 학급이 없다");
+  await cards.first().click();
+  await page.waitForURL(/\/space\/[0-9a-f-]{36}/, { timeout: 30_000 });
+  const classHref = new URL(page.url()).pathname;
 
   await page.goto(classHref);
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
