@@ -318,26 +318,50 @@ export function ToolRail({
          */
         className="ui flex flex-col gap-1 rounded-xl border p-1.5"
         style={{
-          // 바깥 막대가 정해 준 높이 안에서 굴린다. `min-height: 0`이 없으면
-          // flex 자식은 내용만큼 늘어나 max-height를 무시한다.
-          maxHeight: "100%",
+          /**
+           * ⚠️ **`max-height: 100%`로는 안 잡힌다.** 바깥 막대의 높이는 auto
+           * (내용이 정한다)라 퍼센트가 **정의되지 않는다** — 상한은 바깥의
+           * `max-height`가 쥐고 있는데 이 상자는 그것을 못 본다. 그래서
+           * 내용이 길면 이 상자가 막대 밖으로 삐져나오고, 막대가
+           * `items-center`라 **위아래로 반씩** 나간다. 위로 나간 만큼은 무대
+           * 밖이라 잘린다 — 실측 2026-08-09(720px 화면): 내용 711 > 상한 598,
+           * 접기 버튼이 무대 위 y=56에 그려져 **보이지도 눌리지도 않았다.**
+           *
+           * `align-self: stretch`는 다르다 — 상한에 걸려 확정된 막대 높이
+           * (598)를 그대로 받는다. 그제야 `min-height: 0`과 안쪽 스크롤이
+           * 뜻을 갖는다. 내용이 짧을 때는 막대 높이가 곧 내용 높이라 아무
+           * 일도 일어나지 않는다.
+           */
+          alignSelf: "stretch",
           minHeight: 0,
-          overflowY: "auto",
           background: "var(--c-raised)",
           borderColor: "var(--c-rule)",
           boxShadow: "var(--c-shadow-md)",
         }}
       >
+      {/**
+       * ⚠️ **접기 버튼은 안 굴러간다.** 스크롤을 상자 전체에 걸었더니 넘칠
+       * 때 이 버튼이 **위로 밀려 상자 밖으로 나갔다** — 실측 2026-08-09,
+       * 720px 화면: 막대는 y=106인데 버튼 rect가 y=56이라 눌리지도 않았다.
+       * 하필 **막대가 화면보다 길 때** 치우고 싶은 법이라, 빠져나갈 문이
+       * 그때 사라진 셈이다(캔버스 상단 바가 세로를 62px 먹으면서 드러났다).
+       *
+       * 그래서 구르는 것은 **도구 목록만**이다.
+       */}
       <button
         type="button"
         onClick={() => setOpen(false)}
         aria-label="도구 접기"
         title="도구 접기"
-        className="mx-auto mb-0.5 flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-[var(--c-sunk)]"
+        className="mx-auto mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-[var(--c-sunk)]"
         style={{ color: "var(--c-ink-faint)" }}
       >
         <X size={12} />
       </button>
+      <div
+        className="flex flex-col gap-1"
+        style={{ minHeight: 0, overflowY: "auto", overflowX: "hidden" }}
+      >
       {GROUPS.map((group, gi) => (
         <div key={gi} className="flex flex-col gap-1">
           {gi > 0 && (
@@ -365,6 +389,7 @@ export function ToolRail({
           이벤트는 무동작). 한동안 `⌘Z` 글자를 안내로 띄워 뒀는데 레일에
           기호만 덩그러니 떠 있어 지웠다(사용자 지시). 되돌리기는 그대로
           Ctrl/⌘+Z로 된다. */}
+      </div>
       </div>
     </div>
   );
