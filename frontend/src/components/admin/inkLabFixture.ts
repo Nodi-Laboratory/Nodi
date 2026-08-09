@@ -159,5 +159,3 @@ export function labItems(figureId: string | null): CanvasItem[] {
   return [geo, astro, bio, figure, clip];
 }
 
-/** 카드 세 장의 id — 로그에서 "몇 번이 어느 카드인가"를 맞춰 볼 때 쓴다. */
-export const LAB_CARD_IDS = ["lab-card-1", "lab-card-2", "lab-card-3"] as const;

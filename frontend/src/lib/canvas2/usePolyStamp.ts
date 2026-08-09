@@ -17,7 +17,7 @@
  */
 
 import { useEffect } from "react";
-import { polygonPoints, type PolyKind } from "./polyShapes";
+import type { PolyKind } from "./polyShapes";
 import { isPolyTool, type ToolName } from "./types";
 
 /** 이보다 작으면 찍지 않는다 — 톡 누른 것을 도형으로 만들면 점이 쌓인다. */
@@ -119,17 +119,3 @@ export function usePolyStamp({ rootRef, activeTool, toWorld, onStamp }: PolyStam
   }, [activeTool, onStamp, rootRef, toWorld]);
 }
 
-/** 상자 → Excalidraw `line` 스켈레톤. 요소를 만드는 쪽이 이 모양으로 넘긴다. */
-export function polySkeleton(
-  kind: PolyKind,
-  rect: { x: number; y: number; w: number; h: number },
-  style: { strokeColor: string; strokeWidth: number; opacity: number; roughness: number },
-) {
-  return {
-    type: "line" as const,
-    x: rect.x,
-    y: rect.y,
-    points: polygonPoints(kind, rect.w, rect.h),
-    ...style,
-  };
-}

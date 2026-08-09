@@ -465,24 +465,6 @@ CREATE FUNCTION public.teacher_class_overview() RETURNS TABLE(id uuid, name text
      order by last_activity_at desc nulls last, c.created_at desc;
 $$;
 
-CREATE FUNCTION public.teacher_classes() RETURNS TABLE(id uuid, name text, join_code text, created_at timestamp with time zone, student_count bigint)
-    LANGUAGE sql STABLE SECURITY DEFINER
-    SET search_path TO 'public'
-    AS $$
-    select c.id,
-           c.name,
-           c.join_code,
-           c.created_at,
-           (
-               select count(*)
-                 from public.class_members m
-                where m.class_id = c.id and m.role_in_class = 'student'
-           )::bigint as student_count
-      from public.classes c
-     where public.is_class_teacher(c.id)
-     order by c.created_at desc;
-$$;
-
 CREATE TABLE public.ai_logs (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     owner_id uuid NOT NULL,

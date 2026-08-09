@@ -1,7 +1,6 @@
 /** 파일 업로드·목록·삭제·재처리 + 청크 컨텍스트(RAG). api.ts(806줄)에서 분리 — D102. */
 import { API_BASE, authHeaders, ensureOk } from "./_core";
 import type { SpaceTarget } from "./sessions";
-import { spaceParams } from "./sessions";
 import type {
   ChunkContext,
   FileRow,
@@ -30,15 +29,6 @@ export async function uploadFile(
       method: "POST",
       headers: await authHeaders(), // json=false → Content-Type 없음
       body: form,
-    }),
-  );
-  return res.json();
-}
-
-export async function listFiles(target: SpaceTarget): Promise<FileRow[]> {
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/files?${spaceParams(target).toString()}`, {
-      headers: await authHeaders(),
     }),
   );
   return res.json();

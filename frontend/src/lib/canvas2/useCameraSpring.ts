@@ -226,23 +226,3 @@ export function useCameraSpring(
   return { flyTo, jumpTo, cancel };
 }
 
-/**
- * world의 사각형을 화면 중앙에 두는 카메라를 계산한다.
- *
- * v1의 `focusCamera`는 카드의 **top-left**를 중앙에 뒀고 높이는 상수
- * `CARD_CY = 200`으로 추정했다(ConceptCanvasWorkspace.tsx:29). 아이템 높이가
- * 가변인 v2에서는 그 방식이 카드마다 어긋난다 — 실제 사각형을 받는다.
- */
-export function cameraForRect(
-  rect: { x: number; y: number; w: number; h: number },
-  viewport: { w: number; h: number },
-  zoom: number,
-): Camera {
-  const cx = rect.x + rect.w / 2;
-  const cy = rect.y + rect.h / 2;
-  return {
-    zoom,
-    scrollX: viewport.w / 2 / zoom - cx,
-    scrollY: viewport.h / 2 / zoom - cy,
-  };
-}

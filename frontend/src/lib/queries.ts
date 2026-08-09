@@ -13,13 +13,11 @@ import {
   listClassLecturePackages,
   listClassMaterials,
   listClassStudents,
-  listFiles,
   listLecturePackages,
   listLectureVideos,
   listSessionFiles,
   listSessions,
   listStudentClassSessions,
-  listTeacherClasses,
   type ClassLecturePackage,
   type ConceptMapData,
   type LecturePackage,
@@ -31,7 +29,6 @@ import type {
   HomeSummary,
   SessionDetail,
   SessionRow,
-  TeacherClass,
   TeacherClassOverview,
   TeacherStudent,
 } from "@/lib/types";
@@ -60,13 +57,6 @@ export function sessionsKey(target: SpaceTarget) {
 
 export function classMaterialsKey(classId: string | null) {
   return ["teacher", "materials", classId] as const;
-}
-
-export function useTeacherClasses() {
-  return useQuery<TeacherClass[]>({
-    queryKey: ["teacher", "classes"],
-    queryFn: listTeacherClasses,
-  });
 }
 
 /** D67: 교사 콘솔 홈 — 학급 개요(학생수·자료수·최근활동). */
@@ -160,10 +150,6 @@ export function sessionKey(sessionId: string | null) {
   return ["session", sessionId] as const;
 }
 
-export function filesKey(target: SpaceTarget) {
-  return ["files", target.space_kind, target.space_ref ?? null] as const;
-}
-
 /** 현재 공간의 세션 목록 (updated_at desc, 백엔드 정렬). */
 export function useSessions(target: SpaceTarget) {
   return useQuery<SessionRow[]>({
@@ -180,20 +166,6 @@ export function useSessionDetail(sessionId: string | null) {
     queryFn: () => getSession(sessionId as string),
     enabled: !!sessionId,
     staleTime: STALE.sessionDetail,
-  });
-}
-
-/** 현재 공간의 파일 목록. 임베딩 진행 중이면 2.5초 폴링, 완료되면 중지. */
-export function useFiles(target: SpaceTarget) {
-  return useQuery<FileRow[]>({
-    queryKey: filesKey(target),
-    queryFn: () => listFiles(target),
-    staleTime: STALE.files,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      const active = data?.some((f) => FILE_IN_PROGRESS.has(f.status));
-      return active ? 2500 : false;
-    },
   });
 }
 

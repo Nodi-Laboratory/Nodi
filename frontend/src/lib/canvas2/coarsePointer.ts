@@ -28,12 +28,6 @@ import { useEffect, useState } from "react";
 
 const QUERY = "(pointer: coarse)";
 
-/** SSR·구형 브라우저에서는 **PC로 친다**(지금까지의 동작 그대로). */
-export function isCoarsePointer(): boolean {
-  if (typeof window === "undefined" || !window.matchMedia) return false;
-  return window.matchMedia(QUERY).matches;
-}
-
 /**
  * 기기 종류를 따라간다. **`null`은 "아직 모름"이다** (D209).
  *

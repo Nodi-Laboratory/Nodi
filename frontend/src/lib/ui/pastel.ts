@@ -54,12 +54,3 @@ export function pastelForTag(tag: string | null | undefined): string {
   return PASTEL_COLORS[Math.floor(hash01(t) * PASTEL_COLORS.length) % PASTEL_COLORS.length];
 }
 
-/**
- * 순서로 고르는 색 (캔버스 지도가 태그 등장 순서로 쓴다).
- *
- * 이름 해시와 **다른 규칙**인 이유: 한 세션 안에서는 등장 순서가 곧 열
- * 순서라, 옆 열끼리 색이 붙지 않는 것이 더 중요하다.
- */
-export function pastelByIndex(i: number): string {
-  return PASTEL_COLORS[Math.abs(i) % PASTEL_COLORS.length];
-}
