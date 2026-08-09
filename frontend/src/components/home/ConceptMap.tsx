@@ -555,12 +555,50 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       // 아주 약하게 가운데로 — 없으면 연결 없는 카드가 무한히 흘러간다.
       .force("x", forceX(0).strength(0.012))
       .force("y", forceY(0).strength(0.012))
-      .alphaDecay(0.035)
-      .on("tick", () => {
+      .alphaDecay(0.035);
+    simRef.current = sim;
+
+    /**
+     * **자리를 먼저 잡고 나서 보여 준다** (2026-08-10 전면 점검).
+     *
+     * 지금까지는 시뮬레이션이 스스로 돌면서 매 틱 다시 그렸고, 그동안 화면은
+     * "지도를 그리는 중…"이었다 — 실측: 캔버스가 뜨고 **2.6초 더**(개념
+     * 1,200개). 창구 응답은 다 합쳐 200ms였으니 그 시간은 전부 배치 계산이다.
+     *
+     * 그런데 그 계산 결과는 **끝나야만 쓸모가 있다.** 중간 상태를 그리는 것은
+     * 학생에게 보여 줄 것이 아니라 덮개로 가리는 것이었다 — 그릴 이유가 없다.
+     * `sim.tick(n)`은 tick 이벤트를 안 쏘므로 **계산만** 한다.
+     *
+     * 한 프레임에 다 돌리지 않고 조각으로 나눈다: 1,200개 × 260틱을 한 번에
+     * 돌면 그동안 브라우저가 멈춰 스크롤도 안 된다. 조각마다 프레임을 내주면
+     * 화면은 살아 있고, 총 시간은 어차피 계산량이 정한다.
+     */
+    sim.stop();
+    /** 미리 돌릴 틱 수. d3의 기본 수명(alphaDecay 0.035)이 대략 이만큼이다. */
+    const WARM_TICKS = 260;
+    /** 한 프레임에 돌릴 틱 수 — 프레임이 너무 길어지지 않을 만큼만. */
+    const WARM_CHUNK = 20;
+    let warmed = 0;
+    let warmRaf = 0;
+    const warmUp = () => {
+      const n = Math.min(WARM_CHUNK, WARM_TICKS - warmed);
+      sim.tick(n);
+      warmed += n;
+      if (warmed < WARM_TICKS && sim.alpha() > sim.alphaMin()) {
+        warmRaf = requestAnimationFrame(warmUp);
+        return;
+      }
+      // 자리가 잡혔다 — 이제부터가 학생이 볼 화면이다.
+      sim.on("tick", () => {
         drift();
         draw();
       });
-    simRef.current = sim;
+      fitToContent();
+      draw();
+      // 다 식은 시뮬레이션은 스스로 안 깨어난다 — 표류를 시작한다.
+      if (driftTargetRef.current > 0) sim.alphaTarget(DRIFT_ALPHA).restart();
+    };
+    warmRaf = requestAnimationFrame(warmUp);
 
     /**
      * 떠다니기 (사용자 지시 2026-08-10).
@@ -629,9 +667,18 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       }
     }
 
-    /** 다시 떠다니게 — 식은 시뮬레이션은 스스로 깨지 않는다. */
+    /**
+     * 다시 떠다니게 — 식은 시뮬레이션은 스스로 깨지 않는다.
+     *
+     * ⚠️ **`restart()`만으로는 못 깨운다.** 멈출 때 `alpha(0)`으로 완전히
+     * 식혀 두는데, d3의 틱은 `alpha += (target - alpha) * alphaDecay` 뒤
+     * `alpha < alphaMin`이면 스스로 선다 — 0에서 목표 0.02로 올라가는 첫
+     * 걸음이 0.0007이라 **그 자리에서 다시 죽는다**(실측 2026-08-10: 지도만
+     * 보기에서 돌아와도 노드가 안 움직였다). 목표보다 높은 온도를 손으로
+     * 넣어 준다.
+     */
     wakeRef.current = () => {
-      sim.alphaTarget(DRIFT_ALPHA).restart();
+      sim.alpha(Math.max(sim.alpha(), DRIFT_ALPHA * 4)).alphaTarget(DRIFT_ALPHA).restart();
     };
 
     const ro = new ResizeObserver(resize);
@@ -748,13 +795,12 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       if (force) sel.transition().duration(620).call(zoomer.transform, t);
       else sel.call(zoomer.transform, t);
     };
-    sim.on("end", () => {
-      fitToContent();
-      // 다 식으면 그대로 서 버린다 — 자리는 잡혔으니 이제 **떠다닌다**.
-      if (driftTargetRef.current > 0) sim.alphaTarget(DRIFT_ALPHA).restart();
-    });
-    // 배치가 아주 오래 식는 경우에도 학생을 기다리게 하지 않는다.
-    const fitTimer = window.setTimeout(() => fitToContent(), 2500);
+    /**
+     * 예열이 어떤 이유로든 안 끝났을 때의 뒷문 — 학생을 덮개 아래 가둬 두지
+     * 않는다. 예열이 정상적으로 끝났으면 `fitted`가 이미 참이라 아무 일도
+     * 안 한다.
+     */
+    const fitTimer = window.setTimeout(() => fitToContent(), 3000);
 
     // 확대 버튼이 쓸 손잡이. `zoomer`·`sel`은 이 이펙트 밖에서 못 만든다.
     zoomApiRef.current = {
@@ -767,6 +813,7 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
 
     return () => {
       window.clearTimeout(fitTimer);
+      cancelAnimationFrame(warmRaf);
       sim.stop();
       ro.disconnect();
       sel.on(".zoom", null);
