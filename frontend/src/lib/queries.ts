@@ -49,8 +49,10 @@ export const STALE = {
   files: 5 * 60 * 1000,
 } as const;
 
-export function sessionsKey(target: SpaceTarget) {
-  return ["sessions", target.space_kind, target.space_ref ?? null] as const;
+export function sessionsKey(target: SpaceTarget, q?: string) {
+  // 찾는 말이 캐시 키에 들어간다 — 안 그러면 거른 결과가 전체 목록 자리를
+  // 덮어써서, 찾기를 지운 순간 화면에 그 몇 줄만 남는다.
+  return ["sessions", target.space_kind, target.space_ref ?? null, q || null] as const;
 }
 
 // ── 교사 컨트롤 패널 (Stage 4b) ──────────────────────────────────────
@@ -151,11 +153,13 @@ export function sessionKey(sessionId: string | null) {
 }
 
 /** 현재 공간의 세션 목록 (updated_at desc, 백엔드 정렬). */
-export function useSessions(target: SpaceTarget) {
+export function useSessions(target: SpaceTarget, q?: string) {
   return useQuery<SessionRow[]>({
-    queryKey: sessionsKey(target),
-    queryFn: () => listSessions(target),
+    queryKey: sessionsKey(target, q),
+    queryFn: () => listSessions(target, q),
     staleTime: STALE.sessions,
+    // 찾는 말을 고치는 동안 목록이 비었다 채워졌다 하면 눈이 어지럽다.
+    placeholderData: (prev) => prev,
   });
 }
 

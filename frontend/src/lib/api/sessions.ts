@@ -17,9 +17,19 @@ export function spaceTargetFromId(spaceId: string): SpaceTarget {
   return { space_kind: "class", space_ref: spaceId };
 }
 
-export async function listSessions(target: SpaceTarget): Promise<SessionRow[]> {
+export async function listSessions(
+  target: SpaceTarget,
+  /**
+   * 이름으로 찾기 (2026-08-10).
+   *
+   * 목록에는 상한이 있다(`_LIST_CAP` 200). 그것만 두면 201번째 대화에는 닿을
+   * 길이 아예 없다 — 찾기를 서버까지 보내야 상한 밖도 불러올 수 있다.
+   */
+  q?: string,
+): Promise<SessionRow[]> {
   const params = new URLSearchParams({ space_kind: target.space_kind });
   if (target.space_ref) params.set("space_ref", target.space_ref);
+  if (q?.trim()) params.set("q", q.trim());
   const res = await ensureOk(
     await fetch(`${API_BASE}/sessions?${params.toString()}`, {
       headers: await authHeaders(),

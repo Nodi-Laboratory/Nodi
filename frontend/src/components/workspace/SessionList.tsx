@@ -50,11 +50,13 @@ const UNTITLED = "제목 없는 대화";
  */
 const LIST_CAP = 200;
 
-/** 제목으로 거른다. 제목 없는 대화는 "제목 없는 대화"로 친다. */
-function matches(row: SessionRow, q: string): boolean {
-  if (!q) return true;
-  return (row.title?.trim() || UNTITLED).toLowerCase().includes(q.toLowerCase());
-}
+/**
+ * 찾는 말을 서버로 보내기 전에 잠깐 기다리는 시간.
+ *
+ * 한 글자마다 조회하면 "실험"을 치는 동안 요청이 둘 나간다. 사람이 타이핑을
+ * 멈추는 자연스러운 틈이 이 정도다.
+ */
+const SEARCH_DEBOUNCE_MS = 280;
 
 /**
  * 대화기록 사이드바(좌): 현재 공간의 세션 목록 + "새 대화" + 항목 ⋮(이름변경/삭제).
@@ -78,7 +80,6 @@ export function SessionList({
   onPicked?: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { data: sessions, isLoading, isError } = useSessions(target);
   const activeSessionId = useWorkspaceStore((s) => s.activeSessionId);
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
   const [creating, setCreating] = useState(false);
@@ -93,6 +94,20 @@ export function SessionList({
    * 사실상 못 찾는다는 뜻이다.
    */
   const [q, setQ] = useState("");
+  /**
+   * 서버에 실제로 보낸 말. 타이핑이 멎은 뒤에 따라온다.
+   *
+   * ⚠️ **찾기는 서버가 한다.** 화면에서만 거르면 상한(200) 안에 든 것만
+   * 걸러진다 — 201번째 대화는 이름을 정확히 쳐도 안 나온다. "지워지지
+   * 않았어요"라고 써 놓고 갈 길을 안 주는 셈이라, 안내가 아니라 막다른 길이다.
+   */
+  const [사용할말, set사용할말] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => set사용할말(q.trim()), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [q]);
+
+  const { data: sessions, isLoading, isError } = useSessions(target, 사용할말);
 
   // 목록 로드 후 선택된 세션이 없으면 첫 "실제" 세션 자동 선택.
   // 08 F: 낙관(미확정) 행의 임시 id가 active로 잡혀 채팅/영속 경로에 새지 않도록
@@ -104,6 +119,14 @@ export function SessionList({
     }
   }, [sessions, activeSessionId, setActiveSession]);
 
+  /**
+   * 지금 화면이 보고 있는 캐시 칸 — **찾는 말까지 포함한다.**
+   *
+   * 낙관 갱신을 `sessionsKey(target)`(찾기 없음)에 쓰면 찾는 중에는 엉뚱한
+   * 칸을 고치게 된다. 화면은 안 바뀌고, 되돌리기도 엉뚱한 칸을 되돌린다.
+   */
+  const key = sessionsKey(target, 사용할말);
+  // 무효화는 **접두사**로 건다 — 찾기 결과 칸들까지 한 번에 다시 받는다.
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: sessionsKey(target) });
 
@@ -127,7 +150,7 @@ export function SessionList({
       current_head_id: null,
       _pending: true,
     };
-    queryClient.setQueryData<SessionRow[]>(sessionsKey(target), (old) => [
+    queryClient.setQueryData<SessionRow[]>(key, (old) => [
       optimistic,
       ...(old ?? []),
     ]);
@@ -141,7 +164,7 @@ export function SessionList({
       onPicked?.();
     } catch {
       // 롤백: 낙관 행 제거
-      queryClient.setQueryData<SessionRow[]>(sessionsKey(target), (old) =>
+      queryClient.setQueryData<SessionRow[]>(key, (old) =>
         (old ?? []).filter((s) => s.id !== tempId),
       );
     } finally {
@@ -171,15 +194,15 @@ export function SessionList({
     const title = editTitle.trim();
     setEditingId(null);
     if (!title) return;
-    const prev = queryClient.getQueryData<SessionRow[]>(sessionsKey(target));
-    queryClient.setQueryData<SessionRow[]>(sessionsKey(target), (old) =>
+    const prev = queryClient.getQueryData<SessionRow[]>(key);
+    queryClient.setQueryData<SessionRow[]>(key, (old) =>
       (old ?? []).map((s) => (s.id === id ? { ...s, title } : s)),
     );
     try {
       await patchSession(id, title);
       await invalidate();
     } catch {
-      if (prev) queryClient.setQueryData(sessionsKey(target), prev); // 롤백
+      if (prev) queryClient.setQueryData(key, prev); // 롤백
     }
   };
 
@@ -188,9 +211,9 @@ export function SessionList({
     setMenuId(null);
     if (!window.confirm(`"${s.title?.trim() || UNTITLED}" 대화를 삭제할까요?`))
       return;
-    const prev = queryClient.getQueryData<SessionRow[]>(sessionsKey(target));
+    const prev = queryClient.getQueryData<SessionRow[]>(key);
     const prevActive = activeSessionId; // 실패 시 선택 상태도 원복
-    queryClient.setQueryData<SessionRow[]>(sessionsKey(target), (old) =>
+    queryClient.setQueryData<SessionRow[]>(key, (old) =>
       (old ?? []).filter((x) => x.id !== s.id),
     );
     if (s.id === activeSessionId) {
@@ -203,14 +226,14 @@ export function SessionList({
       await deleteSession(s.id);
       await invalidate();
     } catch {
-      if (prev) queryClient.setQueryData(sessionsKey(target), prev); // 롤백
+      if (prev) queryClient.setQueryData(key, prev); // 롤백
       setActiveSession(prevActive); // 선택 상태 롤백
     }
   };
 
-  const shown = (sessions ?? []).filter((row) => matches(row, q.trim()));
+  const shown = sessions ?? [];
   /** 서버가 상한만큼 줬다 — 뒤에 더 있을 수 있다. */
-  const maybeMore = (sessions?.length ?? 0) >= LIST_CAP;
+  const maybeMore = shown.length >= LIST_CAP;
 
   return (
     <aside className="flex min-h-0 flex-1 flex-col">
@@ -261,7 +284,7 @@ export function SessionList({
           <p className="px-2 py-3 text-sm text-danger">
             세션을 불러오지 못했습니다.
           </p>
-        ) : !sessions || sessions.length === 0 ? (
+        ) : shown.length === 0 && !사용할말 ? (
           <p className="px-2 py-3 text-sm text-fg-muted">
             대화가 없습니다. &quot;새 대화&quot;로 시작하세요.
           </p>
@@ -367,9 +390,9 @@ export function SessionList({
             })}
           </ul>
         )}
-        {sessions && sessions.length > 0 && shown.length === 0 && (
+        {!isLoading && 사용할말 && shown.length === 0 && (
           <p className="px-2 py-3 text-sm text-fg-muted">
-            &quot;{q.trim()}&quot;와 맞는 대화가 없어요.
+            &quot;{사용할말}&quot;와 맞는 대화가 없어요.
           </p>
         )}
         {/**
@@ -378,9 +401,9 @@ export function SessionList({
          * 조용히 자르면 "옛 대화가 지워졌다"로 읽힌다 — 화면이 거짓말을 하는
          * 셈이다. 지워진 게 아니라 여기 안 실렸을 뿐이라는 것을 알려 준다.
          */}
-        {maybeMore && !q.trim() && (
+        {maybeMore && !사용할말 && (
           <p className="px-2 py-3 text-xs text-fg-muted">
-            최근 {LIST_CAP}개만 보여요. 옛 대화는 지워지지 않았어요.
+            최근 {LIST_CAP}개만 보여요. 옛 대화는 위에서 이름으로 찾을 수 있어요.
           </p>
         )}
       </div>

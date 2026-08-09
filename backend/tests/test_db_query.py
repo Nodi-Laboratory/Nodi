@@ -68,6 +68,13 @@ def test_not은_is만_부정한다():
         Q.build_where({"seq": "not.eq.3"})
 
 
+def test_ilike는_부분_일치다():
+    """대화를 이름으로 찾는 데 쓴다 — 상한 밖의 옛 대화에 닿는 유일한 길."""
+    where, args, _ = Q.build_where({"title": "ilike.실험"})
+    assert where == " WHERE title ILIKE $1"
+    assert args == ["%실험%"]  # 값은 파라미터로 나간다
+
+
 def test_no_filters_gives_empty_where():
     where, args, _ = Q.build_where({"select": "id", "limit": "1"})
     assert where == ""

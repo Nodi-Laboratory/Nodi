@@ -139,7 +139,16 @@ async def list_sessions(
     space_kind: str,
     space_ref: str | None,
     owner_id: str,
+    q: str | None = None,
 ) -> list[dict[str, Any]]:
+    """이 공간의 대화 목록. 최근 것부터 `_LIST_CAP`개까지.
+
+    `q`가 있으면 **이름으로 찾는다** (2026-08-10).
+
+    상한만 두고 끝내면 201번째 대화에는 닿을 길이 아예 없어진다 — "지워지지
+    않았어요"라고 써 놓고 갈 길을 안 주는 것은 안내가 아니라 막다른 길이다.
+    찾기를 서버까지 보내면 상한 밖의 옛 대화도 이름으로 불러올 수 있다.
+    """
     # personal space_ref defaults to the owner's own id (mirrors create_session).
     ref = space_ref or (owner_id if space_kind == "personal" else None)
     if space_kind == "class" and not ref:
@@ -147,16 +156,16 @@ async def list_sessions(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class sessions require space_ref (class id).",
         )
-    return await client.select(
-        "sessions",
-        {
-            "space_kind": f"eq.{space_kind}",
-            "space_ref": f"eq.{ref}",
-            "select": SESSION_SELECT,
-            "order": "updated_at.desc",
-            "limit": str(_LIST_CAP),
-        },
-    )
+    params: dict[str, str] = {
+        "space_kind": f"eq.{space_kind}",
+        "space_ref": f"eq.{ref}",
+        "select": SESSION_SELECT,
+        "order": "updated_at.desc",
+        "limit": str(_LIST_CAP),
+    }
+    if q and q.strip():
+        params["title"] = f"ilike.{q.strip()}"
+    return await client.select("sessions", params)
 
 
 async def update_session_title(

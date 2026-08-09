@@ -280,6 +280,12 @@ export async function openSeededFigureSession(page: Page): Promise<void> {
   await page.goto("/space/personal");
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
   await page.getByRole("button", { name: "지난 대화" }).click();
+  /**
+   * **이름으로 찾아 연다.** 목록은 최근 200개까지만 오므로(`_LIST_CAP`),
+   * 대화가 쌓인 계정에서는 시드 세션이 그 밖으로 밀려난다. 찾기는 서버가
+   * 하므로 상한 밖도 이름으로 불러온다.
+   */
+  await page.getByLabel("대화 찾기").fill("E2E 도판 세션");
   const row = page.getByRole("dialog").getByText("E2E 도판 세션").first();
   await row.waitFor({ timeout: 15_000 });
   await row.click();

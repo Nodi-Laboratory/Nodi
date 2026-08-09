@@ -135,6 +135,17 @@ def build_where(
             idx += 1
             continue
 
+        if op == "ilike":
+            # `ilike.<말>` — 대소문자 안 가리고 **부분 일치**. 이름으로 찾기용.
+            #
+            # 값은 언제나 파라미터로 나간다($n). 다만 `%`·`_`는 LIKE의 와일드카드라
+            # 사용자가 치면 그대로 와일드카드가 된다 — 찾기에서는 그게 해로울
+            # 것이 없어 굳이 막지 않는다(막으면 제목에 밑줄이 든 대화를 못 찾는다).
+            clauses.append(f"{col} ILIKE ${idx}")
+            args.append(f"%{val}%")
+            idx += 1
+            continue
+
         if op in ("is", "not"):
             # `is.null` / `is.true` / `is.false`, 그리고 그 부정 `not.is.…`.
             #
