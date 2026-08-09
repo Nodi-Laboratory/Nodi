@@ -29,6 +29,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { getFigure } from "@/lib/api/retrieve";
 import { ITEM_W } from "@/lib/canvas2/layout";
+import { HARD_MAX_W } from "@/lib/canvas2/measureWidth";
 import type { CanvasItem } from "@/lib/canvas2/types";
 
 interface Props {
@@ -233,8 +234,19 @@ export function FigureItem({
             color="var(--c-live)"
             getEl={() => rootRef.current}
             onCommit={(next) => onResize(item.id, next)}
-            // 도판은 잴 "가장 긴 줄"이 없다 — 기본 상한만 쓴다(D210 3-2).
-          maxW={() => 0}
+            /**
+             * 도판은 잴 "가장 긴 줄"이 없다(D210 3-2). 그래서 한동안 `0`을
+             * 줬는데, 그러면 `clampWidth`가 기본 상한(`ITEM_W` 560)을 쓴다 —
+             * **이미 560에 닿아 있는 도판은 손잡이를 끌어도 한 픽셀도 안
+             * 움직였다**(실측 2026-08-09: 폭 558에서 아무리 끌어도 558).
+             *
+             * 이 파일의 다른 주석이 경계한 바로 그 상태다 — "학생 눈에는
+             * 손잡이가 고장난 것으로 보인다". 게다가 크게 보고 싶은 것이
+             * 도판이다(그림은 글과 달리 작으면 못 읽는다).
+             *
+             * 글과 **같은 절대 상한**을 준다. 그 위는 `clampWidth`가 막는다.
+             */
+            maxW={() => HARD_MAX_W}
           onReset={() => onResetSize(item.id)}
           />
         )}

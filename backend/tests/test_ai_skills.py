@@ -56,7 +56,7 @@ def test_개인세션에는_학급_도구가_없다():
     assert "search_class_material" not in names
     assert "search_textbook_figure" not in names
     # 개념 조회는 개인 세션에도 있다(개인 공간에서도 카드를 만든다).
-    assert "list_session_concepts" in names
+    assert "get_concept" in names
 
 
 def test_빈_세션에는_도구를_하나도_주지_않는다():
@@ -69,8 +69,18 @@ def test_빈_세션에는_도구를_하나도_주지_않는다():
 
 
 def test_개념이_생기면_개념_스킬이_열린다():
-    assert "list_session_concepts" not in skills_for("class", "student")
-    assert "list_session_concepts" in skills_for("class", "student", has_concepts=True)
+    assert "get_concept" not in skills_for("class", "student")
+    assert "get_concept" in skills_for("class", "student", has_concepts=True)
+
+
+def test_개인세션_개념_카드에는_계획_도구가_안_붙는다():
+    """D216. 개념 스킬이 둘이던 시절에는 그 둘만으로 `think`가 딸려 나왔다.
+
+    목록 스킬을 걷어내 실도구가 하나가 되면서 그 낭비도 사라진다 — 순서를
+    정할 것이 없는데 순서를 정하던 왕복이다(`_PLANNER` 주석의 그 문제).
+    """
+    names = skills_for("personal", "student", has_concepts=True)
+    assert "think" not in names
 
 
 def test_세션_파일_스킬은_파일이_있을_때만_보인다():
@@ -193,9 +203,7 @@ def _patch_llm(monkeypatch, *, tool_calls_sequence, stream_text="답변"):
         for ch in stream_text:
             yield ch
         if usage_sink is not None:
-            usage_sink.update(
-                {"prompt": 100, "completion": 20, "total": 120, "cached": 0}
-            )
+            usage_sink.update({"prompt": 100, "completion": 20, "total": 120, "cached": 0})
 
     monkeypatch.setattr(O.solar, "complete", fake_complete)
     monkeypatch.setattr(O.solar, "stream_answer", fake_stream)
@@ -219,13 +227,18 @@ async def test_도구를_안_부르면_바로_생성한다(monkeypatch):
     assert calls["complete"] == 1
     assert calls["stream"] == 1
     assert text == "안녕!"
-    assert outcome.used_skills == []          # 스킬이 하나도 안 돌았다
+    assert outcome.used_skills == []  # 스킬이 하나도 안 돌았다
     assert "tool_call" not in " ".join(kinds)
 
 
 async def test_도구를_부르면_실행하고_결과를_되돌린다(monkeypatch):
-    tc = [{"id": "c1", "type": "function",
-           "function": {"name": "echo", "arguments": '{"q":"광합성"}'}}]
+    tc = [
+        {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "echo", "arguments": '{"q":"광합성"}'},
+        }
+    ]
     calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
     r = SkillRegistry()
     r.register(_Echo())
@@ -239,8 +252,8 @@ async def test_도구를_부르면_실행하고_결과를_되돌린다(monkeypat
         max_steps=3,
     )
     assert outcome.used_skills == ["echo"]
-    assert calls["complete"] == 2   # 판단 → 결과 반영 후 재판단
-    assert calls["stream"] == 1     # 생성은 마지막 1회
+    assert calls["complete"] == 2  # 판단 → 결과 반영 후 재판단
+    assert calls["stream"] == 1  # 생성은 마지막 1회
     assert kinds.count("sse") == 2  # tool_call + tool_result
 
 
@@ -264,8 +277,7 @@ async def test_생성_단계에는_도구를_주지_않는다(monkeypatch):
 
 async def test_스텝_상한을_넘지_않는다(monkeypatch):
     """모델이 계속 도구를 불러도 무한 루프에 빠지지 않는다."""
-    tc = [{"id": "c", "type": "function",
-           "function": {"name": "echo", "arguments": "{}"}}]
+    tc = [{"id": "c", "type": "function", "function": {"name": "echo", "arguments": "{}"}}]
     calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc] * 10)
     r = SkillRegistry()
     r.register(_Echo())
@@ -334,12 +346,12 @@ async def test_찾은_근거가_생성_프롬프트에_붙는다(monkeypatch):
 
         async def run(self, args, ctx):
             return SkillResult(
-                ok=True, message="ok",
+                ok=True,
+                message="ok",
                 data={"sources": [{"name": "과학.pdf", "snippet": "엽록체에서 일어난다"}]},
             )
 
-    tc = [{"id": "c", "type": "function",
-           "function": {"name": "rag", "arguments": "{}"}}]
+    tc = [{"id": "c", "type": "function", "function": {"name": "rag", "arguments": "{}"}}]
     calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
     r = SkillRegistry()
     r.register(_Rag())
@@ -365,15 +377,17 @@ async def test_같은_도판은_한_번만_모은다(monkeypatch):
 
         async def run(self, args, ctx):
             return SkillResult(
-                ok=True, message="ok",
-                data={"figures": [
-                    {"figure_id": "f1", "file_id": "x", "caption": "그림1"},
-                    {"figure_id": "f1", "file_id": "x", "caption": "그림1"},
-                ]},
+                ok=True,
+                message="ok",
+                data={
+                    "figures": [
+                        {"figure_id": "f1", "file_id": "x", "caption": "그림1"},
+                        {"figure_id": "f1", "file_id": "x", "caption": "그림1"},
+                    ]
+                },
             )
 
-    tc = [{"id": "c", "type": "function",
-           "function": {"name": "fig", "arguments": "{}"}}]
+    tc = [{"id": "c", "type": "function", "function": {"name": "fig", "arguments": "{}"}}]
     _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
     r = SkillRegistry()
     r.register(_Fig())
@@ -390,8 +404,7 @@ async def test_같은_도판은_한_번만_모은다(monkeypatch):
 
 
 async def test_깨진_인자_JSON도_턴을_죽이지_않는다(monkeypatch):
-    tc = [{"id": "c", "type": "function",
-           "function": {"name": "echo", "arguments": "{망가진"}}]
+    tc = [{"id": "c", "type": "function", "function": {"name": "echo", "arguments": "{망가진"}}]
     _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
     r = SkillRegistry()
     r.register(_Echo())
@@ -423,12 +436,12 @@ async def test_모든_스킬_결과가_생성_프롬프트에_닿는다(monkeypa
 
         async def run(self, args, ctx):
             return SkillResult(
-                ok=True, message="최근 질문 2건.",
+                ok=True,
+                message="최근 질문 2건.",
                 data={"questions": ["광합성이 뭐야?", "지진은 왜 나?"]},
             )
 
-    tc = [{"id": "c", "type": "function",
-           "function": {"name": "summarize", "arguments": "{}"}}]
+    tc = [{"id": "c", "type": "function", "function": {"name": "summarize", "arguments": "{}"}}]
     calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
     r = SkillRegistry()
     r.register(_Questions())
@@ -456,8 +469,7 @@ async def test_실패한_스킬은_근거로_쓰이지_않는다(monkeypatch):
         async def run(self, args, ctx):
             return SkillResult(ok=False, message="권한 없음", error_code="forbidden")
 
-    tc = [{"id": "c", "type": "function",
-           "function": {"name": "boom", "arguments": "{}"}}]
+    tc = [{"id": "c", "type": "function", "function": {"name": "boom", "arguments": "{}"}}]
     calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
     r = SkillRegistry()
     r.register(_Fail())
@@ -484,8 +496,7 @@ async def test_큰_결과는_잘라서_넣는다(monkeypatch):
         async def run(self, args, ctx):
             return SkillResult(ok=True, message="많음", data={"items": ["가" * 100] * 200})
 
-    tc = [{"id": "c", "type": "function",
-           "function": {"name": "big", "arguments": "{}"}}]
+    tc = [{"id": "c", "type": "function", "function": {"name": "big", "arguments": "{}"}}]
     calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
     r = SkillRegistry()
     r.register(_Big())
@@ -516,12 +527,12 @@ async def test_think_결과는_근거로_쓰이지_않는다(monkeypatch):
 
         async def run(self, args, ctx):
             return SkillResult(
-                ok=True, message="계획 완료",
+                ok=True,
+                message="계획 완료",
                 data={"reasoning": "자료를 먼저 찾고 그 다음에 설명한다"},
             )
 
-    tc = [{"id": "c", "type": "function",
-           "function": {"name": "think", "arguments": "{}"}}]
+    tc = [{"id": "c", "type": "function", "function": {"name": "think", "arguments": "{}"}}]
     calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
     r = SkillRegistry()
     r.register(_Think())
@@ -556,12 +567,9 @@ async def test_같은_도구_중복_호출은_한_번만_돈다(monkeypatch):
             return SkillResult(ok=True, message="ok", data={"v": 1})
 
     dup = [
-        {"id": "c1", "type": "function",
-         "function": {"name": "echo", "arguments": '{"q":"같음"}'}},
-        {"id": "c2", "type": "function",
-         "function": {"name": "echo", "arguments": '{"q":"같음"}'}},
-        {"id": "c3", "type": "function",
-         "function": {"name": "echo", "arguments": '{"q":"다름"}'}},
+        {"id": "c1", "type": "function", "function": {"name": "echo", "arguments": '{"q":"같음"}'}},
+        {"id": "c2", "type": "function", "function": {"name": "echo", "arguments": '{"q":"같음"}'}},
+        {"id": "c3", "type": "function", "function": {"name": "echo", "arguments": '{"q":"다름"}'}},
     ]
     _patch_llm(monkeypatch, tool_calls_sequence=[dup, None])
     r = SkillRegistry()
@@ -575,9 +583,9 @@ async def test_같은_도구_중복_호출은_한_번만_돈다(monkeypatch):
         answer_system_prompt="BASE",
         max_steps=3,
     )
-    assert len(ran) == 2                    # 중복 하나는 생략
+    assert len(ran) == 2  # 중복 하나는 생략
     assert outcome.used_skills == ["echo", "echo"]
-    assert kinds.count("sse") == 4          # 실행된 2건의 call+result
+    assert kinds.count("sse") == 4  # 실행된 2건의 call+result
 
 
 async def test_실제_전송_프롬프트를_돌려준다(monkeypatch):
@@ -590,12 +598,12 @@ async def test_실제_전송_프롬프트를_돌려준다(monkeypatch):
 
         async def run(self, args, ctx):
             return SkillResult(
-                ok=True, message="ok",
+                ok=True,
+                message="ok",
                 data={"sources": [{"name": "자료.pdf", "snippet": "엽록체"}]},
             )
 
-    tc = [{"id": "c", "type": "function",
-           "function": {"name": "rag", "arguments": "{}"}}]
+    tc = [{"id": "c", "type": "function", "function": {"name": "rag", "arguments": "{}"}}]
     calls = _patch_llm(monkeypatch, tool_calls_sequence=[tc, None])
     r = SkillRegistry()
     r.register(_Rag())
@@ -618,3 +626,25 @@ def test_카탈로그와_레지스트리가_일치한다():
     from app.ai.catalog import ALL_DECLARED
 
     assert set(ai.get_orchestrator().registry.names()) == set(ALL_DECLARED)
+
+
+def test_학생_글이_있을_때만_글_스킬이_열린다():
+    """파일 스킬과 **같은 규칙**이다 — 없는데 보여 주면 모델이 부르고 빈
+    결과로 군더더기를 붙인다(2026-08-09)."""
+    없음 = skills_for("personal", "student", has_concepts=True)
+    있음 = skills_for("personal", "student", has_concepts=True, has_notes=True)
+    assert "read_my_notes" not in 없음
+    assert "read_my_notes" in 있음
+
+
+def test_글만_있어도_카탈로그가_열린다():
+    """글이 있으면 그 도구는 나온다 — 빈 세션 규칙은 "줄 것이 없을 때"의
+    이야기이지, 글이 있는데 감추라는 뜻이 아니다."""
+    names = skills_for("personal", "student", has_notes=True)
+    assert "read_my_notes" in names
+    # 계획 도구는 조합할 것이 둘 이상일 때만(D109) — 하나뿐이면 안 나온다.
+    assert "think" not in names
+
+
+def test_아무것도_없으면_여전히_도구가_없다():
+    assert skills_for("personal", "student") == []

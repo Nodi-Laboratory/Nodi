@@ -105,6 +105,21 @@ async def _empty_session(
         return None
     if await client.count("files", {"session_id": f"eq.{sid}"}):
         return None
+    # 턴이 있었으면 빈 대화가 아니다 (2026-08-09).
+    #
+    # `canvas_items`가 0인데 답이 있는 방이 실제로 존재한다 — 카드는 **화면이**
+    # 만들기 때문이다. 스트리밍 도중에 새로고침하면 서버는 `nodes`에 답을
+    # 남기고 카드는 안 생긴다. v2 이전 대화도 같은 모양이고, 화면은 그런 방을
+    # `nodes`에서 읽어 `legacy-…` 카드로 그린다.
+    #
+    # 그 방을 "비었다"고 보고 재사용하면 **학생이 "새 대화"를 눌렀는데 지난
+    # 답이 그대로 있는 방**이 열린다(실측 2026-08-09: 카드 `legacy-…` 한 장이
+    # 새 대화에 그대로 떠 있었다. e2e 두 건이 이 자리에서 멈췄다).
+    #
+    # D202의 근거는 "빈 대화는 서로 구분할 수 없으니 하나를 다시 열어도
+    # 아무것도 안 잃는다"였다. 이 방은 구분이 된다 — 그러니 새로 만든다.
+    if await client.count("nodes", {"session_id": f"eq.{sid}"}):
+        return None
     return recent[0]
 
 

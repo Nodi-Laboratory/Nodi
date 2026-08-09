@@ -70,11 +70,23 @@ test("홈에 개념 지도가 그려지고, 개념을 누르면 그 대화로 �
   await page.waitForURL(/\/space\//, { timeout: 30_000 });
 });
 
-test("개념이 없으면 무엇을 하면 되는지 말해 준다", async ({ page }) => {
+/**
+ * 개념이 없으면 **홈에 머무르지 않는다** (D210 2-1, 사용자 지시).
+ *
+ * 예전에는 "아직 지도에 올릴 개념이 없습니다 / 첫 대화 시작하기"라는 빈 상태를
+ * 보여 줬다. 지금은 그 화면 자체가 없다 — 지도에 올릴 것이 없으면 캔버스로
+ * 곧장 보낸다. 안내를 한 번 더 읽고 버튼을 누르게 하는 것보다, 할 수 있는
+ * 자리에 데려다 놓는 편이 낫다는 판단이다.
+ *
+ * 판정 기준이 "세션 없음"이 아니라 **"개념 카드 0개"**인 것이 요점이라
+ * 응답을 비워서 태운다(계정을 비우면 다른 스펙이 쓰는 데이터가 사라진다).
+ *
+ * `replace`여야 한다 — `push`면 뒤로 가기가 다시 빈 홈으로 데려오고 거기서
+ * 또 튕겨 나가 뒤로 가기가 먹지 않는 것처럼 보인다.
+ */
+test("개념이 없으면 홈에 머무르지 않고 캔버스로 보낸다", async ({ page }) => {
   test.setTimeout(60_000);
   await login(page);
-  // 빈 상태는 개념이 0건일 때만 뜬다 — 응답을 비워 그 화면만 확인한다.
-  // (계정을 비우면 다른 스펙이 쓰는 데이터가 사라진다.)
   await page.route("**/api/home/concept-map", (route) =>
     route.fulfill({
       status: 200,
@@ -83,10 +95,8 @@ test("개념이 없으면 무엇을 하면 되는지 말해 준다", async ({ pa
     }),
   );
   await page.goto("/home");
-  await expect(page.getByText("아직 지도에 올릴 개념이 없습니다")).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(page.getByRole("link", { name: "첫 대화 시작하기" })).toBeVisible();
+  await page.waitForURL(/\/space\/personal/, { timeout: 30_000 });
+  await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
 });
 
 /* ─────────────────────────── D191 — 대화 목록 · 확대 ─────────────────────── */

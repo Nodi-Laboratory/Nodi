@@ -20,12 +20,24 @@ test("D36·D37·D38·D39 입력창의 규칙들 — 턴 없이 확인되는 것�
   await expect(send).toBeDisabled();
 
   // D37 길어지면 늘고, 상한에서 멈춘다.
+  //
+  // ⚠️ 상한은 **CSS px**인데 `boundingBox()`는 화면 px을 준다. 입력창 상자는
+  // `zoom: var(--ui-scale)`으로 커져 있어서(사용자 지시 2026-08-08, 140%)
+  // 160 상한이 화면에서는 224로 재진다 — 숫자를 그대로 박아 두면 **배율을
+  // 바꿀 때마다 이 줄이 깨진다.** 배율을 읽어 함께 곱한다.
+  // 배율은 **상자 자신에게 묻는다**. `--ui-scale` 변수를 어디에 걸어 두었는지에
+  // 기대면(지금은 `<html>`이 아니다) 조용히 1로 읽혀 이 줄이 다시 깨진다.
+  // `zoom`은 화면 박스만 키우므로 rect/offset 비가 곧 배율이다.
+  const scale = await box.evaluate((el) => {
+    const h = (el as HTMLElement).offsetHeight;
+    return h > 0 ? el.getBoundingClientRect().height / h : 1;
+  });
   const h0 = (await box.boundingBox())!.height;
   await box.fill("긴 질문 ".repeat(120));
   await page.waitForTimeout(300);
   const h1 = (await box.boundingBox())!.height;
   expect(h1).toBeGreaterThan(h0);
-  expect(h1).toBeLessThanOrEqual(160);
+  expect(h1).toBeLessThanOrEqual(160 * scale + 1);
 
   // D39 Shift+Enter는 줄바꿈, 보내지 않는다.
   await box.fill("첫 줄");

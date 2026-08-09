@@ -55,6 +55,26 @@ export interface FocusOpts {
   minZoom: number;
   /** 묶음 둘레에 남기는 화면 여백(px). */
   pad: number;
+  /**
+   * 이 카드가 **자라서 가질 수 있는 폭**(world px). 없으면 지금 폭으로 잰다.
+   *
+   * ## 왜 필요한가 (2026-08-09)
+   *
+   * 배율은 카드가 **생기는 순간** 정해지는데, 그때 카드는 거의 비어 있다.
+   * 폭이 200이면 "다 들어온다"는 계산이 235%를 내주고, 그 뒤 글이 스트리밍
+   * 되면서 카드는 `max-width`(560)까지 넓어진다 — 235%에서 그건 화면 위
+   * **1316px**이다. D166이 잡았던 바로 그 숫자이고, 고친 뒤에도 남아 있었다.
+   * D166은 배율을 고정값에서 상한으로 바꿨지만 **어느 폭에 맞출지**는 그대로
+   * 뒀기 때문이다.
+   *
+   * 실측 2026-08-09(1024×768, 진짜 턴): 다 자란 카드의 왼쪽 변이 **−105px**.
+   * 줄마다 첫 글자가 화면 밖이라 학생 눈에는 "답이 안 뜬다"였다.
+   *
+   * 자랄 폭으로 미리 맞추면 넓은 화면에서는 아무것도 안 바뀐다(거기서는
+   * 어차피 상한에 걸린다). 좁은 화면에서만 한 단계 덜 당긴다 —
+   * **잘린 큰 글씨보다 온전한 작은 글씨가 읽힌다.**
+   */
+  growW?: number;
 }
 
 /**
@@ -96,9 +116,15 @@ export function focusCamera(
   target: Rect,
   attached: readonly Rect[],
   vp: FocusViewport,
-  { maxZoom, minZoom, pad }: FocusOpts,
+  { maxZoom, minZoom, pad, growW }: FocusOpts,
 ): Camera {
   const box = usable(vp);
+  /**
+   * 자랄 폭까지 미리 본다(위 `growW` 설명). 학생이 손잡이로 `growW`보다 넓게
+   * 만들어 둔 카드도 있으므로 **둘 중 큰 쪽**이다.
+   */
+  const t: Rect =
+    growW && growW > target.w ? { ...target, w: growW } : target;
 
   /**
    * 딸린 것이 없다 — 카드 하나만 보면 된다 (D162 → D166).
@@ -109,17 +135,17 @@ export function focusCamera(
    * 축소되어 D162가 뒤집힌다. 위 1/3에 두는 것이 그 자리의 답이다.
    */
   if (!attached.length) {
-    const fit = (box.w - pad * 2) / Math.max(target.w, 1);
+    const fit = (box.w - pad * 2) / Math.max(t.w, 1);
     const z = Math.min(maxZoom, Math.max(minZoom, fit));
     return {
       zoom: z,
-      scrollX: (box.x + box.w / 2) / z - (target.x + target.w / 2),
+      scrollX: (box.x + box.w / 2) / z - (t.x + t.w / 2),
       // 정중앙이 아니라 위 1/3 — 글이 아래로 자라기 때문이다(D162).
-      scrollY: (box.y + box.h / 3) / z - target.y,
+      scrollY: (box.y + box.h / 3) / z - t.y,
     };
   }
 
-  const b = union([target, ...attached]) as Rect;   // 비지 않으므로 null이 아니다
+  const b = union([t, ...attached]) as Rect; // 비지 않으므로 null이 아니다
   const fit = Math.min(
     maxZoom,
     (box.w - pad * 2) / Math.max(b.w, 1),

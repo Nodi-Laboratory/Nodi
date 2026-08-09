@@ -52,22 +52,36 @@ export async function openFreshSession(page: Page): Promise<void> {
   /**
    * **전환이 끝날 때까지 기다린다.**
    *
-   * 예전에는 "아이템 0개 + 질문창 활성"으로 판정했는데, 그 둘은 **이전 빈
-   * 대화에서도 참**이라 아무것도 확인하지 못했다. 그 사이에 파일을 붙이면
-   * 앞 대화로 들어갔다(실측 2026-08-05). 대화 id가 실제로 바뀐 것을 본다.
+   * 처음에는 "아이템 0개 + 질문창 활성"으로만 판정했는데, 그 둘은 이전 빈
+   * 대화에서도 참이라 아무것도 확인하지 못했다(실측 2026-08-05: 그 사이에
+   * 파일을 붙이면 앞 대화로 들어갔다). 그래서 **대화 id가 바뀐 것**을 봤다.
+   *
+   * ⚠️ 그 판정이 **D202(2026-08-07)로 틀린 것이 됐다.** 서버는 이제 이
+   * 공간의 가장 최근 대화가 비어 있으면(제목 없고 · 카드 없고 · 파일 없고)
+   * **새로 만들지 않고 그 행을 돌려준다** — 빈 대화 211개가 쌓여 목록을
+   * 덮은 실측이 근거다. 그러니 id는 **같은 것이 정상**이다.
+   *
+   * 이 단정 하나 때문에 스위트가 통째로 빨갰다 — `openFreshSession`을
+   * 부르는 스펙이 18개라 전부 여기서 멈췄다(실측 2026-08-09). 늘 빨간
+   * 스위트는 없는 것보다 나쁘다. 아무도 안 읽는다.
+   *
+   * 이제 **id 대신 조건**을 본다. 스펙이 실제로 필요한 것은 "새 행"이 아니라
+   * **비어 있고 내 것인 대화**다 — D202가 재사용하는 대화도 그 조건을 이미
+   * 만족한다(서버가 파일까지 확인하고 준다).
    */
-  const before = await page.locator(".canvas2").getAttribute("data-session");
   await page.getByLabel("대화 목록 열기").click();
   // 목록의 세션 행에도 "새 대화"라는 글자가 뜬다(제목 없는 세션의 기본 이름).
   // 만드는 버튼은 title 속성으로 정확히 집는다.
   await page.locator('button[title="새 대화"]').click();
   await expect(page.locator("[data-canvas-item]")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
+  // 세션이 **정해졌는지**는 봐야 한다 — 비어 있으면 캔버스가 읽지도 쓰지도
+  // 않으므로(D148), 그 상태로 시작한 스펙은 엉뚱한 곳에서 실패한다.
   await expect
     .poll(() => page.locator(".canvas2").getAttribute("data-session"), {
       timeout: 30_000,
     })
-    .not.toBe(before);
+    .toMatch(/^[0-9a-f-]{36}$/);
   // 서랍을 닫아 캔버스를 가리지 않게 한다.
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden({ timeout: 10_000 });

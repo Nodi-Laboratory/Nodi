@@ -38,7 +38,7 @@ import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem, ToolName } from "@/lib/canvas2/types";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import { spaceTargetFromId } from "@/lib/api";
-import { useSessionDetail } from "@/lib/queries";
+import { useSessionDetail, useSessions } from "@/lib/queries";
 import { intersects, union, type Rect } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
@@ -61,6 +61,7 @@ import { navigate, type NavDir } from "@/lib/canvas2/navigate";
 import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
+import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
 import { uploadFile } from "@/lib/api";
 import { checkUploadFile } from "@/lib/uploadLimits";
 import { sessionFilesKey } from "@/lib/queries";
@@ -95,6 +96,9 @@ interface Props {
 }
 
 const FALLBACK_H = 180;
+
+/** 방을 다시 열 때의 배율 상한 — 읽히면서 이웃도 보이는 선 (2026-08-09). */
+const LANDING_ZOOM = 1;
 
 /** 스스로 사라지는 안내가 머무는 시간(ms) — 사용자 지시 2026-08-08. */
 const FLASH_MS = 5000;
@@ -218,7 +222,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
       growRef.current = null;
     }, []),
   });
-  const store = useCanvasItems();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   // 교차 연결 이동 (D176) — 공간·세션을 함께 옮기고, 도착 후 초점을 맞춘다.
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
@@ -229,6 +232,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const setPendingFocusItem = useWorkspaceStore((s) => s.setPendingFocusItem);
   const router = useRouter();
   const { sessionId, dropSession } = useSessionBinding(spaceId);
+  // 스토어는 **지금 방**을 알아야 한다 — 다른 방의 답이 화면에 얹히지 않게(2026-08-09).
+  const store = useCanvasItems(sessionId);
 
   /**
    * 선택된 아이템들. **집합이다** — 예전에는 하나뿐이라 올가미로 여럿을 잡아도
@@ -370,7 +375,22 @@ export function CanvasWorkspace({ spaceId }: Props) {
   // 없으면 학생이 지난 대화를 열었을 때 빈 캔버스를 본다(데이터가 날아간
   // 것처럼 보인다). nodes.answer를 파싱해 읽기용으로 그리고, 첫 편집 때
   // 서버로 승격한다(legacyItems.ts 참조).
-  const { data: detail, isPending: detailPending } = useSessionDetail(sessionId);
+  /**
+   * 구 세션 폴백은 **캔버스가 비었을 때만** 부른다 (2026-08-09).
+   *
+   * 이 쿼리는 대화의 **모든 답 원문**을 받아 온다(`NODE_SELECT`에 answer가
+   * 있다). 그런데 쓰이는 곳은 v2 이전 세션 하나뿐이고, 카드가 있는 세션에서는
+   * 받자마자 버린다 — 방을 바꿀 때마다 대화 길이에 비례한 payload가 오간
+   * 셈이다.
+   *
+   * `planHydration`이 이미 "카드가 있으면 detail을 안 기다린다"로 되어 있으니
+   * (`snapshotCount > 0` → `fill: "items"`), 여기서 요청 자체를 막아도
+   * 폴백 경로는 그대로다 — 카드가 0장일 때만 부른다.
+   */
+  const needsLegacy = !!snapshot && snapshot.items.length === 0;
+  const { data: detail, isPending: detailPending } = useSessionDetail(
+    needsLegacy ? sessionId : null,
+  );
 
   /**
    * 이미 채워 넣은 세션 — **수화는 세션당 한 번이다** (D147).
@@ -1766,7 +1786,22 @@ export function CanvasWorkspace({ spaceId }: Props) {
   );
 
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
-  const sessionTitle = detail?.session?.title?.trim() || "제목 없는 대화";
+  /**
+   * 상단 바에 뜨는 방 이름.
+   *
+   * ⚠️ **세션 상세(`detail`)에서 읽으면 안 된다** — 그 질의는 캔버스 스냅샷이
+   * 빈 옛 방에서만 돈다(2026-08-09에 건 게이트). 현대 방에서는 `detail`이
+   * 늘 없으므로 이름이 통째로 "제목 없는 대화"로 굳었다. 게이트를 넣은 그
+   * 커밋에서 같이 깨졌고, 요청이 하나 줄었다는 사실만 재느라 못 봤다.
+   *
+   * 이름은 **세션 목록**에 이미 있다(사이드바가 쓰는 그 질의다). 같은 캐시를
+   * 읽으므로 요청이 늘지 않고, 이름을 바꾸면 목록과 상단 바가 함께 바뀐다.
+   */
+  const sessionList = useSessions(target);
+  const sessionTitle =
+    sessionList.data?.find((s) => s.id === sessionId)?.title?.trim() ||
+    detail?.session?.title?.trim() ||
+    "제목 없는 대화";
 
   // 세션 컨텍스트 파일 첨부 (D83) — 업로드 후 칩 바가 상태를 보여 준다.
   const handleAttach = useCallback(
@@ -1804,9 +1839,73 @@ export function CanvasWorkspace({ spaceId }: Props) {
    */
   const { focusId, clearFocus } = stream;
   const storeItems = store.items;
+
+  /**
+   * 방을 열면 **마지막에 하던 카드**로 내려앉는다 (2026-08-09).
+   *
+   * 지금까지 대화방을 바꾸면 카메라가 그대로 있었다. 카드가 쌓인 방으로
+   * 들어가면 학생이 보는 것은 빈 캔버스에 가깝다 — 실측: 40장짜리 방에서
+   * **화면 안에 2장**뿐이었다. 나머지를 찾으려면 손으로 헤매야 한다.
+   *
+   * 어디로 갈 것인가: **가장 최근 AI 개념 카드**다. 그것이 대화가 끝난
+   * 자리이고, 다시 들어온 학생이 이어서 할 자리다. 전체 보기로 맞추는 길도
+   * 있지만 그러면 글이 깨알같아 읽을 수가 없다(D162가 확대를 넣은 이유).
+   *
+   * **개념 카드가 없는 방도 있다** — 학생이 먼저 글을 써 놓은 방, 도판·클립만
+   * 남은 방. 개념 카드만 찾다 못 찾으면 착지가 통째로 취소되어 카메라가 **앞
+   * 방을 보던 자리**에 그대로 선다. 그건 방을 잘못 연 것처럼 보인다. 그럴
+   * 때는 종류를 안 가리고 가장 최근 것으로 간다.
+   */
+  const landTarget = useMemo(() => {
+    let best: { id: string; seq: number } | null = null;
+    let anyItem: { id: string; seq: number } | null = null;
+    for (const i of storeItems) {
+      if (!anyItem || i.seq > anyItem.seq) anyItem = { id: i.id, seq: i.seq };
+      if (i.kind !== "concept" || i.source !== "ai") continue;
+      if (!best || i.seq > best.seq) best = { id: i.id, seq: i.seq };
+    }
+    return (best ?? anyItem)?.id ?? null;
+  }, [storeItems]);
+  /**
+   * 이 방에 이미 내려앉았나. **ref다** — state로 두면 이펙트 안의 setState가
+   * 되고(React Compiler가 막는다) 렌더가 한 번 더 돈다.
+   */
+  const landedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusId) return;
-    const p = layout.positions.get(focusId);
+    /**
+     * 답이 새로 왔으면 그 카드가 먼저다. 없으면 **방에 처음 들어온 것**이니
+     * 마지막에 하던 카드로 내려앉는다(한 방에 한 번).
+     */
+    const landing = !focusId && sessionId != null && landedRef.current !== sessionId;
+    /**
+     * **학생이 갈 곳을 지목했으면 착지가 비킨다** (2026-08-09).
+     *
+     * 교차 연결 배지로 과거 대화에 가거나(D176) 돌아올 때는 `pendingFocusItemId`에
+     * "가서 이 카드를 보여 달라"가 남는다. 그것도 방을 바꾸므로 착지 조건이 함께
+     * 참이 되고, **같은 카메라를 두 곳에서 쓴다.**
+     *
+     * 지금까지 맞아 보였던 것은 저쪽이 rAF로 한 프레임 뒤에 날아서 나중에
+     * 이겼기 때문이다 — 근거가 아니라 **순서**다. 둘 중 어느 쪽이든 타이밍이
+     * 조금 바뀌면 학생은 누른 카드가 아니라 마지막 카드를 보게 되고, 그건
+     * "배지가 엉뚱한 데로 보낸다"로 읽힌다.
+     *
+     * 지목이 있으면 착지는 아무것도 안 한다. 대신 **이 방에 왔다고 적지도
+     * 않는다** — 지목을 소비한 뒤 학생이 다른 방에 갔다 돌아오면 그때는 착지가
+     * 제 일을 해야 한다.
+     */
+    if (landing && pendingFocusItemId) return;
+    const target = focusId ?? (landing ? landTarget : null);
+    /**
+     * ⚠️ 여기서 "왔다"고 **표시하면 안 된다.**
+     *
+     * 방에 들어온 직후에는 수화 전이라 카드 목록이 비어 있다. 그때 표시해
+     * 버리면 잠시 뒤 카드가 도착해도 착지가 이미 끝난 것이 되어 **아무 일도
+     * 안 일어난다** — 실측 2026-08-09: 40장짜리 방에서 화면 안 카드가 그대로
+     * 2장이었다. 표시는 **실제로 날아간 뒤**에만 한다.
+     */
+    if (!target) return;
+    const focusId2 = target;
+    const p = layout.positions.get(focusId2);
     if (!p) return; // 아직 배치 전 — 다음 렌더에 다시 시도한다
 
     /**
@@ -1816,13 +1915,54 @@ export function CanvasWorkspace({ spaceId }: Props) {
      * 보인다. 딸린 것이 있을 때만 배율을 낮춰 묶음을 담는다(focusCamera).
      */
     const attached = storeItems.filter(
-      (i) => i.parentItemId === focusId && (i.kind === "clip" || i.kind === "figure"),
+      (i) => i.parentItemId === focusId2 && (i.kind === "clip" || i.kind === "figure"),
     );
     // 아직 실측 전인 첨부가 있으면 기다린다. 폴백 크기로 날아가면 카메라가
     // 한 번 어긋난 자리에 서고, focus는 이미 지워져 다시 맞출 기회가 없다.
     if (attached.some((a) => !layout.positions.has(a.id) || !layout.sizes.has(a.id))) return;
 
-    const size = layout.sizes.get(focusId) ?? { w: ITEM_W, h: FALLBACK_H };
+    /**
+     * **대상 자신도 실측될 때까지 기다린다** (2026-08-09).
+     *
+     * 딸린 것에는 이미 이 규칙이 있었는데(바로 위 줄) 정작 날아갈 카드에는
+     * 없어서, 폴백 크기(`ITEM_W`×`FALLBACK_H`)로 카메라를 잡고 날았다. 카드
+     * 실제 폭은 `max-content`라 폴백과 다르고, 배치 엔진은 실측 폭으로 열을
+     * 다시 잡는다 — 그래서 **카드는 옮겨 가는데 카메라는 옛 자리에 선다.**
+     *
+     * 그 뒤 다시 맞출 기회가 없다는 것이 결정적이다: 첫 비행에서 곧바로
+     * `landedRef`에 이 방을 적으므로(아래 ⚠️ 참조) 착지 조건이 두 번 참이
+     * 되지 않는다.
+     *
+     * 실측 2026-08-09(1440×900, 카드 9장): 착지한 카드 `개념 9`의 왼쪽 변이
+     * **−122px** — 화면 밖에서 시작해 오른쪽 꼬리만 보였다. 학생 눈에는
+     * "방을 열었는데 글자 몇 개만 잘려 있다"였다.
+     *
+     * 크기는 ResizeObserver가 그리자마자 재므로 기다리는 값은 한 프레임이다.
+     */
+    const size = layout.sizes.get(focusId2);
+    if (!size) return;
+
+    /**
+     * **좌표가 지금 크기로 다시 잡힌 뒤에 난다** (2026-08-09).
+     *
+     * 배치는 rAF 뒤에 돌기 때문에(`useItemLayout`) 크기가 막 실측된 프레임에는
+     * `sizes`는 진짜 값인데 `positions`는 **폴백 폭으로 잡은 옛 좌표**다.
+     * 착지는 방마다 한 번뿐이라 그 프레임에 날면 되돌릴 기회가 없다.
+     *
+     * 실측 2026-08-09(1440×900·카드 9장, 착지 카드의 왼쪽 변):
+     *   막지 않음            −122px  (크기·좌표 둘 다 폴백)
+     *   크기만 기다림         −79px  (좌표는 여전히 폴백 폭 560으로 잡은 x=7200,
+     *                                실제 카드는 6597 — 딱 그 차이만큼 어긋났다)
+     *   좌표까지 기다림(지금)  화면 안
+     *
+     * ⚠️ "크기가 다 있나"로는 **못 잡는다** — 그 프레임에도 크기는 다 있다.
+     * 물어야 하는 것은 좌표가 그 크기를 반영했나다(`layout.settled`).
+     *
+     * 착지에만 건다. 새 답(`focusId`)은 지금 읽으라고 온 글이라 한 프레임이라도
+     * 빨리 보여 주는 편이 낫고, 그쪽은 스트리밍 중 `backOffCamera`가 계속
+     * 따라가므로 어긋나도 되돌아온다.
+     */
+    if (landing && !layout.settled) return;
     const 처음 = focusCamera(
         { x: p.x, y: p.y, w: size.w, h: size.h },
         attached.map((a) => {
@@ -1840,18 +1980,51 @@ export function CanvasWorkspace({ spaceId }: Props) {
           bottom: UI_BOTTOM,
         },
         {
-          maxZoom: clientSettings.focusZoom || NEW_NODE_ZOOM,
+          /**
+           * 새 답이면 크게(235%), **방에 들어온 것이면 덜 크게**(100%).
+           *
+           * 새 답은 지금 읽으라고 온 글이라 꽉 채우는 것이 맞다(D162). 그런데
+           * 방을 다시 열 때는 "여기가 어디인가"가 먼저다 — 한 장만 크게 띄우면
+           * 둘러볼 수가 없다. 100%는 카드 설계 폭(560)이 그대로 보이는 배율이라
+           * 읽히면서 이웃도 함께 들어온다.
+           */
+          maxZoom: landing
+            ? LANDING_ZOOM
+            : clientSettings.focusZoom || NEW_NODE_ZOOM,
           minZoom: ATTACH_MIN_ZOOM,
           pad: FOCUS_PAD,
+          /**
+           * **자랄 폭까지 미리 본다** (2026-08-09).
+           *
+           * 답이 막 생긴 순간의 카드는 거의 비어 있어서, 그 폭으로 배율을
+           * 잡으면 235%가 나온다. 그 뒤 글이 스트리밍되며 카드가 `max-width`
+           * (=`ITEM_W`)까지 넓어지고, 235%에서 그건 화면 위 1316px이다.
+           * 실측 2026-08-09(1024×768): 다 자란 카드의 왼쪽 변이 −105px.
+           */
+          growW: ITEM_W,
         },
       );
     flyTo(처음);
     // 여기서부터 이 카드가 자라는 것을 지켜본다 (D210 2-2).
-    growRef.current = { id: focusId, cam: 처음 };
+    growRef.current = { id: focusId2, cam: 처음 };
+    /**
+     * ⚠️ **어느 경로로 날았든 "이 방에 왔다"고 적는다.**
+     *
+     * 착지 때만 적으면, 새 답이 235%로 날아간 **직후** `clearFocus()`로
+     * focusId가 비면서 착지 조건이 다시 참이 된다 — 그래서 같은 카드로 한 번
+     * 더, 이번에는 100%로 날아가 방금의 확대를 덮었다(실측 2026-08-09: 답이
+     * 왔는데 배율이 100% 그대로였다. D162가 깨진 것으로 보였다).
+     *
+     * 착지는 **방을 열 때 한 번**이라는 뜻이므로, 첫 비행이 무엇이든 그것으로
+     * 끝난 것이 맞다.
+     */
+    if (sessionId) landedRef.current = sessionId;
+    if (landing) return; // 착지는 스트림의 초점을 건드리지 않는다
     clearFocus();
   }, [
-    focusId, layout.positions, layout.sizes, storeItems, vp, flyTo, clearFocus,
-    clientSettings.focusZoom,
+    focusId, landTarget, sessionId, layout.positions, layout.sizes, layout.settled,
+    pendingFocusItemId, storeItems, vp,
+    flyTo, clearFocus, clientSettings.focusZoom,
   ]);
 
   /**
@@ -2150,10 +2323,22 @@ function UndoToast({ label, onUndo }: { label: string; onUndo: () => void }) {
  * 무언가를 하지만 이것만 화면을 바꾼다. 같은 크기로 두면 그 차이가 안 보인다.
  */
 function MapDoor({ onOpen }: { onOpen: () => void }) {
+  /**
+   * **문도 도구바를 피한다** (2026-08-09).
+   *
+   * 화면이 낮으면 규칙이 2단계로 넘어가 도구바가 지도와 같은 높이대에 서고,
+   * 지도가 `mapDx`만큼 왼쪽으로 물러난다(사용자 지시 2026-08-08: "도구 막대를
+   * 지도의 오른쪽에"). 미니맵은 그 값을 받아 쓰는데 **문은 안 받고 있었다** —
+   * 실측 2026-08-09(1280×620): 도구바가 `top` 모드로 올라온 뒤에도 문 x
+   * 1163..1264 · 도구바 x 1200..1264로 그대로 겹쳤다.
+   */
+  const chrome = useChromeFitValue();
   return (
     <button
       type="button"
       data-no-pan
+      /* 도구바가 피해 갈 대상이다 — `useChromeFit`이 이 표시를 찾는다. */
+      data-map-door
       onClick={onOpen}
       aria-label="개념 지도 열기"
       title="개념 지도"
@@ -2167,6 +2352,7 @@ function MapDoor({ onOpen }: { onOpen: () => void }) {
         borderColor: "var(--c-rule)",
         color: "var(--c-live)",
         boxShadow: "var(--c-shadow-md)",
+        transform: chrome.mapDx ? `translateX(${-chrome.mapDx}px)` : undefined,
       }}
     >
       <MapIcon size={scaled(26)} />

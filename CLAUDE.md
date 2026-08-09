@@ -108,9 +108,25 @@ base_url/model/api_key 셋이 다 채워져야 동작하고, 로컬은 비워 �
   추론 누출 차단). 스킬 실패는 `SkillResult(ok=False)`로 모델에 전달되고
   턴을 죽이지 않는다.
 
-  스킬 8종: think · search_class_material · search_textbook_figure ·
-  search_lecture_clip · list_session_concepts · get_concept ·
-  list_session_files · read_session_file.
+  스킬 11종: think · set_media_intent · search_class_material ·
+  search_textbook_figure · search_lecture_clip · get_concept ·
+  read_my_notes · list_session_files · read_session_file ·
+  list_class_materials · summarize_class_questions.
+  이 목록은 **`catalog.ALL_DECLARED`와 레지스트리가 같은지 테스트가 지킨다** —
+  오타 하나로 스킬이 조용히 사라지는 것을 막는다.
+  · `list_session_concepts`는 D216(2026-08-09)에서 걷어냈다. **목록은 도구가
+    아니라 안내로 준다** — 판단 단계는 캔버스를 못 봐서, 학생이 "아까 그거"라고
+    하면 모델이 먼저 목록을 부르고 그제야 본문을 불렀다(실측 5회 전부). 그
+    제목은 라우터가 카탈로그를 좁히려고 어차피 읽는 행에 들어 있다. 태그
+    재사용의 근거였던 `clusters`는 D135의 tag_guide가 이미 **항상** 주입한다.
+  · 카탈로그를 좁히는 세션 상태 넷(역할·파일·학생 글·개념 카드)은
+    `_react_probes`가 **한꺼번에** 확인한다. 하나씩 await하면 첫 글자 전에
+    커넥션 왕복이 줄줄이 쌓인다.
+  · ⚠️ **개념 카드 유무를 `nodes`로 세지 않는다.** `nodes`는 "턴이 있었나"라
+    인사 한 마디에도 생기고 학생이 카드를 다 지워도 남는다. 그렇게 셌더니
+    카드 0장인 방에서 2턴째부터 개념 스킬이 열리고, 둘이 열리니 think까지
+    딸려 나오고, 카탈로그가 안 비니 **판단 단계가 통째로 돌았다**(실측
+    2026-08-09: 매 턴 +720ms). 출처는 `canvas_items`다.
   카탈로그는 스코프뿐 아니라 **세션 상태**로도 갈린다(파일이 없으면 파일 스킬을
   노출하지 않는다 — 노출하면 모델이 부르고 빈 결과로 군더더기를 붙인다).
   판단 프롬프트에 복합 질문 서브질문 분해 지침이 있다(D130). search_class_material은
@@ -621,10 +637,18 @@ base_url/model/api_key 셋이 다 채워져야 동작하고, 로컬은 비워 �
 - **임베딩은 비대칭** — 질의 `embedding-query`, 문서 `embedding-passage`. 혼용 금지.
 - **거리 규약** `distance = 1 - score` (Qdrant cosine → 기존 임계값 의미 유지).
 - **튜너블(D62)**: admin 오버레이(`app_settings`) > config 기본값. 새 노브는
-  `app_settings.as_*` + clamp로 읽고 `db/03_app_settings.sql`에 기본값을 추가해야
-  admin 콘솔에 뜬다.
-- **권한은 DB가 강제한다(D104)** — RLS 정책 38개 + 함수 26개. 앱 코드로 옮기지
-  않는다. 사용자 요청은 `nodi_app` 역할 + `SET LOCAL app.user_id`로 돌고,
+  `app_settings.as_*` + clamp로 읽는다. **콘솔에 뜨는 것은 스펙이 정한다** —
+  `admin_console`의 스펙에 키가 있으면 `app_settings`에 행이 없어도 뜨고,
+  없는 상태는 `missing_row: true`로 드러난다(실측 2026-08-09: 스펙 67개 · 씨앗
+  SQL 49개인데 콘솔에는 67개가 다 뜬다). `db/03_app_settings.sql`은 **새로
+  만드는 DB에 행을 깔아 주는 것**이고, 이미 돌고 있는 DB에는 마이그레이션이
+  필요하다 — 기본값을 바꿀 때 그 둘을 같이 옮기지 않으면 코드만 바뀌고 실제
+  값은 그대로다(D172의 경고와 같은 함정).
+- **권한은 DB가 강제한다(D104)** — 표 24개에 RLS가 켜져 있고 정책이 그 위에
+  얹혀 있다(실측 2026-08-09: 정책 68 · 우리가 만든 함수 28. 한동안 "38개 +
+  26개"로 적혀 있었는데 **숫자는 늘 뒤처진다** — 정본은 `pg_policies`다:
+  `select count(*) from pg_policies where schemaname='public'`). 앱 코드로
+  옮기지 않는다. 사용자 요청은 `nodi_app` 역할 + `SET LOCAL app.user_id`로 돌고,
   `auth.uid()`가 그 값을 읽어 정책이 판정한다. **직접 커넥션을 얻지 말 것** —
   `db/pool.py`의 `user_conn()`이 트랜잭션과 컨텍스트 주입을 한 묶음으로 보장한다
   (그 경로를 우회하면 앞 요청의 사용자로 질의가 나갈 수 있다).

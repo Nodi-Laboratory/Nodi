@@ -3,11 +3,12 @@
 "새 대화"를 누를 때마다 행이 생기던 것을, **이미 있는 빈 대화를 다시 여는**
 쪽으로 바꿨다. 지우는 것이 아니라 안 만드는 것이라 잃는 것이 없다.
 
-여기서 못 박는 것 넷:
+여기서 못 박는 것 다섯:
   1. 최근 대화가 비었으면 **insert가 아예 안 나간다**
   2. 글이 하나라도 있으면 새로 만든다
   3. 파일만 붙어 있어도 새로 만든다(그 파일이 다음 질문에 딸려 가면 안 된다)
-  4. 제목을 정해서 만들라고 하면 언제나 새로 만든다
+  4. **턴이 있었으면** 새로 만든다 (2026-08-09)
+  5. 제목을 정해서 만들라고 하면 언제나 새로 만든다
 """
 
 from __future__ import annotations
@@ -56,6 +57,23 @@ async def test_빈_대화가_있으면_그것을_돌려준다():
 @pytest.mark.asyncio
 async def test_글이_있으면_새로_만든다():
     c = FakeClient(recent=[빈대화()], counts={"canvas_items": 3})
+    out = await svc.create_session(c, OWNER, "personal", None, None)
+    assert out["id"] == "new-session"
+    assert len(c.inserted) == 1
+
+
+@pytest.mark.asyncio
+async def test_턴이_있었으면_새로_만든다():
+    """`canvas_items`가 0인데 답이 있는 방이 실제로 있다 (2026-08-09).
+
+    카드는 **화면이** 만든다. 스트리밍 도중에 새로고침하면 서버는 `nodes`에
+    답을 남기고 카드는 안 생긴다 — v2 이전 대화도 같은 모양이고, 화면은 그런
+    방을 `nodes`에서 읽어 `legacy-…` 카드로 그린다.
+
+    그 방을 재사용하면 학생이 "새 대화"를 눌렀는데 **지난 답이 그대로 있는
+    방**이 열린다(실측: 새 대화에 `legacy-…` 카드 한 장이 떠 있었다).
+    """
+    c = FakeClient(recent=[빈대화()], counts={"nodes": 1})
     out = await svc.create_session(c, OWNER, "personal", None, None)
     assert out["id"] == "new-session"
     assert len(c.inserted) == 1

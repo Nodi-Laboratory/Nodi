@@ -94,11 +94,43 @@ describe("입력창은 지도가 아래에 올 때만 비킨다", () => {
     expect(r.askDx).toBeGreaterThan(0);
   });
 
+  /** 실제로 그려질 입력창의 좌우 변(화면 px). 줄어들었으면 그 폭으로 잰다. */
+  function 입력창변(input: ChromeInput) {
+    const r = fitChrome(input);
+    const w = r.askMaxW ?? input.askW;
+    const left = (input.stage.w - w) / 2 - r.askDx;
+    return { left, right: left + w, fit: r };
+  }
+
   it("민 뒤에는 지도와 안 겹친다", () => {
-    const r = fitChrome(좁은화면);
-    const askRight = (좁은화면.stage.w + 좁은화면.askW) / 2 - r.askDx;
-    const mapLeft = 좁은화면.stage.w - 좁은화면.margin - 좁은화면.map.w - r.mapDx;
-    expect(askRight).toBeLessThanOrEqual(mapLeft);
+    const { right, fit } = 입력창변(좁은화면);
+    const mapLeft = 좁은화면.stage.w - 좁은화면.margin - 좁은화면.map.w - fit.mapDx;
+    expect(right).toBeLessThanOrEqual(mapLeft);
+  });
+
+  /**
+   * 옛 규칙에는 상한이 없어서 입력창이 **화면 밖**을 가리켰다 (2026-08-09).
+   *
+   * 실측 1440×900: 왼쪽 변 −117px — 첨부 버튼과 안내 문구가 통째로 사라져
+   * 학생이 파일을 붙일 수 없었다. 겹치는 것보다 나쁘다.
+   */
+  it("아무리 밀어도 왼쪽 여백을 넘지 않는다", () => {
+    for (const w of [700, 900, 1100, 1350, 1440]) {
+      const { left } = 입력창변({ ...기본, stage: { w, h: 620 }, corner: "br" });
+      expect(left).toBeGreaterThanOrEqual(기본.margin - 0.5);
+    }
+  });
+
+  it("자리가 모자라면 입력창이 줄어든다", () => {
+    // 지도·도구바·틈을 빼고 남는 자리보다 입력창이 넓은 화면.
+    const 빡빡 = { ...기본, stage: { w: 900, h: 620 }, corner: "br" as const };
+    const r = fitChrome(빡빡);
+    const room =
+      빡빡.stage.w - 빡빡.margin - 빡빡.map.w - r.mapDx - 빡빡.gap - 빡빡.margin;
+    if (빡빡.askW > room) {
+      expect(r.askMaxW).not.toBeNull();
+      expect(r.askMaxW as number).toBeLessThanOrEqual(room + 0.5);
+    }
   });
 
   it("지도가 위쪽이면 입력창은 안 건드린다", () => {

@@ -30,7 +30,6 @@ Bastani 2025의 결과도 같은 방향을 가리킨다 — 우리가 질문까�
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -278,7 +277,3 @@ async def _ask(user_text: str, model: str | None) -> str:
         data = res.json()
     return data["choices"][0]["message"].get("content") or ""
 
-
-def json_dumps(value: Any) -> str:
-    """로그용 — 한국어를 이스케이프하지 않는다."""
-    return json.dumps(value, ensure_ascii=False)

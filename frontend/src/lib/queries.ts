@@ -4,6 +4,7 @@ import {
   type QueryClient,
   useQuery,
 } from "@tanstack/react-query";
+import { getCanvas } from "@/lib/api/canvas";
 import {
   getConceptMap,
   getHomeSummary,
@@ -220,11 +221,22 @@ export function useSessionFiles(sessionId: string | null) {
  * 미리 받아 화면 도착 시 이미 채워지게 한다(cold 워터폴 제거).
  * 임시(낙관) id는 호출하지 않는다(호출부에서 isRealId 가드).
  */
+/**
+ * 목록에서 손이 올라간 대화방을 **미리 데운다** (2026-08-09에 대상 교체).
+ *
+ * 예전에는 세션 상세(`getSession`)를 받았다. 그건 대화의 **모든 답 원문**을
+ * 실어 오는데(`NODE_SELECT`에 answer가 있다) 지금 캔버스는 그걸 안 쓴다 —
+ * v2 이전 세션의 폴백일 뿐이다. 정작 방이 뜨는 것을 좌우하는 것은 **캔버스
+ * 스냅샷**(`/canvas`)인데 그건 안 받고 있었다.
+ *
+ * 즉 미리 받기가 **엉뚱한 것을 데우고** 있었다. 방을 여는 데 쓰이는 것을
+ * 데운다.
+ */
 export function prefetchSessionData(qc: QueryClient, sessionId: string) {
   void qc.prefetchQuery({
-    queryKey: sessionKey(sessionId),
-    queryFn: () => getSession(sessionId),
-    staleTime: STALE.sessionDetail,
+    queryKey: ["canvas", sessionId],
+    queryFn: () => getCanvas(sessionId),
+    staleTime: Infinity,
   });
 }
 

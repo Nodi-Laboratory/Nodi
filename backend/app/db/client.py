@@ -441,6 +441,47 @@ class _BaseClient:
         except Exception as exc:
             _fail(exc, f"delete {table}")
 
+    async def prune_older_than(
+        self,
+        table: str,
+        days: int,
+        *,
+        limit: int = 2000,
+        statuses: tuple[str, ...] | None = None,
+    ) -> int:
+        """오래된 행을 **조금씩** 지운다. 지운 개수를 돌려준다 (2026-08-09).
+
+        `delete()`로도 되지만 그쪽은 `RETURNING *`이라 지운 행을 전부 메모리로
+        가져온다 — 몇 달 치가 쌓인 표를 처음 청소할 때 그 양이 위험하다. 여기서는
+        **개수만** 받고, 회당 상한을 둬서 표를 오래 잡지 않는다.
+
+        `statuses`를 주면 그 상태의 행만 지운다 — `jobs`에서 아직 큐에 있는 일을
+        지우면 그 파일은 영영 색인되지 않는다.
+
+        ⚠️ 진단용 표의 청소에만 쓴다. 학습 데이터(세션·카드·노드)는 학생의
+        것이라 시간으로 지우지 않는다.
+        """
+        if days <= 0 or limit <= 0:
+            return 0
+        where = [f"created_at < now() - make_interval(days => ${1})"]
+        args: list[Any] = [int(days)]
+        if statuses:
+            where.append(f"status = ANY(${len(args) + 1})")
+            args.append(list(statuses))
+        sql = (
+            f"DELETE FROM {Q._ident(table)} WHERE ctid IN ("
+            f" SELECT ctid FROM {Q._ident(table)} WHERE {' AND '.join(where)}"
+            f" LIMIT {int(limit)})"
+        )
+        try:
+            async with self._conn() as conn:
+                await _prepare(conn)
+                tag = await conn.execute(sql, *args)
+            # asyncpg는 "DELETE <n>"을 돌려준다.
+            return int(str(tag).rsplit(" ", 1)[-1] or 0)
+        except Exception as exc:
+            _fail(exc, f"prune {table}")
+
     # --- 함수 호출 ----------------------------------------------------------
     async def rpc(self, fn: str, args: dict[str, Any], *, many: bool = False) -> Any:
         """DB 함수 호출. 이름 있는 인자로 넘겨 순서 의존을 없앤다.

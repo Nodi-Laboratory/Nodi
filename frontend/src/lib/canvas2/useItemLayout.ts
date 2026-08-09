@@ -73,12 +73,28 @@ export interface UseItemLayout {
   measure: (id: string, el: HTMLElement | null) => void;
   /** 외부 사정으로 다시 배치해야 할 때(그림이 바뀐 직후 등). */
   invalidate: () => void;
+  /**
+   * **지금 좌표가 지금 크기로 계산된 것인가** (2026-08-09).
+   *
+   * 배치는 rAF 뒤에 돈다(아래 이펙트). 그래서 크기가 막 실측된 프레임에는
+   * `sizes`는 진짜 값인데 `positions`는 **아직 폴백 크기로 잡힌 옛 좌표**다.
+   * 그 한 프레임을 못 보고 카메라를 잡으면 카드는 곧 옆으로 옮겨 가고
+   * 카메라만 옛 자리에 선다 — 화면에는 "방을 열었는데 글자가 잘려 있다"로
+   * 보인다(실측 2026-08-09: 착지 카드의 왼쪽 변이 −79px, 배치가 폴백 폭
+   * 560으로 잡은 x=7200 자리로 날았고 실제 카드는 6597에 있었다).
+   *
+   * "크기가 다 있나"로는 못 잡는다 — 그 프레임에도 크기는 다 있다. 물어야
+   * 하는 것은 **좌표가 그 크기를 반영했나**다.
+   */
+  settled: boolean;
 }
 
 /** 배치 상태 + 그 배치가 어느 세션의 것인지. 둘을 같이 들고 있어야 리셋이 자연스럽다. */
 interface LayoutState {
   key: string | null;
   result: LayoutResult;
+  /** 이 결과를 만든 입력 시그니처. `settled` 판정의 근거다. */
+  sig: string;
 }
 
 export function useItemLayout(
@@ -87,7 +103,11 @@ export function useItemLayout(
   getObstacles: () => Rect[],
 ): UseItemLayout {
   const [sizes, setSizes] = useState<Map<string, Size>>(() => new Map());
-  const [state, setState] = useState<LayoutState>(() => ({ key: sessionKey, result: EMPTY }));
+  const [state, setState] = useState<LayoutState>(() => ({
+    key: sessionKey,
+    result: EMPTY,
+    sig: "",
+  }));
   const [nonce, setNonce] = useState(0);
 
   const observers = useRef<Map<string, ResizeObserver>>(new Map());
@@ -121,7 +141,11 @@ export function useItemLayout(
       setState((prev) => {
         // 세션이 바뀌었으면 태그 순서를 이어받지 않는다.
         const prevOrder = prev.key === sessionKey ? prev.result.tagOrder : [];
-        return { key: sessionKey, result: layoutItems(inputs, obstacles, prevOrder) };
+        return {
+          key: sessionKey,
+          result: layoutItems(inputs, obstacles, prevOrder),
+          sig: `${sig}#${zSig}`,
+        };
       });
     });
     return () => cancelAnimationFrame(raf);
@@ -190,7 +214,8 @@ export function useItemLayout(
       sizes,
       measure,
       invalidate,
+      settled: state.key === sessionKey && state.sig === `${sig}#${zSig}`,
     }),
-    [state, sizes, measure, invalidate],
+    [state, sizes, measure, invalidate, sessionKey, sig, zSig],
   );
 }

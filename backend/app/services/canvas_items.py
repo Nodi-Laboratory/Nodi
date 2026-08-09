@@ -614,11 +614,12 @@ async def session_tree_context(
     if not trees:
         return None
 
-    blocks: list[str] = []
+    blocks: list[tuple[bool, str]] = []  # (지금 보고 있는 트리인가, 본문)
     for tag, flat in trees.items():
         # 분류 없는 가지는 이름이 없다 — 학생이 떼어내 놓은 것이라고 말해 준다.
         head = "## (분류를 떼어 놓은 가지)" if tag == LOOSE_TAG else f"## [{tag}]"
-        if focus_tag and tag == focus_tag:
+        focused = bool(focus_tag) and tag == focus_tag
+        if focused:
             head += "  ← 학생이 지금 보고 있는 트리"
         lines = [head]
         for depth, r in flat:
@@ -627,11 +628,27 @@ async def session_tree_context(
             pad = "  " * depth
             label = title or body[:40] or "(제목 없음)"
             lines.append(f"{pad}- {label}" + (f": {body}" if body else ""))
-        blocks.append("\n".join(lines))
+        blocks.append((focused, "\n".join(lines)))
 
-    # 넘치면 오래된 트리부터 버린다(태그 순서 = 첫 등장 순서).
-    text = "\n\n".join(blocks)
+    # ── 넘치면 버린다 — 단, **보고 있는 트리는 남긴다** ─────────────────
+    #
+    # 오래된 것부터 버리는 규칙 자체는 옳다("최근 대화가 지금 질문과 가깝다").
+    # 그런데 태그 순서는 **첫 등장 순서**라, 학기 초에 만든 트리로 돌아가
+    # 복습하듯 이어 물으면 **그 트리가 첫 번째 버림 대상**이 된다 — 실측
+    # 2026-08-09(태그 6종 × 카드 20장): 학생이 보고 있던 '판 구조론'이 통째로
+    # 사라지고 무관한 트리 셋만 남았다. `focus_tag`로 "여기를 보고 있다"고
+    # 가리켜 놓고 정작 그 내용을 안 준 셈이다.
+    #
+    # 지금 보고 있는 트리는 **마지막까지 남긴다.** 그것만으로 상한을 넘으면
+    # 그때는 잘라서라도 남긴다 — 없는 것보다 잘린 것이 낫다.
+    def _join(bs: list[tuple[bool, str]]) -> str:
+        return "\n\n".join(b for _, b in bs)
+
+    text = _join(blocks)
     while len(text) > TREE_MAX_CHARS and len(blocks) > 1:
-        blocks.pop(0)
-        text = "\n\n".join(blocks)
+        drop = next((i for i, (f, _) in enumerate(blocks) if not f), None)
+        if drop is None:
+            break  # 남은 것이 전부 초점 트리다 — 아래에서 잘린다.
+        blocks.pop(drop)
+        text = _join(blocks)
     return text[:TREE_MAX_CHARS] if text else None

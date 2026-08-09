@@ -11,6 +11,12 @@
 !.env.example
 !.env.*.example
 
+# Node (저장소 어디서 npm/npx를 돌리든)
+# frontend/.gitignore의 `/node_modules`는 그 폴더에만 걸린다. 루트에서 `npx`를
+# 한 번 돌리면 루트에 node_modules가 생기고 `git status`에 뜬다 — 누가 한 번
+# `git add -A`를 하면 수만 파일이 딸려 들어간다.
+node_modules/
+
 # Python (backend)
 .venv/
 backend/.venv/
