@@ -131,6 +131,16 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const simRef = useRef<Simulation<SimNode, undefined> | null>(null);
+  /**
+   * 위쪽 몇 px이 UI에 덮여 있나 (사용자 지시 2026-08-09).
+   *
+   * 홈이 `[data-map-overlay]`를 씌운다. **자리를 그때그때 잰다** — 프롭으로
+   * 받으면 홈의 문구가 한 줄 늘 때마다 숫자를 손으로 옮겨야 하고, 그 숫자는
+   * 반드시 어긋난다. ref에 담는 이유는 이 값이 렌더가 아니라 **d3 이펙트
+   * 안에서** 쓰이기 때문이다.
+   */
+  const uiTopRef = useRef(0);
+
   /** 화면 변환. React state로 두면 팬/줌마다 전체가 다시 돈다(D124와 같은 이유). */
   const viewRef = useRef({ k: 0.5, x: 0, y: 0 });
   const nodesRef = useRef<SimNode[]>([]);
@@ -490,6 +500,12 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
     let fitted = false;
     const fitToContent = (force = false) => {
       if ((fitted && !force) || !width || !height) return;
+      // 덮개는 지도 위에 절대 배치로 얹혀 있다 — 그 아래 변이 곧 우리 천장이다.
+      const wrapBox = wrapRef.current?.getBoundingClientRect();
+      const uiBox = document
+        .querySelector("[data-map-overlay]")
+        ?.getBoundingClientRect();
+      uiTopRef.current = wrapBox && uiBox ? Math.max(0, uiBox.bottom - wrapBox.top) : 0;
       const shown = nodesRef.current.filter(isVisible);
       // 전부 껐으면 안내 문구가 덮으므로 배율은 아무래도 좋다 — 그래도
       // 전체로 맞춰 두어야 다시 켰을 때 엉뚱한 자리에 있지 않다.
@@ -499,12 +515,32 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
       // 자리가 잡힌 그 순간이 곧 보여 줄 때다 — 따로 재지 않는다.
       setSettling(false);
       const pad = 48;
+      /**
+       * **덮인 자리는 빼고 잰다** (사용자 지시 2026-08-09).
+       *
+       * 홈에서는 이 지도 위에 인사말·입력창·버튼이 얹힌다. 화면 전체로 맞추면
+       * 노드 무리의 한가운데가 정확히 그 글자들 뒤에 깔린다 — 지도가 보이라고
+       * 배경으로 둔 것인데 가장 붐비는 곳이 가려지는 셈이다.
+       *
+       * 그래서 **덮인 아래쪽만**을 화면으로 치고 거기에 맞춘다. 남는 높이가
+       * 너무 얇으면(작은 화면) 맞추기가 무의미해지므로 하한을 둔다.
+       */
+      const top = Math.min(uiTopRef.current, height * 0.6);
+      /**
+       * 아래 띠는 **여백을 아낀다**(pad의 절반).
+       *
+       * 위쪽을 UI에 내주고 나면 남는 높이가 화면의 절반도 안 된다. 거기에
+       * 좌우와 같은 여백까지 물리면 무리가 손톱만 해져서, "한눈에 보이게"
+       * 하려던 것이 도리어 안 보이게 된다(실측 2026-08-09: 810 화면에서
+       * 쓸 수 있는 높이가 290px).
+       */
+      const usableH = Math.max(120, height - top - pad);
       const k = Math.min(
         6,
-        Math.max(0.12, Math.min((width - pad * 2) / b.w, (height - pad * 2) / b.h)),
+        Math.max(0.12, Math.min((width - pad * 2) / b.w, usableH / b.h)),
       );
       const t = zoomIdentity
-        .translate(width / 2, height / 2)
+        .translate(width / 2, top + (height - top) / 2)
         .scale(k)
         .translate(-(b.x + b.w / 2), -(b.y + b.h / 2));
       sel.call(zoomer.transform, t);
@@ -598,7 +634,6 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
 
   const zoomIn = useCallback(() => zoomApiRef.current?.zoomBy(1.6), []);
   const zoomOut = useCallback(() => zoomApiRef.current?.zoomBy(1 / 1.6), []);
-  const fit = useCallback(() => zoomApiRef.current?.fit(), []);
 
   return (
     <div
@@ -616,7 +651,7 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
         className="h-full w-full touch-none cursor-grab active:cursor-grabbing"
       />
 
-      <MapZoomControls onZoomIn={zoomIn} onZoomOut={zoomOut} onFit={fit} />
+      <MapZoomControls onZoomIn={zoomIn} onZoomOut={zoomOut} />
 
       {/**
        * 식는 동안 덮는다 (D211 1).

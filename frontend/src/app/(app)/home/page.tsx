@@ -207,7 +207,7 @@ export default function HomePage() {
              * 자리는 상자 **위쪽**이다. 정가운데에 두면 지도의 가장 붐비는 곳과
              * 겹친다(점은 가운데로 뭉친다).
              */}
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center px-6 pt-[8%]">
+            <div data-map-overlay className="pointer-events-none absolute inset-0 flex flex-col items-center px-6 pt-[8%]">
               <div className="pointer-events-auto flex w-full max-w-3xl flex-col items-center gap-8">
                 {/* 페이지 제목이 h1이므로 여기는 h2다 — 문서 구조가 뒤집히면
                   낭독기가 이 화면의 주제를 인사말로 읽는다. */}
