@@ -134,7 +134,34 @@ export function InkLabTab() {
   useEffect(() => {
     const api = bridge.api;
     if (!api) return;
-    markBase.current = new Set(api.getSceneElements().map((e) => e.id));
+    /**
+     * **실험실은 열면 백지다** (2026-08-09).
+     *
+     * 학습 캔버스는 대화방마다 씬이 갈리지만 여기는 고정 무대라, 앞서 그은
+     * 획이 Excalidraw의 저장·복원을 타고 그대로 남는다(D176의
+     * `customData.nodiAsk`가 도구를 오가도 살아남는 그 성질이다). 남은 획은
+     * 눈에 거슬리는 데서 끝나지 않는다 — 카드 위에 겹쳐 있으면 새로 긋는 획이
+     * 그 요소에 먹혀 **획이 아예 안 세어진다**(실측: 실험실 스펙 둘을 이어
+     * 돌리면 뒤엣것이 그 이유로 멈췄다).
+     *
+     * ⚠️ **청소는 펜을 쥐여 주는 이 자리에서** 한다. 따로 떼어 두면 "언제
+     * 도는가"가 씬이 도착하는 시각과 경합해서, 어떤 때는 남은 획을 못 지우고
+     * 어떤 때는 **방금 그은 획을 지운다**(실측 2026-08-09: 같은 코드로 돌려도
+     * 결과가 갈렸다). 여기서 지우면 순서가 곧 규칙이다 — 지우는 것은 언제나
+     * "펜을 쥐기 전에 있던 것"이고, 학생이 그은 획은 그 뒤의 일이다.
+     *
+     * 시각(`updated`)으로 가르는 길도 있었는데, 그 값이 복원 때 어떻게 되는지
+     * 우리가 정하지 못한다 — **우리가 아는 순서**로 가르는 편이 낫다.
+     */
+    const els = api.getSceneElements();
+    const stale = allAskStrokes(els, new Set<string>());
+    if (stale.length) {
+      const gone = new Set(stale.map((e) => e.id));
+      api.updateScene({ elements: withoutStrokes(els, gone) });
+    }
+    markBase.current = new Set(
+      (api.getSceneElements() ?? []).map((e) => e.id),
+    );
     const raf = requestAnimationFrame(() =>
       requestAnimationFrame(() => bridge.setTool("askpen")),
     );
@@ -314,14 +341,13 @@ export function InkLabTab() {
    * 실험실 스펙 둘을 이어 돌리면 뒤엣것이 그 이유로 멈췄다).
    *
    * 한 번만 지운다 — 매번 지우면 지금 그리는 획까지 사라진다.
+   *
+   * ⚠️ **들어오기 전에 있던 것만** 지운다. `bridge.api`는 한 박자 늦게 오는데,
+   * 그 사이에 그은 획까지 쓸어 가면 "그렸는데 사라지는" 일이 생긴다 — 실측
+   * 2026-08-09: 스펙을 이어 돌릴 때 한 번씩 획 수가 0에서 안 올랐고, 같은
+   * 코드로 다시 돌리면 통과했다(순서가 아니라 **경합**이다). 마운트 시각보다
+   * 나중에 만들어진 요소는 남긴다.
    */
-  const wipedRef = useRef(false);
-  useEffect(() => {
-    if (wipedRef.current || !bridge.api) return;
-    wipedRef.current = true;
-    clear();
-  }, [bridge.api, clear]);
-
   const vlmOn =
     settings?.items.find((i) => i.key === "ink_vlm_enabled")?.value !== false;
 
