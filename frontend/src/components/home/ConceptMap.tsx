@@ -42,13 +42,13 @@ import {
 } from "d3";
 import { MapZoomControls } from "@/components/home/MapZoomControls";
 import type { ConceptMapData, ConceptNode } from "@/lib/api/conceptMap";
+import { pastelForTag } from "@/lib/ui/pastel";
 import {
   boundsOf,
   clusterLabels,
   degrees,
   pickSpacedLabels,
   seedPositions,
-  tagHue,
   tierFor,
   type PlacedNode,
 } from "@/lib/home/conceptLayout";
@@ -321,17 +321,21 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
         if (!isVisible(n)) continue;
         // 화면 크기를 배율로 나눠 월드 단위로 — 결과가 확대와 무관하게 일정하다.
         const r = nodeScreenRadius(n) / k;
-        const hue = tagHue(n.tag);
+        const dotColor = pastelForTag(n.tag);
         ctx!.beginPath();
         ctx!.arc(n.x, n.y, r, 0, Math.PI * 2);
-        // 태그가 있으면 **이름 해시로 정한 색**이다(브랜드와 무관 — 태그마다
-        // 달라야 무리가 갈린다). 태그가 없으면 흐린 중립색인데, 예전 값
-        // `hsl(40 6% 62%)`는 따뜻한 회색이라 초록 화면에서 혼자 떴다.
-        // `--fg-muted`를 옅게 깔아 **토큰을 따라가게** 한다 — 토큰을 그대로
-        // 쓰면 본문 글자만큼 진해져서 태그 있는 점보다 무거워진다(D203).
-        ctx!.fillStyle = n.tag
-          ? `hsl(${hue} 62% 52%)`
-          : withAlpha(mutedColor, 0.45);
+        /**
+         * **파스텔 한 벌에서 고른다** (사용자 지시 2026-08-09).
+         *
+         * 예전에는 이름 해시로 hue를 만들어 `hsl(h 62% 52%)`를 썼다. 그
+         * 채도로는 이 지도가 **홈의 배경**이 된 지금 위에 뜬 글씨와 다툰다.
+         * 목록이 유한한 것도 이점이다 — 연속 hue는 이웃한 두 분류가 사실상
+         * 같은 색으로 뽑히는 일이 생긴다.
+         *
+         * 분류가 없는 점은 목록의 중립색이다. 예전처럼 `--fg-muted`를 옅게
+         * 깔면 파스텔 옆에서 혼자 회색으로 떠 보인다.
+         */
+        ctx!.fillStyle = dotColor;
         ctx!.globalAlpha = tier === "clusters" ? 0.75 : 1;
         ctx!.fill();
         if (n === hovered) {

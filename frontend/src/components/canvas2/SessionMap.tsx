@@ -33,16 +33,15 @@ import type { Size } from "@/lib/canvas2/useItemLayout";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { buildTrees, treeEdges, LOOSE_TAG } from "@/lib/canvas2/tree";
 import type { Rect } from "@/lib/canvas2/rect";
+import { PASTEL_COLORS } from "@/lib/ui/pastel";
 
-/** 태그 색 — 미니맵과 같은 규칙이다(D203에서 초록 대역을 비웠다). */
-const TREE_COLORS = [
-  "#2f7d6e",
-  "#2a76a8",
-  "#565fae",
-  "#8055a2",
-  "#9b4f8c",
-  "#a84f5e",
-];
+/**
+ * 태그 색 — **파스텔 한 벌**(사용자 지시 2026-08-09, `lib/ui/pastel.ts`).
+ *
+ * 홈 개념 지도와 같은 목록을 쓴다. 지도가 셋인데 색을 각자 갖고 있으면 같은
+ * 분류가 화면마다 다른 색으로 뜨고, 학생 눈에는 서로 다른 것으로 읽힌다.
+ */
+const TREE_COLORS = [...PASTEL_COLORS];
 
 const UNTAGGED = LOOSE_TAG;
 const FALLBACK: Size = { w: ITEM_W, h: 180 };

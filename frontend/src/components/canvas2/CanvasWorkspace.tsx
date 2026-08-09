@@ -243,7 +243,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const pendingFocusItemId = useWorkspaceStore((s) => s.pendingFocusItemId);
   const setPendingFocusItem = useWorkspaceStore((s) => s.setPendingFocusItem);
   const router = useRouter();
-  const { sessionId, dropSession } = useSessionBinding(spaceId);
+  const { sessionId, seed, clearSeed, dropSession } = useSessionBinding(spaceId);
   // 스토어는 **지금 방**을 알아야 한다 — 다른 방의 답이 화면에 얹히지 않게(2026-08-09).
   const store = useCanvasItems(sessionId);
 
@@ -1777,6 +1777,38 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 끄는 동안은 DOM transform만 고치고(React를 거치면 60fps에 버벅인다),
    * 손을 뗄 때 한 번 저장한다.
    */
+  /**
+   * 홈에서 들려 보낸 질문을 **한 번만** 보낸다 (사용자 지시 2026-08-09).
+   *
+   * 홈 입력창에 적고 보내면 개인 세션에 새 방이 만들어지고 질문이 스토어에
+   * 실려 온다(`pendingSession.seed`). 여기서 그것을 소비한다.
+   *
+   * ⚠️ **방이 정해지고 저장할 준비가 된 뒤**라야 한다. 세션이 null인 채로
+   * 보내면 답이 갈 곳이 없다(D148: 공간이 안 맞으면 세션은 없는 것으로
+   * 친다). 그래서 `sessionId`를 조건에 둔다.
+   *
+   * ⚠️ **먼저 비우고 보낸다.** 보내고 비우면 그 사이에 이펙트가 다시 돌아
+   * 같은 질문이 두 번 나갈 수 있다 — 답이 두 벌 생기면 학생은 무엇이
+   * 자기 질문이었는지 알 수 없다.
+   */
+  const sentSeedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!seed || !sessionId || stream.busy) return;
+    if (sentSeedRef.current === seed) return;
+    /**
+     * **한 프레임 미룬다.** 이펙트 본문에서 바로 보내면 React Compiler가
+     * 막는 동기 setState가 되고(억제하지 않고 구조로 푼다), 그보다 실질적
+     * 으로는 방금 잡힌 세션으로 저장 경로가 아직 안 붙어 있을 수 있다.
+     * `pendingFocusItemId`를 소비하는 이펙트와 **같은 모양**이다.
+     */
+    const id = requestAnimationFrame(() => {
+      sentSeedRef.current = seed;
+      clearSeed();
+      handleSend(seed);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [seed, sessionId, stream.busy, clearSeed, handleSend]);
+
   const handleShapeDrag = useCallback(
     (dx: number, dy: number, done: boolean) => {
       if (!selectedIds.size) return;

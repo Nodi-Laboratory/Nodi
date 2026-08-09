@@ -132,63 +132,66 @@ async function withFixture(page: import("@playwright/test").Page) {
   );
 }
 
-/** 보이는 개념 수. 캔버스는 픽셀로 못 세므로 오버레이가 내는 값을 읽는다. */
-function visibleNodes(page: import("@playwright/test").Page) {
-  return page.locator("[data-visible-nodes]");
-}
-
-test("대화를 끄면 지도에서 사라지고, 새로고침해도 꺼진 채로 있다", async ({ page }) => {
+/**
+ * 폴더로 대화를 켜고 끄던 목록(D191)은 **2026-08-09에 걷어냈다**(사용자 지시).
+ *
+ * 홈에서 지도는 이제 배경이다 — 그 위에 인사·입력창·갈 곳 둘이 뜬다. 무엇을
+ * 숨길지 고르는 일은 값보다 자리를 더 많이 차지한다는 판단이었다. 그 목록을
+ * 검증하던 두 스펙(대화 끄기 · 폴더 체크박스)도 함께 지웠다 — 없는 기능을
+ * 검증하는 테스트는 다음 사람에게 "있는 기능"이라고 말한다.
+ *
+ * 대신 그 자리에 **새 홈이 갖춰야 할 것**을 둔다.
+ */
+test("홈이 인사·입력창·갈 곳 둘을 지도 위에 띄운다", async ({ page }) => {
   test.setTimeout(90_000);
   await login(page);
   await withFixture(page);
   await page.goto("/home");
 
-  await expect(visibleNodes(page)).toHaveAttribute("data-visible-nodes", "3", {
-    timeout: 30_000,
-  });
+  await expect(page.locator("canvas")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { level: 2 })).toContainText(
+    "무엇을 배우고 싶으신가요?",
+  );
+  await expect(page.getByLabel("질문 입력")).toBeVisible();
+  await expect(page.getByRole("button", { name: "새로운 대화 하기" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "내 세션 보기" })).toBeVisible();
 
-  // 대화 하나를 끈다 — 그 대화의 개념 둘이 빠져야 한다.
-  await page.getByRole("checkbox", { name: "빛 이야기 표시" }).click();
-  await expect(visibleNodes(page)).toHaveAttribute("data-visible-nodes", "1");
-
-  /**
-   * **끈 상태는 새로고침을 넘긴다.** 저장하는 것이 '숨긴 것'이라 성립하는
-   * 성질이고, 반대로 저장했다면 여기가 아니라 **새 대화가 안 뜨는 것**으로
-   * 드러났을 것이다(그건 이 테스트로 못 잡는다 — 단위 테스트가 지킨다).
-   */
-  await page.reload();
-  await expect(visibleNodes(page)).toHaveAttribute("data-visible-nodes", "1", {
-    timeout: 30_000,
-  });
-
-  await page.getByRole("button", { name: "전부 보기" }).click();
-  await expect(visibleNodes(page)).toHaveAttribute("data-visible-nodes", "3");
+  // 걷어낸 목록이 되살아나지 않았는지 — 되살아나면 화면이 다시 좁아진다.
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
 });
 
-test("폴더 체크박스가 그 공간의 대화를 한꺼번에 끄고, 전부 끄면 말해 준다", async ({
-  page,
-}) => {
+test("'내 세션 보기'는 세션 선택 화면으로 간다 (D217)", async ({ page }) => {
   test.setTimeout(90_000);
   await login(page);
   await withFixture(page);
   await page.goto("/home");
-  await expect(visibleNodes(page)).toHaveAttribute("data-visible-nodes", "3", {
-    timeout: 30_000,
-  });
+  await page.getByRole("button", { name: "내 세션 보기" }).click();
+  await page.waitForURL(/\/sessions/, { timeout: 30_000 });
+  await expect(page.getByLabel("학급 코드")).toBeVisible({ timeout: 30_000 });
+});
 
-  // 개인 공간 폴더를 끈다 → 그 안의 대화 전부가 꺼진다.
-  await page.getByRole("checkbox", { name: /개인 공간 전체 표시/ }).click();
-  await expect(visibleNodes(page)).toHaveAttribute("data-visible-nodes", "1");
+/**
+ * 덮개가 지도를 **덮기만 하고 막지는 않는다** (사용자 지시 2026-08-09).
+ *
+ * 베이지 덮개가 포인터를 먹으면 배경은 그림이 되고, 그러면 지도를 둘 이유가
+ * 사라진다. 지도 한가운데에서 위에 있는 것이 캔버스인지로 잰다.
+ */
+test("덮개 아래 지도가 살아 있다", async ({ page }) => {
+  test.setTimeout(90_000);
+  await login(page);
+  await withFixture(page);
+  await page.goto("/home");
+  await expect(page.locator("canvas")).toBeVisible({ timeout: 30_000 });
 
-  // 나머지 폴더까지 끄면 빈 캔버스가 아니라 안내가 뜬다.
-  const classFolder = page.getByRole("checkbox", { name: /전체 표시/ }).nth(1);
-  await classFolder.click();
-  await expect(visibleNodes(page)).toHaveAttribute("data-visible-nodes", "0");
-  await expect(page.getByText("지도에 띄운 대화가 없습니다")).toBeVisible();
-
-  // 일부만 켜진 폴더를 누르면 **전부 켜진다**(전부 끄기가 아니다).
-  await page.getByRole("checkbox", { name: /개인 공간 전체 표시/ }).click();
-  await expect(visibleNodes(page)).toHaveAttribute("data-visible-nodes", "2");
+  /**
+   * **덮개 자신에게 묻는다.** 화면 한 점의 최상위 요소로 재려 했더니 그 자리에
+   * 무엇이 오는지가 지도 내용에 따라 달라졌다(툴팁·확대 손잡이). 지키려는
+   * 성질은 "덮개가 포인터를 안 먹는다" 하나이므로 그것을 직접 잰다.
+   */
+  const veil = page.locator("[data-map-veil]");
+  await expect(veil).toHaveCount(1);
+  const pe = await veil.evaluate((el) => getComputedStyle(el).pointerEvents);
+  expect(pe).toBe("none");
 });
 
 test("지도 위에서 휠을 굴려도 페이지는 안 움직인다", async ({ page }) => {
