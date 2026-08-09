@@ -16,7 +16,7 @@
  *                마우스로 옮겨 온 것이다(D208).
  *   [카드 수정]  그대로.
  *   [펜]         눌러서 편다 — 연필 · 형광펜 · 텍스트.
- *   [도형]       눌러서 편다 — 네모 · 세모 · 별 · 화살표 · 선.
+ *   [도형]       눌러서 편다 — 네모 · 세모 · 별 · 원 · 화살표 · 선.
  *   [색]         무지개 원. 눌러서 편다 — 고른 색은 **모든 그리기 도구**에 쓴다.
  *   [지우개]     그대로.
  *
@@ -77,19 +77,11 @@ const SHAPE_GROUP: ToolDef[] = [
   { tool: "rectangle", icon: Square, label: "네모", key: "r" },
   { tool: "triangle", icon: Triangle, label: "세모", key: "g" },
   { tool: "star", icon: Star, label: "별", key: "k" },
+  // 원은 하루 뺐다가 되돌렸다(사용자 지시 2026-08-10). 키(`o`)는 그동안에도
+  // 그대로 들었다 — 화면에서 사라진 것과 기능이 사라진 것은 다르다.
+  { tool: "ellipse", icon: Circle, label: "원", key: "o" },
   { tool: "arrow", icon: ArrowUpRight, label: "화살표", key: "a" },
   { tool: "line", icon: Minus, label: "선", key: "l" },
-];
-
-/**
- * 레일에 자리는 없지만 **키는 듣는 도구**.
- *
- * 원은 사용자가 고른 도형 다섯에 들지 않았다(2026-08-09). 도구 자체를 없애면
- * 이미 그린 원을 다룰 수 없게 되므로 키(`o`)만 남긴다 — 화면에서 사라진 것과
- * 기능이 사라진 것은 다르다.
- */
-const HIDDEN_TOOLS: ToolDef[] = [
-  { tool: "ellipse", icon: Circle, label: "원", key: "o" },
 ];
 
 /** 묶이지 않은 도구들 — 레일에 자기 줄이 있다. */
@@ -108,7 +100,7 @@ const SOLO_TOOLS: ToolDef[] = [
 ];
 
 /** 단축키가 듣는 전부. 화면에 접혀 있어도 키는 그대로다. */
-const ALL = [...SOLO_TOOLS, ...PEN_GROUP, ...SHAPE_GROUP, ...HIDDEN_TOOLS];
+const ALL = [...SOLO_TOOLS, ...PEN_GROUP, ...SHAPE_GROUP];
 
 /**
  * 색 (D150 → 사용자 지시 2026-08-09로 **한 벌**이 됐다).
