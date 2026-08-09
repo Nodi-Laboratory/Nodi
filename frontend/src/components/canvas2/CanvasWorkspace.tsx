@@ -2166,12 +2166,25 @@ export function CanvasWorkspace({ spaceId }: Props) {
      * 예전 좌상단 버튼들은 absolute라 미니맵이 그 모서리에 못 붙었다(D211 9).
      * 한 줄을 내주면 그 문제가 성립하지 않는다 — 네 모서리는 전부 캔버스 것이다.
      */
-    <div className="flex h-full w-full flex-col">
+    <div className="relative flex h-full w-full flex-col">
       <CanvasTopBar
         spaceName={spaceName}
         sessionTitle={sessionTitle}
         historyOpen={historyOpen}
         onToggleHistory={() => setHistoryOpen(!historyOpen)}
+      />
+      {/**
+       * 지난 대화 서랍 — **상단바까지 덮는다** (사용자 지시 2026-08-09).
+       *
+       * 무대 안(`chrome`)에 있었다. 그러면 어두워지는 것도, 서랍 자신도
+       * 상단바 **아래에서** 시작해 위쪽 한 줄만 밝게 남았다 — 화면을 덮어
+       * 가리는 장치가 한 군데만 안 가리면 그건 덜 그린 것으로 읽힌다.
+       * 여기(루트)에 두면 이 세로 칸 전체를 덮는다.
+       */}
+      <SessionDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        target={target}
       />
       <div className="relative min-h-0 flex-1">
     <CanvasStage
@@ -2213,11 +2226,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
               원래 보던 곳으로
             </button>
           ) : null}
-          <SessionDrawer
-            open={historyOpen}
-            onClose={() => setHistoryOpen(false)}
-            target={target}
-          />
           {/* **비었다고 말하기 전에 비었는지 알아야 한다.**
               `items.length === 0`만 보면 불러오는 동안에도 "여기에 답이
               펼쳐집니다"가 뜬다 — 글이 20개 든 세션을 열어도 몇 초간
@@ -2297,6 +2305,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
           )}
           <AskBar
             ref={askBarRef}
+            askPen={askPen}
+            /**
+             * 토글이 도구를 바꾼다 (사용자 지시 2026-08-09) — 켜면 질문하는
+             * 펜, 끄면 **합친 도구**로 돌아간다. 그리기 도구로 돌려보내면
+             * 자판으로 물으려고 껐는데 캔버스에 선이 그어진다.
+             */
+            onToggleAskPen={(on) => handleTool(on ? "askpen" : "hand")}
             inkPhase={inkPhase}
             inkReady={inkCount > 0}
             inkBusy={inkBusy}
