@@ -157,7 +157,15 @@ test("B19 잘못된 학급 코드는 404 안내다 — 502가 아니라 (D169)",
   page.on("response", (r) => {
     if (r.url().includes("/me/classes") || r.url().includes("join")) statuses.push(r.status());
   });
-  await page.getByRole("button", { name: /가입|추가|연결/ }).first().click();
+  /**
+   * ⚠️ **팝업 안에서 찾는다.** 설정이 팝업이 되면서 뒤에 캔버스가 그대로 있고,
+   * 거기 교차 연결 배지("다른 대화와 연결됨: …")가 `/연결/`에 걸린다 — 그 배지는
+   * 깜빡이는 애니메이션까지 있어 "element is not stable"로 60초를 기다렸다.
+   */
+  await page
+    .getByRole("dialog", { name: "설정" })
+    .getByRole("button", { name: "연결", exact: true })
+    .click();
   await page.waitForTimeout(2500);
 
   // 502가 하나라도 있으면 실패 — 학생 잘못을 서버 고장으로 보고하는 것이다.
