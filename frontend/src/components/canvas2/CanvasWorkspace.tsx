@@ -1881,7 +1881,48 @@ export function CanvasWorkspace({ spaceId }: Props) {
     // 한 번 어긋난 자리에 서고, focus는 이미 지워져 다시 맞출 기회가 없다.
     if (attached.some((a) => !layout.positions.has(a.id) || !layout.sizes.has(a.id))) return;
 
-    const size = layout.sizes.get(focusId2) ?? { w: ITEM_W, h: FALLBACK_H };
+    /**
+     * **대상 자신도 실측될 때까지 기다린다** (2026-08-09).
+     *
+     * 딸린 것에는 이미 이 규칙이 있었는데(바로 위 줄) 정작 날아갈 카드에는
+     * 없어서, 폴백 크기(`ITEM_W`×`FALLBACK_H`)로 카메라를 잡고 날았다. 카드
+     * 실제 폭은 `max-content`라 폴백과 다르고, 배치 엔진은 실측 폭으로 열을
+     * 다시 잡는다 — 그래서 **카드는 옮겨 가는데 카메라는 옛 자리에 선다.**
+     *
+     * 그 뒤 다시 맞출 기회가 없다는 것이 결정적이다: 첫 비행에서 곧바로
+     * `landedRef`에 이 방을 적으므로(아래 ⚠️ 참조) 착지 조건이 두 번 참이
+     * 되지 않는다.
+     *
+     * 실측 2026-08-09(1440×900, 카드 9장): 착지한 카드 `개념 9`의 왼쪽 변이
+     * **−122px** — 화면 밖에서 시작해 오른쪽 꼬리만 보였다. 학생 눈에는
+     * "방을 열었는데 글자 몇 개만 잘려 있다"였다.
+     *
+     * 크기는 ResizeObserver가 그리자마자 재므로 기다리는 값은 한 프레임이다.
+     */
+    const size = layout.sizes.get(focusId2);
+    if (!size) return;
+
+    /**
+     * **좌표가 지금 크기로 다시 잡힌 뒤에 난다** (2026-08-09).
+     *
+     * 배치는 rAF 뒤에 돌기 때문에(`useItemLayout`) 크기가 막 실측된 프레임에는
+     * `sizes`는 진짜 값인데 `positions`는 **폴백 폭으로 잡은 옛 좌표**다.
+     * 착지는 방마다 한 번뿐이라 그 프레임에 날면 되돌릴 기회가 없다.
+     *
+     * 실측 2026-08-09(1440×900·카드 9장, 착지 카드의 왼쪽 변):
+     *   막지 않음            −122px  (크기·좌표 둘 다 폴백)
+     *   크기만 기다림         −79px  (좌표는 여전히 폴백 폭 560으로 잡은 x=7200,
+     *                                실제 카드는 6597 — 딱 그 차이만큼 어긋났다)
+     *   좌표까지 기다림(지금)  화면 안
+     *
+     * ⚠️ "크기가 다 있나"로는 **못 잡는다** — 그 프레임에도 크기는 다 있다.
+     * 물어야 하는 것은 좌표가 그 크기를 반영했나다(`layout.settled`).
+     *
+     * 착지에만 건다. 새 답(`focusId`)은 지금 읽으라고 온 글이라 한 프레임이라도
+     * 빨리 보여 주는 편이 낫고, 그쪽은 스트리밍 중 `backOffCamera`가 계속
+     * 따라가므로 어긋나도 되돌아온다.
+     */
+    if (landing && !layout.settled) return;
     const 처음 = focusCamera(
         { x: p.x, y: p.y, w: size.w, h: size.h },
         attached.map((a) => {
@@ -1932,7 +1973,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
     if (landing) return; // 착지는 스트림의 초점을 건드리지 않는다
     clearFocus();
   }, [
-    focusId, landTarget, sessionId, layout.positions, layout.sizes, storeItems, vp,
+    focusId, landTarget, sessionId, layout.positions, layout.sizes, layout.settled,
+    storeItems, vp,
     flyTo, clearFocus, clientSettings.focusZoom,
   ]);
 
