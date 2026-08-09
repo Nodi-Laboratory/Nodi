@@ -295,7 +295,12 @@ export function SpacePicker() {
           </div>
 
           <form
-            className="flex items-center gap-2"
+            /**
+             * ⚠️ **줄이 넘치면 접힌다.** 칸 여섯 + 하이픈 + [추가하기]는 400px
+             * 남짓이라 폰(390px)에서는 뒤쪽 두 칸과 버튼이 **잘려 나갔다**
+             * (실측 2026-08-10) — 학급 코드를 아예 넣을 수 없었다.
+             */
+            className="flex flex-wrap items-center justify-center gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               if (!joined || join.isPending) return;
@@ -319,7 +324,9 @@ export function SpacePicker() {
                   inputMode="text"
                   maxLength={1}
                   aria-label={`학급 코드 ${i + 1}번째 자리`}
-                  className="h-13 w-12 rounded-xl border border-accent-border/60 bg-bg-elevated py-3 text-center text-xl font-semibold text-fg outline-none focus-visible:ring-2 focus-visible:ring-accent-deep"
+                  // 좁은 화면에서는 칸도 조금 줄인다 — 여섯이 한 줄에 들어가야
+                  // "코드 여섯 자리"라는 모양이 유지된다.
+                  className="h-13 w-12 rounded-xl border border-accent-border/60 bg-bg-elevated py-3 text-center text-xl font-semibold text-fg outline-none focus-visible:ring-2 focus-visible:ring-accent-deep max-[520px]:h-11 max-[520px]:w-9 max-[520px]:text-base"
                 />
                 {/* 이미지의 가운데 하이픈 — 여섯 자리를 셋씩 끊어 읽게 한다. */}
                 {i === 2 && <span className="px-1 text-fg-muted">–</span>}

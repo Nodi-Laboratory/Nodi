@@ -206,7 +206,15 @@ export function AskBar({
           : undefined,
         transition: "transform .34s cubic-bezier(.22,.9,.24,1), max-width .34s ease",
       }}
-      className="ui absolute bottom-[52px] left-1/2 z-50 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
+      /**
+       * 폭 — 넓은 화면에서는 오른쪽 도구바를 피해 `100%-140px`이다.
+       *
+       * ⚠️ 좁은 화면에서는 그 여백이 **입력창을 없앤다**: 무대가 300px이면
+       * 남는 것이 160px인데 왼쪽 토글만 106px이라, 알약이 눌려 [보내기]가
+       * 화면 밖으로 나갔다(실측 2026-08-10, 390px 폰). 좁을 때는 도구바와
+       * 겹치더라도 **묻는 일이 먼저**다.
+       */
+      className="ui absolute bottom-[52px] left-1/2 z-50 w-[min(680px,calc(100%-140px))] -translate-x-1/2 max-[900px]:w-[calc(100%-24px)]"
     >
       {showStatus && (
         <div
