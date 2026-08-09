@@ -1,6 +1,8 @@
 """세션 선택 화면이 쓰는 창구 (사용자 지시 2026-08-09).
 
   GET  /api/spaces/overview              내 공간들 + 자료·강의 수 + 개념
+  GET  /api/spaces/rooms                 한 공간의 대화방 + 방마다의 개념
+  GET  /api/spaces/recent                공간 상관없이 최근 대화방
   GET  /api/spaces/classes/{id}/avatar   학급 프로필 사진 (그 반 사람 누구나)
   PUT  /api/spaces/classes/{id}/avatar   사진 올리기 (그 학급 선생님만)
 
@@ -12,12 +14,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import Response
 
 from ..auth.deps import CurrentUser, get_current_user
 from ..db.client import UserClient
-from ..services import class_avatar, spaces_overview
+from ..services import class_avatar, space_rooms, spaces_overview
 
 router = APIRouter(prefix="/spaces", tags=["spaces"])
 
@@ -27,6 +29,24 @@ async def overview(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     return await spaces_overview.overview(UserClient.from_user(user), user.id)
+
+
+@router.get("/rooms")
+async def rooms(
+    space_kind: str = Query(..., pattern="^(personal|class)$"),
+    space_ref: str | None = Query(None),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    return await space_rooms.rooms(
+        UserClient.from_user(user), str(user.id), space_kind, space_ref
+    )
+
+
+@router.get("/recent")
+async def recent(
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    return await space_rooms.recent(UserClient.from_user(user), str(user.id))
 
 
 @router.get("/classes/{class_id}/avatar")
