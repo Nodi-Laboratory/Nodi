@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUp, Grid2x2, Loader2, MessageSquarePlus } from "lucide-react";
+import { ArrowUp, Expand, Grid2x2, Loader2, MessageSquarePlus, Minimize2 } from "lucide-react";
 import { ConceptMap } from "@/components/home/ConceptMap";
 import { useProfile } from "@/lib/hooks";
 import { useConceptMap, useHomeSummary } from "@/lib/queries";
@@ -63,6 +63,17 @@ export default function HomePage() {
 
   const [question, setQuestion] = useState("");
   const [starting, setStarting] = useState(false);
+  /**
+   * **온전한 지도 보기** (사용자 지시 2026-08-10).
+   *
+   * 켜면 글자·입력창·버튼이 서서히 흐려져 사라지고 덮개도 걷힌다 — 남는 것은
+   * 지도뿐이다. 지도가 배경이 되면서(D218) 정작 그 지도를 **제대로 볼 방법**이
+   * 없어졌던 것을 여기서 되돌린다.
+   *
+   * 사라진 것들은 자리를 비켜 주기만 한다(`opacity` + `pointer-events`) —
+   * DOM에서 빼면 다시 켤 때 입력창이 처음부터 다시 그려져 쓰던 글이 날아간다.
+   */
+  const [mapOnly, setMapOnly] = useState(false);
 
   /**
    * **보여 줄 개념이 없으면 홈을 건너뛴다** (D210 2-1, 사용자 지시).
@@ -170,12 +181,33 @@ export default function HomePage() {
           <GoingToCanvas />
         ) : (
           <>
+            {/**
+             * **온전한 지도 보기** 단추 — 상자 오른쪽 위 (사용자 지시 2026-08-10).
+             *
+             * 지도 위에 떠 있는 유일한 크롬이라 최대한 조용해야 한다. 켜져
+             * 있을 때만 색이 붙어, 지금 어느 상태인지가 그 색으로 읽힌다.
+             */}
+            <button
+              type="button"
+              data-map-only
+              aria-pressed={mapOnly}
+              onClick={() => setMapOnly((v) => !v)}
+              title={mapOnly ? "돌아가기" : "지도만 보기"}
+              aria-label={mapOnly ? "돌아가기" : "지도만 보기"}
+              className="absolute right-3 top-3 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-accent-border/50 bg-bg-elevated/90 text-fg-muted shadow-sm backdrop-blur transition-colors hover:text-fg"
+              style={mapOnly ? { background: "var(--accent)", color: "var(--accent-fg)" } : undefined}
+            >
+              {mapOnly ? <Minimize2 size={16} /> : <Expand size={16} />}
+            </button>
+
             {/* 배경 — 지도. 확대·축소·끌기·누르기가 그대로 동작한다. */}
             <div className="absolute inset-0">
               <ConceptMap
                 data={map}
                 onOpen={openConcept}
                 hiddenSessions={NO_HIDDEN}
+                // 온전히 볼 때는 떠다니던 노드가 **서서히** 선다.
+                quiet={mapOnly}
               />
             </div>
 
@@ -197,8 +229,24 @@ export default function HomePage() {
             <div
               aria-hidden
               data-map-veil
-              className="pointer-events-none absolute inset-0"
-              style={{ background: PAGE_BG, opacity: 0.42 }}
+              className="pointer-events-none absolute inset-0 transition-opacity duration-700"
+              style={{
+                /**
+                 * **스포트라이트** (사용자 지시 2026-08-10).
+                 *
+                 * 고르게 덮으면 가운데의 노드가 잘 안 보인다는 지적이었다.
+                 * 가운데는 거의 맑게(흰빛만 얹어 파스텔 점의 대비를 올리고),
+                 * 가장자리는 지금까지의 베이지 그대로 — 빛이 한가운데 떨어진
+                 * 것처럼 보이면서 화면 밖으로 갈수록 조용해진다.
+                 *
+                 * ⚠️ 초점은 **지도가 실제로 앉는 자리**여야 한다. 상자 한가운데
+                 * (45%)에 뒀더니 빛은 빈 곳을 비추고 무리는 어두운 데 깔렸다
+                 * (실측 2026-08-10) — 지도는 문구 아래 띠의 가운데에 맞춰지므로
+                 * (`fitToContent`) 초점도 그 자리로 내린다.
+                 */
+                background: `radial-gradient(64% 58% at 50% 70%, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.12) 40%, ${PAGE_BG} 82%)`,
+                opacity: mapOnly ? 0 : 0.66,
+              }}
             />
 
             {/**
@@ -207,7 +255,13 @@ export default function HomePage() {
              * 자리는 상자 **위쪽**이다. 정가운데에 두면 지도의 가장 붐비는 곳과
              * 겹친다(점은 가운데로 뭉친다).
              */}
-            <div data-map-overlay className="pointer-events-none absolute inset-0 flex flex-col items-center px-6 pt-[8%]">
+            <div
+              data-map-overlay
+              className="pointer-events-none absolute inset-0 flex flex-col items-center px-6 pt-[8%] transition-opacity duration-700"
+              // 사라진 뒤에도 자리에 남아 있으면 보이지 않는 것이 클릭을 먹는다.
+              style={{ opacity: mapOnly ? 0 : 1, visibility: mapOnly ? "hidden" : "visible" }}
+              aria-hidden={mapOnly}
+            >
               <div className="pointer-events-auto flex w-full max-w-3xl flex-col items-center gap-8">
                 {/* 페이지 제목이 h1이므로 여기는 h2다 — 문서 구조가 뒤집히면
                   낭독기가 이 화면의 주제를 인사말로 읽는다. */}

@@ -80,6 +80,13 @@ export interface ConceptMapProps {
    * 무리가 오늘 오른쪽에 있으면 지도가 아니라 매번 새 그림이다").
    */
   hiddenSessions: ReadonlySet<string>;
+  /**
+   * **온전한 지도 보기** — 덮개도 글자도 없이 지도만 (사용자 지시 2026-08-10).
+   *
+   * 켜지면 떠다니던 노드가 **서서히 멈춘다**. 뚝 멈추면 그 순간이 고장으로
+   * 읽히고, 글자가 사라지는 것과 리듬이 맞아야 한 동작으로 보인다.
+   */
+  quiet?: boolean;
 }
 
 /** 시작 자리를 뿌릴 원판의 반지름. 화면과 무관한 월드 단위다. */
@@ -87,6 +94,57 @@ const SEED_RADIUS = 900;
 
 /** 선을 그리는 최소 배율. 축소 상태에서 선까지 그리면 회색 판이 된다. */
 const EDGE_MIN_ZOOM = 0.35;
+
+/**
+ * 떠다니는 세기 (사용자 지시 2026-08-10: "적당히 움직여야 해").
+ *
+ * 매 틱 노드마다 이만큼의 속도를 더한다. 값이 크면 지도가 끓어오르고, 0.02
+ * 아래면 움직이는지 알 수 없다 — 실측으로 잡은 지점이다. 방향은 노드마다
+ * 가진 각도가 **천천히 도는** 것이라, 난수를 매 틱 새로 뽑는 것과 달리
+ * 떨림이 아니라 **흐름**으로 보인다.
+ */
+const DRIFT_FORCE = 0.055;
+
+/** 각도가 도는 속도(라디안/틱). 크면 방향이 자꾸 꺾여 부산해 보인다. */
+const DRIFT_TURN = 0.012;
+
+/**
+ * 떠다니는 동안 유지하는 시뮬레이션 온도.
+ *
+ * d3는 alpha가 이 값 아래로 안 내려가면 계속 돈다. 0.02는 밀어내기(collide)가
+ * 살아 있을 만큼은 되고 배치가 무너지지 않을 만큼은 낮다 — 이게 "밀어내는
+ * 느낌"의 정체다: 떠다니다 이웃에 닿으면 서로 비킨다.
+ */
+const DRIFT_ALPHA = 0.02;
+
+/**
+ * 멈추라는 신호를 받고 실제로 서기까지 걸리는 시간(ms).
+ *
+ * ⚠️ **틱 수가 아니라 시간이다.** 틱마다 일정 비율로 줄였더니 노드가 많은
+ * 지도에서 틱이 느려 **9초가 지나도 안 멈췄다**(실측 2026-08-10, 개념 1,200개).
+ * 같은 코드가 작은 지도에서는 2초에 섰다 — 화면의 리듬이 데이터 크기에 따라
+ * 달라지면 그건 규칙이 아니다.
+ *
+ * 값은 덮개가 사라지는 시간(0.7초)보다 길다: 글자가 먼저 걷히고 노드가
+ * 뒤따라 잦아드는 순서라야 한 동작으로 읽힌다(사용자 지시: "흐림이 사라짐과
+ * 동시에 천천히 멈춰야 함").
+ */
+const DRIFT_STOP_MS = 1800;
+
+/** 다시 떠다니기 시작할 때 붙는 시간(ms). 멈출 때보다 짧아야 답답하지 않다. */
+const DRIFT_START_MS = 900;
+
+/**
+ * 자동 맞춤 뒤 한 번 더 당기는 배율 (사용자 지시 2026-08-10: "더 확대해서").
+ *
+ * 전체가 들어오게만 맞추면 무리가 화면 가운데 작은 얼룩으로 앉는다. 조금
+ * 넘쳐도 **읽히는 크기**가 낫다 — 넘친 만큼은 끌어서 볼 수 있다.
+ *
+ * ⚠️ 1보다 크다는 것은 **가장자리가 잘린다**는 뜻이다. 1.5로 뒀더니 아래
+ * 두어 줄이 상자 밖으로 나갔다(실측 2026-08-10) — 1.28은 눈에 띄게 커지면서
+ * 무리의 윤곽은 남는 지점이다. 더 키우려면 확대 버튼이 있다.
+ */
+const FIT_BOOST = 1.28;
 
 /** 툴팁 크기. 화면 밖으로 나가지 않게 접는 계산이 이 값을 쓴다. */
 const TIP_W = 260;
@@ -127,7 +185,7 @@ function withAlpha(color: string, alpha: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
 }
 
-export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
+export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: ConceptMapProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const simRef = useRef<Simulation<SimNode, undefined> | null>(null);
@@ -155,10 +213,33 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
    * 그리기만 부른다.
    */
   const hiddenRef = useRef<ReadonlySet<string>>(hiddenSessions);
+  /**
+   * 지금 떠다니는 세기(0~1). **ref다** — 매 틱 바뀌는 값이라 state로 두면
+   * 프레임마다 React가 돈다(D124와 같은 이유).
+   */
+  const driftRef = useRef(1);
+  /** 목표 세기. `quiet`가 켜지면 0으로 두고, **시간에 따라** 다가간다. */
+  const driftTargetRef = useRef(1);
+  /** 지금 결이 시작된 시각과 그때의 세기 — 진행도를 시간으로 잰다. */
+  const driftFromRef = useRef({ at: 0, value: 1 });
+  /** 시뮬레이션 온도를 다시 올릴 손잡이 — 조용히 있다가 깨어날 때 쓴다. */
+  const wakeRef = useRef<(() => void) | null>(null);
+  /**
+   * 지금 온전한 지도 보기인가 — **맞춤 계산이 이 값을 본다.**
+   *
+   * ⚠️ 프롭을 그대로 쓰면 안 된다. 자동 맞춤(배치가 식었을 때·타이머)은 d3
+   * 이펙트 안의 클로저에서 불리는데 그 클로저는 마운트 시점의 값을 들고 있다 —
+   * 실측 2026-08-10: 모드를 켜서 상자 전체로 맞춘 **직후** 뒤늦은 자동 맞춤이
+   * 옛 자리로 되돌려 놓아, 버튼을 눌러도 지도가 그대로인 것처럼 보였다.
+   */
+  const quietRef = useRef(quiet);
+
   /** 확대 버튼이 쓰는 손잡이. 이펙트 안에서만 만들 수 있어 ref로 꺼내 둔다. */
-  const zoomApiRef = useRef<{ zoomBy: (f: number) => void; fit: () => void } | null>(
-    null,
-  );
+  const zoomApiRef = useRef<{
+    zoomBy: (f: number) => void;
+    fit: () => void;
+    refit: (ignoreUi: boolean) => void;
+  } | null>(null);
 
   /** hover한 개념 — 이것만 React가 안다(툴팁 하나 그리는 값이다). */
   const [hover, setHover] = useState<{ node: ConceptNode; sx: number; sy: number } | null>(
@@ -201,6 +282,21 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
     hiddenRef.current = hiddenSessions;
     drawRef.current();
   }, [hiddenSessions]);
+
+  /**
+   * 조용히 / 다시 떠다니기 (사용자 지시 2026-08-10).
+   *
+   * **목표만 바꾼다.** 여기서 시뮬레이션을 세우면 뚝 멈추고, 그 순간이
+   * 고장으로 읽힌다 — 실제로 서는 것은 틱마다 조금씩이다(`DRIFT_EASE`).
+   */
+  useEffect(() => {
+    quietRef.current = quiet;
+    driftTargetRef.current = quiet ? 0 : 1;
+    driftFromRef.current = { at: Date.now(), value: driftRef.current };
+    if (!quiet) wakeRef.current?.();
+    // 글자가 비켜난 만큼 지도가 자리를 넓힌다(그리고 돌아올 때 되돌린다).
+    zoomApiRef.current?.refit(quiet);
+  }, [quiet]);
 
   /**
    * 힘 배치 + 그리기.
@@ -347,7 +443,19 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
          */
         ctx!.fillStyle = dotColor;
         ctx!.globalAlpha = tier === "clusters" ? 0.75 : 1;
+        /**
+         * **아주 약한 테두리 빛** (사용자 지시 2026-08-10: "아주 약간").
+         *
+         * 번짐 반경은 점 크기에 묶는다 — 상수로 두면 확대할수록 빛만 커져
+         * 화면이 뿌옇게 된다. 색은 점 자신의 색이라, 무리마다 다른 빛이 돈다.
+         *
+         * ⚠️ 그림자는 **점에만** 켠다. 켜 둔 채로 글자를 그리면 제목마다
+         * 후광이 생겨 읽기 어려워지고, 선까지 번지면 지도가 안개가 된다.
+         */
+        ctx!.shadowBlur = r * 1.6;
+        ctx!.shadowColor = withAlpha(dotColor, 0.5);
         ctx!.fill();
+        ctx!.shadowBlur = 0;
         if (n === hovered) {
           ctx!.globalAlpha = 1;
           ctx!.lineWidth = 2 / k;
@@ -448,8 +556,83 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
       .force("x", forceX(0).strength(0.012))
       .force("y", forceY(0).strength(0.012))
       .alphaDecay(0.035)
-      .on("tick", draw);
+      .on("tick", () => {
+        drift();
+        draw();
+      });
     simRef.current = sim;
+
+    /**
+     * 떠다니기 (사용자 지시 2026-08-10).
+     *
+     * 노드마다 **각도**를 하나 갖고 그것이 천천히 돈다. 매 틱 난수를 새로
+     * 뽑으면 방향이 프레임마다 뒤집혀 **떨림**으로 보인다 — 각도가 도는
+     * 방식이라야 흐름이 된다. 각도의 시작값과 도는 방향은 노드마다 다르게
+     * (id 해시로) 뿌려 무리 전체가 한쪽으로 몰려가지 않게 한다.
+     *
+     * 밀어내는 느낌은 따로 만들지 않는다 — 이미 `collide`가 있고, 온도를
+     * 조금 남겨 두면 떠다니다 이웃에 닿을 때 서로 비킨다.
+     */
+    const phase = new Float64Array(nodes.length);
+    const spin = new Float64Array(nodes.length);
+    for (let i = 0; i < nodes.length; i++) {
+      // id에서 뽑는다 — 새로고침해도 같은 노드가 같은 결로 움직인다.
+      let h = 2166136261;
+      const id = nodes[i].id;
+      for (let c = 0; c < id.length; c++) {
+        h ^= id.charCodeAt(c);
+        h = Math.imul(h, 16777619);
+      }
+      const u = ((h >>> 0) % 10000) / 10000;
+      phase[i] = u * Math.PI * 2;
+      spin[i] = (u < 0.5 ? 1 : -1) * (0.6 + u);
+    }
+
+    function drift() {
+      // 목표로 다가간다 — 켜고 끌 때 둘 다 결이 있어야 한다. 진행도는
+      // **시간**으로 잰다(틱 수로 재면 지도 크기마다 리듬이 달라진다).
+      const target = driftTargetRef.current;
+      const { at, value } = driftFromRef.current;
+      const span = target === 0 ? DRIFT_STOP_MS : DRIFT_START_MS;
+      const t = at ? Math.min(1, (Date.now() - at) / span) : 1;
+      // ease-in-out — 뚝 끊기지도, 끝에서 질질 끌지도 않는다.
+      const e = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+      driftRef.current = value + (target - value) * e;
+      const amp = driftRef.current * DRIFT_FORCE;
+      if (amp < 0.002) {
+        if (target !== 0) return;
+        /**
+         * 다 식었다 — **여기서 확실히 세운다.**
+         *
+         * 온도만 놓아 주면(`alphaTarget(0)`) d3가 스스로 식긴 하는데, 그
+         * 식는 속도가 **틱 수**에 걸려 있어 노드가 많은 지도에서는 몇 초를
+         * 더 꿈틀댄다(실측 2026-08-10: 같은 코드가 어떤 실행에서는 서고
+         * 어떤 실행에서는 안 섰다). 남은 속도까지 0으로 두고 타이머를
+         * 멈춘다 — 멈춤은 눈에 보이는 약속이라 경합에 맡길 수 없다.
+         */
+        for (const n of nodesRef.current) {
+          n.vx = 0;
+          n.vy = 0;
+        }
+        sim.alphaTarget(0);
+        sim.alpha(0);
+        sim.stop();
+        draw();
+        return;
+      }
+      const ns = nodesRef.current;
+      for (let i = 0; i < ns.length; i++) {
+        phase[i] += DRIFT_TURN * spin[i];
+        const n = ns[i];
+        n.vx = (n.vx ?? 0) + Math.cos(phase[i]) * amp;
+        n.vy = (n.vy ?? 0) + Math.sin(phase[i]) * amp;
+      }
+    }
+
+    /** 다시 떠다니게 — 식은 시뮬레이션은 스스로 깨지 않는다. */
+    wakeRef.current = () => {
+      sim.alphaTarget(DRIFT_ALPHA).restart();
+    };
 
     const ro = new ResizeObserver(resize);
     ro.observe(wrap);
@@ -498,7 +681,13 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
      * 구멍은 화면 밖으로 밀린다.
      */
     let fitted = false;
-    const fitToContent = (force = false) => {
+    /**
+     * @param force  이미 맞췄어도 다시 맞춘다(버튼·모드 전환).
+     * @param ignoreUi  덮개를 없는 것으로 치고 **상자 전체**에 맞춘다.
+     *   온전한 지도 보기(사용자 지시 2026-08-10)에서 쓴다 — 글자가 사라졌는데
+     *   지도가 그 자리를 계속 비워 두면 위쪽 절반이 통째로 빈 종이가 된다.
+     */
+    const fitToContent = (force = false, ignoreUi = quietRef.current) => {
       if ((fitted && !force) || !width || !height) return;
       // 덮개는 지도 위에 절대 배치로 얹혀 있다 — 그 아래 변이 곧 우리 천장이다.
       const wrapBox = wrapRef.current?.getBoundingClientRect();
@@ -525,7 +714,7 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
        * 그래서 **덮인 아래쪽만**을 화면으로 치고 거기에 맞춘다. 남는 높이가
        * 너무 얇으면(작은 화면) 맞추기가 무의미해지므로 하한을 둔다.
        */
-      const top = Math.min(uiTopRef.current, height * 0.6);
+      const top = ignoreUi ? 0 : Math.min(uiTopRef.current, height * 0.6);
       /**
        * 아래 띠는 **여백을 아낀다**(pad의 절반).
        *
@@ -534,18 +723,36 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
        * 하려던 것이 도리어 안 보이게 된다(실측 2026-08-09: 810 화면에서
        * 쓸 수 있는 높이가 290px).
        */
-      const usableH = Math.max(120, height - top - pad);
+      const usableH = Math.max(120, height - top - (ignoreUi ? pad * 2 : pad));
+      /**
+       * 온전한 지도 보기에서는 **넘치지 않게** 맞춘다(boost 없음).
+       *
+       * 평소의 1.28배는 "글자 아래 좁은 띠에서도 읽히게"라는 사정에서 나온
+       * 값이다. 상자를 다 쓰는 자리에서 같은 배율을 또 물리면 이번엔 진짜로
+       * 가장자리가 잘린다 — 온전히 보자고 켠 모드에서 그건 앞뒤가 안 맞는다.
+       */
       const k = Math.min(
         6,
-        Math.max(0.12, Math.min((width - pad * 2) / b.w, usableH / b.h)),
+        Math.max(0.12, Math.min((width - pad * 2) / b.w, usableH / b.h)) *
+          (ignoreUi ? 1 : FIT_BOOST),
       );
       const t = zoomIdentity
         .translate(width / 2, top + (height - top) / 2)
         .scale(k)
         .translate(-(b.x + b.w / 2), -(b.y + b.h / 2));
-      sel.call(zoomer.transform, t);
+      /**
+       * 모드를 오갈 때는 **미끄러지듯** 옮긴다(사용자 지시의 "서서히"에는
+       * 카메라도 든다). 첫 맞춤은 튀지 않게 그냥 놓는다 — 학생이 보기 전의
+       * 움직임에 시간을 들일 이유가 없다.
+       */
+      if (force) sel.transition().duration(620).call(zoomer.transform, t);
+      else sel.call(zoomer.transform, t);
     };
-    sim.on("end", () => fitToContent());
+    sim.on("end", () => {
+      fitToContent();
+      // 다 식으면 그대로 서 버린다 — 자리는 잡혔으니 이제 **떠다닌다**.
+      if (driftTargetRef.current > 0) sim.alphaTarget(DRIFT_ALPHA).restart();
+    });
     // 배치가 아주 오래 식는 경우에도 학생을 기다리게 하지 않는다.
     const fitTimer = window.setTimeout(() => fitToContent(), 2500);
 
@@ -553,6 +760,7 @@ export function ConceptMap({ data, onOpen, hiddenSessions }: ConceptMapProps) {
     zoomApiRef.current = {
       zoomBy: (f) => sel.call(zoomer.scaleBy, f),
       fit: () => fitToContent(true),
+      refit: (ignoreUi: boolean) => fitToContent(true, ignoreUi),
     };
 
     resize();
