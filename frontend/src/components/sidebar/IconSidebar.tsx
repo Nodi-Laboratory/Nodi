@@ -11,7 +11,10 @@ import {
   School,
   type LucideIcon,
 } from "lucide-react";
+import { useState } from "react";
 import { useProfile } from "@/lib/hooks";
+import { HelpDialog } from "@/components/help/HelpDialog";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
 
 /**
  * 좌측 64px 아이콘 사이드바.
@@ -27,8 +30,8 @@ import { useProfile } from "@/lib/hooks";
  *   로고    아무 기능 없음 (여기가 어디인지 말해 주는 표식)
  *   홈      홈으로
  *   세션    세션 선택 페이지로 — 학급을 사진으로 골라 들어간다
- *   설정    기존과 같다
- *   도움말  도움말 페이지로
+ *   설정    **팝업**으로 연다 (사용자 지시 2026-08-10)
+ *   도움말  **팝업**으로 연다
  *
  * **기록은 여기 있다가 캔버스 상단 바로 옮겼다**(사용자 지시 2026-08-09).
  * 대화방을 오가는 일은 캔버스 **안**에서 하는 일이고, 사이드바는 화면을
@@ -36,6 +39,12 @@ import { useProfile } from "@/lib/hooks";
  *
  * 하단의 프로필 머리글자도 뺐다 — **아무것도 안 하는 표시**였고, 그 자리를
  * 도움말이 쓴다.
+ *
+ * ## 설정·도움말은 **화면을 안 바꾼다** (사용자 지시 2026-08-10)
+ *
+ * 둘 다 페이지였는데 팝업으로 옮기고 `/profile`·`/help`는 지웠다. 거기서 하는
+ * 일은 전부 **한 번 하고 돌아가는 일**이라(이름 바꾸기·학급 넣기·사용법 보기)
+ * 하던 대화를 떠날 값이 없다 — 캔버스에서 열면 뒤에 그대로 남는다.
  *
  * 교사·관리자 콘솔 버튼은 그대로 둔다. 그 둘은 학생 화면의 일부가 아니라
  * 다른 앱에 가까워서, 세션 선택 페이지에 섞으면 오히려 찾기 어려워진다.
@@ -72,9 +81,41 @@ function NavIcon({
   );
 }
 
+/** 페이지를 안 옮기고 **그 자리에서 여는** 버튼 (설정·도움말). */
+function NavButton({
+  label,
+  icon: Icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: LucideIcon;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep ${
+        active
+          ? "bg-accent-soft text-sidebar-fg-active"
+          : "text-sidebar-fg hover:bg-accent-soft/60 hover:text-sidebar-fg-active"
+      }`}
+    >
+      <Icon size={20} strokeWidth={2} />
+    </button>
+  );
+}
+
 export default function IconSidebar() {
   const pathname = usePathname();
   const { data: profile } = useProfile();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const role = profile?.role ?? null;
   const isStudent = !role || role === "student";
 
@@ -136,23 +177,29 @@ export default function IconSidebar() {
         />
       ) : null}
 
-      {/* 설정·도움말 (하단 고정) */}
+      {/* 설정·도움말 (하단 고정) — 팝업이라 주소가 안 바뀐다. */}
       <div className="mt-auto flex flex-col items-center gap-1">
-        <NavIcon
-          href="/profile"
-          label={
-            profile?.display_name ? `설정 (${profile.display_name})` : "설정"
-          }
+        <NavButton
+          label={profile?.display_name ? `설정 (${profile.display_name})` : "설정"}
           icon={Settings}
-          active={isActive("/profile")}
+          active={settingsOpen}
+          onClick={() => setSettingsOpen(true)}
         />
-        <NavIcon
-          href="/help"
+        <NavButton
           label="도움말"
           icon={HelpCircle}
-          active={isActive("/help")}
+          active={helpOpen}
+          onClick={() => setHelpOpen(true)}
         />
       </div>
+
+      {/**
+       * ⚠️ 팝업은 이 `nav` 안에 그려지지만 **몸통으로 포털된다**(`Dialog`).
+       * 여기에는 `zoom`이 걸려 있어서, 그대로 그리면 64px 기둥 안에 배율까지
+       * 먹은 채로 뜬다.
+       */}
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </nav>
   );
 }

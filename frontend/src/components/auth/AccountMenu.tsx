@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Settings, LogOut } from "lucide-react";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { clearToken } from "@/lib/session";
 import { useProfile } from "@/lib/hooks";
 
@@ -18,6 +18,7 @@ export function AccountMenu({ dark = false }: { dark?: boolean }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [settings, setSettings] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -74,13 +75,19 @@ export function AccountMenu({ dark = false }: { dark?: boolean }) {
         <div
           className={`absolute right-0 top-10 z-50 w-44 overflow-hidden rounded-lg border py-1 text-sm shadow-lg ${panel}`}
         >
-          <Link
-            href="/profile"
-            onClick={() => setOpen(false)}
+          {/* 설정은 **페이지가 아니라 팝업**이다(사용자 지시 2026-08-10).
+              교사·관리자 콘솔은 학생 셸 밖이라 사이드바가 없다 — 그래서 여기가
+              그 둘에게 설정으로 가는 유일한 길이고, 같은 팝업을 쓴다. */}
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setSettings(true);
+            }}
             className={`flex w-full items-center gap-2 px-3 py-2 text-left ${itemHover}`}
           >
             <Settings size={14} /> 프로필·설정
-          </Link>
+          </button>
           <button
             type="button"
             onClick={handleLogout}
@@ -90,6 +97,8 @@ export function AccountMenu({ dark = false }: { dark?: boolean }) {
           </button>
         </div>
       )}
+
+      <SettingsDialog open={settings} onClose={() => setSettings(false)} />
     </div>
   );
 }

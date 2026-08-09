@@ -16,7 +16,6 @@ import { SESSION_COOKIE } from "@/lib/session";
 const PROTECTED_PREFIXES = [
   "/home",
   "/space",
-  "/profile",
   "/teacher",
   "/admin",
   "/onboarding",
