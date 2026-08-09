@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -203,10 +204,18 @@ def start(_app: object | None = None) -> None:
     )
     # 진단용 표의 보존 정리 (2026-08-09). 하루 한 번이면 충분하다 — 폴은 몇
     # 초마다 돌지만 이 일은 그 리듬이 아니다.
+    #
+    # ⚠️ `interval` 트리거는 **첫 실행이 한 주기 뒤**다. 그대로 두면 배포가
+    # 하루보다 잦은 동안에는 이 일이 **한 번도 안 돈다** — 표는 계속 자라는데
+    # 로그에는 아무 흔적도 없다(등록은 됐으니 코드를 봐도 정상으로 보인다).
+    # 그래서 뜨고 나서 한 번은 곧 돌게 첫 시각을 직접 준다. 유예를 두는 이유는
+    # 부팅 직후가 가장 바쁜 때이기 때문이다(풀·인덱스 예열).
     _scheduler.add_job(
         _sweep_retention,
         "interval",
         seconds=retention.INTERVAL_SECONDS,
+        next_run_time=datetime.now(UTC)
+        + timedelta(seconds=retention.FIRST_RUN_DELAY_SECONDS),
         max_instances=1,
         coalesce=True,
         id="retention_sweep",
