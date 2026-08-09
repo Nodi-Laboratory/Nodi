@@ -181,10 +181,22 @@ const INITIAL_CAMERA = { scrollX: 180, scrollY: 150, zoom: 1 };
 
 /** 뷰포트 크기. 캔버스는 사이드바를 뺀 <main> 안에 있다. */
 function viewport(): { w: number; h: number } {
-  const el = typeof document !== "undefined" ? document.querySelector("main") : null;
+  if (typeof document === "undefined") return { w: 1200, h: 800 };
+  /**
+   * **캔버스 무대를 잰다** (2026-08-09).
+   *
+   * 예전에는 `<main>`을 쟀다. 그때는 캔버스가 `main`을 통째로 채웠지만, 지금은
+   * 그 위에 상단 바가 한 줄을 차지한다 — `main`으로 재면 카메라가 바 높이만큼
+   * 아래로 어긋나고, 그 어긋남은 "답이 살짝 낮게 뜬다"로만 보인다.
+   *
+   * 무대가 아직 없으면(첫 프레임) `main`으로 떨어진다 — 그 순간에는 둘이
+   * 같고, 착지는 어차피 배치가 굳은 뒤에 난다.
+   */
+  const el =
+    document.querySelector(".canvas2") ?? document.querySelector("main");
   return {
-    w: el?.clientWidth ?? 1200,
-    h: el?.clientHeight ?? 800,
+    w: (el as HTMLElement | null)?.clientWidth ?? 1200,
+    h: (el as HTMLElement | null)?.clientHeight ?? 800,
   };
 }
 
@@ -204,7 +216,7 @@ function useViewport(): { w: number; h: number } {
     };
     read();
     window.addEventListener("resize", read);
-    const el = document.querySelector("main");
+    const el = document.querySelector(".canvas2") ?? document.querySelector("main");
     const ro = el ? new ResizeObserver(read) : null;
     if (el && ro) ro.observe(el);
     return () => {
@@ -2148,6 +2160,20 @@ export function CanvasWorkspace({ spaceId }: Props) {
       : null);
 
   return (
+    /**
+     * 상단 바는 캔버스 **위에 자리를 잡는다**(떠 있지 않다).
+     *
+     * 예전 좌상단 버튼들은 absolute라 미니맵이 그 모서리에 못 붙었다(D211 9).
+     * 한 줄을 내주면 그 문제가 성립하지 않는다 — 네 모서리는 전부 캔버스 것이다.
+     */
+    <div className="flex h-full w-full flex-col">
+      <CanvasTopBar
+        spaceName={spaceName}
+        sessionTitle={sessionTitle}
+        historyOpen={historyOpen}
+        onToggleHistory={() => setHistoryOpen(!historyOpen)}
+      />
+      <div className="relative min-h-0 flex-1">
     <CanvasStage
       // 미니맵이 같은 변에 붙으면 도구바가 비켜선다 (D211 9).
       mapCorner={mapOpen ? mapCorner : null}
@@ -2187,7 +2213,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
               원래 보던 곳으로
             </button>
           ) : null}
-          <CanvasTopBar spaceName={spaceName} sessionTitle={sessionTitle} />
           <SessionDrawer
             open={historyOpen}
             onClose={() => setHistoryOpen(false)}
@@ -2330,6 +2355,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
         onNavigate={goToPastConversation}
       />
     </CanvasStage>
+      </div>
+    </div>
   );
 }
 

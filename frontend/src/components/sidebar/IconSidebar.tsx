@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   Grid2x2,
   HelpCircle,
-  History,
   Home,
   Settings,
   Shield,
@@ -13,7 +12,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useProfile } from "@/lib/hooks";
-import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 
 /**
  * 좌측 64px 아이콘 사이드바.
@@ -24,14 +22,17 @@ import { useWorkspaceStore } from "@/store/useWorkspaceStore";
  * 알아볼 수 없다** — 이름 첫 글자 하나로는 "3학년 1반"과 "3학년 2반"이 같아
  * 보이고, 많아지면 목록이 스크롤로 밀린다.
  *
- * 이제 사이드바에 있는 것은 여섯뿐이다:
+ * 이제 사이드바에 있는 것은 다섯뿐이다:
  *
  *   로고    아무 기능 없음 (여기가 어디인지 말해 주는 표식)
  *   홈      홈으로
- *   기록    지난 대화 서랍을 연다 (예전 캔버스 좌상단 삼선 버튼의 일)
  *   세션    세션 선택 페이지로 — 학급을 사진으로 골라 들어간다
  *   설정    기존과 같다
  *   도움말  도움말 페이지로
+ *
+ * **기록은 여기 있다가 캔버스 상단 바로 옮겼다**(사용자 지시 2026-08-09).
+ * 대화방을 오가는 일은 캔버스 **안**에서 하는 일이고, 사이드바는 화면을
+ * 통째로 바꾸는 것들만 두는 편이 갈래가 분명하다.
  *
  * 하단의 프로필 머리글자도 뺐다 — **아무것도 안 하는 표시**였고, 그 자리를
  * 도움말이 쓴다.
@@ -71,46 +72,11 @@ function NavIcon({
   );
 }
 
-/** 페이지를 옮기지 않고 그 자리에서 무언가 여는 버튼(기록). */
-function NavButton({
-  label,
-  icon: Icon,
-  active,
-  onClick,
-}: {
-  label: string;
-  icon: LucideIcon;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      aria-pressed={active}
-      onClick={onClick}
-      className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep ${
-        active
-          ? "bg-accent-soft text-sidebar-fg-active"
-          : "text-sidebar-fg hover:bg-accent-soft/60 hover:text-sidebar-fg-active"
-      }`}
-    >
-      {active ? (
-        <span className="absolute -left-2 h-5 w-1 rounded-full bg-accent-deep" />
-      ) : null}
-      <Icon size={20} strokeWidth={2} />
-    </button>
-  );
-}
-
 export default function IconSidebar() {
   const pathname = usePathname();
   const { data: profile } = useProfile();
   const role = profile?.role ?? null;
   const isStudent = !role || role === "student";
-  const historyOpen = useWorkspaceStore((s) => s.historyOpen);
-  const setHistoryOpen = useWorkspaceStore((s) => s.setHistoryOpen);
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
@@ -143,18 +109,6 @@ export default function IconSidebar() {
       {isStudent && (
         <>
           <NavIcon href="/home" label="홈" icon={Home} active={isActive("/home")} />
-          {/**
-           * 기록 — 지난 대화 서랍. **페이지를 안 옮긴다.**
-           *
-           * 캔버스 좌상단에 있던 삼선 버튼이 하던 일이다. 그 버튼은 방 이름을
-           * 함께 달고 있었는데, 이름은 이제 캔버스 상단 바가 말한다.
-           */}
-          <NavButton
-            label="기록"
-            icon={History}
-            active={historyOpen}
-            onClick={() => setHistoryOpen(!historyOpen)}
-          />
           <NavIcon
             href="/sessions"
             label="세션"
