@@ -302,6 +302,26 @@ export function InkLabTab() {
     setError(null);
   }, [askStrokes, bridge.api]);
 
+  /**
+   * **실험실은 열면 백지다** (2026-08-09).
+   *
+   * 학습 캔버스는 대화방마다 씬이 갈리지만 여기는 고정 무대라, 앞서 그은
+   * 획이 Excalidraw의 저장·복원을 타고 그대로 남는다(D176의
+   * `customData.nodiAsk`가 도구를 오가도 살아남는 그 성질이다).
+   *
+   * 남은 획은 눈에 거슬리는 데서 끝나지 않는다 — 카드 위에 겹쳐 있으면 새로
+   * 긋는 획이 그 요소에 먹혀 **획이 아예 안 세어진다**(실측 2026-08-09:
+   * 실험실 스펙 둘을 이어 돌리면 뒤엣것이 그 이유로 멈췄다).
+   *
+   * 한 번만 지운다 — 매번 지우면 지금 그리는 획까지 사라진다.
+   */
+  const wipedRef = useRef(false);
+  useEffect(() => {
+    if (wipedRef.current || !bridge.api) return;
+    wipedRef.current = true;
+    clear();
+  }, [bridge.api, clear]);
+
   const vlmOn =
     settings?.items.find((i) => i.key === "ink_vlm_enabled")?.value !== false;
 
