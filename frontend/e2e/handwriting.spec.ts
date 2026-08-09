@@ -102,11 +102,16 @@ function deltas(samples: readonly Sample[]): number[] {
 }
 
 /**
- * 캔버스 손글씨 폰트의 CSS family 이름. 2026-08-04에 Gaegu → 나눔손글씨
- * 야근하는 김주임으로 바뀌었다(사용자 지시). 자체 호스팅이라 이름도 우리가
- * 정한 값이다 — `components/canvas2/hand-font.css`의 @font-face와 같아야 한다.
+ * 캔버스 손글씨 폰트의 CSS family 이름.
+ *
+ * Gaegu → 나눔손글씨 야근하는 김주임(2026-08-04) → **KCC 한빛체**(D210 3-3)
+ * 순으로 바뀌었다. 자체 호스팅이라 이름도 우리가 정한 값이다.
+ *
+ * ⚠️ 이 상수는 `components/canvas2/hand-font.css`의 `@font-face`와 **같아야
+ * 한다.** 폰트를 바꾸면서 여기를 안 고쳐 이 스펙이 한동안 빨갰다 — 폰트 이름은
+ * 코드 한 곳에서만 바꾸면 되는 값처럼 보이지만 실은 둘이다.
  */
-const HAND_FAMILY = "Nanum YaGeunHaNeunGimJuIm";
+const HAND_FAMILY = "KCC Hanbit";
 
 test("캔버스 글씨는 손글씨 폰트로 실제 렌더된다", async ({ page }) => {
   await loginAndOpenCanvas(page);
