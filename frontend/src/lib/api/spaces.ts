@@ -16,6 +16,8 @@ export interface SpaceOverview {
   concepts: string[];
   /** 학급 프로필 사진이 있나. 없으면 화면이 머리글자로 대신한다. */
   has_avatar: boolean;
+  /** 사진의 판 — 주소에 달아 캐시를 가른다. */
+  avatar_version: string | null;
 }
 
 export async function getSpacesOverview(): Promise<SpaceOverview[]> {
@@ -32,8 +34,15 @@ export async function getSpacesOverview(): Promise<SpaceOverview[]> {
  * 통하는 이유가 그것이다 — 배포·로컬 모두 페이지와 **같은 출처**(`/api`)라
  * 브라우저가 자격을 알아서 싣는다.
  */
-export function classAvatarUrl(classId: string): string {
-  return `${API_BASE}/spaces/classes/${classId}/avatar`;
+export function classAvatarUrl(classId: string, version?: string | null): string {
+  /**
+   * ⚠️ **판(version)을 달아야 한다.** 이 창구의 주소는 학급마다 하나뿐인데
+   * 그 안의 그림은 바뀐다 — 응답이 한 시간 캐시되므로, 주소가 그대로면
+   * 선생님이 바꾼 사진이 학생에게 그만큼 늦게 보인다(실측 2026-08-10).
+   * 판은 `/spaces/overview`가 저장 경로에서 뽑아 준다.
+   */
+  const v = version ? `?v=${encodeURIComponent(version)}` : "";
+  return `${API_BASE}/spaces/classes/${classId}/avatar${v}`;
 }
 
 /** 학급 프로필 사진 올리기. **그 학급의 선생님만** 된다(서버가 판정). */

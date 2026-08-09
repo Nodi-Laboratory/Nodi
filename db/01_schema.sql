@@ -424,6 +424,31 @@ CREATE FUNCTION public.nodi_gen_join_code() RETURNS text
     from generate_series(1, 6);
 $$;
 
+-- 학급 사진 경로 적기 (2026-08-10).
+--
+-- `classes`의 UPDATE 정책은 **만든 사람만**인데, 나머지 전부는 "이 학급의
+-- 선생님"을 `is_class_teacher()`(만든 사람 또는 교사 구성원)로 판정한다.
+-- 정책을 통째로 넓히면 부담임이 학급 이름·참여 코드까지 바꾸게 되므로,
+-- **사진 경로 하나만** 여는 함수를 둔다. 돌려주는 값은 "바꿨나"다 —
+-- 조용한 0행 갱신을 성공으로 보고하지 않기 위해서다.
+CREATE OR REPLACE FUNCTION public.set_class_avatar(p_class_id uuid, p_path text)
+    RETURNS boolean
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_updated int;
+BEGIN
+    IF NOT public.is_class_teacher(p_class_id) THEN
+        RETURN false;
+    END IF;
+    UPDATE public.classes SET avatar_path = p_path WHERE id = p_class_id;
+    GET DIAGNOSTICS v_updated = ROW_COUNT;
+    RETURN v_updated > 0;
+END;
+$$;
+
 CREATE FUNCTION public.teacher_class_overview() RETURNS TABLE(id uuid, name text, join_code text, created_at timestamp with time zone, student_count bigint, material_count bigint, last_activity_at timestamp with time zone)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'

@@ -109,6 +109,18 @@ async def _class_counts(client: UserClient, class_id: str) -> tuple[int, int]:
     return materials, lectures
 
 
+def _avatar_version(path: str | None) -> str | None:
+    """저장 경로에서 **바뀌면 달라지는 짧은 조각**을 뽑는다.
+
+    경로는 `class-avatars/{class_id}/{uuid}.{ext}`라 파일 이름이 곧 판이다.
+    통째로 실어 보낼 이유는 없다 — 주소가 길어질 뿐이다.
+    """
+    if not path:
+        return None
+    name = path.rsplit("/", 1)[-1]
+    return name.split(".")[0][:12] or None
+
+
 async def overview(client: UserClient, user_id: str) -> list[dict[str, Any]]:
     """세션 선택 화면용 공간 목록.
 
@@ -164,6 +176,11 @@ async def overview(client: UserClient, user_id: str) -> list[dict[str, Any]]:
                 "lectures": lectures,
                 "concepts": concepts,
                 "has_avatar": bool(avatars.get(ref)) if kind == "class" else False,
+                # 사진의 **판**. 창구 주소는 학급마다 하나뿐이라 바뀌지 않는데
+                # 내용은 바뀐다 — 판을 주소에 달아야 브라우저가 새로 받는다
+                # (안 그러면 선생님이 바꾼 사진이 학생에게 최대 한 시간 늦게
+                # 보인다. 실측 2026-08-10: 바꾼 뒤에도 옛 그림이 그대로였다).
+                "avatar_version": _avatar_version(avatars.get(ref)) if kind == "class" else None,
             }
         )
     return out

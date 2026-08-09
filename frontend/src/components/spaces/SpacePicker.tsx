@@ -33,6 +33,7 @@ import { classAvatarUrl, getSpacesOverview, type SpaceOverview } from "@/lib/api
 import { getRecentRooms, getSpaceRooms, type RoomRow } from "@/lib/api/rooms";
 import { deleteSession, joinClass, patchSession } from "@/lib/api";
 import { PAGE_BG, PERSONAL_CARD_BG } from "@/lib/ui/surface";
+import { useAuthedImage } from "@/lib/ui/useAuthedImage";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { ConceptChips } from "./ConceptChips";
 import { RoomList } from "./RoomList";
@@ -75,6 +76,17 @@ function FolderMark({ size = 88 }: { size?: number }) {
 
 function SpaceCard({ space, onOpen }: { space: SpaceOverview; onOpen: () => void }) {
   const isPersonal = space.space_kind === "personal";
+  /**
+   * ⚠️ **사진은 받아 와서 그린다.** 주소를 `<img src>`에 그대로 넣으면
+   * 브라우저가 Authorization 없이 받으러 가고, 창구는 401을 준다 — 실측
+   * 2026-08-10: 사진을 올린 학급도 폴더 그림으로만 보였다(폴백이 그럴싸해서
+   * 아무도 못 알아챘다). D178이 도판에서 만난 벽과 같은 벽이다.
+   */
+  const avatar = useAuthedImage(
+    !isPersonal && space.has_avatar
+      ? classAvatarUrl(space.space_ref, space.avatar_version)
+      : null,
+  );
 
   return (
     <button
@@ -98,14 +110,11 @@ function SpaceCard({ space, onOpen }: { space: SpaceOverview; onOpen: () => void
       style={{ background: isPersonal ? PERSONAL_CARD_BG : "var(--bg-elevated)" }}
     >
       <div className="flex h-[76px] w-full shrink-0 items-center justify-center overflow-hidden">
-        {!isPersonal && space.has_avatar ? (
+        {avatar ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={classAvatarUrl(space.space_ref)}
-            alt=""
-            className="h-[76px] w-[76px] rounded-xl object-cover"
-          />
+          <img src={avatar} alt="" className="h-[76px] w-[76px] rounded-xl object-cover" />
         ) : (
+          // 아직 받는 중이거나 사진이 없다 — 둘 다 폴더로 간다.
           <FolderMark size={86} />
         )}
       </div>

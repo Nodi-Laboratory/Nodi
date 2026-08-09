@@ -6,8 +6,15 @@
 ## 누가 정하나
 
 **그 학급의 선생님만.** 학생이 바꿀 수 있으면 반 전체가 보는 그림이 한 사람
-장난에 달린다. 판정은 `classes.teacher_id`로 하고, 읽기는 그 반 사람 누구나
-할 수 있게 둔다(RLS가 이미 그 경계를 안다).
+장난에 달린다. 읽기는 그 반 사람 누구나 할 수 있다(RLS가 이미 그 경계를 안다).
+
+⚠️ **"선생님"의 뜻은 `is_class_teacher()`가 정한다** — 학급을 만든 사람
+(`classes.teacher_id`)**이거나** 그 학급에 교사로 들어와 있는 사람
+(`class_members.role_in_class='teacher'`). 여기만 `teacher_id`로 좁게 봤더니
+콘솔과 말이 갈렸다: 부담임에게 교사 콘솔은 그 학급을 보여 주고 사진 바꾸기
+버튼까지 주는데, 누르면 403이었다(실측 2026-08-10). **화면이 권하는 일을
+서버가 거절하면 그건 둘 중 하나가 틀린 것이다** — 나머지 전부가 쓰는 규칙에
+맞춘다.
 
 ## 주소를 저장하지 않는다
 
@@ -48,6 +55,33 @@ async def _class_row(client: UserClient, class_id: str) -> dict[str, Any]:
     return rows[0]
 
 
+async def _is_class_teacher(
+    client: UserClient,
+    class_id: str,
+    user_id: str,
+    row: dict[str, Any] | None = None,
+) -> bool:
+    """`is_class_teacher()`(DB)와 **같은 뜻**의 판정.
+
+    DB 함수를 그대로 부르지 않는 이유는 이 경로가 이미 학급 행을 읽었기
+    때문이다 — 만든 사람이면 왕복 없이 끝난다. 아니면 그때만 구성원을 본다.
+    """
+    r = row if row is not None else await _class_row(client, class_id)
+    if str(r.get("teacher_id") or "") == str(user_id):
+        return True
+    rows = await client.select(
+        "class_members",
+        {
+            "class_id": f"eq.{class_id}",
+            "user_id": f"eq.{user_id}",
+            "role_in_class": "eq.teacher",
+            "select": "user_id",
+            "limit": "1",
+        },
+    )
+    return bool(rows)
+
+
 async def set_avatar(
     client: UserClient,
     *,
@@ -57,9 +91,9 @@ async def set_avatar(
     mime: str | None,
     data: bytes,
 ) -> dict[str, Any]:
-    """사진을 올린다. **그 학급의 담임만.**"""
+    """사진을 올린다. **그 학급의 선생님만**(만든 사람 또는 교사 구성원)."""
     row = await _class_row(client, class_id)
-    if str(row.get("teacher_id") or "") != str(user_id):
+    if not await _is_class_teacher(client, class_id, user_id, row):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="이 학급의 선생님만 사진을 바꿀 수 있습니다.",
@@ -90,7 +124,19 @@ async def set_avatar(
     # 브라우저가 옛 그림을 캐시에서 계속 준다.
     path = f"class-avatars/{class_id}/{uuid.uuid4().hex}.{ext}"
     await svc.storage_upload(settings.storage_bucket, path, data, kind)
-    await client.update("classes", {"id": f"eq.{class_id}"}, {"avatar_path": path})
+    # ⚠️ **경로 적기는 RPC로 한다.**
+    #
+    # `classes`의 UPDATE 정책은 "만든 사람만"이라, 교사로 들어온 부담임이 그냥
+    # UPDATE하면 **0행이 조용히 바뀌고 우리는 200을 돌려준다** — 실측
+    # 2026-08-10: 사진은 그대로인데 창구는 성공이라고 했다.
+    # `set_class_avatar`는 `is_class_teacher()`로 판정하고 **바꿨는지를**
+    # 돌려준다(마이그레이션 2026-08-10-set-class-avatar-rpc).
+    ok = await client.rpc("set_class_avatar", {"p_class_id": class_id, "p_path": path})
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이 학급의 선생님만 사진을 바꿀 수 있습니다.",
+        )
     return {"class_id": class_id, "has_avatar": True}
 
 

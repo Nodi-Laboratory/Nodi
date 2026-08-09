@@ -15,6 +15,7 @@ import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ImagePlus } from "lucide-react";
 import { classAvatarUrl, putClassAvatar } from "@/lib/api/spaces";
+import { useAuthedImage } from "@/lib/ui/useAuthedImage";
 
 export function ClassAvatarSetting({ classId }: { classId: string }) {
   const qc = useQueryClient();
@@ -23,6 +24,13 @@ export function ClassAvatarSetting({ classId }: { classId: string }) {
   const [msg, setMsg] = useState<string | null>(null);
   /** 캐시를 깨는 값. 같은 주소로 다시 받으면 옛 그림이 그대로 온다. */
   const [stamp, setStamp] = useState(0);
+  /**
+   * 바꾼 직후에도 새 사진이 보여야 한다 — `stamp`를 주소에 달아 훅이 다시
+   * 받게 한다(브라우저 캐시도 이 값으로 갈린다).
+   */
+  const preview = useAuthedImage(
+    `${classAvatarUrl(classId)}${stamp ? `?v=${stamp}` : ""}`,
+  );
 
   const pick = async (file: File) => {
     setBusy(true);
@@ -51,17 +59,12 @@ export function ClassAvatarSetting({ classId }: { classId: string }) {
   return (
     <section className="flex items-center gap-4 rounded-xl border border-accent-border/60 bg-bg-elevated p-4">
       <div className="h-16 w-16 overflow-hidden rounded-xl bg-accent-soft/50">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          key={stamp}
-          src={`${classAvatarUrl(classId)}${stamp ? `?v=${stamp}` : ""}`}
-          alt=""
-          className="h-full w-full object-cover"
-          // 사진이 아직 없으면 404다 — 그건 고장이 아니라 기본 상태다.
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-          }}
-        />
+        {/* ⚠️ 주소를 그대로 넣으면 401이다 — `<img>`는 토큰을 못 싣는다
+            (`lib/ui/useAuthedImage.ts`). 사진이 아직 없으면 빈 칸이 기본 상태다. */}
+        {preview && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={preview} alt="" className="h-full w-full object-cover" />
+        )}
       </div>
       <div className="flex flex-col gap-1">
         <div className="text-sm font-medium text-fg">학급 사진</div>
