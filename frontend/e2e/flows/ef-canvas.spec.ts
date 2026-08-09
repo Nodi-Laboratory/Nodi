@@ -95,25 +95,88 @@ test("F56 펜을 고르면 색 팔레트가 뜨고, 지우개에서는 안 뜬�
   await pick(page, "선택");
 });
 
-test("F59 전체 보기를 누르면 캔버스가 반응한다", async ({ page }) => {
+/**
+ * 캔버스 배율은 **휠이 바꾼다** (사용자 지시 2026-08-09).
+ *
+ * 좌상단의 `[− 000% + ⤢]` 막대를 걷어내면서 버튼으로 배율을 바꾸는 길이
+ * 사라졌다 — 그 자리는 이제 "어느 학급 어느 대화방"을 말하는 글자 한 줄이고,
+ * 비운 덕에 미니맵이 네 모서리를 다 쓴다.
+ *
+ * 그래서 여기서 지키는 것은 버튼이 아니라 **배율이 바뀐다**는 사실이다.
+ * 화면에 배율 숫자가 없으므로 오버레이 변환에서 직접 읽는다.
+ */
+async function canvasZoom(page: import("@playwright/test").Page): Promise<number> {
+  return await page.evaluate(() => {
+    const item = document.querySelector("[data-canvas-item]");
+    const layer = item?.parentElement;
+    if (!layer) return 0;
+    return new DOMMatrixReadOnly(getComputedStyle(layer).transform).a;
+  });
+}
+
+test("F59 Ctrl+휠로 캔버스 배율이 바뀐다", async ({ page }) => {
   await loginAndOpenCanvas(page);
-  const zoom = page.getByText(/^\d+%$/).first();
-  const before = await zoom.textContent();
-  // "재배치"는 걷어냈다(2026-08-08) — 남은 것은 전체 보기다.
-  await page.getByRole("button", { name: /전체/ }).first().click();
-  await page.waitForTimeout(1500);
-  const after = await zoom.textContent();
-  // 배율이든 위치든 **무언가** 바뀌어야 한다. 아무 일도 없으면 죽은 버튼이다.
-  expect(typeof after).toBe("string");
-  expect(before).not.toBeUndefined();
+  const item = page.locator("[data-canvas-item]").first();
+  if ((await item.count()) === 0) test.skip(true, "카드가 없는 방이다");
+  await expect(item).toBeVisible({ timeout: 30_000 });
+
+  /**
+   * **카메라가 멈춘 뒤에 잰다.** 방을 열면 카드로 날아가는 착지 비행이 돌고
+   * (스프링), 그 도중에 휠을 굴리면 비행이 끝나면서 배율을 도로 덮는다 —
+   * 실측: 휠 직후 1.1이었다가 5초 내내 1로 돌아왔다.
+   */
+  await expect
+    .poll(
+      async () => {
+        const a = await canvasZoom(page);
+        await page.waitForTimeout(400);
+        return (await canvasZoom(page)) === a;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+
+  const box = await item.boundingBox();
+  if (!box) throw new Error("카드를 찾지 못했습니다");
+  const before = await canvasZoom(page);
+
+  /**
+   * **카드 위에서** 굴린다. 기본 도구(화면 이동)에서 카드는 포인터를 받는데,
+   * 휠 전달이 다른 조건에 걸려 있어서 한동안 카드 위 Ctrl+휠이 **브라우저
+   * 페이지 확대**로 샜다(사용자 보고 2026-08-09). 배경에서만 재면 그 결함이
+   * 안 잡힌다.
+   */
+  await page.mouse.move(box.x + 30, box.y + 8);
+  await page.keyboard.down("Control");
+  await page.mouse.wheel(0, -300);
+  await page.keyboard.up("Control");
+  await expect
+    .poll(() => canvasZoom(page), { timeout: 5000 })
+    .not.toBe(before);
 });
 
-test("F54 줌 버튼이 배율을 바꾼다", async ({ page }) => {
+/**
+ * 여기 나오는 확대·축소 버튼은 **지도의 것**이다 (사용자 지시 2026-08-09로
+ * 캔버스 좌상단 막대가 사라진 뒤로는 그것뿐이다). 지도는 기본이 닫힘이라
+ * 먼저 연다 — 안 열면 버튼이 DOM에 아예 없다.
+ */
+test("F54 지도의 줌 버튼이 배율을 바꾼다", async ({ page }) => {
   await loginAndOpenCanvas(page);
-  const zoom = page.getByText(/^\d+%$/).first();
+  await page.getByRole("button", { name: "개념 지도 열기" }).click();
+
+  /**
+   * ⚠️ **지도 안에서 찾는다.** 화면 전체에서 `/^\d+%$/`를 찾으면 Excalidraw가
+   * 숨겨 둔 자기 `Reset zoom` 버튼(0×0, `visibility: hidden`)이 먼저 잡힌다 —
+   * 우리 배율 표시가 캔버스 좌상단에 있을 때는 그것이 먼저였는데, 그 막대를
+   * 걷어내면서(사용자 지시 2026-08-09) 순서가 뒤집혔다.
+   */
+  const map = page.locator("[data-minimap]");
+  await expect(map).toBeVisible({ timeout: 15_000 });
+  const zoom = map.getByText(/^\d+%$/).first();
+  await expect(zoom).toBeVisible({ timeout: 15_000 });
   const before = Number((await zoom.textContent())!.replace("%", ""));
 
-  const inBtn = page.getByRole("button", { name: "확대", exact: true });
+  const inBtn = map.getByRole("button", { name: "확대", exact: true });
   await expect(inBtn).toBeVisible();
   await inBtn.click({ timeout: 10_000 });
   await expect.poll(async () => Number((await zoom.textContent())!.replace("%", "")), {
@@ -121,7 +184,7 @@ test("F54 줌 버튼이 배율을 바꾼다", async ({ page }) => {
   }).toBeGreaterThan(before);
 
   const zoomed = Number((await zoom.textContent())!.replace("%", ""));
-  const outBtn = page.getByRole("button", { name: "축소", exact: true });
+  const outBtn = map.getByRole("button", { name: "축소", exact: true });
   await outBtn.click({ timeout: 10_000 });
   // **방향만** 본다. 왕복이 정확히 제자리로 오지는 않는다(Excalidraw가 배율을
   // 자기 눈금으로 스냅한다 — 실측: 100 → 확대 → 축소 = 94). 학생에게 중요한
