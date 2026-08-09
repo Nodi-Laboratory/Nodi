@@ -1877,6 +1877,23 @@ export function CanvasWorkspace({ spaceId }: Props) {
      * 마지막에 하던 카드로 내려앉는다(한 방에 한 번).
      */
     const landing = !focusId && sessionId != null && landedRef.current !== sessionId;
+    /**
+     * **학생이 갈 곳을 지목했으면 착지가 비킨다** (2026-08-09).
+     *
+     * 교차 연결 배지로 과거 대화에 가거나(D176) 돌아올 때는 `pendingFocusItemId`에
+     * "가서 이 카드를 보여 달라"가 남는다. 그것도 방을 바꾸므로 착지 조건이 함께
+     * 참이 되고, **같은 카메라를 두 곳에서 쓴다.**
+     *
+     * 지금까지 맞아 보였던 것은 저쪽이 rAF로 한 프레임 뒤에 날아서 나중에
+     * 이겼기 때문이다 — 근거가 아니라 **순서**다. 둘 중 어느 쪽이든 타이밍이
+     * 조금 바뀌면 학생은 누른 카드가 아니라 마지막 카드를 보게 되고, 그건
+     * "배지가 엉뚱한 데로 보낸다"로 읽힌다.
+     *
+     * 지목이 있으면 착지는 아무것도 안 한다. 대신 **이 방에 왔다고 적지도
+     * 않는다** — 지목을 소비한 뒤 학생이 다른 방에 갔다 돌아오면 그때는 착지가
+     * 제 일을 해야 한다.
+     */
+    if (landing && pendingFocusItemId) return;
     const target = focusId ?? (landing ? landTarget : null);
     /**
      * ⚠️ 여기서 "왔다"고 **표시하면 안 된다.**
@@ -1997,7 +2014,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
     clearFocus();
   }, [
     focusId, landTarget, sessionId, layout.positions, layout.sizes, layout.settled,
-    storeItems, vp,
+    pendingFocusItemId, storeItems, vp,
     flyTo, clearFocus, clientSettings.focusZoom,
   ]);
 
