@@ -221,7 +221,7 @@ async def _finalize_file(svc: ServiceClient, file_id: str) -> None:
     )
 
     if pending != 0:
-        await svc.update("files", {"id": f"eq.{file_id}"}, {"chunk_done": embedded})
+        await _bump_progress(svc, file_id, embedded)
         return
     if failed > 0:
         await svc.update(
@@ -235,4 +235,28 @@ async def _finalize_file(svc: ServiceClient, file_id: str) -> None:
         "files",
         {"id": f"eq.{file_id}", "status": "neq.indexed"},
         {"chunk_done": embedded, "status": "indexed"},
+    )
+    # ⚠️ 위 가드는 **종결을 한 번만** 하려는 것이지, 진행도를 낡은 채로 두라는
+    # 뜻이 아니었다. 배치 둘이 동시에 끝나면 이런 일이 벌어진다:
+    #
+    #   A가 센다(248) → B가 센다(250) → B가 쓴다(indexed, 250)
+    #                                  → A가 쓴다: 가드에 걸려 **통째로 건너뜀**
+    #
+    # 순서가 반대면 248이 박힌 채 굳는다. 실측 2026-08-10: 조각 250개가 전부
+    # embedded인데 화면은 **248/250**이었다. 교사 눈에는 다 되지 않은 자료다 —
+    # 다시 올리거나, 안 쓰거나, 둘 중 하나를 하게 된다.
+    await _bump_progress(svc, file_id, embedded)
+
+
+async def _bump_progress(svc: ServiceClient, file_id: str, embedded: int) -> None:
+    """진행도를 **올리기만** 한다.
+
+    조건(`chunk_done < embedded`)을 걸어 뒤늦게 도착한 작은 숫자가 큰 숫자를
+    덮지 못하게 한다 — 동시에 끝난 배치들이 각자 다른 시점의 개수를 들고
+    오므로, 무조건 쓰면 어느 쪽이 이길지가 순서에 달린다.
+    """
+    await svc.update(
+        "files",
+        {"id": f"eq.{file_id}", "chunk_done": f"lt.{embedded}"},
+        {"chunk_done": embedded},
     )
