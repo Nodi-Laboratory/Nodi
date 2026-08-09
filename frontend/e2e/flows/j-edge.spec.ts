@@ -77,8 +77,14 @@ test("J98 주요 흐름에서 콘솔 오류가 0건이다", async ({ page }) => 
   await page.getByRole("button", { name: "선택·이동", exact: true }).click();
   await page.getByRole("button", { name: "지난 대화" }).click();
   await page.keyboard.press("Escape");
+  // 설정은 **팝업**이다(사용자 지시 2026-08-10) — `/profile`은 더 없다.
+  await page.getByLabel(/^설정/).click();
+  await page.waitForTimeout(600);
+  await page.keyboard.press("Escape");
+  await page.getByLabel("도움말").click();
+  await page.waitForTimeout(600);
+  await page.keyboard.press("Escape");
   await page.goto("/home");
-  await page.goto("/profile");
   await page.waitForTimeout(1500);
 
   expect(errs.join("\n")).toBe("");

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { enterSpace, loginAndOpenCanvas } from "../helpers";
+import { closeDialog, enterSpace, loginAndOpenCanvas, openSettings } from "../helpers";
 
 /**
  * 플로우 B11–B20 — 홈·공간 이동 (docs/TEST-FLOWS.md).
@@ -125,32 +125,31 @@ test("B15 없는 공간 id로 들어가도 잠기지 않는다", async ({ page }
   expect(body.trim().length).toBeGreaterThan(10);
 });
 
-test("B16 프로필에서 이름을 바꾸면 사이드바가 따라 바뀐다", async ({ page }) => {
+test("B16 설정에서 이름을 바꾸면 사이드바가 따라 바뀐다", async ({ page }) => {
   await loginAndOpenCanvas(page);
-  await page.goto("/profile");
+  await openSettings(page);
   const input = page.getByPlaceholder("표시 이름");
 
   const next = `E2E테스트${Date.now() % 1000}`;
   await input.fill(next);
-  await page.getByRole("button", { name: /저장|변경/ }).first().click();
+  await page.getByRole("button", { name: "저장", exact: true }).click();
   await page.waitForTimeout(1500);
+  await closeDialog(page);
 
-  await page.goto("/home");
-  // 사이드바는 이니셜만 보여 준다 — 이름은 라벨에 있다(스크린리더가 읽는다).
-  await expect(page.getByRole("link", { name: new RegExp(next) })).toBeVisible({
-    timeout: 15_000,
-  });
+  // 사이드바의 설정 버튼이 이름을 달고 있다 — 팝업이 닫힌 뒤에도 그대로다.
+  await expect(page.getByLabel(`설정 (${next})`)).toBeVisible({ timeout: 15_000 });
 
   // 공유 계정이므로 이름을 되돌려 둔다.
-  await page.goto("/profile");
+  await openSettings(page);
   await page.getByPlaceholder("표시 이름").fill("E2E테스트");
-  await page.getByRole("button", { name: /저장|변경/ }).first().click();
+  await page.getByRole("button", { name: "저장", exact: true }).click();
   await page.waitForTimeout(1200);
+  await closeDialog(page);
 });
 
 test("B19 잘못된 학급 코드는 404 안내다 — 502가 아니라 (D169)", async ({ page }) => {
   await loginAndOpenCanvas(page);
-  await page.goto("/profile");
+  await openSettings(page);
 
   const codeInput = page.getByPlaceholder("학급 코드");
   await codeInput.fill("ZZZZZZ");
@@ -163,12 +162,14 @@ test("B19 잘못된 학급 코드는 404 안내다 — 502가 아니라 (D169)",
 
   // 502가 하나라도 있으면 실패 — 학생 잘못을 서버 고장으로 보고하는 것이다.
   expect(statuses.filter((s) => s >= 500)).toEqual([]);
-  await expect(page.locator("body")).toContainText(/유효하지 않은|없는|확인/);
+  await expect(page.getByRole("dialog", { name: "설정" })).toContainText(
+    /유효하지 않은|없는|확인/,
+  );
 });
 
 test("B18 소문자 학급 코드도 통한다 (D170)", async ({ page }) => {
   await loginAndOpenCanvas(page);
-  await page.goto("/profile");
+  await openSettings(page);
   const codeInput = page.getByPlaceholder("학급 코드");
   await codeInput.fill("abc123");
   // 화면이 먼저 대문자로 보여 준다 — 서버도 정규화하지만 학생이 먼저 안다.
@@ -177,12 +178,17 @@ test("B18 소문자 학급 코드도 통한다 (D170)", async ({ page }) => {
 
 test("B20 학급 목록이 새로고침 뒤에도 남는다 (D169)", async ({ page }) => {
   await loginAndOpenCanvas(page);
-  await page.goto("/profile");
-  await page.waitForTimeout(1500);
-  const before = await page.locator("main").innerText();
+  await openSettings(page);
+  await page.waitForTimeout(1200);
+  const dialog = page.getByRole("dialog", { name: "설정" });
+  const before = await dialog.innerText();
+
   await page.reload();
-  await page.waitForTimeout(2000);
-  const after = await page.locator("main").innerText();
+  await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
+  await openSettings(page);
+  await page.waitForTimeout(1200);
+  const after = await page.getByRole("dialog", { name: "설정" }).innerText();
+
   // 학급 이름이 통째로 사라지는 회귀(D169)를 잡는다.
   const names = before.match(/\d학년\d반/g) ?? [];
   for (const n of names) expect(after).toContain(n);

@@ -165,6 +165,26 @@ export async function itemPos(note: Locator): Promise<{ x: number; y: number }> 
 }
 
 /**
+ * 설정 팝업을 연다 (사용자 지시 2026-08-10).
+ *
+ * `/profile` 페이지를 걷어내고 사이드바 버튼이 여는 팝업으로 옮겼다. 주소가
+ * 안 바뀌므로 스펙도 "어디서든 열 수 있다"를 그대로 쓴다 — 어느 화면에 있든
+ * 사이드바는 거기 있다.
+ */
+export async function openSettings(page: Page): Promise<void> {
+  await page.getByLabel(/^설정/).click();
+  await expect(page.getByRole("dialog", { name: "설정" })).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
+/** 열려 있는 팝업을 닫는다. */
+export async function closeDialog(page: Page): Promise<void> {
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden({ timeout: 10_000 });
+}
+
+/**
  * 세션 선택 화면에서 공간 카드를 눌러 **첫 대화방으로 들어간다** (사용자 지시
  * 2026-08-09).
  *
