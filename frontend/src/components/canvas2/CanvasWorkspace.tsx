@@ -38,7 +38,6 @@ import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem, ToolName } from "@/lib/canvas2/types";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import { spaceTargetFromId } from "@/lib/api";
-import { useSessions } from "@/lib/queries";
 import { useMyClasses } from "@/lib/hooks";
 import { intersects, type Rect } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
@@ -1858,17 +1857,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
   /**
-   * 상단 바에 뜨는 방 이름.
-   *
-   * ⚠️ **세션 상세(`detail`)에서 읽으면 안 된다** — 그 질의는 캔버스 스냅샷이
-   * 빈 옛 방에서만 돈다(2026-08-09에 건 게이트). 현대 방에서는 `detail`이
-   * 늘 없으므로 이름이 통째로 "제목 없는 대화"로 굳었다. 게이트를 넣은 그
-   * 커밋에서 같이 깨졌고, 요청이 하나 줄었다는 사실만 재느라 못 봤다.
-   *
-   * 이름은 **세션 목록**에 이미 있다(사이드바가 쓰는 그 질의다). 같은 캐시를
-   * 읽으므로 요청이 늘지 않고, 이름을 바꾸면 목록과 상단 바가 함께 바뀐다.
-   */
-  /**
    * 상단 바에 뜨는 **학급 이름** (사용자 지시 2026-08-09).
    *
    * 사이드바에서 학급 동그라미가 사라져 지금 어느 학급인지 알 길이 없어졌다.
@@ -1883,11 +1871,22 @@ export function CanvasWorkspace({ spaceId }: Props) {
       ? null
       : (myClasses ?? []).find((m) => m.class_id === spaceId)?.classes?.name ?? "학급";
 
-  const sessionList = useSessions(target);
-  // 두 번째 폴백(`detail.session.title`)이 있었는데, 그 쿼리는 **구 세션일
-  // 때만** 켜져 있어서 평소엔 언제나 null이었다. 죽은 가지였다.
-  const sessionTitle =
-    sessionList.data?.find((s) => s.id === sessionId)?.title?.trim() || "제목 없는 대화";
+  /**
+   * 상단 바에 뜨는 방 이름 — **스냅샷이 들고 온다** (2026-08-10).
+   *
+   * 예전에는 세션 **목록**에서 찾아 읽었다. 이름 하나 때문에 그 공간의 대화를
+   * 전부 받는 셈이고, 대화가 쌓일수록 는다(실측: 435건 156KB). 서버는 어차피
+   * 캔버스를 내주기 전에 세션 행이 보이는지 확인하므로, 제목은 거기 딸려 온다.
+   *
+   * 이름을 바꾸는 자리는 `/sessions`뿐이고 그 화면은 캔버스와 함께 뜨지 않는다.
+   * 들어올 때마다 스냅샷을 새로 받으므로(D147: 떠날 때 캐시를 버린다) 바뀐
+   * 이름이 그대로 보인다.
+   *
+   * ⚠️ 한때 세션 상세(`detail`)에서 읽다가 이름이 통째로 "제목 없는 대화"로
+   * 굳은 적이 있다 — 그 질의가 옛 방에서만 돌게 게이트가 걸렸는데, 요청이
+   * 하나 줄었다는 사실만 재느라 화면을 안 봤다.
+   */
+  const sessionTitle = snapshot?.sessionTitle?.trim() || "제목 없는 대화";
 
   // 세션 컨텍스트 파일 첨부 (D83) — 업로드 후 칩 바가 상태를 보여 준다.
   const handleAttach = useCallback(

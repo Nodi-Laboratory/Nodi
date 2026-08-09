@@ -76,19 +76,24 @@ def _bad(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
 
 
-async def _assert_session(client: UserClient, session_id: str) -> None:
-    """세션이 보이는지 확인 — 안 보이면 404.
+async def _assert_session(client: UserClient, session_id: str) -> dict[str, Any]:
+    """세션이 보이는지 확인 — 안 보이면 404. 보이면 그 행을 돌려준다.
 
     RLS가 어차피 막지만, 그 경우 INSERT는 0행으로 조용히 성공한 것처럼 보인다.
     호출부가 "저장됐다"고 믿게 두지 않는다.
+
+    제목까지 함께 읽는 이유: 어차피 이 행을 가지러 가는 길이라 공짜다. 캔버스는
+    상단 바에 쓸 제목 **하나** 때문에 세션 목록을 통째로 받고 있었다(실측
+    2026-08-10: 435건 156KB — 대화가 쌓이는 만큼 계속 는다).
     """
     rows = await client.select(
-        "sessions", {"select": "id", "id": f"eq.{session_id}", "limit": "1"}
+        "sessions", {"select": "id,title", "id": f"eq.{session_id}", "limit": "1"}
     )
     if not rows:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="세션을 찾을 수 없습니다."
         )
+    return rows[0]
 
 
 async def _orphan_answers(
@@ -141,7 +146,7 @@ async def list_canvas(client: UserClient, session_id: str) -> dict[str, Any]:
     두 번 왕복하지 않는 이유: 아이템만 먼저 오면 그림 없는 캔버스가 한 프레임
     보였다가 그림이 튀어 들어온다.
     """
-    await _assert_session(client, session_id)
+    session = await _assert_session(client, session_id)
     items = await client.select(
         "canvas_items",
         {
@@ -167,6 +172,8 @@ async def list_canvas(client: UserClient, session_id: str) -> dict[str, Any]:
         "drawing": drawings[0] if drawings else {"elements": [], "files": {}},
         # 카드 없는 답. 평소엔 빈 배열이다 (`_orphan_answers` 머리말).
         "orphan_nodes": orphans,
+        # 상단 바에 쓸 제목. 이것 하나 때문에 목록을 통째로 받지 않게(`_assert_session`).
+        "session_title": session.get("title"),
     }
 
 

@@ -69,6 +69,14 @@ export interface CanvasSnapshot {
    * 여기에 실어 주고 화면이 되살린다(`canvas_items._orphan_answers` 머리말).
    */
   orphanNodes: OrphanNode[];
+  /**
+   * 상단 바에 쓸 대화 제목 (2026-08-10).
+   *
+   * 이것 하나 때문에 캔버스가 **세션 목록을 통째로** 받고 있었다 — 실측 435건
+   * 156KB, 대화가 쌓이는 만큼 계속 는다. 서버는 어차피 세션 행을 확인하러
+   * 가므로 제목은 공짜로 딸려 온다.
+   */
+  sessionTitle: string | null;
 }
 
 export async function getCanvas(sessionId: string): Promise<CanvasSnapshot> {
@@ -81,11 +89,13 @@ export async function getCanvas(sessionId: string): Promise<CanvasSnapshot> {
     items: ItemRow[];
     drawing: DrawingScene;
     orphan_nodes?: OrphanNode[];
+    session_title?: string | null;
   };
   return {
     items: (body.items ?? []).map(toItem),
     drawing: body.drawing ?? { elements: [], files: {} },
     orphanNodes: body.orphan_nodes ?? [],
+    sessionTitle: body.session_title ?? null,
   };
 }
 
