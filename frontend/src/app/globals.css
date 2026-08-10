@@ -99,6 +99,13 @@
    * 손가락 기기에서는 **늘 보여 준다.** 마우스에서는 지금 그대로 hover에만
    * 뜬다(줄마다 ⋮가 늘 떠 있으면 목록이 시끄러워진다는 원래 판단은 유효하다).
    */
+  /* 12px 글자 한 줄은 18px밖에 안 된다 — 위아래로 넓혀 손가락에 맞춘다.
+     음수 여백으로 되돌리므로 **줄 간격은 그대로다**(카드가 길어지면 안 된다). */
+  [data-clip-link] {
+    padding-block: 13px;
+    margin-block: -13px;
+  }
+
   [data-hover-only] {
     opacity: 1 !important;
     min-width: 44px;

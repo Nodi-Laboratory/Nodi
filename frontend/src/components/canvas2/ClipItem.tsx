@@ -305,6 +305,7 @@ export function ClipItem({
         target="_blank"
         rel="noopener noreferrer"
         data-no-pan
+        data-clip-link
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         className="shrink-0 truncate"
