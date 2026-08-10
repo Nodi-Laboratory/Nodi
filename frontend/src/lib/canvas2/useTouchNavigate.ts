@@ -296,14 +296,43 @@ export function useTouchNavigate({
       if (!cur.moved) onBackgroundClick?.();
     };
 
+    /**
+     * **화면이 가려지면 장부를 비운다** (2026-08-10).
+     *
+     * 장부를 이펙트 밖으로 뺀 대가다. iPadOS는 다른 앱으로 가면 탭을 통째로
+     * 얼리는데(D162 주석 참고), 그 사이에 손을 떼면 `pointerup`도
+     * `pointercancel`도 **영영 안 온다**. 그러면 찌꺼기가 남아 다음에 한
+     * 손가락만 대도 우리 눈에는 **두 번째 손가락**이라, 엉뚱한 거리에서
+     * 확대가 시작돼 화면이 튄다.
+     *
+     * 이펙트 안의 지역 변수였을 때는 이펙트가 다시 붙으며 우연히 청소됐다 —
+     * 그 우연이 사라졌으니 명시적으로 치운다. 돌아온 뒤 다시 짚는 것은
+     * 사람에게 자연스럽다.
+     */
+    const 비우기 = () => {
+      손가락.clear();
+      핀치Box.current = null;
+    };
+    const onHide = () => {
+      if (document.visibilityState === "hidden") 비우기();
+    };
+
     root.addEventListener("pointerdown", onDown, { capture: true });
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("blur", 비우기);
     window.addEventListener("pointermove", onMove, { capture: true });
     window.addEventListener("pointerup", onUp, { capture: true });
     window.addEventListener("pointercancel", onUp, { capture: true });
     return () => {
       if (g) window.clearTimeout(g.timer);
       hideBox();
+      // ⚠️ **여기서 장부를 비우지 않는다.** 이 이펙트는 도구가 바뀔 때마다
+      // 다시 붙는데, 카드를 짚으면 그 일이 제스처 **도중에** 일어난다 —
+      // 치우면 첫 손가락이 사라져 카드 위 확대가 다시 안 된다(그 결함을
+      // 고치려고 장부를 ref로 뺀 것이다). 청소는 화면이 가려질 때만 한다.
       root.removeEventListener("pointerdown", onDown, { capture: true });
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("blur", 비우기);
       window.removeEventListener("pointermove", onMove, { capture: true });
       window.removeEventListener("pointerup", onUp, { capture: true });
       window.removeEventListener("pointercancel", onUp, { capture: true });
