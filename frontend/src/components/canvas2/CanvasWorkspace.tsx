@@ -91,6 +91,7 @@ import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 import type { CrossLink } from "@/lib/api";
 import { SplitPrompt } from "./SplitPrompt";
 import { isModalOpen } from "@/lib/ui/modalLayer";
+import { watchKeyboardInset } from "@/lib/ui/keyboardInset";
 
 interface Props {
   spaceId: string;
@@ -207,6 +208,16 @@ function viewport(): { w: number; h: number } {
  * 부르는 것만으로는 리사이즈 때 리렌더가 나지 않는다(교실 태블릿의 화면
  * 회전이 정확히 그 경우다).
  */
+/**
+ * 소프트 키보드가 먹은 높이를 `--kb-inset`으로 흘린다 (2026-08-10).
+ *
+ * 캔버스 화면에만 건다 — 키보드에 가릴 것이 있는 자리가 여기다(입력창).
+ * 구독 하나뿐이라 React state를 안 쓴다(`lib/ui/keyboardInset.ts` 머리말).
+ */
+function useKeyboardInset(): void {
+  useEffect(() => watchKeyboardInset(), []);
+}
+
 function useViewport(): { w: number; h: number } {
   const [vp, setVp] = useState(() => ({ w: 1200, h: 800 }));
   useEffect(() => {
@@ -255,6 +266,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const pendingFocusItemId = useWorkspaceStore((s) => s.pendingFocusItemId);
   const setPendingFocusItem = useWorkspaceStore((s) => s.setPendingFocusItem);
   const router = useRouter();
+  useKeyboardInset();
   const { sessionId, seed, clearSeed, dropSession } = useSessionBinding(spaceId);
   // 스토어는 **지금 방**을 알아야 한다 — 다른 방의 답이 화면에 얹히지 않게(2026-08-09).
   const store = useCanvasItems(sessionId);
