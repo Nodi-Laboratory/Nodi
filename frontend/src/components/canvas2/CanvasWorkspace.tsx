@@ -91,7 +91,7 @@ import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 import type { CrossLink } from "@/lib/api";
 import { SplitPrompt } from "./SplitPrompt";
 import { isModalOpen } from "@/lib/ui/modalLayer";
-import { watchKeyboardInset } from "@/lib/ui/keyboardInset";
+import { keyboardInset, watchKeyboardInset } from "@/lib/ui/keyboardInset";
 
 interface Props {
   spaceId: string;
@@ -214,8 +214,54 @@ function viewport(): { w: number; h: number } {
  * 캔버스 화면에만 건다 — 키보드에 가릴 것이 있는 자리가 여기다(입력창).
  * 구독 하나뿐이라 React state를 안 쓴다(`lib/ui/keyboardInset.ts` 머리말).
  */
-function useKeyboardInset(): void {
+function useKeyboardInset(panByScreen: (dx: number, dy: number) => void): void {
   useEffect(() => watchKeyboardInset(), []);
+
+  /**
+   * **키보드가 올라오면 편집 중인 카드를 위로 밀어 준다** (2026-08-10).
+   *
+   * `--kb-inset`은 입력창 하나만 쓰고 있었다. 그런데 학생이 글을 치는 자리는
+   * 하나가 더 있다 — **카드 자신**이다. 화면 아래쪽 카드를 고쳐 쓰려고 누르면
+   * 키보드가 그 위로 올라오고, 자기가 치는 글이 안 보인다.
+   *
+   * 보통은 브라우저가 알아서 밀어 준다. 여기서는 **못 민다** — 캔버스는
+   * 고정 높이 레이아웃이고 카드는 절대 배치된 오버레이 위에 있어서, 문서에
+   * 스크롤할 자리가 없다. 밀 수 있는 것은 카메라뿐이고 그건 우리 것이다.
+   *
+   * 딱 가린 만큼만 민다. 넉넉히 밀면 방금 누른 카드가 화면 위로 튀어 올라
+   * "내가 뭘 눌렀지"가 된다.
+   */
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    let timer = 0;
+    const 맞추기 = () => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el?.closest?.("[data-canvas-item]")) return;
+      const 가린높이 = keyboardInset(window.innerHeight, {
+        height: vv.height,
+        offsetTop: vv.offsetTop,
+      });
+      if (가린높이 <= 0) return;
+      const 넘침 = el.getBoundingClientRect().bottom - (window.innerHeight - 가린높이 - 12);
+      if (넘침 > 0) panByScreen(0, -Math.round(넘침));
+    };
+    /**
+     * 키보드는 **천천히** 올라온다(iOS 약 250ms). 그 전에 재면 아직 안 가린
+     * 상태라 0이 나온다 — 초점이 옮겨진 뒤에도 한 번 더 잰다.
+     */
+    const 나중에 = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(맞추기, 300);
+    };
+    window.addEventListener("focusin", 나중에);
+    vv.addEventListener("resize", 맞추기);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focusin", 나중에);
+      vv.removeEventListener("resize", 맞추기);
+    };
+  }, [panByScreen]);
 }
 
 function useViewport(): { w: number; h: number } {
@@ -266,7 +312,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const pendingFocusItemId = useWorkspaceStore((s) => s.pendingFocusItemId);
   const setPendingFocusItem = useWorkspaceStore((s) => s.setPendingFocusItem);
   const router = useRouter();
-  useKeyboardInset();
+  useKeyboardInset(bridge.panByScreen);
   const { sessionId, seed, clearSeed, dropSession } = useSessionBinding(spaceId);
   // 스토어는 **지금 방**을 알아야 한다 — 다른 방의 답이 화면에 얹히지 않게(2026-08-09).
   const store = useCanvasItems(sessionId);
