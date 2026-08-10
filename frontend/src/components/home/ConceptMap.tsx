@@ -1187,6 +1187,9 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
     >
       <canvas
         ref={canvasRef}
+        /* 홈에는 캔버스가 둘이다(지도 · 막). 이름이 없으면 시험이 어느 쪽을
+           가리키는지 알 수 없다 — 2026-08-11에 막이 캔버스가 되면서 생긴 일. */
+        data-concept-map
         onMouseMove={handleMove}
         onMouseLeave={handleLeave}
         onClick={handleClick}
