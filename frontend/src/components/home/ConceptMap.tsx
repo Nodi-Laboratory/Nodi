@@ -61,6 +61,15 @@ interface SimNode extends PlacedNode {
   fx?: number | null;
   fy?: number | null;
   /**
+   * 배열에서의 자리 — **d3가 채운다**(`SimulationNodeDatum.index`).
+   *
+   * 이웃 표(`nbr`)를 만들 때 링크의 양 끝에서 읽는다. 선언이 없으면
+   * `npm run build`가 죽는데 `tsc --noEmit`은 그냥 지나갈 수 있다 —
+   * 증분 캐시(`tsconfig.tsbuildinfo`)가 이 파일을 다시 안 볼 때가 있어서다.
+   * **빌드가 정본이다**(2026-08-10 배포 실패로 확인).
+   */
+  index?: number;
+  /**
    * 프레임마다 다시 구할 이유가 없는 값들 (2026-08-10 최적화).
    *
    * 색은 태그 해시, 반지름은 연결 수에서 나온다 — **둘 다 안 변한다.**
