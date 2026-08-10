@@ -26,7 +26,7 @@
  * 빈 캔버스를 눌렀을 때뿐이다. 그리기 도구와 아이템 드래그는 그대로 둔다.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { Rect } from "./rect";
 
 /** 손가락: 이만큼 누르고 있으면 선택 상자로 바뀐다(ms). */
@@ -61,6 +61,8 @@ export interface TouchNavigateArgs {
   mouse?: boolean;
   /** 화면 픽셀만큼 화면을 민다. */
   panByScreen: (dx: number, dy: number) => void;
+  /** 한 점을 붙든 채 배율을 곱한다 — 두 손가락 확대. */
+  zoomAtScreen: (factor: number, cx: number, cy: number) => void;
   /** 화면 좌표 → world. */
   toWorld: (cx: number, cy: number, box: DOMRect) => { x: number; y: number };
   onMarquee?: (rect: Rect, additive: boolean) => void;
@@ -77,14 +79,48 @@ export function useTouchNavigate({
   enabled,
   mouse = false,
   panByScreen,
+  zoomAtScreen,
   toWorld,
   onMarquee,
   onBackgroundClick,
 }: TouchNavigateArgs): void {
+  /**
+   * ⚠️ **제스처 상태는 이펙트 밖에 둔다** (2026-08-10).
+   *
+   * 처음에는 이펙트 안의 지역 변수였다. 그런데 카드를 짚으면 도구가 바뀌고
+   * (글을 누르면 선택으로 자동 전환) 이펙트가 **다시 붙으면서 장부가
+   * 초기화된다** — 첫 손가락이 지워져 두 번째가 "첫 번째"가 되고, 두 손가락
+   * 확대가 카드 위에서만 안 먹었다(실측 2026-08-10: 빈 곳은 4배로 커지는데
+   * 카드 위는 560 → 560).
+   */
+  const 손가락Ref = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const 핀치Ref = useRef<{ 거리: number } | null>(null);
+
   useEffect(() => {
     const root = rootRef.current;
     if (!root || (!enabled && !mouse)) return;
     if (!NAV_TOOLS.has(activeTool)) return;
+
+    /**
+     * **두 손가락 확대** (사용자 지시 2026-08-10).
+     *
+     * ⚠️ 패드에서 확대가 **통째로 안 됐다**(실측: 빈 곳에서도 카드 위에서도
+     * 배율이 안 변했다). D218이 배율 막대를 걷어내며 "배율은 휠·Ctrl+휠이
+     * 맡는다"고 했는데 **패드에는 휠이 없다** — 확대할 방법이 하나도 없었다.
+     *
+     * Excalidraw에 맡길 수도 없다: 첫 손가락의 `pointerdown`을 우리가
+     * 삼키므로(아래 `stopPropagation`) 저쪽은 제스처를 시작조차 못 한다.
+     * 터치를 우리가 소유하기로 한 이상 **확대도 우리 일이다.**
+     */
+    const 손가락 = 손가락Ref.current;
+    const 핀치Box = 핀치Ref;
+
+    const 두점 = (): [{ x: number; y: number }, { x: number; y: number }] | null => {
+      const v = [...손가락.values()];
+      return v.length >= 2 ? [v[0], v[1]] : null;
+    };
+    const 사이 = (a: { x: number; y: number }, b2: { x: number; y: number }) =>
+      Math.hypot(a.x - b2.x, a.y - b2.y);
 
     /** 지금 제스처. null이면 우리가 잡은 것이 없다. */
     let g: {
@@ -130,6 +166,22 @@ export function useTouchNavigate({
 
     const onDown = (e: PointerEvent) => {
       const isMouse = e.pointerType === "mouse";
+      if (!isMouse) {
+        손가락.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const 둘 = 두점();
+        if (둘) {
+          // 두 번째가 닿았다 — 밀던 것을 접고 확대로 넘어간다. 확대하려던
+          // 사람은 화면을 밀 뜻이 없었다.
+          if (g) {
+            window.clearTimeout(g.timer);
+            g = null;
+          }
+          hideBox();
+          핀치Box.current = { 거리: 사이(둘[0], 둘[1]) };
+          e.stopPropagation();
+          return;
+        }
+      }
       /**
        * 마우스는 **합친 도구일 때만** 우리가 가져간다.
        *
@@ -172,6 +224,25 @@ export function useTouchNavigate({
     };
 
     const onMove = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse" && 손가락.has(e.pointerId)) {
+        손가락.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      if (핀치Box.current) {
+        const 둘 = 두점();
+        if (!둘) return;
+        const 지금 = 사이(둘[0], 둘[1]);
+        // 아주 작은 흔들림은 무시한다 — 손가락은 가만히 있어도 떨린다.
+        if (지금 > 4 && Math.abs(지금 - 핀치Box.current.거리) > 1.5) {
+          zoomAtScreen(
+            지금 / 핀치Box.current.거리,
+            (둘[0].x + 둘[1].x) / 2,
+            (둘[0].y + 둘[1].y) / 2,
+          );
+          핀치Box.current.거리 = 지금;
+        }
+        e.stopPropagation();
+        return;
+      }
       if (!g || e.pointerId !== g.id) return;
       e.stopPropagation();
       const dx = e.clientX - g.lx;
@@ -190,6 +261,13 @@ export function useTouchNavigate({
     };
 
     const onUp = (e: PointerEvent) => {
+      손가락.delete(e.pointerId);
+      if (핀치Box.current && 손가락.size < 2) {
+        핀치Box.current = null;
+        // 남은 손가락으로 곧장 밀기 시작하지 않는다 — 확대를 끝내는 동작의
+        // 꼬리로 화면이 튀면 어지럽다. 다음 `pointerdown`부터 다시 센다.
+        return;
+      }
       if (!g || e.pointerId !== g.id) return;
       e.stopPropagation();
       window.clearTimeout(g.timer);
@@ -230,5 +308,5 @@ export function useTouchNavigate({
       window.removeEventListener("pointerup", onUp, { capture: true });
       window.removeEventListener("pointercancel", onUp, { capture: true });
     };
-  }, [activeTool, enabled, mouse, onBackgroundClick, onMarquee, panByScreen, rootRef, toWorld]);
+  }, [activeTool, enabled, mouse, onBackgroundClick, onMarquee, panByScreen, rootRef, toWorld, zoomAtScreen]);
 }

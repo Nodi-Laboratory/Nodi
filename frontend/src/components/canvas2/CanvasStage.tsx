@@ -168,7 +168,7 @@ export function CanvasStage({
   const rootRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
-  const { activeTool, overlayInteractive, subscribeFrame, panByScreen } = bridge;
+  const { activeTool, overlayInteractive, subscribeFrame, panByScreen, zoomAtScreen } = bridge;
 
   /**
    * 글을 누르면 선택으로 (사용자 지시 2026-08-08).
@@ -398,6 +398,7 @@ export function CanvasStage({
     // 그냥 끌면 화면 이동, 0.7초 누르고 끌면 선택 상자.
     mouse: true,
     panByScreen,
+    zoomAtScreen,
     toWorld,
     onMarquee,
     onBackgroundClick,
