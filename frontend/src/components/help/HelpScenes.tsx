@@ -132,19 +132,44 @@ function LinkScene() {
   return (
     <Stage>
       <Card x={30} y={30} w={140} title="빛의 굴절" lines={2} />
+      {/**
+       * ⚠️ **끌린 뒤의 자리에 선을 맞춘다** (2026-08-10).
+       *
+       * 이 카드는 `nh-drag`로 (-34,-16)만큼 옮겨져 멈춘다. 그런데 선의 끝점은
+       * 옮기기 **전** 좌표에 맞춰져 있어서, 카드가 제자리를 잡는 순간 선이
+       * 카드 본문을 가로질렀다(사용자 보고 2026-08-10).
+       *
+       * 시작 좌표 = 최종 좌표 + (34,16). 아래 선은 **최종** 좌표를 겨눈다.
+       */}
       <g className="nh-drag">
-        <Card x={240} y={104} w={140} title="렌즈" lines={2} by="hand" />
+        <Card x={266} y={136} w={140} title="렌즈" lines={2} by="hand" />
       </g>
-      {/* 이어지는 선 */}
+      {/**
+       * 이어지는 선 — 부모의 **아래** 점에서 자식의 **위** 점으로.
+       *
+       * 양 끝에서 수직으로 들고 나는 S자다(실제 연결선과 같은 결). 최대 y가
+       * 자식 상단(120)과 같아 **카드를 넘지 않는다** — 곡선 길이 213이라
+       * dasharray 240이면 한 대시로 덮여 그리기 애니메이션이 끊기지 않는다.
+       */}
       <path
         className="nh-link"
-        d="M100 78 C 100 110, 240 96, 300 104"
+        d="M100 78 C 100 106, 302 92, 302 120"
         stroke={C.ai}
         strokeWidth="2"
         fill="none"
-        strokeDasharray="220"
+        strokeDasharray="240"
       />
       <circle className="nh-port" cx={100} cy={78} r="4" fill={C.paper} stroke={C.ai} strokeWidth="2" />
+      {/* 닿은 자리 — 선이 허공에서 끝나면 "이어졌다"로 안 읽힌다. */}
+      <circle
+        className="nh-landed"
+        cx={302}
+        cy={120}
+        r="4"
+        fill={C.paper}
+        stroke={C.ai}
+        strokeWidth="2"
+      />
       <text x={210} y={188} fontSize="9" fill={C.faint} textAnchor="middle">
         카드 아래 점에서 끌어다 다른 카드에 놓으면 이어집니다
       </text>
@@ -429,6 +454,7 @@ export function HelpSceneStyles() {
 @keyframes nh-fadein { 0%,40% { opacity: 0; } 52%,100% { opacity: 1; } }
 @keyframes nh-fadein2 { 0%,54% { opacity: 0; } 64%,100% { opacity: 1; } }
 @keyframes nh-pulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+@keyframes nh-land { 0%,32% { opacity: 0; transform: scale(.4); } 44%,100% { opacity: 1; transform: scale(1); } }
 @keyframes nh-ping { 0% { r: 8; opacity: .9; } 70%,100% { r: 20; opacity: 0; } }
 @keyframes nh-float { 0%,100% { transform: translate(0,0); } 33% { transform: translate(2.5px,-2px); } 66% { transform: translate(-2px,2.5px); } }
 @keyframes nh-tap { 0%,55% { transform: scale(1); } 62% { transform: scale(.965); } 70%,100% { transform: scale(1); } }
@@ -438,6 +464,8 @@ export function HelpSceneStyles() {
 .nh-drag { animation: nh-drag 4.6s cubic-bezier(.3,.7,.3,1) infinite; }
 .nh-link { animation: nh-draw 4.6s ease-in-out infinite; }
 .nh-port { animation: nh-pulse 4.6s ease-in-out infinite; }
+/* 닿은 자리 — 선이 다 그려진(34%) 뒤에 뜬다. 먼저 뜨면 순서가 거꾸로 읽힌다. */
+.nh-landed { animation: nh-land 4.6s ease-in-out infinite; }
 .nh-stroke1 { animation: nh-draw 5s ease-in-out infinite; }
 .nh-stroke2 { animation: nh-draw2 5s ease-in-out infinite; }
 .nh-stroke3 { animation: nh-fadein 5s ease-in-out infinite; }
@@ -459,6 +487,9 @@ export function HelpSceneStyles() {
   .nh-ping, .nh-jump, .nh-tap, .nh-popup { animation: none; }
   .nh-typing, .nh-answer, .nh-stroke3, .nh-recognized, .nh-flyout, .nh-jump, .nh-popup { opacity: 1; clip-path: none; }
   .nh-link, .nh-stroke1, .nh-stroke2 { stroke-dashoffset: 0; }
+  /* 끌림도 끄므로 카드는 시작 자리에 선다 — 선이 겨눈 최종 자리로 옮겨 준다. */
+  .nh-drag { transform: translate(-34px,-16px); }
+  .nh-landed { opacity: 1; transform: scale(1); }
 }
 `}</style>
   );

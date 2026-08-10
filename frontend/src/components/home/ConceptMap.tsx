@@ -59,6 +59,22 @@ interface SimNode extends PlacedNode {
   vy?: number;
   fx?: number | null;
   fy?: number | null;
+  /**
+   * 프레임마다 다시 구할 이유가 없는 값들 (2026-08-10 최적화).
+   *
+   * 색은 태그 해시, 반지름은 연결 수에서 나온다 — **둘 다 안 변한다.**
+   * 매 프레임 1,200번씩 해시를 돌리고 있었다.
+   */
+  _color?: string;
+  _r?: number;
+  /**
+   * **제자리** — 예열이 끝난 순간의 좌표 (2026-08-10).
+   *
+   * 떠다니는 것은 이 자리 **주위의 진동**이지 새 배치가 아니다. 붙들어 두지
+   * 않으면 링크가 계속 당겨 무리가 천천히 오그라든다(실측: 30초에 430 → 312).
+   */
+  ax?: number;
+  ay?: number;
 }
 
 interface SimEdge {
@@ -99,14 +115,39 @@ const EDGE_MIN_ZOOM = 0.35;
  * 떠다니는 세기 (사용자 지시 2026-08-10: "적당히 움직여야 해").
  *
  * 매 틱 노드마다 이만큼의 속도를 더한다. 값이 크면 지도가 끓어오르고, 0.02
- * 아래면 움직이는지 알 수 없다 — 실측으로 잡은 지점이다. 방향은 노드마다
- * 가진 각도가 **천천히 도는** 것이라, 난수를 매 틱 새로 뽑는 것과 달리
- * 떨림이 아니라 **흐름**으로 보인다.
+ * 아래면 움직이는지 알 수 없다.
+ *
+ * ⚠️ **방향은 난수가 아니라 연결이 정한다** (사용자 지시 2026-08-10:
+ * "무작위로 움직이는 것보다 중력이나 장력 때문에 움직이는 것처럼"). 예전에는
+ * 노드마다 제 각도를 갖고 그 각도가 천천히 돌았는데 — 흐름처럼은 보여도
+ * 결국 **저마다 딴 데로 헤엄치는** 그림이라, 옆 노드와 아무 상관이 없었다.
+ *
+ * 지금은 이웃 쪽으로 당겼다 밀었다 한다(`drift`). 이웃이 곧 이 노드를 붙들고
+ * 있는 선이므로, 화면에는 **선이 팽팽해졌다 느슨해지는 것**으로 보인다.
+ * 이웃이 없는 노드는 가운데가 당긴다 — 그쪽은 중력이다.
  */
-const DRIFT_FORCE = 0.055;
+const DRIFT_FORCE = 1.05;
 
-/** 각도가 도는 속도(라디안/틱). 크면 방향이 자꾸 꺾여 부산해 보인다. */
-const DRIFT_TURN = 0.012;
+/**
+ * 한 번 밀고 당기는 데 걸리는 위상 진행(라디안/틱).
+ *
+ * 0.010이면 60fps에서 한 호흡이 약 10초다. 크면 호흡이 빨라져 다시 떨림으로
+ * 보이고, 작으면 멈춘 것과 구별이 안 된다.
+ */
+const DRIFT_BREATH = 0.013;
+
+/**
+ * 제자리로 당기는 세기 (2026-08-10).
+ *
+ * 진동 폭은 `DRIFT_FORCE`와 이 값의 **비**로 정해진다 — 미는 힘이 세지면
+ * 폭이 커지고, 당기는 힘이 세지면 좁아진다. 그래서 "더 움직이게"는 앞의 값을
+ * 올리는 것으로 끝나고, 무리가 흘러가지 않는 것은 이 값이 보장한다.
+ *
+ * ⚠️ d3의 `forceX/Y`는 세기에 **alpha를 곱한다**(여기서는 0.02). 그래서 이
+ * 값은 커 보여도 실제로는 그 1/50이다 — 1보다 큰 값이 이상해 보인다면 그
+ * 곱셈을 잊은 것이다.
+ */
+const ANCHOR_STRENGTH = 0.8;
 
 /**
  * 떠다니는 동안 유지하는 시뮬레이션 온도.
@@ -140,11 +181,33 @@ const DRIFT_START_MS = 900;
  * 전체가 들어오게만 맞추면 무리가 화면 가운데 작은 얼룩으로 앉는다. 조금
  * 넘쳐도 **읽히는 크기**가 낫다 — 넘친 만큼은 끌어서 볼 수 있다.
  *
- * ⚠️ 1보다 크다는 것은 **가장자리가 잘린다**는 뜻이다. 1.5로 뒀더니 아래
- * 두어 줄이 상자 밖으로 나갔다(실측 2026-08-10) — 1.28은 눈에 띄게 커지면서
- * 무리의 윤곽은 남는 지점이다. 더 키우려면 확대 버튼이 있다.
+ * ⚠️ 1보다 크다는 것은 **가장자리가 잘린다**는 뜻이다. 1.28에서 한 번 더
+ * 올렸다(사용자 지시 2026-08-10, 두 번째 요청). 무리는 가운데가 붐비고
+ * 가장자리가 성기므로, 잘리는 것은 대개 외딴 노드 몇이고 **읽히는 크기**를
+ * 얻는 대가로는 싸다 — 넘친 만큼은 끌어서 보면 된다.
  */
-const FIT_BOOST = 1.28;
+const FIT_BOOST = 1.62;
+
+/**
+ * **테두리 빛** — 점보다 조금 큰 원을 아주 옅게 두 겹 깐다.
+ *
+ * ⚠️ 예전에는 캔버스 `shadowBlur`를 썼다. 그림자는 **도형마다 블러 패스**가
+ * 돌아서, 점 1,200개짜리 지도에서 프레임이 66ms(15fps)가 됐다 — 프로파일에서
+ * 네이티브 페인트가 70.8%였다(실측 2026-08-10). 원 두 겹은 색깔별로 묶어
+ * 한 번에 칠할 수 있어 **채우기 호출이 노드 수와 무관**해진다.
+ *
+ * 지금은 **점 하나를 통째로 미리 구워 둔다**(`sprite`). 색 × 반지름 조합이
+ * 수십 개뿐이라 한 번 그려 놓고 프레임마다 `drawImage`로 복사만 하면 된다 —
+ * 그러면 빛을 진짜 방사형 그라데이션으로 줄 수 있다. 한 번만 그리는 그림에는
+ * 비싼 붓을 써도 된다.
+ */
+const GLOW_SCALE = 2.2;
+const GLOW_ALPHA = 0.3;
+
+/** 간선 농도를 몇 단으로 끊을까. 단마다 한 번씩만 긋는다. */
+const EDGE_TIERS = 5;
+
+const TAU = Math.PI * 2;
 
 /** 툴팁 크기. 화면 밖으로 나가지 않게 접는 계산이 이 값을 쓴다. */
 const TIP_W = 260;
@@ -177,7 +240,25 @@ const LABEL_LINE = 14;
  * 값을 그대로 돌려준다** — 선이 안 그려지는 것보다 불투명하게 그려지는
  * 쪽이 낫다. 여기서 던지면 지도 전체가 빈 화면이 된다.
  */
+/**
+ * 색 문자열은 **한 번만 만든다** (2026-08-10 최적화).
+ *
+ * 정규식 + parseInt + 템플릿이라 싸지 않은데, 프레임마다 간선 수만큼(수천 번)
+ * 불리고 있었다. 결과는 색과 투명도만으로 정해지므로 그대로 쟁여 둔다.
+ */
+const alphaCache = new Map<string, string>();
+
 function withAlpha(color: string, alpha: number): string {
+  const key = `${color}|${alpha}`;
+  const hit = alphaCache.get(key);
+  if (hit !== undefined) return hit;
+  const out = computeAlpha(color, alpha);
+  // 색은 토큰 몇 개, 투명도는 단계가 유한하다 — 그래도 상한을 둔다.
+  if (alphaCache.size < 512) alphaCache.set(key, out);
+  return out;
+}
+
+function computeAlpha(color: string, alpha: number): string {
   const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
   if (!m) return color;
   const h = m[1].length === 3 ? m[1].replace(/./g, (c) => c + c) : m[1];
@@ -387,6 +468,53 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       return !hiddenRef.current.has(n.session_id ?? "");
     }
 
+    /**
+     * **점 하나를 미리 구워 둔다** (2026-08-10 최적화).
+     *
+     * 색은 파스텔 일곱, 반지름은 3~10px 정수 — 조합이 수십 개뿐이다. 한 번
+     * 그려 두면 프레임마다 하는 일이 `drawImage` 복사뿐이라, 점 1,200개의
+     * 채우기·그라데이션이 통째로 사라진다.
+     *
+     * 화면 px로 굽는다. 점 크기는 배율과 무관하므로(`nodeScreenRadius`를 k로
+     * 나눠 그리던 것이 곧 화면 고정 크기라는 뜻이다) 확대해도 다시 구울 일이
+     * 없고, 변환을 되돌린 화면 좌표에 얹으므로 흐려지지도 않는다.
+     */
+    const sprites = new Map<string, HTMLCanvasElement>();
+    const dpr = window.devicePixelRatio || 1;
+    function sprite(color: string, r: number): HTMLCanvasElement {
+      const key = `${color}|${r}`;
+      const hit = sprites.get(key);
+      if (hit) return hit;
+      const half = Math.ceil(r * GLOW_SCALE);
+      const c = document.createElement("canvas");
+      c.width = c.height = Math.ceil(half * 2 * dpr);
+      const g = c.getContext("2d")!;
+      g.scale(dpr, dpr);
+      // 빛 — 가운데는 옅게, 바깥으로 가며 사라진다. 한 번만 그리므로 비싸도 된다.
+      const grad = g.createRadialGradient(half, half, r * 0.7, half, half, r * GLOW_SCALE);
+      grad.addColorStop(0, withAlpha(color, GLOW_ALPHA));
+      grad.addColorStop(1, withAlpha(color, 0));
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(half, half, r * GLOW_SCALE, 0, TAU);
+      g.fill();
+      // 점
+      g.fillStyle = color;
+      g.beginPath();
+      g.arc(half, half, r, 0, TAU);
+      g.fill();
+      sprites.set(key, c);
+      return c;
+    }
+
+    /**
+     * 그리기용 재사용 버퍼 — **프레임마다 새로 만들지 않는다.**
+     *
+     * 1,200개짜리 배열을 초당 60번 새로 만들면 그것만으로 GC가 돈다
+     * (프로파일에서 1.2%였다). 비우고 다시 채운다.
+     */
+    const edgeTiers: SimNode[][] = Array.from({ length: EDGE_TIERS }, () => []);
+
     function draw() {
       const { k, x: tx, y: ty } = viewRef.current;
       const tier = tierFor(k);
@@ -404,8 +532,16 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       ctx!.scale(k, k);
 
       // --- 선 -----------------------------------------------------------
+      /**
+       * **농도를 몇 단으로 끊어 단마다 한 번씩 긋는다** (2026-08-10 최적화).
+       *
+       * 예전에는 간선마다 `strokeStyle`을 새로 만들고 `stroke()`를 따로 불렀다 —
+       * 색 문자열이 프레임마다 간선 수만큼 생기고 그리기 호출도 그만큼이다.
+       * 사람 눈에 연속 농도와 5단은 구분되지 않는다.
+       */
       if (k >= EDGE_MIN_ZOOM) {
         ctx!.lineWidth = 1 / k;
+        for (const arr of edgeTiers) arr.length = 0;
         for (const e of edgesRef.current) {
           const s = e.source as SimNode;
           const t = e.target as SimNode;
@@ -413,57 +549,77 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
           if (!s || !t || !isVisible(s) || !isVisible(t)) continue;
           // 가까운 쌍일수록 진하게. 먼 쌍까지 같은 농도로 그으면 구조가 묻힌다.
           const strength = Math.max(0, 1 - e.distance / 0.7);
-          ctx!.strokeStyle = withAlpha(linkColor, 0.06 + strength * 0.22);
+          const tier = Math.min(
+            EDGE_TIERS - 1,
+            Math.floor(strength * EDGE_TIERS),
+          );
+          edgeTiers[tier].push(s, t);
+        }
+        for (let i = 0; i < EDGE_TIERS; i++) {
+          const pts = edgeTiers[i];
+          if (!pts.length) continue;
+          ctx!.strokeStyle = withAlpha(
+            linkColor,
+            0.06 + ((i + 0.5) / EDGE_TIERS) * 0.22,
+          );
           ctx!.beginPath();
-          ctx!.moveTo(s.x, s.y);
-          ctx!.lineTo(t.x, t.y);
+          for (let j = 0; j < pts.length; j += 2) {
+            ctx!.moveTo(pts[j].x, pts[j].y);
+            ctx!.lineTo(pts[j + 1].x, pts[j + 1].y);
+          }
           ctx!.stroke();
         }
       }
 
       // --- 노드 ---------------------------------------------------------
+      /**
+       * **미리 구운 점을 복사한다** (2026-08-10 최적화).
+       *
+       * 예전에는 점마다 `beginPath`·`arc`·`fill`을 돌리고 그 위에 그림자
+       * 블러까지 켰다 — 점 1,200개짜리 지도에서 프레임이 66ms(15fps)였고
+       * 프로파일의 70.8%가 네이티브 페인트였다.
+       *
+       * **화면 밖은 아예 안 그린다.** 확대해 놓으면 무리의 상당수가 상자
+       * 밖인데, 그것까지 그리는 것은 통째로 버리는 일이다.
+       */
       const hovered = hoverRef.current;
+      ctx!.restore();
+      ctx!.save();
+      ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx!.globalAlpha = tier === "clusters" ? 0.75 : 1;
       for (const n of nodesRef.current) {
         if (!isVisible(n)) continue;
-        // 화면 크기를 배율로 나눠 월드 단위로 — 결과가 확대와 무관하게 일정하다.
-        const r = nodeScreenRadius(n) / k;
-        const dotColor = pastelForTag(n.tag);
-        ctx!.beginPath();
-        ctx!.arc(n.x, n.y, r, 0, Math.PI * 2);
-        /**
-         * **파스텔 한 벌에서 고른다** (사용자 지시 2026-08-09).
-         *
-         * 예전에는 이름 해시로 hue를 만들어 `hsl(h 62% 52%)`를 썼다. 그
-         * 채도로는 이 지도가 **홈의 배경**이 된 지금 위에 뜬 글씨와 다툰다.
-         * 목록이 유한한 것도 이점이다 — 연속 hue는 이웃한 두 분류가 사실상
-         * 같은 색으로 뽑히는 일이 생긴다.
-         *
-         * 분류가 없는 점은 목록의 중립색이다. 예전처럼 `--fg-muted`를 옅게
-         * 깔면 파스텔 옆에서 혼자 회색으로 떠 보인다.
-         */
-        ctx!.fillStyle = dotColor;
-        ctx!.globalAlpha = tier === "clusters" ? 0.75 : 1;
-        /**
-         * **아주 약한 테두리 빛** (사용자 지시 2026-08-10: "아주 약간").
-         *
-         * 번짐 반경은 점 크기에 묶는다 — 상수로 두면 확대할수록 빛만 커져
-         * 화면이 뿌옇게 된다. 색은 점 자신의 색이라, 무리마다 다른 빛이 돈다.
-         *
-         * ⚠️ 그림자는 **점에만** 켠다. 켜 둔 채로 글자를 그리면 제목마다
-         * 후광이 생겨 읽기 어려워지고, 선까지 번지면 지도가 안개가 된다.
-         */
-        ctx!.shadowBlur = r * 1.6;
-        ctx!.shadowColor = withAlpha(dotColor, 0.5);
-        ctx!.fill();
-        ctx!.shadowBlur = 0;
-        if (n === hovered) {
-          ctx!.globalAlpha = 1;
-          ctx!.lineWidth = 2 / k;
-          ctx!.strokeStyle = inkColor;
-          ctx!.stroke();
+        const sx = n.x * k + tx;
+        const sy = n.y * k + ty;
+        const r = (n._r ??= nodeScreenRadius(n));
+        const half = Math.ceil(r * GLOW_SCALE);
+        if (sx + half < 0 || sx - half > width || sy + half < 0 || sy - half > height) {
+          continue;
         }
-        ctx!.globalAlpha = 1;
+        ctx!.drawImage(
+          sprite((n._color ??= pastelForTag(n.tag)), r),
+          sx - half,
+          sy - half,
+          half * 2,
+          half * 2,
+        );
       }
+      ctx!.globalAlpha = 1;
+      // 짚은 점 하나만 테두리 — 하나뿐이라 미리 구울 것이 없다.
+      if (hovered && isVisible(hovered)) {
+        const r = (hovered._r ??= nodeScreenRadius(hovered));
+        ctx!.beginPath();
+        ctx!.arc(hovered.x * k + tx, hovered.y * k + ty, r, 0, TAU);
+        ctx!.lineWidth = 2;
+        ctx!.strokeStyle = inkColor;
+        ctx!.stroke();
+      }
+      // 글자는 다시 월드 좌표에서 그린다.
+      ctx!.restore();
+      ctx!.save();
+      ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx!.translate(tx, ty);
+      ctx!.scale(k, k);
 
       // --- 글자 ---------------------------------------------------------
       if (tier === "titles") {
@@ -588,6 +744,32 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
         warmRaf = requestAnimationFrame(warmUp);
         return;
       }
+      /**
+       * **자리를 못 박고, 구조를 만들던 힘은 내려놓는다** (2026-08-10 최적화).
+       *
+       * 배치를 만드는 일은 예열에서 끝났다. 그 뒤로 `forceManyBody`·`forceLink`가
+       * 하는 일은 "이미 잡힌 자리를 유지하는 것"인데, 그 값을 매 틱 사분트리를
+       * 새로 쌓아 가며 치르고 있었다 — 프로파일에서 전하력 하나가 프레임의
+       * 30%였다(개념 1,200개).
+       *
+       * 유지가 목적이라면 **제자리를 기억해 두고 거기로 당기는 것**이 훨씬 싸고
+       * (노드당 뺄셈 두 번) 훨씬 정확하다. 힘의 균형으로 자리를 되찾으려 하면
+       * 반드시 흘러간다 — 실측 2026-08-10: 전하력만 싸게 바꿨더니 무리가
+       * 30초에 430 → 312로 오그라들었다. 균형이 아니라 **기억**이어야 한다.
+       *
+       * `collide`는 남긴다. 떠다니다 이웃에 닿으면 서로 비키는 것이 사용자가
+       * 말한 "밀어내는 느낌"이고, 그건 제자리 스프링으로는 안 나온다.
+       */
+      for (const n of nodes) {
+        n.ax = n.x;
+        n.ay = n.y;
+      }
+      sim
+        .force("charge", null)
+        .force("link", null)
+        .force("x", forceX<SimNode>().x((n) => n.ax ?? 0).strength(ANCHOR_STRENGTH))
+        .force("y", forceY<SimNode>().y((n) => n.ay ?? 0).strength(ANCHOR_STRENGTH));
+
       // 자리가 잡혔다 — 이제부터가 학생이 볼 화면이다.
       sim.on("tick", () => {
         drift();
@@ -626,6 +808,22 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       spin[i] = (u < 0.5 ? 1 : -1) * (0.6 + u);
     }
 
+    /**
+     * 이웃 목록 — **장력의 방향**이 여기서 나온다.
+     *
+     * 한 번만 만든다. 노드는 움직여도 누가 누구와 이어졌는지는 안 바뀐다.
+     * `forceLink`가 초기화하면서 `source`/`target`을 노드 객체로 바꿔 놓으므로
+     * 그 뒤에 읽어야 한다.
+     */
+    const nbr: number[][] = nodes.map(() => []);
+    for (const e of edges) {
+      const a = (e.source as unknown as SimNode).index;
+      const b = (e.target as unknown as SimNode).index;
+      if (a === undefined || b === undefined) continue;
+      nbr[a].push(b);
+      nbr[b].push(a);
+    }
+
     function drift() {
       // 목표로 다가간다 — 켜고 끌 때 둘 다 결이 있어야 한다. 진행도는
       // **시간**으로 잰다(틱 수로 재면 지도 크기마다 리듬이 달라진다).
@@ -660,10 +858,36 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       }
       const ns = nodesRef.current;
       for (let i = 0; i < ns.length; i++) {
-        phase[i] += DRIFT_TURN * spin[i];
+        phase[i] += DRIFT_BREATH * spin[i];
         const n = ns[i];
-        n.vx = (n.vx ?? 0) + Math.cos(phase[i]) * amp;
-        n.vy = (n.vy ?? 0) + Math.sin(phase[i]) * amp;
+        /**
+         * **당기는 쪽은 이웃이다.**
+         *
+         * 이웃들의 한가운데를 향한 방향에 사인파를 실어, 그쪽으로 당겼다
+         * 반대로 밀었다 한다 — 그 방향이 곧 이 노드를 붙들고 있는 선들의
+         * 방향이라, 화면에는 선이 팽팽해졌다 느슨해지는 것으로 보인다.
+         * 이웃이 없으면 가운데(0,0)가 당긴다: 그쪽은 중력이다.
+         *
+         * 이웃마다 위상이 조금씩 어긋나 있어(`spin`) 무리 전체가 한 번에
+         * 부풀었다 꺼지지 않는다 — 그러면 호흡이 아니라 확대·축소로 읽힌다.
+         */
+        const ks = nbr[i];
+        let tx = 0;
+        let ty = 0;
+        if (ks.length) {
+          for (const j of ks) {
+            tx += ns[j].x ?? 0;
+            ty += ns[j].y ?? 0;
+          }
+          tx /= ks.length;
+          ty /= ks.length;
+        }
+        const dx = tx - (n.x ?? 0);
+        const dy = ty - (n.y ?? 0);
+        const d = Math.hypot(dx, dy) || 1;
+        const push = Math.sin(phase[i]) * amp;
+        n.vx = (n.vx ?? 0) + (dx / d) * push;
+        n.vy = (n.vy ?? 0) + (dy / d) * push;
       }
     }
 
@@ -783,8 +1007,23 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
         Math.max(0.12, Math.min((width - pad * 2) / b.w, usableH / b.h)) *
           (ignoreUi ? 1 : FIT_BOOST),
       );
+      /**
+       * **넘치는 쪽은 위로 보낸다** (사용자 지시 2026-08-10: "더 확대").
+       *
+       * 띠 한가운데에 두면 확대분이 위아래로 **똑같이** 넘친다. 그런데 두
+       * 방향의 값이 다르다 — 위로 넘친 것은 인사말 뒤에 숨지만(애초에 그
+       * 자리를 UI에 내준 것이다), 아래로 넘친 것은 **상자에 잘린다.**
+       * 실측 2026-08-10: 무리 아래쪽이 상자 바닥에서 잘려 나갔다.
+       *
+       * 무리가 띠보다 크면 아래 변을 상자 바닥에 붙이고, 작으면 예전대로 띠
+       * 한가운데에 둔다(작은 무리를 바닥에 붙이면 글자와 붙어 답답하다).
+       */
+      const 무리높이 = b.h * k;
+      const 띠가운데 = top + (height - top) / 2;
+      const 바닥맞춤 = height - pad * 0.5 - 무리높이 / 2;
+      const cy = ignoreUi ? height / 2 : Math.min(띠가운데, 바닥맞춤);
       const t = zoomIdentity
-        .translate(width / 2, top + (height - top) / 2)
+        .translate(width / 2, cy)
         .scale(k)
         .translate(-(b.x + b.w / 2), -(b.y + b.h / 2));
       /**
