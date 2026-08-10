@@ -1650,7 +1650,11 @@ export function CanvasWorkspace({ spaceId }: Props) {
     const els = askStrokes();
     if (!els.length) return;
     const strokes = toStrokes(els);
-    const png = await renderInkPng(strokes, window.devicePixelRatio || 1);
+    const png = await renderInkPng(
+      strokes,
+      window.devicePixelRatio || 1,
+      bridge.cameraRef.current.zoom,
+    );
     if (!png) return;
     setInkBusy(true);
     try {
