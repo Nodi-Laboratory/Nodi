@@ -515,12 +515,41 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [cleaned, snapshot],
   );
 
+  /**
+   * 그림 저장이 마지막으로 낸 안내. **자기가 낸 것만 지우려고** 들고 있다.
+   */
+  const saveErrRef = useRef<string | null>(null);
+
   const commitScene = useCallback(
     (scene: DrawingScene) => {
       if (!sessionId) return;
       void putDrawing(sessionId, scene)
-        .then(() => setDrawError(null))
-        .catch((e: Error) => setDrawError(e.message));
+        .then(() => {
+          /**
+           * ⚠️ **남의 안내를 지우지 않는다** (2026-08-10).
+           *
+           * 예전에는 저장이 성공하면 `setDrawError(null)`로 배너를 통째로
+           * 껐다. 그런데 그 배너에는 **손글씨 인식 실패**도 실린다 —
+           * "글씨를 알아보지 못했어요. 조금 크게 다시 써 볼까요?"
+           *
+           * 인식에 실패하면 획을 남기므로(D176) 곧 씬 저장 디바운스가 돌고,
+           * 그 저장이 성공하는 순간 학생이 **읽어야 할 문구가 사라진다.**
+           * 실측 2026-08-10: 문구가 잠깐 떴다가 8초 뒤에는 흔적도 없었다.
+           * 패드에서는 더 나쁘다 — 학생은 화면 위쪽 배너가 아니라 자기가 쓴
+           * 글씨를 보고 있다.
+           *
+           * `flashError`가 "오류는 스스로 사라지면 안 된다"고 적어 둔 규칙을
+           * 이쪽이 우회하고 있었다.
+           */
+          const 내것 = saveErrRef.current;
+          if (!내것) return;
+          saveErrRef.current = null;
+          setDrawError((cur) => (cur === 내것 ? null : cur));
+        })
+        .catch((e: Error) => {
+          saveErrRef.current = e.message;
+          setDrawError(e.message);
+        });
     },
     [sessionId],
   );
