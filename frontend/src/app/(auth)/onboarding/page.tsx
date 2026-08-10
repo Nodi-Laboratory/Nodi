@@ -3,19 +3,40 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, completeOnboarding, joinClass } from "@/lib/api";
+import { ApiError, completeOnboarding, joinClass, saveOnboardingAnswers } from "@/lib/api";
 import { useMyClasses, useProfile } from "@/lib/hooks";
+import {
+  EMPTY_ANSWERS,
+  ProfileSurvey,
+  type SurveyAnswers,
+} from "@/components/onboarding/ProfileSurvey";
 
 /**
- * 온보딩(학급코드) — 최초 가입 1회만(D18).
- * "연결할 학급이 있습니까?" → 학급코드 입력 → join_class_by_code RPC.
+ * 온보딩 — 최초 가입 1회만(D18).
+ *
+ * 두 마당이다(D222, 사용자 지시 2026-08-11):
+ *
+ *   1. **설문** — 이름·학년·학습 단계·목표. 형식상 받아 두는 값이라 아무것도
+ *      안 적어도 넘어간다.
+ *   2. **학급 코드** — 원래 있던 것. join_class_by_code RPC.
+ *
  * 시작 시 complete-onboarding 호출(이후 로그인엔 안 뜸).
+ *
+ * ⚠️ 문을 하나 더 만들지 않았다. `profiles.onboarded` 하나가 이 화면 전체를
+ * 가리므로, 설문만 마치고 나간 사람은 다음 로그인에 **설문부터** 다시 본다 —
+ * 답은 이미 저장돼 있어 잃는 것이 없고, 문이 둘이면 "설문은 했는데 학급은
+ * 안 한 사람"이라는 상태를 새로 관리해야 한다.
  */
 export default function OnboardingPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: myClasses = [] } = useMyClasses();
   const { data: profile } = useProfile();
+
+  /** 설문을 마쳤나. 마치기 전에는 학급 코드 마당을 안 보여 준다. */
+  const [surveyDone, setSurveyDone] = useState(false);
+  const [answers, setAnswers] = useState<SurveyAnswers>(EMPTY_ANSWERS);
+  const [savingSurvey, setSavingSurvey] = useState(false);
 
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -51,6 +72,36 @@ export default function OnboardingPage() {
     await queryClient.invalidateQueries({ queryKey: ["my-classes"] });
     setLoading(false);
   };
+
+  /**
+   * 설문을 저장하고 다음 마당으로.
+   *
+   * **저장 실패가 온보딩을 막지 않는다.** 이 값을 읽는 기능이 없으므로 여기서
+   * 멈춰 세우면 잃는 것만 있다 — 다만 조용히 넘기지는 않는다(콘솔에 남긴다).
+   */
+  const finishSurvey = async () => {
+    setSavingSurvey(true);
+    try {
+      await saveOnboardingAnswers(answers);
+    } catch (err) {
+      console.warn("[온보딩] 설문을 저장하지 못했다 — 그대로 진행한다", err);
+    }
+    setSavingSurvey(false);
+    setSurveyDone(true);
+  };
+
+  if (!surveyDone) {
+    return (
+      <div className="flex w-full justify-center py-4">
+        <ProfileSurvey
+          answers={answers}
+          onChange={setAnswers}
+          onDone={() => void finishSurvey()}
+          busy={savingSurvey}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-accent-border/30 bg-bg-elevated p-8 shadow-sm">

@@ -1883,3 +1883,41 @@ CREATE POLICY clip_thumbnails_write_admin ON public.clip_thumbnails
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.clip_thumbnails TO nodi_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.clip_thumbnails TO nodi_worker;
+
+--
+-- 온보딩 설문 답 (D222, 사용자 지시 2026-08-11)
+--
+-- 처음 가입한 학생에게 이름·학년·학습 단계·목표를 묻는다. **형식상 받아 두는
+-- 것**이고 지금은 아무 기능도 이 값을 읽지 않는다.
+--
+-- ⚠️ `profiles`에 칼럼을 더하지 않았다 — 저쪽은 정책이 display_name·avatar_url
+-- 만 UPDATE를 허용하도록 좁혀져 있어, 쓰지도 않을 값 때문에 프로필 쓰기 권한을
+-- 넓히게 된다.
+--
+
+CREATE TABLE public.onboarding_answers (
+    user_id uuid PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+    display_name text,
+    grade text,
+    stage text,
+    goal text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.onboarding_answers ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY onboarding_answers_select_own ON public.onboarding_answers
+    FOR SELECT USING (user_id = (SELECT auth.uid()));
+
+CREATE POLICY onboarding_answers_insert_own ON public.onboarding_answers
+    FOR INSERT WITH CHECK (user_id = (SELECT auth.uid()));
+
+CREATE POLICY onboarding_answers_update_own ON public.onboarding_answers
+    FOR UPDATE USING (user_id = (SELECT auth.uid()));
+
+GRANT SELECT, INSERT, UPDATE ON public.onboarding_answers TO nodi_app;
+
+CREATE TRIGGER onboarding_answers_touch
+    BEFORE UPDATE ON public.onboarding_answers
+    FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();

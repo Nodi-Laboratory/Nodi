@@ -82,6 +82,32 @@ export async function deleteSession(id: string): Promise<void> {
 }
 
 /** 온보딩 1회 완료 표시(D18). */
+/** 온보딩 설문 답 (D222). 전부 선택이라 빈 값도 정상이다. */
+export interface OnboardingAnswers {
+  display_name: string;
+  grade: string;
+  stage: string;
+  goal: string;
+}
+
+/**
+ * 설문을 저장한다. 멱등 — 다시 보내면 덮어쓴다.
+ *
+ * ⚠️ **던지게 두는 것이 맞다.** 호출부가 삼켜서 온보딩을 계속하게 하되,
+ * 여기서 조용히 성공한 척하면 저장이 안 되는 것을 아무도 모른다.
+ */
+export async function saveOnboardingAnswers(
+  answers: OnboardingAnswers,
+): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/auth/onboarding-answers`, {
+      method: "PUT",
+      headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+      body: JSON.stringify(answers),
+    }),
+  );
+}
+
 export async function completeOnboarding(): Promise<void> {
   await ensureOk(
     await fetch(`${API_BASE}/auth/complete-onboarding`, {

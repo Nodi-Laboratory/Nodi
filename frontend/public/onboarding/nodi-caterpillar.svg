@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 170" role="img" aria-label="노디 애벌레">
+  <title>노디 애벌레</title>
+  <defs>
+    <radialGradient id="seg" cx="34%" cy="28%" r="78%">
+      <stop offset="0%" stop-color="#E8F79B"/>
+      <stop offset="55%" stop-color="#C6E85C"/>
+      <stop offset="100%" stop-color="#9FD22B"/>
+    </radialGradient>
+    <radialGradient id="head" cx="36%" cy="26%" r="76%">
+      <stop offset="0%" stop-color="#EAF8A6"/>
+      <stop offset="52%" stop-color="#C9EA61"/>
+      <stop offset="100%" stop-color="#93CC22"/>
+    </radialGradient>
+    <linearGradient id="lens" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#EFF6DE"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 바닥 그림자. 캐릭터가 떠 보이지 않게 아주 옅게만. -->
+  <ellipse cx="112" cy="150" rx="70" ry="9" fill="#9FD22B" opacity="0.18"/>
+
+  <!-- 몸통 마디 — 뒤에서 앞으로 그린다(앞 마디가 위에 겹치도록). -->
+  <g stroke="#8CC41F" stroke-width="1.6">
+    <ellipse cx="176" cy="126" rx="20" ry="18" fill="url(#seg)"/>
+    <ellipse cx="150" cy="128" rx="23" ry="21" fill="url(#seg)"/>
+    <ellipse cx="120" cy="126" rx="26" ry="24" fill="url(#seg)"/>
+  </g>
+
+  <!-- 마디 사이 주름 — 굵기로만 나눈다(선을 진하게 하면 벌레가 딱딱해진다). -->
+  <g fill="none" stroke="#8CC41F" stroke-width="2" stroke-linecap="round" opacity="0.55">
+    <path d="M162 111 q5 15 0 30"/>
+    <path d="M134 108 q6 18 0 36"/>
+  </g>
+
+  <!-- 더듬이. 끝의 동그라미가 이 캐릭터의 표식이라 몸통보다 진하게. -->
+  <g fill="none" stroke="#7FB817" stroke-width="3.4" stroke-linecap="round">
+    <path d="M62 62 q-6 -26 4 -38"/>
+    <path d="M82 58 q4 -26 18 -34"/>
+  </g>
+  <circle cx="66" cy="20" r="7.5" fill="#C6E85C" stroke="#7FB817" stroke-width="2"/>
+  <circle cx="101" cy="22" r="7" fill="#C6E85C" stroke="#7FB817" stroke-width="2"/>
+
+  <!-- 머리 -->
+  <circle cx="78" cy="106" r="40" fill="url(#head)" stroke="#8CC41F" stroke-width="1.8"/>
+
+  <!-- 안경 — 다리, 테, 알. 테가 굵어야 '똑똑한 애벌레'로 읽힌다. -->
+  <path d="M66 96 q12 -5 24 0" fill="none" stroke="#2B2B22" stroke-width="4" stroke-linecap="round"/>
+  <path d="M40 100 q-6 -3 -8 -9" fill="none" stroke="#2B2B22" stroke-width="3.4" stroke-linecap="round"/>
+  <circle cx="55" cy="101" r="18" fill="url(#lens)" stroke="#2B2B22" stroke-width="4.5"/>
+  <circle cx="99" cy="99" r="17" fill="url(#lens)" stroke="#2B2B22" stroke-width="4.5"/>
+
+  <!-- 눈동자. 살짝 위·안쪽을 보게 두면 화면의 글을 보는 것처럼 읽힌다. -->
+  <circle cx="59" cy="99" r="8.5" fill="#1F1F19"/>
+  <circle cx="95" cy="97" r="8" fill="#1F1F19"/>
+  <circle cx="62" cy="95" r="2.6" fill="#FFFFFF"/>
+  <circle cx="98" cy="93" r="2.4" fill="#FFFFFF"/>
+
+  <!-- 입 — 한 획이면 충분하다. -->
+  <path d="M70 124 q9 7 18 0" fill="none" stroke="#6FA414" stroke-width="2.6" stroke-linecap="round"/>
+</svg>

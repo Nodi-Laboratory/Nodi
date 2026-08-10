@@ -204,6 +204,53 @@ async def update_me(
     return {"display_name": rows[0].get("display_name")}
 
 
+class OnboardingAnswers(BaseModel):
+    """온보딩 설문 답 (D222).
+
+    **전부 선택이다.** 형식상 받아 두는 값이라 하나도 안 적어도 시작을 막지
+    않는다 — 막으면 쓰지도 않을 값 때문에 학생이 제품에 못 들어간다.
+    """
+
+    display_name: str | None = Field(default=None, max_length=40)
+    grade: str | None = Field(default=None, max_length=40)
+    stage: str | None = Field(default=None, max_length=40)
+    goal: str | None = Field(default=None, max_length=200)
+
+
+@router.put("/onboarding-answers")
+async def put_onboarding_answers(
+    body: OnboardingAnswers,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """온보딩 설문을 저장한다. 멱등 — 다시 보내면 덮어쓴다.
+
+    지금 이 값을 읽는 기능은 **하나도 없다**(사용자 확인 2026-08-11: 형식상
+    받아 두는 것). 그래서 표도 따로 두고, 관리자 읽기 정책도 안 만들었다.
+    """
+    client = UserClient.from_user(user)
+    row = {
+        "user_id": user.id,
+        **{k: (v.strip() or None) if isinstance(v, str) else v
+           for k, v in body.model_dump().items()},
+    }
+    await client.upsert("onboarding_answers", row, on_conflict="user_id")
+    return {"saved": True}
+
+
+@router.get("/onboarding-answers")
+async def get_onboarding_answers(
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """저장된 설문. 없으면 빈 값 — 처음 오는 사람이 정상이라 404가 아니다."""
+    client = UserClient.from_user(user)
+    rows = await client.select(
+        "onboarding_answers",
+        {"user_id": f"eq.{user.id}", "select": "display_name,grade,stage,goal", "limit": "1"},
+    )
+    got = rows[0] if rows else {}
+    return {k: got.get(k) for k in ("display_name", "grade", "stage", "goal")}
+
+
 @router.post("/complete-onboarding")
 async def complete_onboarding(
     user: CurrentUser = Depends(get_current_user),

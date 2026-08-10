@@ -27,6 +27,8 @@ export {
   patchSession,
   deleteSession,
   completeOnboarding,
+  saveOnboardingAnswers,
+  type OnboardingAnswers,
   getSession,
 } from "./sessions";
 
