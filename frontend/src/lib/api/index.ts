@@ -27,6 +27,7 @@ export {
   patchSession,
   deleteSession,
   completeOnboarding,
+  getOnboardingAnswers,
   saveOnboardingAnswers,
   type OnboardingAnswers,
   getSession,

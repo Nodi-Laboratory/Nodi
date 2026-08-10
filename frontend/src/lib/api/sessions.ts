@@ -108,6 +108,25 @@ export async function saveOnboardingAnswers(
   );
 }
 
+/** 저장된 설문. 처음 오는 사람은 빈 값이 정상이라 404가 아니다. */
+export async function getOnboardingAnswers(): Promise<OnboardingAnswers> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/auth/onboarding-answers`, {
+      headers: await authHeaders(),
+    }),
+  );
+  const raw = (await res.json()) as Partial<Record<keyof OnboardingAnswers, unknown>>;
+  // 서버는 안 적은 칸을 null로 준다. 화면의 입력값은 문자열이어야 하므로
+  // 여기서 한 번에 고른다 — 컴포넌트마다 `?? ""`를 흩어 두면 하나를 빠뜨린다.
+  const 글자 = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    display_name: 글자(raw.display_name),
+    grade: 글자(raw.grade),
+    stage: 글자(raw.stage),
+    goal: 글자(raw.goal),
+  };
+}
+
 export async function completeOnboarding(): Promise<void> {
   await ensureOk(
     await fetch(`${API_BASE}/auth/complete-onboarding`, {

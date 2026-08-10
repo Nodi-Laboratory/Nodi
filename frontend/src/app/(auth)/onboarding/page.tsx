@@ -2,8 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, completeOnboarding, joinClass, saveOnboardingAnswers } from "@/lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ApiError,
+  completeOnboarding,
+  getOnboardingAnswers,
+  joinClass,
+  saveOnboardingAnswers,
+} from "@/lib/api";
 import { useMyClasses, useProfile } from "@/lib/hooks";
 import {
   EMPTY_ANSWERS,
@@ -35,8 +41,18 @@ export default function OnboardingPage() {
 
   /** 설문을 마쳤나. 마치기 전에는 학급 코드 마당을 안 보여 준다. */
   const [surveyDone, setSurveyDone] = useState(false);
-  const [answers, setAnswers] = useState<SurveyAnswers>(EMPTY_ANSWERS);
   const [savingSurvey, setSavingSurvey] = useState(false);
+  /**
+   * 저장돼 있던 답. **오기 전에 읽는다** — 이펙트로 나중에 채우면 화면이 한 번
+   * 빈 칸으로 그려졌다가 값이 들어와, 그 사이에 학생이 친 글자를 덮는다.
+   */
+  const { data: saved, isPending: loadingAnswers } = useQuery({
+    queryKey: ["onboarding-answers"],
+    queryFn: getOnboardingAnswers,
+    // 이 화면은 한 번 오고 마는 자리라 다시 받을 일이 없다.
+    staleTime: Infinity,
+    retry: false,
+  });
 
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -79,7 +95,7 @@ export default function OnboardingPage() {
    * **저장 실패가 온보딩을 막지 않는다.** 이 값을 읽는 기능이 없으므로 여기서
    * 멈춰 세우면 잃는 것만 있다 — 다만 조용히 넘기지는 않는다(콘솔에 남긴다).
    */
-  const finishSurvey = async () => {
+  const finishSurvey = async (answers: SurveyAnswers) => {
     setSavingSurvey(true);
     try {
       await saveOnboardingAnswers(answers);
@@ -91,12 +107,20 @@ export default function OnboardingPage() {
   };
 
   if (!surveyDone) {
+    // 저장돼 있던 답을 받기 전에는 그리지 않는다(위 주석 참고). 한 번 왕복이라
+    // 눈에 띄는 기다림이 아니고, 깜빡였다 덮는 것보다 낫다.
+    if (loadingAnswers) return <div className="py-16" aria-hidden />;
     return (
       <div className="flex w-full justify-center py-4">
         <ProfileSurvey
-          answers={answers}
-          onChange={setAnswers}
-          onDone={() => void finishSurvey()}
+          initial={saved ?? EMPTY_ANSWERS}
+          /* 넘길 때마다 저장한다 — 실패해도 진행을 막지 않는다(형식상 값이다). */
+          onAdvance={(a) => {
+            void saveOnboardingAnswers(a).catch((err) => {
+              console.warn("[온보딩] 중간 저장에 실패했다 — 그대로 진행한다", err);
+            });
+          }}
+          onDone={(a) => void finishSurvey(a)}
           busy={savingSurvey}
         />
       </div>

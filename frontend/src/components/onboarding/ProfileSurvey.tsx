@@ -98,28 +98,47 @@ export const STEPS: readonly Step[] = [
 ];
 
 export function ProfileSurvey({
-  answers,
-  onChange,
+  initial,
+  onAdvance,
   onDone,
   busy = false,
 }: {
-  answers: SurveyAnswers;
-  onChange: (next: SurveyAnswers) => void;
+  /**
+   * 이미 저장돼 있던 답. **마운트 때 한 번만** 읽는다 — 그 뒤로는 이 화면이
+   * 답의 주인이라, 늦게 도착한 서버 값이 학생이 방금 친 글자를 덮으면 안 된다.
+   */
+  initial: SurveyAnswers;
+  /**
+   * 한 단계를 넘겼다. 호출부가 **그때그때 저장**해서, 새로고침하거나 도중에
+   * 나갔다 와도 적은 것이 남게 한다(실측 2026-08-11: 안 하면 1단계부터 다시).
+   */
+  onAdvance: (answers: SurveyAnswers) => void;
   /** 마지막 단계에서 눌렀다. 저장·다음 화면은 호출부의 일이다. */
-  onDone: () => void;
+  onDone: (answers: SurveyAnswers) => void;
   busy?: boolean;
 }) {
-  const [at, setAt] = useState(0);
+  const [answers, setAnswers] = useState<SurveyAnswers>(initial);
+  /**
+   * 이미 적어 둔 답이 있으면 **처음 빈 칸**에서 시작한다. 다 적고 돌아온
+   * 사람에게 1단계부터 다시 묻는 것은 한 일을 안 한 것으로 치는 셈이다.
+   */
+  const [at, setAt] = useState(() => {
+    const i = STEPS.findIndex((s) => !initial[s.field]);
+    return i < 0 ? STEPS.length - 1 : i;
+  });
   const step = STEPS[at];
   const last = at === STEPS.length - 1;
   const value = answers[step.field];
 
   const 다음 = () => {
-    if (last) onDone();
-    else setAt((i) => i + 1);
+    if (last) onDone(answers);
+    else {
+      onAdvance(answers);
+      setAt((i) => i + 1);
+    }
   };
 
-  const 적기 = (v: string) => onChange({ ...answers, [step.field]: v });
+  const 적기 = (v: string) => setAnswers((cur) => ({ ...cur, [step.field]: v }));
 
   return (
     <div className="flex w-full max-w-2xl flex-col items-center gap-10">
