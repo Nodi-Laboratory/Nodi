@@ -573,6 +573,15 @@ function TextItemImpl(props: TextItemProps) {
         left: x,
         top: y,
         /**
+         * 손가락 끌기를 브라우저가 채가지 않게 (2026-08-10).
+         *
+         * `ResizeHandles`·`SessionMap`이 이미 쓰는 처방이다. ⚠️ **헤드리스에서
+         * 재 보면 이것이 있든 없든 결과가 같다** — 실제 iOS 사파리가 한 손가락
+         * 제스처를 채가는 것이 이 처방의 근거이고, 그건 여기서 재현할 수 없다.
+         * 고친 것이 아니라 **막아 두는 것**이다.
+         */
+        touchAction: "none",
+        /**
          * 내용만큼만 차지하되 읽기 폭을 넘지 않는다.
          *
          * **`fit-content`가 아니라 `max-content`다.** 절대 배치 요소에서
