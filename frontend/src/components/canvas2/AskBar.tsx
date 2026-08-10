@@ -428,6 +428,7 @@ export function AskBar({
             onClick={submit}
             disabled={!value.trim() || busy || disabled}
             aria-label="보내기"
+            data-ask-send
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-30"
             // 시안의 전송 버튼은 **밝은 초록 원**이다(사용자 지시 2026-08-07).
             style={{ background: "var(--accent-mid)", color: "var(--c-paper)" }}
