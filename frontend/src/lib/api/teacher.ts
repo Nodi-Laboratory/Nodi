@@ -3,19 +3,11 @@ import { API_BASE, authHeaders, ensureOk } from "./_core";
 import type {
   CreatedClass,
   SessionRow,
-  TeacherClass,
   TeacherClassOverview,
   TeacherStudent,
 } from "@/lib/types";
 
 // ── 교사 컨트롤 패널 (Stage 4b, teacher role만) ──────────────────────
-
-export async function listTeacherClasses(): Promise<TeacherClass[]> {
-  const res = await ensureOk(
-    await fetch(`${API_BASE}/teacher/classes`, { headers: await authHeaders() }),
-  );
-  return res.json();
-}
 
 /** D67: 교사 콘솔 홈 — 학급별 학생수·자료수·최근활동(last_activity_at desc nulls last). */
 export async function fetchTeacherOverview(): Promise<TeacherClassOverview[]> {

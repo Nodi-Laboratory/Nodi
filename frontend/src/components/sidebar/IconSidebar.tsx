@@ -2,24 +2,52 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
 import {
+  Grid2x2,
+  HelpCircle,
   Home,
   Settings,
   Shield,
   School,
-  User,
   type LucideIcon,
 } from "lucide-react";
-import { useMyClasses, useProfile } from "@/lib/hooks";
-import { listSessions, spaceTargetFromId } from "@/lib/api";
-import { sessionsKey, STALE } from "@/lib/queries";
-import { roleHome } from "@/lib/roleHome";
+import { useState } from "react";
+import { useProfile } from "@/lib/hooks";
+import { HelpDialog } from "@/components/help/HelpDialog";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
 
 /**
- * 좌측 64px 아이콘 사이드바 (dark brown).
- * 항목: [홈 진입] · [공간 전환: 개인 + 가입 학급] · [프로필·설정]
- * 공간은 실제 데이터(개인 + class_members→classes). 미로그인/로딩 시에도 셸이 깨지지 않음.
+ * 좌측 64px 아이콘 사이드바.
+ *
+ * ## 학급 동그라미를 걷어냈다 (사용자 지시 2026-08-09)
+ *
+ * 예전에는 가입한 학급마다 배지가 하나씩 쌓였다. 학급이 늘수록 **무슨 반인지
+ * 알아볼 수 없다** — 이름 첫 글자 하나로는 "3학년 1반"과 "3학년 2반"이 같아
+ * 보이고, 많아지면 목록이 스크롤로 밀린다.
+ *
+ * 이제 사이드바에 있는 것은 다섯뿐이다:
+ *
+ *   로고    아무 기능 없음 (여기가 어디인지 말해 주는 표식)
+ *   홈      홈으로
+ *   세션    세션 선택 페이지로 — 학급을 사진으로 골라 들어간다
+ *   설정    **팝업**으로 연다 (사용자 지시 2026-08-10)
+ *   도움말  **팝업**으로 연다
+ *
+ * **기록은 여기 있다가 캔버스 상단 바로 옮겼다**(사용자 지시 2026-08-09).
+ * 대화방을 오가는 일은 캔버스 **안**에서 하는 일이고, 사이드바는 화면을
+ * 통째로 바꾸는 것들만 두는 편이 갈래가 분명하다.
+ *
+ * 하단의 프로필 머리글자도 뺐다 — **아무것도 안 하는 표시**였고, 그 자리를
+ * 도움말이 쓴다.
+ *
+ * ## 설정·도움말은 **화면을 안 바꾼다** (사용자 지시 2026-08-10)
+ *
+ * 둘 다 페이지였는데 팝업으로 옮기고 `/profile`·`/help`는 지웠다. 거기서 하는
+ * 일은 전부 **한 번 하고 돌아가는 일**이라(이름 바꾸기·학급 넣기·사용법 보기)
+ * 하던 대화를 떠날 값이 없다 — 캔버스에서 열면 뒤에 그대로 남는다.
+ *
+ * 교사·관리자 콘솔 버튼은 그대로 둔다. 그 둘은 학생 화면의 일부가 아니라
+ * 다른 앱에 가까워서, 세션 선택 페이지에 섞으면 오히려 찾기 어려워진다.
  */
 
 function NavIcon({
@@ -53,76 +81,46 @@ function NavIcon({
   );
 }
 
-/**
- * 공간 전환 배지 (D100).
- *
- * 과거에는 개인 공간이 "개인"(2글자), 학급이 이름 첫 글자(1글자)를 40px 원 안에
- * 넣어 표기 규칙이 서로 달랐다 — 화면상 "개인"과 "로"가 나란히 놓여 잘린 것처럼
- * 보였다. 이제 개인 공간은 **아이콘**, 학급은 **머리글자 1자**로 종류를 형태로
- * 구분한다. 텍스트를 원 안에 우겨넣지 않으므로 이름 길이에 영향받지 않는다.
- */
-function SpaceBadge({
-  href,
+/** 페이지를 안 옮기고 **그 자리에서 여는** 버튼 (설정·도움말). */
+function NavButton({
   label,
-  active,
   icon: Icon,
-  initial,
-  onPrefetch,
+  active,
+  onClick,
 }: {
-  href: string;
   label: string;
+  icon: LucideIcon;
   active: boolean;
-  /** 개인 공간처럼 고정 의미를 가진 공간은 아이콘으로 표시한다. */
-  icon?: LucideIcon;
-  /** 학급처럼 이름이 다양한 공간은 머리글자 1자로 표시한다. */
-  initial?: string;
-  onPrefetch?: () => void;
+  onClick: () => void;
 }) {
   return (
-    <Link
-      href={href}
-      onMouseEnter={onPrefetch}
-      title={`공간 전환: ${label}`}
-      aria-label={`공간 전환: ${label}`}
-      aria-current={active ? "page" : undefined}
-      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep ${
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep ${
         active
-          ? "border-accent-deep bg-accent text-accent-fg"
-          : "border-accent-border text-sidebar-fg hover:border-accent-deep hover:text-sidebar-fg-active"
+          ? "bg-accent-soft text-sidebar-fg-active"
+          : "text-sidebar-fg hover:bg-accent-soft/60 hover:text-sidebar-fg-active"
       }`}
     >
-      {Icon ? <Icon size={18} strokeWidth={2} /> : initial}
-    </Link>
+      <Icon size={20} strokeWidth={2} />
+    </button>
   );
 }
 
-function initials(name: string | null | undefined, fallback: string) {
-  const trimmed = name?.trim();
-  if (!trimmed) return fallback;
-  return trimmed.slice(0, 1).toUpperCase();
-}
-
-export function IconSidebar() {
+export default function IconSidebar() {
   const pathname = usePathname();
   const { data: profile } = useProfile();
-  const { data: myClasses = [] } = useMyClasses();
-  const queryClient = useQueryClient();
-
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const role = profile?.role ?? null;
   const isStudent = !role || role === "student";
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
-
-  // 08 G: 공간 배지 hover 시 그 공간의 세션 목록을 선반입(공간 전환 즉시 표시).
-  const prefetchSpace = (spaceId: string) => {
-    const target = spaceTargetFromId(spaceId);
-    void queryClient.prefetchQuery({
-      queryKey: sessionsKey(target),
-      queryFn: () => listSessions(target),
-      staleTime: STALE.sessions,
-    });
-  };
 
   return (
     <nav
@@ -135,52 +133,32 @@ export function IconSidebar() {
       style={{ zoom: "var(--ui-scale, 1)" }}
       className="flex h-full w-16 shrink-0 flex-col items-center gap-3 border-r border-accent-border/40 bg-bg-sidebar py-3"
     >
-      {/* 브랜드 마크 */}
-      <Link
-        href={roleHome(role)}
-        title="nodi"
-        aria-label="nodi"
-        className="mb-1 flex h-9 w-9 items-center justify-center rounded-full bg-accent font-bold text-accent-fg"
+      {/**
+       * 브랜드 마크 — **누를 수 없다** (사용자 지시 2026-08-09).
+       *
+       * 예전에는 홈으로 가는 링크였는데 바로 아래에 홈 버튼이 따로 있다.
+       * 같은 곳으로 가는 길이 둘이면 하나는 없는 것과 같고, 어느 쪽이 무엇을
+       * 하는지 배우는 데만 시간이 든다.
+       */}
+      <div
+        aria-hidden="true"
+        className="mb-1 flex h-9 w-9 select-none items-center justify-center rounded-full bg-accent font-bold text-accent-fg"
       >
         n
-      </Link>
+      </div>
 
-      {/* 학생 전용: 홈 · 공간 · 개념 */}
       {isStudent && (
         <>
           <NavIcon href="/home" label="홈" icon={Home} active={isActive("/home")} />
-
-          <div className="my-1 h-px w-8 bg-accent-border/50" />
-
-          {/* min-h-0가 있어야 flex 부모 안에서 실제로 스크롤된다 — 없으면 학급이
-              많을 때 목록이 사이드바 밖으로 밀려 하단 프로필 버튼을 가린다. */}
-          <div className="flex min-h-0 flex-col items-center gap-2 overflow-y-auto">
-            <SpaceBadge
-              href="/space/personal"
-              label="개인 공간"
-              icon={User}
-              active={isActive("/space/personal")}
-              onPrefetch={() => prefetchSpace("personal")}
-            />
-            {myClasses.map((m) => {
-              const href = `/space/${m.class_id}`;
-              const label = m.classes?.name ?? "학급";
-              return (
-                <SpaceBadge
-                  key={m.class_id}
-                  href={href}
-                  label={label}
-                  initial={initials(m.classes?.name, "반")}
-                  active={isActive(href)}
-                  onPrefetch={() => prefetchSpace(m.class_id)}
-                />
-              );
-            })}
-          </div>
+          <NavIcon
+            href="/sessions"
+            label="세션"
+            icon={Grid2x2}
+            active={isActive("/sessions")}
+          />
         </>
       )}
 
-      {/* 교사 콘솔 */}
       {role === "teacher" ? (
         <NavIcon
           href="/teacher"
@@ -190,7 +168,6 @@ export function IconSidebar() {
         />
       ) : null}
 
-      {/* 관리자 콘솔 */}
       {role === "admin" ? (
         <NavIcon
           href="/admin"
@@ -200,27 +177,29 @@ export function IconSidebar() {
         />
       ) : null}
 
-      {/* 프로필·설정 (하단 고정) */}
+      {/* 설정·도움말 (하단 고정) — 팝업이라 주소가 안 바뀐다. */}
       <div className="mt-auto flex flex-col items-center gap-1">
-        <NavIcon
-          href="/profile"
-          label={
-            profile?.display_name
-              ? `프로필·설정 (${profile.display_name})`
-              : "프로필·설정"
-          }
+        <NavButton
+          label={profile?.display_name ? `설정 (${profile.display_name})` : "설정"}
           icon={Settings}
-          active={isActive("/profile")}
+          active={settingsOpen}
+          onClick={() => setSettingsOpen(true)}
         />
-        {profile?.display_name ? (
-          <span
-            title={profile.display_name}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-fg"
-          >
-            {initials(profile.display_name, "나")}
-          </span>
-        ) : null}
+        <NavButton
+          label="도움말"
+          icon={HelpCircle}
+          active={helpOpen}
+          onClick={() => setHelpOpen(true)}
+        />
       </div>
+
+      {/**
+       * ⚠️ 팝업은 이 `nav` 안에 그려지지만 **몸통으로 포털된다**(`Dialog`).
+       * 여기에는 `zoom`이 걸려 있어서, 그대로 그리면 64px 기둥 안에 배율까지
+       * 먹은 채로 뜬다.
+       */}
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </nav>
   );
 }

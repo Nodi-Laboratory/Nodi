@@ -42,6 +42,15 @@ export interface ChromeInput {
   margin: number;
   /** 크롬끼리 남길 틈. */
   gap: number;
+  /**
+   * 위쪽에 떠 있는 상단 바의 높이 (2026-08-10).
+   *
+   * 바가 캔버스 위로 올라오면서(사용자 지시) 위 모서리의 지도가 그만큼 내려
+   * 앉는다(`cornerSnap.cornerPos`). 여기서 같은 값을 안 보면 **계산이 보는
+   * 지도 자리와 화면의 지도 자리가 갈린다** — 겹치는데 안 겹친다고 하거나
+   * 그 반대가 된다.
+   */
+  topInset?: number;
 }
 
 export type RailMode =
@@ -92,21 +101,39 @@ function overlaps(a0: number, a1: number, b0: number, b1: number): boolean {
 }
 
 export function fitChrome(input: ChromeInput): ChromeFit {
-  const { stage, corner, map, rail, askW, margin, gap } = input;
-  // 지도가 없거나 왼쪽에 있으면 도구바(오른쪽)와 만날 일이 없다.
-  if (!corner || corner === "tl" || corner === "bl") return NONE;
+  const { stage, corner, map, rail, askW, margin, gap, topInset = 0 } = input;
+  if (!corner) return NONE;
 
-  const mapTop = corner === "tr" ? margin : stage.h - margin - map.h;
+  const top = corner === "tl" || corner === "tr";
+  const mapTop = top ? margin + topInset : stage.h - margin - map.h;
   const mapBottom = mapTop + map.h;
+  /** 지도의 가로 자리. 왼쪽 모서리면 왼쪽 변에, 오른쪽이면 오른쪽 변에 붙는다. */
+  const mapLeft =
+    corner === "tl" || corner === "bl" ? margin : stage.w - margin - map.w;
+  const mapRight = mapLeft + map.w;
+
+  // 도구바는 오른쪽 변에 붙어 있다.
+  const railRight = stage.w - margin;
+  const railLeft = railRight - rail.w;
   const railTop = (stage.h - rail.h) / 2;
   const railBottom = railTop + rail.h;
 
+  /**
+   * ⚠️ **모서리로 단정하지 않는다** (사용자 보고 2026-08-10: "미니맵이랑 도구
+   * 바가 겹친다").
+   *
+   * 예전에는 "지도가 왼쪽이면 오른쪽 도구바와 만날 일이 없다"고 곧장 끝냈다.
+   * 그런데 지도는 **넓다** — 왼쪽에 붙어도 오른쪽 변까지 닿으면 도구바가 그
+   * 아래 깔린다. 가로도 세로처럼 **재서** 판단한다.
+   */
+  if (!overlaps(railLeft, railRight, mapLeft, mapRight)) return NONE;
   if (!overlaps(railTop, railBottom, mapTop, mapBottom)) return NONE;
 
 
   // ── 1단계: 겹친 만큼만 민다 ────────────────────────────────────────
-  const shift =
-    corner === "tr" ? mapBottom + gap - railTop : -(railBottom + gap - mapTop);
+  //
+  // 지도가 위쪽이면 도구바를 아래로, 아래쪽이면 위로 비킨다.
+  const shift = top ? mapBottom + gap - railTop : -(railBottom + gap - mapTop);
   const movedTop = railTop + shift;
   const movedBottom = railBottom + shift;
   // 밀어서 화면 안에 다 들어오면 그것으로 끝이다(평소 방식).
@@ -114,12 +141,27 @@ export function fitChrome(input: ChromeInput): ChromeFit {
     return { railMode: "center", railShift: shift, mapDx: 0, askDx: 0, askMaxW: null };
   }
 
+  /**
+   * 왼쪽에 붙은 지도는 **왼쪽으로 더 물릴 곳이 없다.**
+   *
+   * 2단계는 "도구바가 바깥쪽 열을 갖고 지도가 왼쪽으로 물러난다"인데, 지도가
+   * 이미 왼쪽 변에 붙어 있으면 물러날 자리가 없다. 밀 수 있는 만큼만 밀고
+   * 끝낸다 — 그래도 안 되면 그건 지도가 화면을 거의 다 덮은 것이라, 자리를
+   * 다투는 것보다 학생이 지도를 접는 편이 빠르다.
+   */
+  if (corner === "tl" || corner === "bl") {
+    const 한계 = top
+      ? Math.min(shift, stage.h - margin - railBottom)
+      : Math.max(shift, margin - railTop);
+    return { railMode: "center", railShift: 한계, mapDx: 0, askDx: 0, askMaxW: null };
+  }
+
   // ── 2단계: 나란히 서고 지도를 왼쪽으로 물린다 ─────────────────────
   //
   // 도구바가 **바깥쪽 열**을 갖는다(사용자 지시: "지도의 오른쪽에"). 지도는
   // 그만큼 왼쪽으로 물러난다.
   const mapDx = rail.w + gap;
-  const railMode: RailMode = corner === "tr" ? "top" : "bottom";
+  const railMode: RailMode = top ? "top" : "bottom";
 
   /**
    * 입력창은 아래 가운데다. 지도가 아래쪽으로 오면 겹칠 수 있다.

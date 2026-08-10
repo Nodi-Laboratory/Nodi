@@ -79,10 +79,23 @@ interface WorkspaceState {
   } | null;
   setMapSnapshot: (s: WorkspaceState["mapSnapshot"]) => void;
 
+  /**
+   * 지난 대화 서랍이 열려 있나 (사용자 지시 2026-08-09).
+   *
+   * 예전에는 캔버스 좌상단 버튼이 자기 안에서 열고 닫았다. 이제 여는 곳이
+   * **사이드바의 [기록]**이라 캔버스 밖이다 — 두 화면이 같은 상태를 봐야
+   * 하므로 스토어로 올린다.
+   */
+  historyOpen: boolean;
+  setHistoryOpen: (open: boolean) => void;
+
   reset: () => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
+  historyOpen: false,
+  setHistoryOpen: (open) => set({ historyOpen: open }),
+
   activeSessionId: null,
   activeSessionSpaceId: null,
   activeNodeId: null,

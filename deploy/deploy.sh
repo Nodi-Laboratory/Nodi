@@ -82,6 +82,32 @@ done
 ok "$applied건 적용"
 
 # ---------------------------------------------------------------------------
+# 3-1. 걷어낸 자동 파싱의 흔적 지우기 (2026-08-10)
+#
+# 대회 규정상 **제품 안에서 해외 모델을 쓸 수 없다.** EBS 자동 파싱과 Whisper
+# 전사를 코드에서 걷어냈는데, 지우는 SQL만으로는 두 가지가 남는다:
+#
+#   · Qdrant 벡터 — 행은 지워도 벡터가 남으면 검색이 히트를 내고 본문 재조회가
+#     빈손이 된다. 그 조합은 오류를 안 내고 **조용히 틀린다.**
+#   · faster-whisper가 받아 둔 모델 파일 — 코드가 없으니 로드될 일은 없지만,
+#     "종료하고 기록도 지운다"는 요구에는 디스크에 남은 가중치도 든다.
+#
+# 둘 다 **멱등**이다. 없으면 아무 일도 안 한다. 실패해도 배포를 막지 않는다 —
+# 청소가 서비스를 멈출 이유는 없다.
+# ---------------------------------------------------------------------------
+log "자동 파싱 흔적 정리"
+for col in lecture_clips lecture_clip_atoms; do
+    curl -fsS -X DELETE "http://127.0.0.1:${QDRANT_PORT}/collections/${col}" \
+        >/dev/null 2>&1 || true
+done
+for d in "$HOME/.cache/huggingface/hub/models--Systran--faster-whisper-"* \
+         "$HOME/.cache/huggingface/hub/models--guillaumekln--faster-whisper-"*; do
+    [ -e "$d" ] || continue
+    rm -rf "$d" && log "  whisper 가중치 삭제: $(basename "$d")"
+done
+ok "정리 완료"
+
+# ---------------------------------------------------------------------------
 # 4. 프론트엔드 빌드
 #
 # ⚠️ NEXT_PUBLIC_* 와 BACKEND_ORIGIN은 **빌드 시점에 박힌다.** 값을 바꿨다면

@@ -122,9 +122,6 @@ export function tagHue(tag: string | null): number {
   return Math.round(hash01(tag) * 360);
 }
 
-/** 태그 없는 카드의 색(무채색) — 있는 것과 확실히 구분된다. */
-export const UNTAGGED_HUE = null;
-
 /**
  * 확대 배율에 따라 무엇을 보여 줄지 (D151 지도와 같은 태도).
  *

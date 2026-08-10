@@ -40,10 +40,12 @@ async def create_session(
 async def list_sessions(
     space_kind: str = Query(..., pattern="^(personal|class)$"),
     space_ref: str | None = Query(None),
+    #: 이름으로 찾기. 상한(`_LIST_CAP`) 밖의 옛 대화에 닿는 유일한 길이다.
+    q: str | None = Query(None, max_length=80),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     client = UserClient.from_user(user)
-    return await svc.list_sessions(client, space_kind, space_ref, user.id)
+    return await svc.list_sessions(client, space_kind, space_ref, user.id, q)
 
 
 @router.get("/{session_id}")

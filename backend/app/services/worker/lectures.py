@@ -1,7 +1,15 @@
-"""강의 클립 인제스트 워커 (D149) — figures.py 골격 미러.
+"""강의 클립 인제스트 워커 (D149, 2026-08-10 개정).
 
-lecture_parse: EBS 페이지 GET+파싱 → lecture_clips(pending) 생성 → lecture_embed 팬아웃.
-lecture_embed: 클립 제목 embedding-passage → Qdrant lecture_clips → 행 embedded.
+lecture_embed: 클립 제목+본문 embedding-passage → Qdrant lecture_clips → 행 embedded.
+lecture_atom: 클립당 예상 질문 생성 → Qdrant lecture_clip_atoms.
+
+⚠️ **`lecture_parse` 잡은 없다.** 예전에는 서버가 EBS 페이지를 가져와 챕터를
+파싱하고, 자막이 없으면 Whisper로 전사까지 했다. 대회 규정상 제품 안에서
+해외 모델을 쓸 수 없어 그 경로를 통째로 걷어냈다(2026-08-10) — 파싱과 전사는
+저장소 밖 오프라인 스크립트(`.claude/scripts/parse_lectures.py`)가 하고,
+관리자는 그 결과 파일을 끌어다 놓는다. 그때 클립 행이 바로 만들어지고
+여기서는 임베딩부터 시작한다.
+
 실패는 lecture_videos/lecture_clips.status로 격리 — files.status 절대 안 건드림(D88 동형).
 """
 from __future__ import annotations
@@ -14,115 +22,14 @@ from ...config import get_settings
 from .. import (
     app_settings,
     atomize,
-    lecture_parse,
     qdrant_store,
     solar,
-    subtitle_parse,
     upstage,
-    whisper_transcribe,
 )
 from . import common, jobs
 
 logger = logging.getLogger("nodi.worker.lectures")
 settings = get_settings()
-
-
-async def _heartbeat_loop(svc: Any, job_id: str, interval: int = 30) -> None:
-    """장기 전사 동안 주기적으로 잡을 touch — 스테일 복구 오탐 방지(D133 동형)."""
-    try:
-        while True:
-            await asyncio.sleep(interval)
-            await common.touch_job(svc, job_id)
-    except asyncio.CancelledError:
-        pass
-
-
-
-async def _handle_lecture_parse(svc: Any, job: dict[str, Any]) -> None:
-    video_id = job["target_id"]
-    rows = await svc.select("lecture_videos",
-        {"id": f"eq.{video_id}", "select": "id,page_url,subtitle_path,title,status", "limit": "1"})
-    if not rows:
-        await jobs._fail_job(svc, job["id"], "lecture video row missing")
-        return
-    video = rows[0]
-
-    overlay = await app_settings.get_overlay()
-    if not app_settings.as_bool(overlay, "lecture_pipeline_enabled",
-                                settings.lecture_pipeline_enabled):
-        # 킬 스위치 off — 영상은 pending으로 두고 잡만 done(추측 인제스트 금지).
-        await svc.update("jobs", {"id": f"eq.{job['id']}"},
-                         {"status": "done", "updated_at": common._now_iso()})
-        return
-
-    await svc.update("lecture_videos", {"id": f"eq.{video_id}"},
-                     {"status": "parsing", "error": None})
-    try:
-        html = await lecture_parse.fetch_ebs_html(video["page_url"])
-        chapters = lecture_parse.parse_ebs_player(html)
-    except Exception as exc:  # noqa: BLE001
-        await svc.update("lecture_videos", {"id": f"eq.{video_id}"},
-                         {"status": "failed", "error": str(exc)[:500]})
-        await jobs._fail_job(svc, job["id"], f"lecture parse error: {exc}")
-        return
-
-    if not chapters:
-        await svc.update("lecture_videos", {"id": f"eq.{video_id}"},
-                         {"status": "failed", "error": "챕터를 찾지 못했습니다"})
-        await jobs._fail_job(svc, job["id"], "no chapters")
-        return
-
-    # 본문(transcript) 소스: 업로드 자막 우선(R1), 없으면 Whisper 자동 전사(R2).
-    # 어떤 실패든 본문만 비고 파이프라인은 계속(제목만 임베딩으로 강등).
-    cues = []
-    if video.get("subtitle_path"):
-        try:
-            data = await svc.storage_download(settings.storage_bucket, video["subtitle_path"])
-            cues = subtitle_parse.parse_subtitle(data, video["subtitle_path"])
-        except Exception:  # noqa: BLE001 - 자막 실패는 본문만 비운다(파이프라인 계속)
-            logger.warning("자막 로드/파싱 실패 video=%s", video_id, exc_info=True)
-    elif app_settings.as_bool(overlay, "lecture_whisper_enabled",
-                              settings.lecture_whisper_enabled):
-        media_url = lecture_parse.extract_media_url(html)
-        if not media_url:
-            logger.warning("MP4 URL 추출 실패 video=%s — 제목만 임베딩", video_id)
-        else:
-            # 전사는 수 분 걸린다(블로킹) — 스레드로 돌리고 하트비트로 스테일 방지.
-            beat = asyncio.create_task(_heartbeat_loop(svc, job["id"]))
-            try:
-                cues = await asyncio.to_thread(whisper_transcribe.transcribe_media, media_url)
-            except Exception:  # noqa: BLE001 - 전사 실패는 격리(본문만 빔)
-                logger.warning("Whisper 전사 실패 video=%s", video_id, exc_info=True)
-            finally:
-                beat.cancel()
-
-    # 재파싱 멱등: 기존 클립 제거 후 재삽입. end_sec = 다음 챕터 시작(마지막은 None).
-    await svc.delete("lecture_clips", {"video_id": f"eq.{video_id}"})
-    clip_rows = []
-    for i, ch in enumerate(chapters):
-        end_sec = chapters[i + 1].start_sec if i + 1 < len(chapters) else None
-        transcript = subtitle_parse.transcript_for(cues, ch.start_sec, end_sec) if cues else ""
-        clip_rows.append({
-            "video_id": video_id, "seq": i, "start_sec": ch.start_sec, "end_sec": end_sec,
-            "title": ch.title, "transcript": transcript, "status": "pending"})
-    await svc.insert("lecture_clips", clip_rows, returning=False)
-    await svc.update("lecture_videos", {"id": f"eq.{video_id}"}, {"status": "parsed"})
-
-    # lecture_embed 팬아웃(seq 범위).
-    n = len(chapters)
-    bsize = settings.lecture_batch_size
-    for start in range(0, n, bsize):
-        await svc.insert("jobs", {
-            "owner_id": job.get("owner_id"),
-            "kind": "lecture_embed",
-            "target_id": video_id,
-            "parent_job_id": job["id"],
-            "batch_range": {"from_seq": start, "to_seq": min(start + bsize, n)},
-            "status": "queued",
-        }, returning=False)
-
-    await svc.update("jobs", {"id": f"eq.{job['id']}"},
-                     {"status": "done", "updated_at": common._now_iso()})
 
 
 # 회로차단 임계 — solar가 연속 이만큼 실패하면 잔여 클립 생성을 생략하고 배치를

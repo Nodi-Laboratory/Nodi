@@ -262,10 +262,6 @@ class Settings(BaseSettings):
 
     lecture_batch_size: int = 16                   # 임베딩/원자 잡 팬아웃 단위
     # 자동 전사(개정 R2) — 업로드 자막이 없으면 EBS 오디오를 Whisper로 전사.
-    lecture_whisper_enabled: bool = True           # 자막 없을 때 자동 전사(오버레이 폴백 가능)
-    lecture_whisper_model: str = "small"           # faster-whisper 모델(config/env 전용)
-    lecture_whisper_language: str = "ko"           # 전사 언어(config/env 전용)
-    lecture_whisper_ffmpeg_timeout_seconds: int = 900  # ffmpeg 스트림·추출 상한
 
     # ── 교차 세션 개념 연결 (D176) ────────────────────────────────
     # 거리는 상한이 아니라 **띠**다. 너무 가까운 히트는 융합이 아니라 중복이라
@@ -298,6 +294,16 @@ class Settings(BaseSettings):
     # 서버가 값을 갖고 `GET /settings/client`로 내려보낸다.
     canvas_cards_per_turn: int = 1         # 한 턴에 만들 개념 카드 수 (D162)
     canvas_type_chars_per_frame: int = 2   # 글자 나오는 속도(프레임당 글자 수)
+
+    # 홈 개념 지도의 떠다니는 움직임 (사용자 지시 2026-08-10).
+    #
+    # 프론트 상수였는데 "과하다/덜하다"를 배포 없이 맞출 수 있어야 한다.
+    # 폭과 속도를 **따로** 둔다 — 섞여 있으면 "천천히"와 "덜 흔들리게"를
+    # 한 값으로 다투게 된다.
+    home_drift_force: float = 0.3          # 미는 힘(폭)
+    home_drift_breath: float = 0.006       # 위상 진행(속도, 라디안/틱)
+    home_drift_anchor: float = 0.8         # 제자리로 당기는 힘
+    home_fit_boost: float = 1.62           # 처음 맞춤 뒤 더 당기는 배율
     canvas_focus_zoom: float = 2.35        # 새 카드로 확대할 배율 **상한** (D166)
     canvas_map_node_zoom: float = 1.8      # 지도에서 노드·간선이 보이기 시작하는 배율
     canvas_connectors_default_on: bool = True  # 캔버스 연결선 기본 표시 (D151)

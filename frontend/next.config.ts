@@ -34,6 +34,20 @@ function devOrigins(): string[] {
 const nextConfig: NextConfig = {
   allowedDevOrigins: devOrigins(),
 
+  /**
+   * dev 표시기를 **끈다** (2026-08-10).
+   *
+   * Next의 개발 표시기는 화면 **왼쪽 아래**에 뜬다 — 우리 사이드바의 [도움말]
+   * 버튼이 정확히 그 자리다. 그래서 로컬에서 도움말을 누르면 그 표시기가
+   * 클릭을 먹고, e2e는 `<nextjs-portal> intercepts pointer events`로 멈춘다
+   * (실측 2026-08-10).
+   *
+   * 컴파일 상태·오류 개수를 그 배지로 보던 것은 아쉽지만, **오류 0건은 이미
+   * 스펙이 지킨다**(J98: 주요 흐름에서 콘솔 오류가 0건이다). 프로덕션에는
+   * 애초에 없는 것이라 잃는 것도 dev 편의뿐이다.
+   */
+  devIndicators: false,
+
   experimental: {
     /**
      * 프록시가 버퍼링하는 요청 본문의 상한 (D184).

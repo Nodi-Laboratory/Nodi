@@ -28,6 +28,7 @@ from .routers import (
     me,
     ocr,
     sessions,
+    spaces,
     teacher,
 )
 from .services import admin_console, qdrant_store, worker
@@ -94,6 +95,9 @@ for _router in (
     clip_thumbnails.router,
     # D194: 질문 방향성 코치 — 언제 말할지는 화면이, 무슨 말을 할지는 여기가.
     coach.router,
+    # 세션 선택 화면(사용자 지시 2026-08-09) — 공간 요약 + 학급 프로필 사진.
+    # ⚠️ `/files/...` 아래 두면 `/files/{file_id}`가 먼저 잡아 삼킨다(D190).
+    spaces.router,
     teacher.router,
     # D176: 손글씨 인식(펜 입력판) — 모델 서버 미설정이면 501을 준다.
     ocr.router,

@@ -135,12 +135,33 @@ def build_where(
             idx += 1
             continue
 
-        if op == "is":
+        if op == "ilike":
+            # `ilike.<말>` — 대소문자 안 가리고 **부분 일치**. 이름으로 찾기용.
+            #
+            # 값은 언제나 파라미터로 나간다($n). 다만 `%`·`_`는 LIKE의 와일드카드라
+            # 사용자가 치면 그대로 와일드카드가 된다 — 찾기에서는 그게 해로울
+            # 것이 없어 굳이 막지 않는다(막으면 제목에 밑줄이 든 대화를 못 찾는다).
+            clauses.append(f"{col} ILIKE ${idx}")
+            args.append(f"%{val}%")
+            idx += 1
+            continue
+
+        if op in ("is", "not"):
+            # `is.null` / `is.true` / `is.false`, 그리고 그 부정 `not.is.…`.
+            #
+            # `not`은 **`is`의 부정만** 받는다. 부정을 일반 연산자로 열면
+            # (`not.eq.…`, `not.in.…`) 조합이 늘어나는 만큼 변환기를 잘못
+            # 읽을 여지도 늘어난다 — 필요한 것 하나만 연다.
             token = val.strip().lower()
+            if op == "not":
+                if not token.startswith("is."):
+                    raise UnsupportedQuery(f"not은 is만 부정한다: {raw!r}")
+                token = token[3:]
+            negate = op == "not"
             if token == "null":
-                clauses.append(f"{col} IS NULL")
+                clauses.append(f"{col} IS {'NOT ' if negate else ''}NULL")
             elif token in ("true", "false"):
-                clauses.append(f"{col} IS {token}")
+                clauses.append(f"{col} IS {'NOT ' if negate else ''}{token}")
             else:
                 raise UnsupportedQuery(f"is 대상이 아니다: {raw!r}")
             continue

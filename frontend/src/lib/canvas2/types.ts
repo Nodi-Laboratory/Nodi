@@ -148,6 +148,15 @@ export type ToolName =
   | "ellipse"
   | "arrow"
   | "line"
+  /**
+   * 세모·별 (사용자 지시 2026-08-09) — **Excalidraw에 없는 도구다.**
+   *
+   * 형광펜과 같은 처지다: 저쪽 도구를 물려 쓰는 것이 아니라 우리가 끌린
+   * 상자를 받아 **닫힌 선**을 직접 만들어 넣는다(`polyShapes.ts`). 그래서
+   * Excalidraw의 appState는 이 도구를 모르고, 우리가 따로 기억한다.
+   */
+  | "triangle"
+  | "star"
   | "eraser"
   /** 우리 note 아이템을 만드는 도구 — Excalidraw text가 아니다. */
   | "note"
@@ -180,8 +189,17 @@ export const DRAW_TOOLS: readonly ToolName[] = [
   "ellipse",
   "arrow",
   "line",
+  "triangle",
+  "star",
   "eraser",
 ];
+
+/** 우리가 직접 만들어 넣는 도형 — Excalidraw에 같은 도구가 없다. */
+export const POLY_TOOLS: readonly ToolName[] = ["triangle", "star"];
+
+export function isPolyTool(t: ToolName): boolean {
+  return POLY_TOOLS.includes(t);
+}
 
 export function isDrawTool(t: ToolName): boolean {
   return DRAW_TOOLS.includes(t);

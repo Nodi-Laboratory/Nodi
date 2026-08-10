@@ -25,7 +25,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Camera, DrawStyle, Rect, ToolName } from "./types";
-import { isPassThroughTool } from "./types";
+import { isPassThroughTool, isPolyTool } from "./types";
+import { polygonPoints, type PolyKind } from "./polyShapes";
 import { inflate } from "./rect";
 import { boundsOf, elementHitsRect } from "./elementHit";
 
@@ -43,6 +44,11 @@ export interface ExcalidrawApi {
     editingTextElement?: { id: string } | null;
     /** 지금 선택된 도형들. 올가미 결과를 덮어쓸 때 기준이 된다. */
     selectedElementIds?: Record<string, boolean>;
+    /** 앞으로 만들 요소의 기본 스타일 — 세모·별을 그 값으로 만든다. */
+    currentItemStrokeColor?: string;
+    currentItemStrokeWidth?: number;
+    currentItemOpacity?: number;
+    currentItemRoughness?: number;
   };
   getSceneElements: () => readonly ExcalidrawElementLike[];
   updateScene: (data: {
@@ -120,6 +126,14 @@ export interface Bridge {
   activeTool: ToolName;
   setTool: (tool: ToolName) => void;
   /**
+   * 세모·별을 씬에 넣는다 (사용자 지시 2026-08-09).
+   *
+   * Excalidraw에 없는 도형이라 **요소를 우리가 만든다.** 손으로 빚으면 필드
+   * 하나만 빠져도 저쪽이 조용히 무시하므로, 공식 변환기
+   * (`convertToExcalidrawElements`)에 스켈레톤을 넘겨 유효한 요소로 받는다.
+   */
+  stampPoly: (kind: PolyKind, rect: Rect) => void;
+  /**
    * 다음에 그릴 것의 색·굵기·투명도를 정한다 (D150).
    *
    * 이미 그려 둔 요소는 건드리지 않는다 — Excalidraw의 `currentItem*`은
@@ -175,6 +189,12 @@ export function useExcalidrawBridge(): Bridge {
   const [editMode, setEditMode] = useState(false);
   /** 질문하는 펜(D176). note와 같은 처지 — appState만 봐서는 구별할 수 없다. */
   const [askMode, setAskMode] = useState(false);
+  /**
+   * 세모·별 (사용자 지시 2026-08-09). Excalidraw에 없는 도구라 우리가 기억한다
+   * — 저쪽에는 **선택 도구**를 물려 두고, 끌린 상자를 받아 우리가 요소를
+   * 만들어 넣는다(`polyShapes.ts`). `noteMode`와 같은 처지다.
+   */
+  const [polyTool, setPolyTool] = useState<ToolName | null>(null);
   /**
    * 형광펜을 켰나 (D150). note와 같은 처지다 — Excalidraw에는 형광펜이
    * 없어서 자유선을 물려 두고 스타일만 바꾸므로, appState만 봐서는 펜과
@@ -261,6 +281,7 @@ export function useExcalidrawBridge(): Bridge {
         if (t !== "selection") {
           setNoteMode(false);
           setEditMode(false);
+          setPolyTool(null);
         }
         // 질문하는 펜은 **자유선**을 물려 쓴다(D176) — 기존 펜이 자연스럽게
         // 써지기 때문이다. 그래서 자유선을 벗어났을 때만 끝난 것으로 본다.
@@ -281,17 +302,53 @@ export function useExcalidrawBridge(): Bridge {
       setEditMode(tool === "cardedit");
       setAskMode(tool === "askpen");
       setHighlighting(tool === "highlighter");
+      setPolyTool(isPolyTool(tool) ? tool : null);
       // 우리 도구 둘은 Excalidraw의 다른 도구를 물려 쓴다.
       //   note        선택 도구 — 캔버스 클릭을 오버레이가 가로챈다
       //   highlighter 자유선   — 스타일만 반투명·굵게 바꾼다
       const type =
-        tool === "note" || tool === "cardedit"
+        tool === "note" || tool === "cardedit" || isPolyTool(tool)
           ? "selection"
           : tool === "highlighter" || tool === "askpen"
             ? "freedraw"
             : tool;
       setRawTool(type);
       api?.setActiveTool({ type });
+    },
+    [api],
+  );
+
+  /**
+   * 세모·별 (사용자 지시 2026-08-09).
+   *
+   * 지금 그리기 스타일을 그대로 물려받는다 — 팔레트에서 고른 색으로 도형이
+   * 나와야 하고, 그 값은 이미 `currentItem*`에 들어 있다.
+   *
+   * ⚠️ `updateScene({elements})`는 **전체 교체**다. 지금 씬을 빠뜨리면
+   * 캔버스가 통째로 지워진다 — 반드시 **더해서** 넘긴다.
+   */
+  const stampPoly = useCallback(
+    (kind: PolyKind, rect: Rect) => {
+      if (!api) return;
+      const app = api.getAppState();
+      void (async () => {
+        const { convertToExcalidrawElements } = await import("@excalidraw/excalidraw");
+        const made = convertToExcalidrawElements([
+          {
+            type: "line",
+            x: rect.x,
+            y: rect.y,
+            points: polygonPoints(kind, rect.w, rect.h),
+            strokeColor: app.currentItemStrokeColor ?? "#1e1e1e",
+            strokeWidth: app.currentItemStrokeWidth ?? 2,
+            opacity: app.currentItemOpacity ?? 100,
+            roughness: app.currentItemRoughness ?? 1,
+          },
+        ] as never);
+        api.updateScene({
+          elements: [...api.getSceneElements(), ...(made as never[])] as never,
+        });
+      })();
     },
     [api],
   );
@@ -319,17 +376,19 @@ export function useExcalidrawBridge(): Bridge {
    * 레일에 아무것도 눌리지 않은 상태로 두면 학생이 무엇이 켜졌는지 모른다.
    */
   const activeTool: ToolName =
-    askMode && rawTool === "freedraw"
-      ? "askpen"
-      : editMode
-        ? "cardedit"
-        : noteMode
-          ? "note"
-          : highlighting && rawTool === "freedraw"
-            ? "highlighter"
-            : KNOWN_TOOLS.has(rawTool)
-              ? (rawTool as ToolName)
-              : "selection";
+    polyTool && rawTool === "selection"
+      ? polyTool
+      : askMode && rawTool === "freedraw"
+        ? "askpen"
+        : editMode
+          ? "cardedit"
+          : noteMode
+            ? "note"
+            : highlighting && rawTool === "freedraw"
+              ? "highlighter"
+              : KNOWN_TOOLS.has(rawTool)
+                ? (rawTool as ToolName)
+                : "selection";
 
   const getObstacles = useCallback((): Rect[] => {
     if (!api) return [];
@@ -474,6 +533,7 @@ export function useExcalidrawBridge(): Bridge {
       panByScreen,
       activeTool,
       setTool,
+      stampPoly,
       setDrawStyle,
       overlayInteractive,
       getObstacles,
@@ -491,6 +551,7 @@ export function useExcalidrawBridge(): Bridge {
       panByScreen,
       activeTool,
       setTool,
+      stampPoly,
       setDrawStyle,
       overlayInteractive,
       getObstacles,

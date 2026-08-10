@@ -77,16 +77,25 @@ export async function listLectureVideos(
   );
 }
 
-export async function addLectureVideo(
+/** 업로드 결과 — 들어간 것과 **건너뛴 것**을 함께 준다. */
+export interface LectureUploadResult {
+  added: (LectureVideo & { clips: number; embedding: boolean })[];
+  skipped: { file: string; reason: string }[];
+}
+
+/**
+ * 파싱 파일 여러 개를 한 번에 올린다 (2026-08-10).
+ *
+ * 예전에는 url·제목을 보내면 서버가 EBS를 긁고 Whisper로 전사했다. 대회 규정상
+ * 제품 안에서 해외 모델을 못 써서 그 경로를 걷어냈다 — 파싱은 저장소 밖
+ * 오프라인 스크립트가 끝내고, 여기서는 그 결과 JSON을 보낸다.
+ */
+export async function uploadLectureDocs(
   packageId: string,
-  page_url: string,
-  title: string,
-  subtitle: File | null,
-): Promise<LectureVideo> {
+  files: File[],
+): Promise<LectureUploadResult> {
   const fd = new FormData();
-  fd.append("page_url", page_url);
-  fd.append("title", title);
-  if (subtitle) fd.append("subtitle", subtitle);
+  for (const f of files) fd.append("files", f);
   // multipart — authHeaders()(json=false): Content-Type 미지정으로 FormData가
   // boundary를 잡는다.
   return j(
@@ -94,15 +103,6 @@ export async function addLectureVideo(
       method: "POST",
       headers: await authHeaders(),
       body: fd,
-    }),
-  );
-}
-
-export async function reparseLectureVideo(videoId: string): Promise<void> {
-  await ensureOk(
-    await fetch(`${API_BASE}/admin/lecture-videos/${videoId}/reparse`, {
-      method: "POST",
-      headers: await authHeaders(),
     }),
   );
 }

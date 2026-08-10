@@ -57,7 +57,7 @@ export default function SignupPage() {
         role,
       });
       // 가입과 동시에 로그인 상태가 된다(이메일 확인 단계 없음).
-      saveToken(auth.access_token);
+      saveToken(auth.access_token, auth.expires_in);
       queryClient.clear();
       // 학생은 온보딩(학급 코드), 교사는 콘솔로.
       router.replace(role === "student" ? "/onboarding" : roleHome(role));

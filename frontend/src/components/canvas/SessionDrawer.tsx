@@ -30,7 +30,12 @@ export default function SessionDrawer({
   if (!open) return null;
 
   return (
-    <div className="absolute inset-0 z-40" role="dialog" aria-modal="true">
+    /**
+     * ⚠️ **입력창보다 위여야 한다.** 입력창이 `z-50`이라 서랍이 `z-40`이던
+     * 동안에는 어두워진 화면 위로 입력창만 밝게 떠 있었다 — 덮는 장치가 한
+     * 군데만 안 덮으면 덜 그린 것으로 읽힌다(사용자 지시 2026-08-09).
+     */
+    <div className="absolute inset-0 z-[60]" role="dialog" aria-modal="true">
       <div
         className="absolute inset-0 bg-black/20"
         onClick={onClose}

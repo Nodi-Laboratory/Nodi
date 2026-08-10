@@ -38,6 +38,8 @@ interface Props {
   measure: (id: string, el: HTMLElement | null) => void;
   onSelect: (id: string | null, additive?: boolean) => void;
   onDragEnd: (id: string, x: number, y: number, dx: number, dy: number) => void;
+  /** 세로 이동 허용 범위 (`lib/canvas2/parentGuard.ts`). */
+  dyLimitsFor?: (movingIds: readonly string[]) => { min: number; max: number };
   onDelete: (id: string) => void;
 }
 
@@ -50,6 +52,7 @@ export function ClipItem({
   measure,
   onSelect,
   onDragEnd,
+  dyLimitsFor,
   onDelete,
 }: Props) {
   const clip = item.data.clip;
@@ -77,6 +80,7 @@ export function ClipItem({
     rootRef,
     onSelect,
     onDragEnd,
+    dyLimitsFor,
   });
 
   // 새 좌표가 도착한 프레임에 남은 transform을 걷어낸다(TextItem·FigureItem과 동형).

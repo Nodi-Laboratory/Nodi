@@ -127,8 +127,6 @@ async def _process(svc: ServiceClient, job: dict[str, Any]) -> None:
             await figures._handle_figure_batch(svc, job)
         elif job["kind"] == "atom_batch":
             await atoms._handle_atom_batch(svc, job)
-        elif job["kind"] == "lecture_parse":
-            await lectures._handle_lecture_parse(svc, job)
         elif job["kind"] == "lecture_embed":
             await lectures._handle_lecture_embed(svc, job)
         elif job["kind"] == "lecture_atom":

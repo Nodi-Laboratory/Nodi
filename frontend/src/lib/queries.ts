@@ -13,13 +13,11 @@ import {
   listClassLecturePackages,
   listClassMaterials,
   listClassStudents,
-  listFiles,
   listLecturePackages,
   listLectureVideos,
   listSessionFiles,
   listSessions,
   listStudentClassSessions,
-  listTeacherClasses,
   type ClassLecturePackage,
   type ConceptMapData,
   type LecturePackage,
@@ -31,7 +29,6 @@ import type {
   HomeSummary,
   SessionDetail,
   SessionRow,
-  TeacherClass,
   TeacherClassOverview,
   TeacherStudent,
 } from "@/lib/types";
@@ -52,21 +49,16 @@ export const STALE = {
   files: 5 * 60 * 1000,
 } as const;
 
-export function sessionsKey(target: SpaceTarget) {
-  return ["sessions", target.space_kind, target.space_ref ?? null] as const;
+export function sessionsKey(target: SpaceTarget, q?: string) {
+  // 찾는 말이 캐시 키에 들어간다 — 안 그러면 거른 결과가 전체 목록 자리를
+  // 덮어써서, 찾기를 지운 순간 화면에 그 몇 줄만 남는다.
+  return ["sessions", target.space_kind, target.space_ref ?? null, q || null] as const;
 }
 
 // ── 교사 컨트롤 패널 (Stage 4b) ──────────────────────────────────────
 
 export function classMaterialsKey(classId: string | null) {
   return ["teacher", "materials", classId] as const;
-}
-
-export function useTeacherClasses() {
-  return useQuery<TeacherClass[]>({
-    queryKey: ["teacher", "classes"],
-    queryFn: listTeacherClasses,
-  });
 }
 
 /** D67: 교사 콘솔 홈 — 학급 개요(학생수·자료수·최근활동). */
@@ -160,16 +152,14 @@ export function sessionKey(sessionId: string | null) {
   return ["session", sessionId] as const;
 }
 
-export function filesKey(target: SpaceTarget) {
-  return ["files", target.space_kind, target.space_ref ?? null] as const;
-}
-
 /** 현재 공간의 세션 목록 (updated_at desc, 백엔드 정렬). */
-export function useSessions(target: SpaceTarget) {
+export function useSessions(target: SpaceTarget, q?: string) {
   return useQuery<SessionRow[]>({
-    queryKey: sessionsKey(target),
-    queryFn: () => listSessions(target),
+    queryKey: sessionsKey(target, q),
+    queryFn: () => listSessions(target, q),
     staleTime: STALE.sessions,
+    // 찾는 말을 고치는 동안 목록이 비었다 채워졌다 하면 눈이 어지럽다.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -180,20 +170,6 @@ export function useSessionDetail(sessionId: string | null) {
     queryFn: () => getSession(sessionId as string),
     enabled: !!sessionId,
     staleTime: STALE.sessionDetail,
-  });
-}
-
-/** 현재 공간의 파일 목록. 임베딩 진행 중이면 2.5초 폴링, 완료되면 중지. */
-export function useFiles(target: SpaceTarget) {
-  return useQuery<FileRow[]>({
-    queryKey: filesKey(target),
-    queryFn: () => listFiles(target),
-    staleTime: STALE.files,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      const active = data?.some((f) => FILE_IN_PROGRESS.has(f.status));
-      return active ? 2500 : false;
-    },
   });
 }
 

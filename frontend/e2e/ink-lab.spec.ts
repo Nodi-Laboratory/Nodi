@@ -34,6 +34,23 @@ async function openInkLab(page: Page): Promise<void> {
   await expect(page.locator('[data-canvas-item="lab-card-1"]')).toBeVisible({
     timeout: 20_000,
   });
+
+  /**
+   * **앞 테스트의 획을 지우고 시작한다** (2026-08-09).
+   *
+   * 학습 캔버스는 매번 빈 대화에서 시작하지만(`openFreshSession`) 실험실은
+   * 고정 무대라 **씬이 그대로 남는다** — Excalidraw가 요소를 저장·복원하기
+   * 때문이다(D176의 `customData.nodiAsk`가 도구를 오가도 살아남는 그 성질).
+   *
+   * 남은 획이 다음 테스트를 실제로 깨뜨린다: 카드 위에 겹쳐 있으면 새 획이
+   * 그 요소에 먹혀 **획 수가 0으로 남고** `읽기`가 잠긴 채였다(실측: 파일을
+   * 통째로 돌리면 뒤에 오는 테스트가 그 이유로 실패했다).
+   */
+  const wipe = page.getByTitle("획 지우기");
+  if (await wipe.isEnabled().catch(() => false)) {
+    await wipe.click();
+    await expect(page.getByText(/^획 0$/)).toBeVisible({ timeout: 5000 });
+  }
 }
 
 /** 캔버스에 획 하나 — 실험실 스테이지 기준 화면 좌표로. */

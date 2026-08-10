@@ -10,7 +10,7 @@ import { loginAndOpenCanvas, openFreshSession } from "../helpers";
 test.describe.configure({ mode: "serial" });
 
 async function openDrawer(page: Page): Promise<void> {
-  await page.getByLabel("대화 목록 열기").click();
+  await page.getByRole("button", { name: "지난 대화" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
 }
 
@@ -41,7 +41,9 @@ test("C24 세션 이름을 바꾸면 목록이 따라간다", async ({ page }) =
   await page.getByRole("dialog").getByRole("button", { name: "이름 변경" }).click();
 
   const name = `대화${Date.now() % 10000}`;
-  const box = page.getByRole("dialog").locator("input").first();
+  // ⚠️ `input`을 순서로 잡으면 안 된다 — 서랍에 **찾기 칸**이 생기면서
+  // 첫 input이 그쪽이 됐다(그 상태로 이름을 치면 목록만 걸러진다).
+  const box = page.getByRole("dialog").getByLabel("새 대화 이름");
   await box.fill(name);
   await box.press("Enter");
   await expect(page.getByRole("dialog")).toContainText(name, { timeout: 10_000 });

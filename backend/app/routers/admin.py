@@ -10,6 +10,7 @@ D113에서 이 콘솔이 서비스 전체를 관측하는 창구가 됐다:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import UTC, datetime
@@ -46,6 +47,13 @@ from ..services import figures as figures_svc
 from . import health
 
 logger = logging.getLogger("nodi.admin")
+
+
+def _bad(detail: str) -> HTTPException:
+    """관리자에게 **무엇이 잘못됐는지** 그대로 돌려준다."""
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail
+    )
 router = APIRouter(prefix="/admin", tags=["admin"])
 settings = get_settings()
 
@@ -894,94 +902,154 @@ async def list_lecture_videos(
     )
 
 
+#: 파싱 파일 한 개의 상한(바이트). 전사 본문이 들어 있어 자료 파일보다 작다.
+_LECTURE_DOC_MAX = 4 * 1024 * 1024
+
+#: 한 번에 받을 파일 수. 드래그앤드롭으로 폴더째 끌어다 놓는 것을 전제한다.
+_LECTURE_DOC_MAX_FILES = 60
+
+
+def _parse_lecture_doc(name: str, raw: bytes) -> dict[str, Any]:
+    """파싱 파일 하나를 검증해 (영상, 클립 목록)으로 편다.
+
+    이 파일은 **저장소 밖 오프라인 스크립트**가 만든다
+    (`.claude/scripts/parse_lectures.py`, 2026-08-10). 대회 규정상 제품 안에서
+    해외 모델을 못 쓰므로 EBS 파싱과 전사를 서버에서 걷어냈고, 그 결과물만
+    여기로 들어온다.
+
+    ⚠️ **믿지 않고 검사한다.** 관리자가 올리는 파일이라도 형식이 어긋나면
+    조용히 반쯤 들어가는 것이 가장 나쁘다 — 클립이 비거나 시간이 뒤엉킨 채
+    임베딩까지 돌면 학생 화면에 엉뚱한 지점이 추천된다.
+    """
+    if len(raw) > _LECTURE_DOC_MAX:
+        raise _bad(f"{name}: 파일이 너무 큽니다({len(raw) // 1024}KB).")
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise _bad(f"{name}: JSON을 읽지 못했습니다 — {exc}") from exc
+    if not isinstance(doc, dict):
+        raise _bad(f"{name}: 최상위가 객체가 아닙니다.")
+
+    title = str(doc.get("title") or "").strip()
+    page_url = str(doc.get("page_url") or "").strip()
+    if not title:
+        raise _bad(f"{name}: title이 비어 있습니다.")
+    # page_url은 화면에서 <a href>로 렌더된다 — javascript:/data:면 학생이
+    # 누르는 순간 스크립트가 돈다(D149).
+    if not page_url.lower().startswith(("http://", "https://")):
+        raise _bad(f"{name}: page_url은 http:// 또는 https://로 시작해야 합니다.")
+
+    chapters = doc.get("chapters")
+    if not isinstance(chapters, list) or not chapters:
+        raise _bad(f"{name}: chapters가 비어 있습니다.")
+
+    clips: list[dict[str, Any]] = []
+    for i, ch in enumerate(chapters):
+        if not isinstance(ch, dict):
+            raise _bad(f"{name}: {i}번째 chapter가 객체가 아닙니다.")
+        ch_title = str(ch.get("title") or "").strip()
+        if not ch_title:
+            raise _bad(f"{name}: {i}번째 chapter의 title이 비어 있습니다.")
+        try:
+            start_sec = int(ch.get("start_sec") or 0)
+            end_raw = ch.get("end_sec")
+            end_sec = None if end_raw is None else int(end_raw)
+        except (TypeError, ValueError) as exc:
+            raise _bad(f"{name}: {i}번째 chapter의 시간이 숫자가 아닙니다.") from exc
+        if start_sec < 0 or (end_sec is not None and end_sec <= start_sec):
+            raise _bad(f"{name}: {i}번째 chapter의 시간 구간이 뒤집혀 있습니다.")
+        clips.append({
+            "seq": i,
+            "start_sec": start_sec,
+            "end_sec": end_sec,
+            "title": ch_title[:300],
+            "transcript": str(ch.get("transcript") or ""),
+            "status": "pending",
+        })
+
+    return {
+        "source": str(doc.get("source") or "ebs")[:40],
+        "title": title[:200],
+        "page_url": page_url[:1000],
+        "clips": clips,
+    }
+
+
 @router.post(
     "/lecture-packages/{package_id}/videos", status_code=status.HTTP_201_CREATED
 )
-async def add_lecture_video(
+async def upload_lecture_docs(
     package_id: str,
-    page_url: str = Form(..., min_length=8, max_length=1000),
-    title: str = Form(..., min_length=1, max_length=200),
-    subtitle: UploadFile | None = File(None),
+    files: list[UploadFile] = File(...),
     user: CurrentUser = Depends(get_current_user),
     _: Profile = Depends(require_admin),
 ) -> dict[str, Any]:
-    """EBS 영상 등록(멀티파트) — page_url·title + 자막파일(선택).
+    """파싱 파일 여러 개를 한 번에 받아 영상·클립 행을 만든다 (2026-08-10).
 
-    자막이 있으면 Storage에 올려 subtitle_path를 채우고, 파싱 잡을 en큐한다.
-    워커 DSN이 없으면(get_service_client None) 행만 만들고 잡·자막은 건너뛴다 —
-    files.py 업로드 경로와 같은 계약(en큐 불가 시 조용히 비활성).
+    예전에는 url·제목을 받아 서버가 EBS를 긁고 Whisper로 전사했다. 대회 규정상
+    제품에 해외 모델을 못 써서 그 경로를 통째로 걷어냈다 — 파싱은 오프라인
+    스크립트가 끝내고, 여기서는 **읽어서 넣기만** 한다.
+
+    파일 하나가 어긋나면 그 파일만 사유와 함께 건너뛰고 나머지는 들어간다.
+    폴더째 끌어다 놓는 흐름이라, 하나 때문에 전부 되돌리면 어느 것이 문제인지
+    모른 채 처음부터 다시 해야 한다.
     """
-    # page_url은 프론트에서 <a href>로 렌더된다. javascript:/data: URL이면
-    # 학생 클릭 시 스크립트가 실행되므로 http(s)만 허용한다 (D149).
-    if not page_url.lower().startswith(("http://", "https://")):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="page_url은 http:// 또는 https://로 시작해야 합니다.",
-        )
-    client = UserClient.from_user(user)
-    video = await client.insert(
-        "lecture_videos",
-        {
-            "package_id": package_id,
-            "source": "ebs",
-            "page_url": page_url,
-            "title": title,
-            "status": "pending",
-        },
-    )
-    svc = get_service_client()
-    if svc is None:
-        return video
-    if subtitle is not None:
-        data = await subtitle.read()
-        ext = ((subtitle.filename or "sub").rsplit(".", 1)[-1] or "sub").lower()
-        path = f"lectures/{video['id']}/subtitle.{ext}"
-        await svc.storage_upload(
-            settings.storage_bucket,
-            path,
-            data,
-            subtitle.content_type or "text/plain",
-        )
-        await client.update(
-            "lecture_videos", {"id": f"eq.{video['id']}"}, {"subtitle_path": path}
-        )
-        video["subtitle_path"] = path
-    await svc.insert(
-        "jobs",
-        {
-            "owner_id": user.id,
-            "kind": "lecture_parse",
-            "target_id": video["id"],
-            "status": "queued",
-        },
-        returning=False,
-    )
-    return video
+    if len(files) > _LECTURE_DOC_MAX_FILES:
+        raise _bad(f"한 번에 {_LECTURE_DOC_MAX_FILES}개까지 올릴 수 있습니다.")
 
-
-@router.post("/lecture-videos/{video_id}/reparse")
-async def reparse_lecture_video(
-    video_id: str,
-    user: CurrentUser = Depends(get_current_user),
-    _: Profile = Depends(require_admin),
-) -> dict[str, Any]:
     client = UserClient.from_user(user)
-    await client.update(
-        "lecture_videos", {"id": f"eq.{video_id}"}, {"status": "pending", "error": None}
-    )
     svc = get_service_client()
-    if svc is not None:
-        await svc.insert(
-            "jobs",
+    added: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+
+    for f in files:
+        name = f.filename or "(이름 없음)"
+        try:
+            doc = _parse_lecture_doc(name, await f.read())
+        except HTTPException as exc:
+            skipped.append({"file": name, "reason": str(exc.detail)})
+            continue
+
+        video = await client.insert(
+            "lecture_videos",
             {
-                "owner_id": user.id,
-                "kind": "lecture_parse",
-                "target_id": video_id,
-                "status": "queued",
+                "package_id": package_id,
+                "source": doc["source"],
+                "page_url": doc["page_url"],
+                "title": doc["title"],
+                # 파싱은 이미 끝나서 들어온다 — 서버가 할 파싱이 없다.
+                "status": "parsed",
             },
-            returning=False,
         )
-    return {"ok": True}
+        rows = [{"video_id": video["id"], **c} for c in doc["clips"]]
+        if svc is None:
+            # 워커 DSN이 없으면 행만 만들고 임베딩은 건너뛴다(files.py와 같은 계약).
+            added.append({**video, "clips": len(rows), "embedding": False})
+            continue
+
+        await svc.insert("lecture_clips", rows, returning=False)
+        n = len(rows)
+        bsize = settings.lecture_batch_size
+        for start in range(0, n, bsize):
+            await svc.insert(
+                "jobs",
+                {
+                    "owner_id": user.id,
+                    "kind": "lecture_embed",
+                    "target_id": video["id"],
+                    "batch_range": {"from_seq": start, "to_seq": min(start + bsize, n)},
+                    "status": "queued",
+                },
+                returning=False,
+            )
+        added.append({**video, "clips": n, "embedding": True})
+
+    if not added and skipped:
+        # 하나도 못 받았으면 200으로 조용히 끝내지 않는다 — 화면이 "됐다"로
+        # 읽으면 관리자가 빈 패키지를 학급에 켠다.
+        raise _bad("올린 파일을 하나도 읽지 못했습니다: "
+                   + " / ".join(f"{s['file']} — {s['reason']}" for s in skipped[:3]))
+    return {"added": added, "skipped": skipped}
 
 
 @router.delete("/lecture-videos/{video_id}")

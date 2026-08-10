@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useCoarsePointer } from "@/lib/canvas2/coarsePointer";
 import { useTouchNavigate } from "@/lib/canvas2/useTouchNavigate";
+import { usePolyStamp } from "@/lib/canvas2/usePolyStamp";
 // 캔버스 손글씨 @font-face (D164). **여기서** 임포트하는 이유는 unicode-range
 // 목록이 gzip 13KB이기 때문이다 — globals.css에 넣으면 로그인·홈·관리자 화면도
 // 그걸 받는다. 폰트가 캔버스 전용이니 CSS도 캔버스 라우트 청크에만 둔다.
@@ -191,7 +192,18 @@ export function CanvasStage({
     onBackgroundClick?.();
   }, [autoSelect, activeTool, setTool, onBackgroundClick]);
 
-  useWheelForwarding(overlayRef, overlayInteractive);
+  /**
+   * 아이템이 포인터를 받는 상태인가 — **휠 전달과 같은 조건이어야 한다**.
+   *
+   * 아래 `--c2-item-events`가 `auto`면 카드 위의 휠은 오버레이가 받는다.
+   * 그런데 휠 전달은 `overlayInteractive`에만 걸려 있어서, 기본 도구(화면
+   * 이동)로 카드 위에 커서를 두면 **휠이 어디에도 안 갔다**:
+   *   · 그냥 굴리면 캔버스가 안 움직인다
+   *   · Ctrl+굴리면 브라우저가 받아 **페이지 전체가 확대**된다
+   * (사용자 보고 2026-08-09). 조건을 하나로 묶어 두 곳이 갈라지지 않게 한다.
+   */
+  const itemsTakePointer = overlayInteractive || (autoSelect && activeTool === "hand");
+  useWheelForwarding(overlayRef, itemsTakePointer);
   useMiddleDragPan(rootRef, panByScreen);
 
   /**
@@ -372,10 +384,19 @@ export function CanvasStage({
   }, [activeTool, coarse, onCanvasClick, backToHand, onMarquee, toWorld, hasElementSelection, elementAtPoint, cameraRef, onShapeDrag]);
 
   /** 손가락: 끌면 이동, 길게 누르면 선택 상자 (D208). */
+  /**
+   * 세모·별은 **우리가 그린다** (사용자 지시 2026-08-09) — Excalidraw에 없는
+   * 도형이라, 끌린 상자를 받아 닫힌 선을 씬에 넣는다.
+   */
+  usePolyStamp({ rootRef, activeTool, toWorld, onStamp: bridge.stampPoly });
+
   useTouchNavigate({
     rootRef,
     activeTool,
     enabled: coarse === true,
+    // 마우스도 **합친 도구**에서는 같은 규칙이다(사용자 지시 2026-08-09):
+    // 그냥 끌면 화면 이동, 0.7초 누르고 끌면 선택 상자.
+    mouse: true,
     panByScreen,
     toWorld,
     onMarquee,
@@ -453,8 +474,7 @@ export function CanvasStage({
            * 그래야 "글을 누르면 선택으로 바뀐다"가 성립한다. 배경은 그대로
            * Excalidraw가 받아 화면을 옮긴다 — 글 위에서만 우리가 가져온다.
            */
-          ["--c2-item-events" as string]:
-            overlayInteractive || (autoSelect && activeTool === "hand") ? "auto" : "none",
+          ["--c2-item-events" as string]: itemsTakePointer ? "auto" : "none",
         }}
         onPointerDownCapture={onOverlayDown}
       >

@@ -44,18 +44,6 @@ async def _assert_teaches(client: UserClient, class_id: str) -> None:
         )
 
 
-@router.get("/classes")
-async def list_classes(
-    user: CurrentUser = Depends(get_current_user),
-    _: Profile = Depends(require_teacher),
-) -> list[dict[str, Any]]:
-    """Classes the caller teaches, with student counts."""
-    client = UserClient.from_user(user)
-    # many=True — 학급이 **하나뿐일 때** 목록 대신 dict가 와서 화면이 빈 채로
-    # 보이던 자리다(2026-08-07 실측, 새 교사는 100% 겪는다).
-    return await client.rpc("teacher_classes", {}, many=True)
-
-
 @router.get("/classes/overview")
 async def list_class_overview(
     user: CurrentUser = Depends(get_current_user),
@@ -66,7 +54,11 @@ async def list_class_overview(
 
     Delegates to the teacher_class_overview() SECURITY DEFINER RPC (0023), which
     self-guards via is_class_teacher(c.id) — so a teacher sees only their own
-    classes. The legacy /classes (dropdown) endpoint is unchanged.
+    classes.
+
+    구 `/classes`(드롭다운용)는 **2026-08-10에 걷어냈다** — 콘솔이 전부 이
+    창구를 쓰게 된 뒤로 아무도 부르지 않았다. 그쪽이 쓰던 `teacher_classes()`
+    RPC도 함께 쓸모를 잃었다(마이그레이션 0043에서 DROP).
     """
     client = UserClient.from_user(user)
     return await client.rpc("teacher_class_overview", {}, many=True)

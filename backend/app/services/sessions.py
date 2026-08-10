@@ -123,12 +123,32 @@ async def _empty_session(
     return recent[0]
 
 
+#: 목록으로 한 번에 내주는 대화 수 (2026-08-10).
+#:
+#: 상한이 **없었다.** 그 공간의 대화를 전부 줬다 — 실측: 개인 공간 435건 156KB.
+#: 대화는 지우지 않는 이상 계속 쌓이므로 그 무게도 계속 는다. 한 학기 쓴 학생이
+#: 서랍을 열 때마다 그만큼을 받는 셈이다.
+#:
+#: 최근 것부터 준다. 옛 대화를 되찾는 길은 따로 있어야 하지만(검색·기간), 그때도
+#: **한 번에 전부**가 답인 적은 없다.
+_LIST_CAP = 200
+
+
 async def list_sessions(
     client: UserClient,
     space_kind: str,
     space_ref: str | None,
     owner_id: str,
+    q: str | None = None,
 ) -> list[dict[str, Any]]:
+    """이 공간의 대화 목록. 최근 것부터 `_LIST_CAP`개까지.
+
+    `q`가 있으면 **이름으로 찾는다** (2026-08-10).
+
+    상한만 두고 끝내면 201번째 대화에는 닿을 길이 아예 없어진다 — "지워지지
+    않았어요"라고 써 놓고 갈 길을 안 주는 것은 안내가 아니라 막다른 길이다.
+    찾기를 서버까지 보내면 상한 밖의 옛 대화도 이름으로 불러올 수 있다.
+    """
     # personal space_ref defaults to the owner's own id (mirrors create_session).
     ref = space_ref or (owner_id if space_kind == "personal" else None)
     if space_kind == "class" and not ref:
@@ -136,15 +156,16 @@ async def list_sessions(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="class sessions require space_ref (class id).",
         )
-    return await client.select(
-        "sessions",
-        {
-            "space_kind": f"eq.{space_kind}",
-            "space_ref": f"eq.{ref}",
-            "select": SESSION_SELECT,
-            "order": "updated_at.desc",
-        },
-    )
+    params: dict[str, str] = {
+        "space_kind": f"eq.{space_kind}",
+        "space_ref": f"eq.{ref}",
+        "select": SESSION_SELECT,
+        "order": "updated_at.desc",
+        "limit": str(_LIST_CAP),
+    }
+    if q and q.strip():
+        params["title"] = f"ilike.{q.strip()}"
+    return await client.select("sessions", params)
 
 
 async def update_session_title(
@@ -165,8 +186,22 @@ async def update_session_title(
 
 
 async def delete_session(client: UserClient, session_id: str) -> None:
-    """Delete a session (nodes cascade; files.session_id -> null, see 0011)."""
-    await client.delete("sessions", {"id": f"eq.{session_id}"})
+    """Delete a session (nodes cascade; files.session_id -> null, see 0011).
+
+    ⚠️ **지웠는지 확인한다.** RLS(`sessions_delete_owner`)는 남의 방을 지우려는
+    시도에 오류를 내지 않는다 — **0행을 지우고 조용히 끝난다.** 그대로 두면
+    창구가 204를 돌려주고, 화면은 목록에서 그 줄을 지운 뒤 새로고침에서 되살아
+    난다(실측 2026-08-10의 학급 사진과 같은 부류의 결함이다).
+
+    선생님은 학급의 학생 방을 **볼 수** 있고(`sessions_select`), 그래서 목록에
+    남의 방이 뜬다 — 이 경로는 실제로 닿는다.
+    """
+    rows = await client.delete("sessions", {"id": f"eq.{session_id}"})
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or not yours.",
+        )
 
 
 async def get_session(client: UserClient, session_id: str) -> dict[str, Any]:

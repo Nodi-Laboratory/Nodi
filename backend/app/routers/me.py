@@ -12,17 +12,17 @@ from pydantic import BaseModel, Field
 from ..auth.deps import (
     CurrentUser,
     Profile,
-    UserScopes,
     get_current_profile,
     get_current_user,
-    get_user_scopes,
 )
 from ..auth.email import EmailAddress
 from ..auth.tokens import create_access_token
+from ..config import get_settings
 from ..db.client import UserClient
 from ..services import accounts, admin_console
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+settings = get_settings()
 
 
 class SignupBody(BaseModel):
@@ -44,6 +44,14 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user_id: str
     email: str | None = None
+    #: 토큰이 몇 초 뒤에 죽나.
+    #:
+    #: **화면이 이 값으로 쿠키 수명을 정한다.** 예전에는 프론트가 12시간을
+    #: 따로 적어 뒀는데, 그건 같은 사실을 두 곳에 적어 둔 것이다 —
+    #: `JWT_EXPIRE_MINUTES`를 줄이면 쿠키만 살아남아 "화면은 열리는데 창구는
+    #: 전부 401"인 상태가 된다(가드가 로그인 화면으로 돌려보내 주기는 하지만,
+    #: 애초에 어긋날 이유가 없다).
+    expires_in: int = settings.jwt_expire_minutes * 60
 
 
 @router.post("/signup", response_model=TokenResponse, status_code=201)
@@ -89,18 +97,6 @@ async def login(body: LoginBody) -> TokenResponse:
 async def get_me(profile: Profile = Depends(get_current_profile)) -> Profile:
     """인증된 호출자의 `public.profiles` 행."""
     return profile
-
-
-@router.get("/me/token")
-async def get_me_token(user: CurrentUser = Depends(get_current_user)) -> dict:
-    """검증된 토큰에서 얻는 최소 신원(DB 조회 없음)."""
-    return {"id": user.id, "email": user.email}
-
-
-@router.get("/me/scopes", response_model=UserScopes)
-async def get_me_scopes(scopes: UserScopes = Depends(get_user_scopes)) -> UserScopes:
-    """접근 가능한 개인·학급 스코프."""
-    return scopes
 
 
 @router.get("/me/classes")

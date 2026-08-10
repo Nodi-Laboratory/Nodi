@@ -32,7 +32,6 @@ export {
 
 export {
   uploadFile,
-  listFiles,
   listSessionFiles,
   listClassMaterials,
   getFile,
@@ -42,7 +41,6 @@ export {
 } from "./files";
 
 export {
-  listTeacherClasses,
   fetchTeacherOverview,
   createClass,
   listClassStudents,

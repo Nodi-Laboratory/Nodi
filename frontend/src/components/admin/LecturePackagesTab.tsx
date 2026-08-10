@@ -2,13 +2,12 @@
 
 import { useState, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, RotateCw, Trash2 } from "lucide-react";
+import { Plus, Trash2, UploadCloud } from "lucide-react";
 import {
   createLecturePackage,
   deleteLecturePackage,
-  addLectureVideo,
-  reparseLectureVideo,
   deleteLectureVideo,
+  uploadLectureDocs,
   listLectureClips,
   type LecturePackage,
   type LectureVideo,
@@ -240,43 +239,45 @@ function VideosPanel({
   const queryClient = useQueryClient();
   const { data: videos, isLoading, isError } = useLectureVideos(packageId);
 
-  const [pageUrl, setPageUrl] = useState("");
-  const [title, setTitle] = useState("");
-  const [subtitle, setSubtitle] = useState<File | null>(null);
   const [adding, setAdding] = useState(false);
+  /** 끌어온 것이 이 영역 위에 있나 — 놓을 자리를 눈으로 알려 준다. */
+  const [over, setOver] = useState(false);
+  /** 읽지 못한 파일과 그 사유. 조용히 삼키면 관리자가 빈 패키지를 켠다. */
+  const [skipped, setSkipped] = useState<{ file: string; reason: string }[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const invalidateVideos = () =>
     queryClient.invalidateQueries({ queryKey: lectureVideosKey(packageId) });
 
-  const handleAdd = async () => {
-    if (!pageUrl.trim() || !title.trim()) {
-      onError("영상 링크와 제목을 입력하세요.");
+  /**
+   * 파싱 파일을 올린다 (2026-08-10).
+   *
+   * 예전에는 url·제목을 쳐 넣으면 서버가 EBS를 긁고 Whisper로 전사했다.
+   * 대회 규정상 제품 안에서 해외 모델을 못 써서 그 경로를 걷어냈다 — 파싱은
+   * 저장소 밖 오프라인 스크립트가 끝내고 여기서는 결과 파일만 받는다.
+   */
+  const upload = async (list: FileList | File[]) => {
+    // `.json`만 걸러 낸다. 폴더째 끌어다 놓으면 잡다한 파일이 섞여 온다.
+    const files = Array.from(list).filter((f) => f.name.toLowerCase().endsWith(".json"));
+    if (!files.length) {
+      onError("파싱 파일(.json)을 끌어다 놓으세요.");
       return;
     }
     onError(null);
+    setSkipped([]);
     setAdding(true);
     try {
-      await addLectureVideo(packageId, pageUrl.trim(), title.trim(), subtitle);
+      const r = await uploadLectureDocs(packageId, files);
       await invalidateVideos();
-      setPageUrl("");
-      setTitle("");
-      setSubtitle(null);
+      // 건너뛴 것은 **화면에 남긴다** — 폴더째 올리는 흐름이라 어느 파일이
+      // 왜 빠졌는지 말해 주지 않으면 처음부터 다시 하게 된다.
+      setSkipped(r.skipped);
       if (fileRef.current) fileRef.current.value = "";
     } catch (e) {
-      onError(`영상 추가 실패: ${(e as Error).message}`);
+      onError(`업로드 실패: ${(e as Error).message}`);
     } finally {
       setAdding(false);
-    }
-  };
-
-  const handleReparse = async (videoId: string) => {
-    onError(null);
-    try {
-      await reparseLectureVideo(videoId);
-      await invalidateVideos();
-    } catch (e) {
-      onError(`재파싱 실패: ${(e as Error).message}`);
+      setOver(false);
     }
   };
 
@@ -293,42 +294,71 @@ function VideosPanel({
 
   return (
     <Panel title="영상">
-      <div className="flex flex-col gap-2 border-b border-white/10 pb-3">
-        <input
-          className={INPUT}
-          placeholder="EBS 영상 페이지 URL"
-          value={pageUrl}
-          disabled={adding}
-          onChange={(e) => setPageUrl(e.target.value)}
-        />
-        <input
-          className={INPUT}
-          placeholder="영상 제목"
-          value={title}
-          disabled={adding}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".srt,.vtt,.smi"
-          disabled={adding}
-          onChange={(e) => setSubtitle(e.target.files?.[0] ?? null)}
-          className="text-xs text-[#9a948a] file:mr-2 file:rounded file:border-0 file:bg-[#332d23] file:px-2 file:py-1 file:text-xs file:text-[#e7e3d8]"
-        />
-        <span className="text-[11px] text-[#6f6a62]">
-          자막 파일(.srt/.vtt/.smi)은 선택 — 없으면 페이지에서 추출을 시도합니다.
+      {/**
+        * **끌어다 놓는 자리** (사용자 지시 2026-08-10).
+        *
+        * 스크립트가 만든 폴더를 통째로 끌어 오는 것을 전제한다 — 영상 하나씩
+        * url을 붙여 넣던 자리를 대신한다.
+        */}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!adding) setOver(true);
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (!adding) void upload(e.dataTransfer.files);
+        }}
+        className={`flex flex-col items-center gap-1 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors ${
+          over ? "border-[#e0a32e] bg-[#e0a32e]/10" : "border-white/15 bg-white/[0.02]"
+        } ${adding ? "opacity-60" : ""}`}
+      >
+        <UploadCloud size={22} className="text-[#9a948a]" />
+        <span className="text-sm text-[#e7e3d8]">
+          {adding ? "올리는 중…" : "파싱 파일(.json)을 여기에 끌어다 놓으세요"}
+        </span>
+        <span className="text-[11px] leading-relaxed text-[#6f6a62]">
+          여러 개를 한 번에 놓을 수 있습니다. 파일은
+          {" "}
+          <code className="rounded bg-black/30 px-1">.claude/scripts/parse_lectures.py</code>
+          {" "}로 만듭니다.
         </span>
         <button
           type="button"
-          onClick={handleAdd}
+          onClick={() => fileRef.current?.click()}
           disabled={adding}
-          className="inline-flex items-center justify-center gap-1 rounded bg-[#e0a32e] px-3 py-1.5 text-sm font-medium text-[#1b1813] transition-opacity hover:opacity-90 disabled:opacity-50"
+          className="mt-1 inline-flex items-center gap-1 rounded bg-[#332d23] px-2.5 py-1 text-xs text-[#e7e3d8] transition-opacity hover:opacity-90 disabled:opacity-50"
         >
-          <Plus size={14} />
-          {adding ? "추가 중…" : "영상 추가"}
+          <Plus size={13} />
+          파일 고르기
         </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".json,application/json"
+          multiple
+          hidden
+          disabled={adding}
+          onChange={(e) => {
+            if (e.target.files?.length) void upload(e.target.files);
+          }}
+        />
       </div>
+
+      {skipped.length > 0 && (
+        <ul className="mt-2 flex flex-col gap-1 rounded border border-[#a8452e]/40 bg-[#a8452e]/10 px-3 py-2">
+          {skipped.map((s2) => (
+            <li key={s2.file} className="text-[11px] leading-relaxed text-[#e0b0a4]">
+              {/* 사유에 이미 파일 이름이 들어 있다 — 두 번 쓰지 않는다. */}
+              <span className="font-medium">{s2.file}</span> —{" "}
+              {s2.reason.startsWith(`${s2.file}: `)
+                ? s2.reason.slice(s2.file.length + 2)
+                : s2.reason}
+            </li>
+          ))}
+        </ul>
+      )}
 
       <div className="mt-3">
         {isLoading ? (
@@ -340,12 +370,7 @@ function VideosPanel({
         ) : (
           <ul className="flex flex-col gap-2">
             {(videos ?? []).map((v) => (
-              <VideoRow
-                key={v.id}
-                video={v}
-                onReparse={() => handleReparse(v.id)}
-                onDelete={() => handleDelete(v.id)}
-              />
+              <VideoRow key={v.id} video={v} onDelete={() => handleDelete(v.id)} />
             ))}
           </ul>
         )}
@@ -356,11 +381,9 @@ function VideosPanel({
 
 function VideoRow({
   video,
-  onReparse,
   onDelete,
 }: {
   video: LectureVideo;
-  onReparse: () => void;
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -388,14 +411,6 @@ function VideoRow({
           </span>
         </button>
         {statusBadge(video.status)}
-        <button
-          type="button"
-          onClick={onReparse}
-          title="재파싱"
-          className="rounded p-1 text-[#9a948a] transition-colors hover:text-[#e7e3d8]"
-        >
-          <RotateCw size={14} />
-        </button>
         <button
           type="button"
           onClick={onDelete}

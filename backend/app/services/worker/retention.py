@@ -41,6 +41,18 @@ KEEP_DAYS: dict[str, int] = {
 #: 한 번에 지울 최대 행수(표당). 표를 오래 잡고 있지 않기 위한 값이다.
 BATCH = 2000
 
+#: 한 표를 몇 번까지 이어서 지울까 (2026-08-10).
+#:
+#: ⚠️ 예전에는 표마다 **한 번**만 지웠다. 그러면 하루에 2,000행 넘게 쌓이는
+#: 순간부터 정리가 영영 못 따라잡고 표는 **조용히** 계속 는다 — 아무도 오류를
+#: 보지 않으므로 몇 달 뒤 디스크로 알게 된다. 개발 기계도 이미 하루 1,000행
+#: 언저리였다(2026-08-10: crosslink_runs 5,136행). 학급 여럿이 도는 학교라면
+#: 쉽게 넘는다.
+#:
+#: 밀린 것을 한 번에 다 지우지도 않는다 — 2,000행씩 끊어 스무 번이면 하루
+#: 40,000행이고, 그 사이사이 다른 일이 표를 쓸 틈이 생긴다.
+MAX_PASSES = 20
+
 #: 하루 한 번이면 충분하다 — 폴은 몇 초마다 돌지만 이 일은 그 리듬이 아니다.
 INTERVAL_SECONDS = 24 * 60 * 60
 
@@ -65,12 +77,28 @@ async def sweep(svc: Any) -> dict[str, int]:
     out: dict[str, int] = {}
     for table, days in KEEP_DAYS.items():
         try:
-            out[table] = await svc.prune_older_than(
-                table,
-                days,
-                limit=BATCH,
-                statuses=DONE_ONLY if table == "jobs" else None,
-            )
+            지운수 = 0
+            # 한 번에 딱 BATCH만 지우면 하루 유입이 그보다 많은 순간부터 영영
+            # 못 따라잡는다. **밀린 만큼** 이어서 지우되 상한을 둔다.
+            for _ in range(MAX_PASSES):
+                n = await svc.prune_older_than(
+                    table,
+                    days,
+                    limit=BATCH,
+                    statuses=DONE_ONLY if table == "jobs" else None,
+                )
+                지운수 += n
+                # 한 배치를 다 못 채웠으면 지울 것이 떨어진 것이다.
+                if n < BATCH:
+                    break
+            else:
+                # 상한까지 갔다 = 아직 남았다. 다음 바퀴가 이어 받지만, 유입이
+                # 계속 이만큼이면 사람이 알아야 한다.
+                logger.warning(
+                    "보존 정리가 상한(%d회 × %d행)까지 찼다: %s — 유입이 정리보다 빠르다",
+                    MAX_PASSES, BATCH, table,
+                )
+            out[table] = 지운수
         except Exception:  # noqa: BLE001 - 보존이 워커를 멈추게 하지 않는다
             logger.warning("보존 정리 실패: %s", table, exc_info=True)
             out[table] = -1

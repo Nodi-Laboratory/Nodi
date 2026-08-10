@@ -7,7 +7,6 @@ Supabase JWKS를 받아 ES256으로 검증했는데, 그 왕복·캐시·kid 매
 - `get_current_user`    -> 검증된 클레임 (id / email)
 - `get_current_profile` -> 호출자의 `public.profiles` 행 (앱 역할)
 - `require_role(*roles)`-> 앱 역할 가드
-- `get_user_scopes`     -> 접근 가능한 personal + class 스코프
 
 역할 주의: 앱 역할(student/teacher/admin)은 토큰이 아니라 **profiles.role**에
 있다. 토큰에 역할을 넣으면 승격 후에도 옛 역할이 남고, 클라이언트가 들고 있는
@@ -109,24 +108,3 @@ async def require_admin(
     return profile
 
 
-class UserScopes(BaseModel):
-    user_id: str
-    personal_ref: str  # == user_id
-    class_ids: list[str] = []
-
-
-async def get_user_scopes(
-    user: CurrentUser = Depends(get_current_user),
-) -> UserScopes:
-    """호출자가 접근 가능한 스코프(개인 + 가입 학급).
-
-    RLS가 여전히 실질 경계다 — 이건 질의를 만들기 위한 편의값이다.
-    """
-    from ..db.client import UserClient
-
-    client = UserClient(user.id)
-    rows = await client.select(
-        "class_members", {"user_id": f"eq.{user.id}", "select": "class_id"}
-    )
-    class_ids = [str(r["class_id"]) for r in rows if r.get("class_id")]
-    return UserScopes(user_id=user.id, personal_ref=user.id, class_ids=class_ids)

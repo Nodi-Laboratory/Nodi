@@ -145,7 +145,15 @@ export function MiniMapOverlay({
     return () => document.removeEventListener("keydown", onKey, { capture: true });
   }, [open, big, onClose]);
 
-  const at = cornerPos(corner, vp, MINI);
+  /**
+   * 위쪽 상단 바가 먹는 높이 (2026-08-10).
+   *
+   * 바가 캔버스 위로 올라오면서(사용자 지시) 위 두 모서리가 그 밑에 깔린다.
+   * **재서** 받는다 — 문구가 한 줄 늘거나 크롬 배율이 바뀌면 높이가 달라지고,
+   * 상수로 박아 둔 숫자는 반드시 어긋난다.
+   */
+  const topInset = useTopBarHeight();
+  const at = cornerPos(corner, vp, MINI, topInset);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -200,6 +208,7 @@ export function MiniMapOverlay({
         { x: d.x + (e.clientX - d.sx), y: d.y + (e.clientY - d.sy) },
         vp,
         MINI,
+        topInset,
       );
       /**
        * ⚠️ **인라인 좌표를 지우면 안 된다** (D211 8, 사용자 보고 2026-08-08).
@@ -213,7 +222,7 @@ export function MiniMapOverlay({
        * 목표 좌표를 **직접 쓴다.** React의 인라인 값과 같아지므로 다시 그리든
        * 안 그리든 자리가 같다.
        */
-      const at2 = cornerPos(next, vp, MINI);
+      const at2 = cornerPos(next, vp, MINI, topInset);
       el.style.transition = "";
       el.style.left = `${at2.x}px`;
       el.style.top = `${at2.y}px`;
@@ -221,7 +230,7 @@ export function MiniMapOverlay({
       window.localStorage.setItem(CORNER_KEY, next);
       onCornerChange?.(next);
     },
-    [vp, onCornerChange],
+    [vp, topInset, onCornerChange],
   );
 
   if (!open) return null;
@@ -359,4 +368,34 @@ export function MiniMapOverlay({
       )}
     </>
   );
+}
+
+
+/**
+ * 캔버스 위에 떠 있는 상단 바의 높이 (2026-08-10).
+ *
+ * 미니맵이 위 모서리에 붙을 때 이만큼 내려 앉아야 바에 안 가린다. **재는**
+ * 이유는 그 높이가 고정이 아니기 때문이다 — 문구가 한 줄 늘거나 크롬 배율
+ * (`--ui-scale`)이 바뀌면 달라지고, 상수로 박아 둔 숫자는 반드시 어긋난다.
+ *
+ * 바가 없는 화면(지도 페이지)에서는 0이다.
+ */
+function useTopBarHeight(): number {
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    const el = document.querySelector("[data-canvas-crumb]");
+    if (!el) return;
+    // ⚠️ 여기서 `setH`를 **동기로 부르지 않는다** — React Compiler가 막고,
+    // 부를 필요도 없다: ResizeObserver는 관찰을 시작할 때 현재 크기로 한 번
+    // 불린다. 그 콜백 하나가 첫 값과 이후 변화를 모두 준다.
+    //
+    // ⚠️ **`contentRect`를 쓰면 안 된다.** 그건 padding과 `zoom`을 뺀 값이라
+    // 화면에서 이 바가 실제로 먹는 높이와 다르다 — 실측 2026-08-10: 화면에는
+    // 90px인데 `contentRect`는 52px이라, 지도가 38px만큼 바 밑에 깔렸다.
+    // 미니맵은 화면 좌표로 앉으므로 화면 기준으로 재야 한다.
+    const ro = new ResizeObserver(() => setH(el.getBoundingClientRect().height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return h;
 }

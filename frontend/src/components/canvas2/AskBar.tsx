@@ -12,10 +12,12 @@ import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
 import {
   ArrowUp,
   Check,
+  Keyboard,
   Lightbulb,
   Loader2,
   Paperclip,
   Pencil,
+  PenLine,
   Quote,
   X,
 } from "lucide-react";
@@ -64,6 +66,15 @@ interface Props {
   inkBusy: boolean;
   onRecognize: () => void;
   onWriteAgain: () => void;
+  /**
+   * 손으로 써서 묻는 중인가 (사용자 지시 2026-08-09).
+   *
+   * 질문하는 펜은 도구 레일에서 **여기로 옮겨 왔다**. 자판으로 물을지 손으로
+   * 물을지는 "무엇을 그릴까"가 아니라 "어떻게 물을까"라, 그리기 도구들과
+   * 같은 자리에 있을 것이 아니었다.
+   */
+  askPen: boolean;
+  onToggleAskPen: (on: boolean) => void;
   ref?: React.Ref<AskBarHandle>;
 }
 
@@ -93,6 +104,8 @@ export function AskBar({
   inkBusy,
   onRecognize,
   onWriteAgain,
+  askPen,
+  onToggleAskPen,
   ref,
 }: Props) {
   // 우하단 미니맵과 겹칠 때만 왼쪽으로 물러난다 (사용자 지시 2026-08-08).
@@ -193,7 +206,15 @@ export function AskBar({
           : undefined,
         transition: "transform .34s cubic-bezier(.22,.9,.24,1), max-width .34s ease",
       }}
-      className="ui absolute bottom-[52px] left-1/2 z-50 w-[min(680px,calc(100%-140px))] -translate-x-1/2"
+      /**
+       * 폭 — 넓은 화면에서는 오른쪽 도구바를 피해 `100%-140px`이다.
+       *
+       * ⚠️ 좁은 화면에서는 그 여백이 **입력창을 없앤다**: 무대가 300px이면
+       * 남는 것이 160px인데 왼쪽 토글만 106px이라, 알약이 눌려 [보내기]가
+       * 화면 밖으로 나갔다(실측 2026-08-10, 390px 폰). 좁을 때는 도구바와
+       * 겹치더라도 **묻는 일이 먼저**다.
+       */
+      className="ui absolute bottom-[52px] left-1/2 z-50 w-[min(680px,calc(100%-140px))] -translate-x-1/2 max-[900px]:w-[calc(100%-24px)]"
     >
       {showStatus && (
         <div
@@ -279,8 +300,17 @@ export function AskBar({
         </div>
       )}
 
+      {/**
+       * 토글 + 입력 알약을 **한 줄**로 (사용자 지시 2026-08-09).
+       *
+       * 토글이 이 상자 안에 있어야 지도가 좌하단에 붙었을 때 둘이 **함께**
+       * 오른쪽으로 밀린다 — 바깥에 두면 입력창만 비켜서고 토글은 지도 밑에
+       * 깔린다(미는 값은 이 상자의 `transform`이 갖고 있다).
+       */}
+      <div className="flex items-end gap-2">
+      <AskModeToggle askPen={askPen} onChange={onToggleAskPen} disabled={disabled} />
       <div
-        className="flex items-end gap-2 rounded-2xl border px-3 py-2 transition-shadow"
+        className="flex min-w-0 flex-1 items-end gap-2 rounded-2xl border px-3 py-2 transition-shadow"
         style={{
           background: "var(--c-raised)",
           // **포커스에 테두리를 칠하지 않는다**(사용자 지시). 누를 때마다
@@ -406,6 +436,72 @@ export function AskBar({
           </button>
         )}
       </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 무엇으로 물을까 — **자판 ↔ 펜** (사용자 지시 2026-08-09).
+ *
+ * 질문하는 펜(D176)이 도구 레일에서 여기로 옮겨 왔다. 레일은 "캔버스에 무엇을
+ * 그릴까"를 고르는 자리인데 이 도구가 정하는 것은 **묻는 방법**이라, 물음이
+ * 시작되는 입력창 옆이 제자리다.
+ *
+ * 알약 하나에 둘을 넣고 켜진 쪽에만 색을 준다 — 스위치처럼 생겨야 "둘 중
+ * 하나"가 읽힌다. 아이콘만 두 개 나란히 두면 버튼 두 개로 보인다.
+ */
+function AskModeToggle({
+  askPen,
+  onChange,
+  disabled,
+}: {
+  askPen: boolean;
+  onChange: (on: boolean) => void;
+  disabled?: boolean;
+}) {
+  const side = (on: boolean) => ({
+    background: on ? "var(--c-hand-wash)" : "transparent",
+    color: on ? "var(--c-hand)" : "var(--c-ink-faint)",
+  });
+  return (
+    <div
+      data-ask-mode
+      role="radiogroup"
+      aria-label="질문 방법"
+      className="mb-0.5 flex shrink-0 items-center gap-0.5 rounded-full border p-1"
+      style={{
+        background: "var(--c-raised)",
+        borderColor: "var(--c-rule)",
+        boxShadow: "var(--c-shadow-md)",
+      }}
+    >
+      <button
+        type="button"
+        role="radio"
+        aria-checked={!askPen}
+        aria-label="자판으로 묻기"
+        title="자판으로 묻기"
+        disabled={disabled}
+        onClick={() => onChange(false)}
+        className="flex h-8 w-8 items-center justify-center rounded-full transition-colors"
+        style={side(!askPen)}
+      >
+        <Keyboard size={16} />
+      </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={askPen}
+        aria-label="펜으로 써서 묻기"
+        title="펜으로 써서 묻기"
+        disabled={disabled}
+        onClick={() => onChange(true)}
+        className="flex h-8 w-8 items-center justify-center rounded-full transition-colors"
+        style={side(askPen)}
+      >
+        <PenLine size={16} />
+      </button>
     </div>
   );
 }

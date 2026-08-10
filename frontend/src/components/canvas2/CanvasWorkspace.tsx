@@ -29,7 +29,7 @@ import { useCameraSpring } from "@/lib/canvas2/useCameraSpring";
 import { useItemLayout, type LayoutSource } from "@/lib/canvas2/useItemLayout";
 import { useCanvasItems } from "@/lib/canvas2/useCanvasItems";
 import { sanitizeScene } from "@/lib/canvas2/sanitizeScene";
-import { itemsFromNodes } from "@/lib/canvas2/legacyItems";
+import { itemsFromAnswers } from "@/lib/canvas2/recoveredItems";
 import { planHydration } from "@/lib/canvas2/hydration";
 import { useCanvasStream } from "@/lib/canvas2/useCanvasStream";
 import type { ItemPatch } from "@/lib/api/canvas";
@@ -38,11 +38,12 @@ import type { EditContext, EditResult } from "@/lib/canvas2/useItemDrag";
 import type { CanvasItem, ToolName } from "@/lib/canvas2/types";
 import type { ExcalidrawElementLike } from "@/lib/canvas2/useExcalidrawBridge";
 import { spaceTargetFromId } from "@/lib/api";
-import { useSessionDetail, useSessions } from "@/lib/queries";
-import { intersects, union, type Rect } from "@/lib/canvas2/rect";
+import { useMyClasses } from "@/lib/hooks";
+import { intersects, type Rect } from "@/lib/canvas2/rect";
 import type { ResizeCommit } from "./ResizeHandles";
 import { clearDragOffsets, setDragOffsets } from "@/lib/canvas2/dragBus";
 import { ITEM_W, type Placed } from "@/lib/canvas2/layout";
+import { dyLimits } from "@/lib/canvas2/parentGuard";
 import { backOffCamera, focusCamera, type Camera } from "@/lib/canvas2/focusCamera";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { useEventCallback } from "@/lib/canvas2/useEventCallback";
@@ -58,7 +59,6 @@ import { idRemap, remapId, remapIdSet } from "@/lib/canvas2/idRemap";
 import { useQuestionCoach } from "@/lib/canvas2/useQuestionCoach";
 import { CoachBubble } from "./CoachBubble";
 import { navigate, type NavDir } from "@/lib/canvas2/navigate";
-import { cameraForRect } from "@/lib/canvas2/useCameraSpring";
 import SessionDrawer from "@/components/canvas/SessionDrawer";
 import SessionFilesBar from "@/components/canvas/SessionFilesBar";
 import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
@@ -90,6 +90,7 @@ import { useCrossLinks } from "@/lib/canvas2/useCrossLinks";
 import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 import type { CrossLink } from "@/lib/api";
 import { SplitPrompt } from "./SplitPrompt";
+import { isModalOpen } from "@/lib/ui/modalLayer";
 
 interface Props {
   spaceId: string;
@@ -154,6 +155,17 @@ const FOCUS_PAD = 72;
  * 개념 지도(오른쪽 위)는 빼지 않는다 — 접을 수 있고, 폭이 340이라 빼기
  * 시작하면 쓸 수 있는 자리가 확 줄어 오히려 더 축소된다.
  */
+/**
+ * 연결선을 놓을 때 카드 상자를 얼마나 부풀려 보나 (world px, 사용자 지시
+ * 2026-08-09).
+ *
+ * 카드는 글 높이만큼만 차지해서 한 줄짜리는 50px 남짓이다. 그 안에 정확히
+ * 떨어뜨려야만 이어지니 조준이 까다롭고, 빗나가면 학생 눈에는 "연결이 안
+ * 된다"로 보인다. 사람이 겨눈 곳과 실제로 놓이는 곳의 차이를 덮을 만큼만
+ * 준다 — 더 키우면 옆 카드가 먼저 잡힌다.
+ */
+const LINK_PAD = 56;
+
 const UI_LEFT = 72;
 const UI_TOP = 56;
 const UI_RIGHT = 80;
@@ -169,10 +181,22 @@ const INITIAL_CAMERA = { scrollX: 180, scrollY: 150, zoom: 1 };
 
 /** 뷰포트 크기. 캔버스는 사이드바를 뺀 <main> 안에 있다. */
 function viewport(): { w: number; h: number } {
-  const el = typeof document !== "undefined" ? document.querySelector("main") : null;
+  if (typeof document === "undefined") return { w: 1200, h: 800 };
+  /**
+   * **캔버스 무대를 잰다** (2026-08-09).
+   *
+   * 예전에는 `<main>`을 쟀다. 그때는 캔버스가 `main`을 통째로 채웠지만, 지금은
+   * 그 위에 상단 바가 한 줄을 차지한다 — `main`으로 재면 카메라가 바 높이만큼
+   * 아래로 어긋나고, 그 어긋남은 "답이 살짝 낮게 뜬다"로만 보인다.
+   *
+   * 무대가 아직 없으면(첫 프레임) `main`으로 떨어진다 — 그 순간에는 둘이
+   * 같고, 착지는 어차피 배치가 굳은 뒤에 난다.
+   */
+  const el =
+    document.querySelector(".canvas2") ?? document.querySelector("main");
   return {
-    w: el?.clientWidth ?? 1200,
-    h: el?.clientHeight ?? 800,
+    w: (el as HTMLElement | null)?.clientWidth ?? 1200,
+    h: (el as HTMLElement | null)?.clientHeight ?? 800,
   };
 }
 
@@ -192,7 +216,7 @@ function useViewport(): { w: number; h: number } {
     };
     read();
     window.addEventListener("resize", read);
-    const el = document.querySelector("main");
+    const el = document.querySelector(".canvas2") ?? document.querySelector("main");
     const ro = el ? new ResizeObserver(read) : null;
     if (el && ro) ro.observe(el);
     return () => {
@@ -231,7 +255,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
   const pendingFocusItemId = useWorkspaceStore((s) => s.pendingFocusItemId);
   const setPendingFocusItem = useWorkspaceStore((s) => s.setPendingFocusItem);
   const router = useRouter();
-  const { sessionId, dropSession } = useSessionBinding(spaceId);
+  const { sessionId, seed, clearSeed, dropSession } = useSessionBinding(spaceId);
   // 스토어는 **지금 방**을 알아야 한다 — 다른 방의 답이 화면에 얹히지 않게(2026-08-09).
   const store = useCanvasItems(sessionId);
 
@@ -275,7 +299,14 @@ export function CanvasWorkspace({ spaceId }: Props) {
     },
     [],
   );
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  /**
+   * 지난 대화 서랍은 **사이드바가 연다** (사용자 지시 2026-08-09).
+   *
+   * 예전에는 캔버스 좌상단 삼선 버튼이 자기 state로 열고 닫았다. 이제 여는
+   * 곳이 캔버스 밖이라 스토어를 함께 본다.
+   */
+  const historyOpen = useWorkspaceStore((s) => s.historyOpen);
+  const setHistoryOpen = useWorkspaceStore((s) => s.setHistoryOpen);
   const [uploadError, setUploadError] = useState<string | null>(null);
   /** 가지 한가운데를 떼어내려는 중 — 아래를 어떻게 할지 묻는다 (D156). */
   const [split, setSplit] = useState<{ id: string; tag: string | null } | null>(null);
@@ -371,27 +402,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     };
   }, [sessionId, queryClient]);
 
-  // 구 세션 폴백 — v2 이전 세션에는 canvas_items가 한 행도 없다. 폴백이
-  // 없으면 학생이 지난 대화를 열었을 때 빈 캔버스를 본다(데이터가 날아간
-  // 것처럼 보인다). nodes.answer를 파싱해 읽기용으로 그리고, 첫 편집 때
-  // 서버로 승격한다(legacyItems.ts 참조).
-  /**
-   * 구 세션 폴백은 **캔버스가 비었을 때만** 부른다 (2026-08-09).
-   *
-   * 이 쿼리는 대화의 **모든 답 원문**을 받아 온다(`NODE_SELECT`에 answer가
-   * 있다). 그런데 쓰이는 곳은 v2 이전 세션 하나뿐이고, 카드가 있는 세션에서는
-   * 받자마자 버린다 — 방을 바꿀 때마다 대화 길이에 비례한 payload가 오간
-   * 셈이다.
-   *
-   * `planHydration`이 이미 "카드가 있으면 detail을 안 기다린다"로 되어 있으니
-   * (`snapshotCount > 0` → `fill: "items"`), 여기서 요청 자체를 막아도
-   * 폴백 경로는 그대로다 — 카드가 0장일 때만 부른다.
-   */
-  const needsLegacy = !!snapshot && snapshot.items.length === 0;
-  const { data: detail, isPending: detailPending } = useSessionDetail(
-    needsLegacy ? sessionId : null,
-  );
-
   /**
    * 이미 채워 넣은 세션 — **수화는 세션당 한 번이다** (D147).
    *
@@ -407,7 +417,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
       sessionId,
       hydratedFor: hydratedFor.current,
       snapshotCount: snapshot ? snapshot.items.length : null,
-      detailPending,
     });
     if (plan.clear) {
       hydratedFor.current = null;
@@ -415,12 +424,21 @@ export function CanvasWorkspace({ spaceId }: Props) {
     }
     if (!plan.fill || !sessionId || !snapshot) return;
     hydratedFor.current = sessionId;
-    replaceAll(
-      plan.fill === "items"
-        ? snapshot.items
-        : itemsFromNodes(sessionId, detail?.nodes ?? []),
+    /**
+     * 저장된 카드 **+ 카드가 없는 답** (2026-08-10).
+     *
+     * 후자는 답을 기다리다 브라우저가 사라진 턴이다 — 답은 DB에 있는데
+     * 카드만 없다(`recoveredItems.ts` 머리말). 예전에는 캔버스가 통째로 빈
+     * 세션에서만 되살렸기 때문에, 카드가 한 장이라도 있으면 그 턴은 영영
+     * 안 보였다. 이제 섞어 넣는다.
+     */
+    const recovered = itemsFromAnswers(
+      sessionId,
+      snapshot.orphanNodes,
+      snapshot.items.length,
     );
-  }, [sessionId, snapshot, detail, detailPending, replaceAll]);
+    replaceAll(recovered.length ? [...snapshot.items, ...recovered] : snapshot.items);
+  }, [sessionId, snapshot, replaceAll]);
 
   // 그림은 마운트 시 1회만 밀어 넣는다(`initialData`가 그때만 읽힌다).
   // sceneKey는 씬이 도착한 뒤에야 생긴다 — sessionId로 키를 잡으면 세션 전환
@@ -889,15 +907,40 @@ export function CanvasWorkspace({ spaceId }: Props) {
       const root = document.querySelector(".canvas2");
       return bridge.toWorld(cx, cy, root?.getBoundingClientRect() ?? new DOMRect());
     },
+    /**
+     * 놓은 자리의 카드. **상자보다 넉넉하게 본다** (사용자 지시 2026-08-09).
+     *
+     * 정확히 글자 상자 안에 떨어뜨려야만 이어졌다. 카드는 글 높이만큼만
+     * 차지해서(한 줄이면 50px 남짓) 조준이 까다롭고, 빗나가면 "연결이 안
+     * 된다"로 읽힌다 — 실제로 그렇게 보고됐다(D211 2가 사유 안내를 붙인 것도
+     * 같은 뿌리다).
+     *
+     * 그래서 상자를 `LINK_PAD`만큼 부풀려 본다. 다만 **먼저 정확히 들어간
+     * 카드를 찾는다** — 부풀린 상자끼리는 겹치므로, 정확히 위에 놓았는데
+     * 옆 카드가 잡히면 그게 더 나쁘다. 정확한 것이 없을 때만 부풀린 상자를
+     * 보고, 그중에서는 **가운데가 가장 가까운** 카드를 고른다.
+     */
     cardAt: (w) => {
+      let near: { id: string; d2: number } | null = null;
       for (const [id, at] of layout.positions) {
         const sz = layout.sizes.get(id);
         if (!sz) continue;
         if (w.x >= at.x && w.x <= at.x + sz.w && w.y >= at.y && w.y <= at.y + sz.h) {
-          return id;
+          return id; // 정확히 위 — 더 볼 것 없다
+        }
+        if (
+          w.x >= at.x - LINK_PAD &&
+          w.x <= at.x + sz.w + LINK_PAD &&
+          w.y >= at.y - LINK_PAD &&
+          w.y <= at.y + sz.h + LINK_PAD
+        ) {
+          const cx = at.x + sz.w / 2;
+          const cy = at.y + sz.h / 2;
+          const d2 = (w.x - cx) ** 2 + (w.y - cy) ** 2;
+          if (!near || d2 < near.d2) near = { id, d2 };
         }
       }
-      return null;
+      return near?.id ?? null;
     },
     onLink: linkCards,
     canLink,
@@ -1064,6 +1107,27 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * camera를 deps로 가진 useMemo라 팬/줌 중 매 프레임 새 객체가 된다 —
    * v1이 정확히 그래서 느렸다(useItemLayout.ts 머리말 참조).
    */
+  /**
+   * **자식은 부모보다 위로 못 간다** (사용자 지시 2026-08-09).
+   *
+   * 규칙 자체는 `lib/canvas2/parentGuard.ts`가 갖고, 여기서는 지금 배치를
+   * 넣어 준다. 아이템이 아니라 워크스페이스가 만드는 이유는 **부모·자식이
+   * 서로 남**이기 때문이다 — 카드 하나는 자기 부모의 좌표를 모른다.
+   */
+  const dyLimitsFor = useEventCallback((movingIds: readonly string[]) =>
+    dyLimits({
+      moving: movingIds,
+      parentOf: (id) => items.find((i) => i.id === id)?.parentItemId ?? null,
+      rectOf: (id) => {
+        const p = layout.positions.get(id);
+        const s = layout.sizes.get(id);
+        return p && s ? { y: p.y, h: s.h } : null;
+      },
+      childrenOf: (id) =>
+        items.filter((i) => i.parentItemId === id).map((i) => i.id),
+    }),
+  );
+
   const handlers = useMemo(
     () => ({
       onSelect,
@@ -1081,8 +1145,9 @@ export function CanvasWorkspace({ spaceId }: Props) {
       onResetSize,
       onAsk,
       onPick,
+      dyLimitsFor,
     }),
-    [onCut, portLink.begin, onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick],
+    [onCut, portLink.begin, onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick, dyLimitsFor],
   );
 
   /**
@@ -1147,21 +1212,19 @@ export function CanvasWorkspace({ spaceId }: Props) {
     [sessionId, createNote, nextSeq, setTool],
   );
 
-  // 화면 배율 — 뷰포트 중앙을 기준으로 확대·축소한다(커서 기준은 휠이 맡는다).
+  /**
+   * 카메라를 옮기는 데 쓰는 손잡이들.
+   *
+   * ⚠️ 화면 배율 버튼(`handleZoom`)과 전체 보기(`handleFit`)는 **2026-08-09에
+   * 걷어냈다** — 캔버스 좌상단의 `[− 000% +  ⤢]` 막대를 없애라는 지시를
+   * 따르면서 그 둘을 부르는 곳이 사라졌다. 배율은 휠·Ctrl+휠이 하고,
+   * 둘러보기는 지도가 맡는다(분류·카드를 누르면 그 자리로 간다).
+   *
+   * 되살릴 일이 생기면 git에 그대로 있다. 안 부르는 코드를 남겨 두면 다음
+   * 사람이 살아 있는 경로로 읽는다.
+   */
   const { flyTo } = spring;
-  const { cameraRef, getObstacles } = bridge;
-  const handleZoom = useCallback(
-    (factor: number) => {
-      const c = cameraRef.current;
-      const { w, h } = viewport();
-      const next = Math.min(2.5, Math.max(0.2, c.zoom * factor));
-      // 화면 중앙의 world 점을 고정한 채 배율만 바꾼다.
-      const cx = w / 2 / c.zoom - c.scrollX;
-      const cy = h / 2 / c.zoom - c.scrollY;
-      flyTo({ zoom: next, scrollX: w / 2 / next - cx, scrollY: h / 2 / next - cy });
-    },
-    [cameraRef, flyTo],
-  );
+  const { cameraRef } = bridge;
 
   /**
    * 질문 방향성 코치 (D194) — 규칙·문구·자리 계산은 훅이 가진다.
@@ -1177,47 +1240,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
     pickedId,
     patch,
   });
-
-  const handleFit = useCallback(() => {
-    /**
-     * **화면에 그려진 상자를 잰다** — 배치 맵이 아니라.
-     *
-     * 예전에는 `layout.positions`·`layout.sizes`로 상자를 만들었는데, 방금
-     * 답이 끝난 카드의 크기가 아직 옛 값이라 상자가 작게 잡혔다. 그래서
-     * **한 번 눌러서는 안 맞고 세 번 눌러야 맞았다**(실측 2026-08-07:
-     * 배율 0.806 → 0.679 → 0.438, 필요한 값은 0.438). 학생 눈에는 "전체
-     * 보기를 눌렀는데 카드가 아직 화면 밖"이다 — 그러면 그 버튼을 안 믿는다.
-     *
-     * 아이템은 월드 좌표로 절대 배치되고 `offsetWidth/Height`는 transform
-     * 배율의 영향을 받지 않으므로, DOM 값이 그대로 월드 단위다.
-     */
-    const rects = items
-      .map((i) => {
-        const el = document.querySelector<HTMLElement>(
-          `[data-canvas-item="${CSS.escape(i.id)}"]`,
-        );
-        if (el) {
-          return {
-            x: parseFloat(el.style.left) || 0,
-            y: parseFloat(el.style.top) || 0,
-            w: el.offsetWidth || ITEM_W,
-            h: el.offsetHeight || FALLBACK_H,
-          };
-        }
-        // 아직 안 그려진 것(첫 프레임)은 배치 맵으로 어림한다.
-        const p = layout.positions.get(i.id);
-        if (!p) return null;
-        const s = layout.sizes.get(i.id) ?? { w: ITEM_W, h: FALLBACK_H };
-        return { x: p.x, y: p.y, w: s.w, h: s.h };
-      })
-      .filter((r): r is NonNullable<typeof r> => !!r);
-    const box = union([...rects, ...getObstacles()]);
-    if (!box) return;
-    const { w, h } = viewport();
-    const pad = 140;
-    const zoom = Math.min(1.2, Math.max(0.2, Math.min((w - pad) / box.w, (h - pad) / box.h)));
-    flyTo(cameraForRect(box, { w, h }, zoom));
-  }, [items, layout, getObstacles, flyTo]);
 
   const vp = useViewport();
 
@@ -1237,10 +1259,24 @@ export function CanvasWorkspace({ spaceId }: Props) {
       const size = layout.sizes.get(id) ?? { w: ITEM_W, h: FALLBACK_H };
       const { w, h } = viewport();
       const z = cameraRef.current.zoom;
+      /**
+       * **UI를 뺀 자리의 가운데**로 간다 (사용자 지시 2026-08-09).
+       *
+       * 창 전체의 가운데로 보내면 왼쪽 레일·오른쪽 도구바·아래 질문창이
+       * 그 위에 겹쳐 있으므로, 지도에서 카드를 눌러 도착했는데 그 카드가
+       * **도구바 밑에 반쯤 깔려** 있었다. D166이 새 답에 대해 내린 결론과
+       * 같은 이유다 — 잣대는 창이 아니라 쓸 수 있는 자리다.
+       */
+      const box = {
+        x: UI_LEFT,
+        y: UI_TOP,
+        w: Math.max(1, w - UI_LEFT - UI_RIGHT),
+        h: Math.max(1, h - UI_TOP - UI_BOTTOM),
+      };
       flyTo({
         zoom: z,
-        scrollX: w / 2 / z - (p.x + size.w / 2),
-        scrollY: h / 2 / z - (p.y + size.h / 2),
+        scrollX: (box.x + box.w / 2) / z - (p.x + size.w / 2),
+        scrollY: (box.y + box.h / 2) / z - (p.y + size.h / 2),
       });
     },
     [layout, cameraRef, flyTo],
@@ -1319,6 +1355,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      // 팝업이 떠 있으면 그쪽이 키의 주인이다(`lib/ui/modalLayer.ts`).
+      if (isModalOpen()) return;
       const t = e.target as HTMLElement | null;
       if (
         t &&
@@ -1740,6 +1778,38 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 끄는 동안은 DOM transform만 고치고(React를 거치면 60fps에 버벅인다),
    * 손을 뗄 때 한 번 저장한다.
    */
+  /**
+   * 홈에서 들려 보낸 질문을 **한 번만** 보낸다 (사용자 지시 2026-08-09).
+   *
+   * 홈 입력창에 적고 보내면 개인 세션에 새 방이 만들어지고 질문이 스토어에
+   * 실려 온다(`pendingSession.seed`). 여기서 그것을 소비한다.
+   *
+   * ⚠️ **방이 정해지고 저장할 준비가 된 뒤**라야 한다. 세션이 null인 채로
+   * 보내면 답이 갈 곳이 없다(D148: 공간이 안 맞으면 세션은 없는 것으로
+   * 친다). 그래서 `sessionId`를 조건에 둔다.
+   *
+   * ⚠️ **먼저 비우고 보낸다.** 보내고 비우면 그 사이에 이펙트가 다시 돌아
+   * 같은 질문이 두 번 나갈 수 있다 — 답이 두 벌 생기면 학생은 무엇이
+   * 자기 질문이었는지 알 수 없다.
+   */
+  const sentSeedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!seed || !sessionId || stream.busy) return;
+    if (sentSeedRef.current === seed) return;
+    /**
+     * **한 프레임 미룬다.** 이펙트 본문에서 바로 보내면 React Compiler가
+     * 막는 동기 setState가 되고(억제하지 않고 구조로 푼다), 그보다 실질적
+     * 으로는 방금 잡힌 세션으로 저장 경로가 아직 안 붙어 있을 수 있다.
+     * `pendingFocusItemId`를 소비하는 이펙트와 **같은 모양**이다.
+     */
+    const id = requestAnimationFrame(() => {
+      sentSeedRef.current = seed;
+      clearSeed();
+      handleSend(seed);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [seed, sessionId, stream.busy, clearSeed, handleSend]);
+
   const handleShapeDrag = useCallback(
     (dx: number, dy: number, done: boolean) => {
       if (!selectedIds.size) return;
@@ -1787,21 +1857,36 @@ export function CanvasWorkspace({ spaceId }: Props) {
 
   const target = useMemo(() => spaceTargetFromId(spaceId), [spaceId]);
   /**
-   * 상단 바에 뜨는 방 이름.
+   * 상단 바에 뜨는 **학급 이름** (사용자 지시 2026-08-09).
    *
-   * ⚠️ **세션 상세(`detail`)에서 읽으면 안 된다** — 그 질의는 캔버스 스냅샷이
-   * 빈 옛 방에서만 돈다(2026-08-09에 건 게이트). 현대 방에서는 `detail`이
-   * 늘 없으므로 이름이 통째로 "제목 없는 대화"로 굳었다. 게이트를 넣은 그
-   * 커밋에서 같이 깨졌고, 요청이 하나 줄었다는 사실만 재느라 못 봤다.
+   * 사이드바에서 학급 동그라미가 사라져 지금 어느 학급인지 알 길이 없어졌다.
+   * 개인 공간이면 null이고, 그때 상단 바는 "개인 세션"이라고 쓴다.
    *
-   * 이름은 **세션 목록**에 이미 있다(사이드바가 쓰는 그 질의다). 같은 캐시를
-   * 읽으므로 요청이 늘지 않고, 이름을 바꾸면 목록과 상단 바가 함께 바뀐다.
+   * 출처는 **이미 받아 둔 내 학급 목록**이다 — 이 화면 때문에 요청을 새로
+   * 내지 않는다(사이드바가 쓰던 그 질의다).
    */
-  const sessionList = useSessions(target);
-  const sessionTitle =
-    sessionList.data?.find((s) => s.id === sessionId)?.title?.trim() ||
-    detail?.session?.title?.trim() ||
-    "제목 없는 대화";
+  const { data: myClasses } = useMyClasses();
+  const spaceName =
+    spaceId === "personal"
+      ? null
+      : (myClasses ?? []).find((m) => m.class_id === spaceId)?.classes?.name ?? "학급";
+
+  /**
+   * 상단 바에 뜨는 방 이름 — **스냅샷이 들고 온다** (2026-08-10).
+   *
+   * 예전에는 세션 **목록**에서 찾아 읽었다. 이름 하나 때문에 그 공간의 대화를
+   * 전부 받는 셈이고, 대화가 쌓일수록 는다(실측: 435건 156KB). 서버는 어차피
+   * 캔버스를 내주기 전에 세션 행이 보이는지 확인하므로, 제목은 거기 딸려 온다.
+   *
+   * 이름을 바꾸는 자리는 `/sessions`뿐이고 그 화면은 캔버스와 함께 뜨지 않는다.
+   * 들어올 때마다 스냅샷을 새로 받으므로(D147: 떠날 때 캐시를 버린다) 바뀐
+   * 이름이 그대로 보인다.
+   *
+   * ⚠️ 한때 세션 상세(`detail`)에서 읽다가 이름이 통째로 "제목 없는 대화"로
+   * 굳은 적이 있다 — 그 질의가 옛 방에서만 돌게 게이트가 걸렸는데, 요청이
+   * 하나 줄었다는 사실만 재느라 화면을 안 봤다.
+   */
+  const sessionTitle = snapshot?.sessionTitle?.trim() || "제목 없는 대화";
 
   // 세션 컨텍스트 파일 첨부 (D83) — 업로드 후 칩 바가 상태를 보여 준다.
   const handleAttach = useCallback(
@@ -2064,6 +2149,33 @@ export function CanvasWorkspace({ spaceId }: Props) {
       : null);
 
   return (
+    /**
+     * 상단 바는 캔버스 **위에 자리를 잡는다**(떠 있지 않다).
+     *
+     * 예전 좌상단 버튼들은 absolute라 미니맵이 그 모서리에 못 붙었다(D211 9).
+     * 한 줄을 내주면 그 문제가 성립하지 않는다 — 네 모서리는 전부 캔버스 것이다.
+     */
+    <div className="relative flex h-full w-full flex-col">
+      <CanvasTopBar
+        spaceName={spaceName}
+        sessionTitle={sessionTitle}
+        historyOpen={historyOpen}
+        onToggleHistory={() => setHistoryOpen(!historyOpen)}
+      />
+      {/**
+       * 지난 대화 서랍 — **상단바까지 덮는다** (사용자 지시 2026-08-09).
+       *
+       * 무대 안(`chrome`)에 있었다. 그러면 어두워지는 것도, 서랍 자신도
+       * 상단바 **아래에서** 시작해 위쪽 한 줄만 밝게 남았다 — 화면을 덮어
+       * 가리는 장치가 한 군데만 안 가리면 그건 덜 그린 것으로 읽힌다.
+       * 여기(루트)에 두면 이 세로 칸 전체를 덮는다.
+       */}
+      <SessionDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        target={target}
+      />
+      <div className="relative min-h-0 flex-1">
     <CanvasStage
       // 미니맵이 같은 변에 붙으면 도구바가 비켜선다 (D211 9).
       mapCorner={mapOpen ? mapCorner : null}
@@ -2103,18 +2215,6 @@ export function CanvasWorkspace({ spaceId }: Props) {
               원래 보던 곳으로
             </button>
           ) : null}
-          <CanvasTopBar
-            title={sessionTitle}
-            zoom={bridge.camera.zoom}
-            onOpenSessions={() => setDrawerOpen(true)}
-            onZoom={handleZoom}
-            onFit={handleFit}
-          />
-          <SessionDrawer
-            open={drawerOpen}
-            onClose={() => setDrawerOpen(false)}
-            target={target}
-          />
           {/* **비었다고 말하기 전에 비었는지 알아야 한다.**
               `items.length === 0`만 보면 불러오는 동안에도 "여기에 답이
               펼쳐집니다"가 뜬다 — 글이 20개 든 세션을 열어도 몇 초간
@@ -2194,6 +2294,13 @@ export function CanvasWorkspace({ spaceId }: Props) {
           )}
           <AskBar
             ref={askBarRef}
+            askPen={askPen}
+            /**
+             * 토글이 도구를 바꾼다 (사용자 지시 2026-08-09) — 켜면 질문하는
+             * 펜, 끄면 **합친 도구**로 돌아간다. 그리기 도구로 돌려보내면
+             * 자판으로 물으려고 껐는데 캔버스에 선이 그어진다.
+             */
+            onToggleAskPen={(on) => handleTool(on ? "askpen" : "hand")}
             inkPhase={inkPhase}
             inkReady={inkCount > 0}
             inkBusy={inkBusy}
@@ -2252,6 +2359,8 @@ export function CanvasWorkspace({ spaceId }: Props) {
         onNavigate={goToPastConversation}
       />
     </CanvasStage>
+      </div>
+    </div>
   );
 }
 
