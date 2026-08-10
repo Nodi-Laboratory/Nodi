@@ -310,12 +310,28 @@ export function InkLabTab() {
         .finally(() => setAnswering(false));
     }
 
-    // 실제 화면과 같게 — 글자가 된 획은 캔버스에서 사라진다.
-    const gone = new Set(els.map((e) => e.id));
-    bridge.api?.updateScene({
-      elements: withoutStrokes(bridge.api.getSceneElements(), gone),
-    });
-    setInkCount(0);
+    /**
+     * **글자가 됐을 때만** 획을 걷는다 (2026-08-10).
+     *
+     * 학습 화면은 처음부터 그랬다 — 창구가 던지면 걷는 줄까지 못 가고, 읽은
+     * 글자가 비면 `return`한다(D176: "인식 실패는 획을 지우지 않는다. 지우면
+     * 다시 써야 한다"). 그런데 실험실만 **무조건** 걷고 있었다.
+     *
+     * 실측(2026-08-10): 망을 끊고 [읽기]를 누르면 획 1 → 0이 되고 화면에는
+     * "다시 시도하거나 자판으로 입력해 주세요"가 뜬다 — **다시 시도할 획이
+     * 없는데** 그렇게 말한다.
+     *
+     * 실험실의 존재 이유는 실제 경로를 그대로 태우는 것이다. 실패했을 때의
+     * 처신이 다르면, 관리자가 여기서 보는 실패는 학생이 겪는 실패가 아니다.
+     */
+    const 읽었다 = Boolean(reply?.text?.trim());
+    if (읽었다) {
+      const gone = new Set(els.map((e) => e.id));
+      bridge.api?.updateScene({
+        elements: withoutStrokes(bridge.api.getSceneElements(), gone),
+      });
+      setInkCount(0);
+    }
   }, [askStrokes, bridge, busy, clientSettings, items, layout, markPending]);
 
   const clear = useCallback(() => {
