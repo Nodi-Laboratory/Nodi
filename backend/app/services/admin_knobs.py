@@ -567,18 +567,6 @@ _SPECS: list[dict[str, Any]] = [
         "description": "개념 카드 하나에 곁들일 강의 클립 수 상한 (D190: 기본 1).",
         "effect": "클립 노출량",
     },
-    {
-        "key": "lecture_whisper_enabled",
-        "label": "자막 없을 때 자동 전사",
-        "group": "강의 클립",
-        "widget": "toggle",
-        "scope": "new-only",
-        "description": (
-            "업로드 자막이 없으면 영상 오디오를 Whisper로 전사한다. 끄면 "
-            "제목만 임베딩되어 매칭이 약해지지만 인제스트가 훨씬 빠르다."
-        ),
-        "effect": "매칭 품질 ↔ 인제스트 시간",
-    },
     # ── 캔버스 화면 (D174) ───────────────────────────────────────────
     #
     # 프론트에 상수로 박혀 있던 값들이다. 서버가 갖고 `/settings/client`로

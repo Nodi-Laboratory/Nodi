@@ -17,7 +17,6 @@ dependencies = [
     "asyncpg>=0.30",
     "pyjwt>=2.9",
     "bcrypt>=4.2",
-    "faster-whisper>=1.2.1",
     # D210 8-1 손글씨 폰트 — 업로드한 폰트의 지표 실측·서브셋에 쓴다.
     # `[woff]`가 brotli를 딸려 온다: 그게 없으면 woff2로 못 쪼갠다.
     #

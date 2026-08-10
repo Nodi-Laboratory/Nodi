@@ -12,9 +12,21 @@ from typing import Any
 
 from ..config import get_settings
 from ..db.client import UserClient
-from . import app_settings, lecture_parse, qdrant_store, upstage
+from . import app_settings, qdrant_store, upstage
 
 logger = logging.getLogger("nodi.lecture_search")
+
+
+def fmt_timeline(sec: int) -> str:
+    """초 → 사람이 읽는 타임라인. 1시간 미만은 M:SS, 이상은 H:MM:SS.
+
+    EBS 페이지를 파싱하던 모듈에 있던 함수다. 그 모듈은 자동 파싱과 함께
+    걷어냈지만(2026-08-10) 이 표시 규칙은 화면이 계속 쓴다.
+    """
+    sec = max(0, int(sec))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 settings = get_settings()
 
 
@@ -108,7 +120,7 @@ async def search_class_clips(
                 "clip_id": cid,
                 "title": r.get("title") or "",
                 "start_sec": sec,
-                "timeline_label": lecture_parse.fmt_timeline(sec),
+                "timeline_label": fmt_timeline(sec),
                 "page_url": v.get("page_url") or "",
                 "video_title": v.get("title") or "",
                 "via": via,

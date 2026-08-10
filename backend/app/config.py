@@ -262,10 +262,6 @@ class Settings(BaseSettings):
 
     lecture_batch_size: int = 16                   # 임베딩/원자 잡 팬아웃 단위
     # 자동 전사(개정 R2) — 업로드 자막이 없으면 EBS 오디오를 Whisper로 전사.
-    lecture_whisper_enabled: bool = True           # 자막 없을 때 자동 전사(오버레이 폴백 가능)
-    lecture_whisper_model: str = "small"           # faster-whisper 모델(config/env 전용)
-    lecture_whisper_language: str = "ko"           # 전사 언어(config/env 전용)
-    lecture_whisper_ffmpeg_timeout_seconds: int = 900  # ffmpeg 스트림·추출 상한
 
     # ── 교차 세션 개념 연결 (D176) ────────────────────────────────
     # 거리는 상한이 아니라 **띠**다. 너무 가까운 히트는 융합이 아니라 중복이라

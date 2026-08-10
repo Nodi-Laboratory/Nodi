@@ -26,7 +26,8 @@ def test_lecture_admin_routes_registered():
     p = _paths()
     assert "/api/admin/lecture-packages" in p
     assert "/api/admin/lecture-packages/{package_id}/videos" in p
-    assert "/api/admin/lecture-videos/{video_id}/reparse" in p
+    # 재파싱 창구는 없다 — 서버가 할 파싱이 없으므로 다시 할 것도 없다.
+    assert "/api/admin/lecture-videos/{video_id}/reparse" not in p
 
 
 def test_create_package_body_model():

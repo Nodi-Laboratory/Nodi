@@ -150,7 +150,7 @@ _SCOPE_TABLES: dict[str, list[tuple[str, str, str]]] = {
         ),
         (
             "lecture_videos",
-            "id,package_id,source,page_url,subtitle_path,title,status,error,created_at",
+            "id,package_id,source,page_url,title,status,error,created_at",
             "created_at.asc",
         ),
         (

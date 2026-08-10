@@ -562,22 +562,6 @@ wheels = [
 ]
 
 [[package]]
-name = "faster-whisper"
-version = "1.2.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "av" },
-    { name = "ctranslate2" },
-    { name = "huggingface-hub" },
-    { name = "onnxruntime" },
-    { name = "tokenizers" },
-    { name = "tqdm" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/99/49ee85903dee060d9f08297b4a342e5e0bcfca2f027a07b4ee0a38ab13f9/faster_whisper-1.2.1-py3-none-any.whl", hash = "sha256:79a66ad50688c0b794dd501dc340a736992a6342f7f95e5811be60b5224a26a7", size = 1118909, upload-time = "2025-10-31T11:35:47.794Z" },
-]
-
-[[package]]
 name = "filelock"
 version = "3.32.2"
 source = { registry = "https://pypi.org/simple" }
@@ -897,7 +881,6 @@ dependencies = [
     { name = "asyncpg" },
     { name = "bcrypt" },
     { name = "fastapi" },
-    { name = "faster-whisper" },
     { name = "fonttools", extra = ["woff"] },
     { name = "httpx" },
     { name = "pydantic", extra = ["email"] },
@@ -924,7 +907,6 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "bcrypt", specifier = ">=4.2" },
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "faster-whisper", specifier = ">=1.2.1" },
     { name = "fonttools", extras = ["woff"], specifier = ">=4.60" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.7" },

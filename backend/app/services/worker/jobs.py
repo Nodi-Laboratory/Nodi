@@ -164,13 +164,6 @@ async def _fail_file_for_job(
                 },
                 {"status": "failed"},
             )
-    elif kind == "lecture_parse":
-        # D149: 파싱 영구 실패 — 영상만 failed(파일·다른 인제스트 불가침).
-        await svc.update(
-            "lecture_videos",
-            {"id": f"eq.{file_id}"},
-            {"status": "failed", "error": (error or "")[:500]},
-        )
     elif kind == "lecture_embed":
         # D149·D88 격리: 임베딩 잡 영구 실패는 파일·영상 status와 무관.
         # 범위 내 pending 클립 행만 seq 기준으로 failed로 둔다.
