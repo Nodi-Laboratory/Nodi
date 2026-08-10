@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { HELP_SCENES } from "../src/components/help/HelpScenes";
 import { closeDialog, loginAndOpenCanvas, openSettings } from "./helpers";
 
 /**
@@ -63,7 +64,14 @@ test("도움말은 카드를 넘겨 가며 본다", async ({ page }) => {
 
   // 점을 눌러 바로 간다.
   const dots = dlg.locator("footer button");
-  await expect(dots).toHaveCount(6);
+  /**
+   * 카드 **수**를 못 박지 않는다 (2026-08-10).
+   *
+   * 6으로 적어 뒀더니 설명 카드를 더할 때마다 이 스펙이 깨졌다 — 기능이
+   * 늘어난 것이 결함으로 보고되면 다음 사람이 숫자만 고치고 넘어간다.
+   * 지켜야 할 것은 "점이 카드 수만큼 있다"이지 그 수가 몇이냐가 아니다.
+   */
+  await expect(dots).toHaveCount(HELP_SCENES.length);
   await dots.last().click();
   await expect(page.getByLabel("다음 설명")).toBeDisabled();
 

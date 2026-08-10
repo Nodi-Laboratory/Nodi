@@ -270,6 +270,85 @@ function ToolScene() {
   );
 }
 
+/* ── 배지: 다른 대화와 이어졌을 때 ────────────────────────────────────── */
+function BadgeScene() {
+  return (
+    <Stage>
+      {/* 지금 보고 있는 카드 */}
+      <Card x={38} y={54} w={165} title="빛의 굴절" lines={2} />
+      {/* 배지 — 카드 위에 붙는다 */}
+      <g className="nh-badge">
+        <rect x={44} y={34} width={128} height={19} rx="9.5" fill={C.paper} stroke={C.accentDeep} />
+        <circle cx={56} cy={43.5} r="3" fill={C.accentDeep} />
+        <text x={64} y={47} fontSize="9" fill={C.accentDeep}>
+          다른 대화와 연결됨
+        </text>
+      </g>
+
+      {/* 어제 다른 방에서 한 이야기 */}
+      <g opacity="0.62">
+        <Card x={232} y={112} w={150} title="렌즈와 상" lines={2} by="hand" />
+        <text x={307} y={172} fontSize="8.5" fill={C.faint} textAnchor="middle">
+          지난 “광학” 대화
+        </text>
+      </g>
+
+      {/* 둘을 잇는 실 */}
+      <path
+        className="nh-thread"
+        d="M120 100 C 150 130, 200 120, 232 134"
+        stroke={C.accentDeep}
+        strokeWidth="1.6"
+        fill="none"
+        strokeDasharray="150"
+        opacity="0.75"
+      />
+      <text x={210} y={193} fontSize="9" fill={C.faint} textAnchor="middle">
+        예전에 한 이야기와 이어질 때만 조용히 뜹니다
+      </text>
+    </Stage>
+  );
+}
+
+/* ── 질문 방향성: 한 줄기만 계속 팔 때 ───────────────────────────────── */
+function CoachScene() {
+  return (
+    <Stage>
+      {/* 한 줄로 이어진 카드 셋 — 같은 갈래를 계속 파고든 모습 */}
+      <Card x={30} y={22} w={140} title="화산" lines={1} />
+      <Card x={30} y={72} w={140} title="마그마" lines={1} />
+      <Card x={30} y={122} w={140} title="분출 과정" lines={1} />
+      <path
+        d="M100 57 L100 72 M100 107 L100 122"
+        stroke={C.ai}
+        strokeWidth="1.6"
+        fill="none"
+      />
+
+      {/* 귀띔 말풍선 */}
+      <g className="nh-coach">
+        <rect x={196} y={104} width={196} height={54} rx="12" fill={C.paper} stroke={C.accentDeep} />
+        <path d="M196 130 l-9 5 9 5 z" fill={C.paper} stroke={C.accentDeep} />
+        <text x={208} y={122} fontSize="9.5" fill={C.accentDeep}>
+          이런 방향은 어때요?
+        </text>
+        <text x={208} y={137} fontSize="9" fill={C.ink}>
+          “다른 것과 견주어 보기”
+        </text>
+        <text x={208} y={151} fontSize="8" fill={C.faint}>
+          질문은 직접 만들어 보세요
+        </text>
+        <text x={382} y={116} fontSize="9" fill={C.faint} textAnchor="end">
+          ×
+        </text>
+      </g>
+      <text x={210} y={193} fontSize="9" fill={C.faint} textAnchor="middle">
+        한 갈래를 계속 파고들 때, 안 물어본 방향을 귀띔합니다
+      </text>
+    </Stage>
+  );
+}
+
 /* ── 5. 지도 ───────────────────────────────────────────────────────────── */
 function MapScene() {
   // 자리는 못 박는다 — 난수를 쓰면 도움말이 열 때마다 다른 그림이 된다.
@@ -410,6 +489,24 @@ export const HELP_SCENES: HelpScene[] = [
     Scene: ToolScene,
   },
   {
+    key: "badge",
+    title: "예전 대화와 이어지면 알려 줍니다",
+    lines: [
+      "지금 보는 카드가 다른 대화에서 한 이야기와 이어질 때, 카드 위에 작은 배지가 뜹니다.",
+      "눌러 보면 어느 대화의 무엇과 이어지는지 보이고, 그 카드로 건너갈 수 있습니다. 이어질 것이 없으면 아무것도 뜨지 않습니다.",
+    ],
+    Scene: BadgeScene,
+  },
+  {
+    key: "coach",
+    title: "물어볼 방향을 귀띔해 줍니다",
+    lines: [
+      "한 갈래를 계속 이어서 물어보면, 아직 안 물어본 방향을 카드 옆에서 조용히 귀띔합니다.",
+      "질문 문장을 대신 써 주지는 않습니다 — 베낀 질문은 내 질문이 아니니까요. ×로 닫으면 그 갈래에서는 한동안 다시 말을 걸지 않습니다.",
+    ],
+    Scene: CoachScene,
+  },
+  {
     key: "map",
     title: "지도로 지난 개념을 찾아갑니다",
     lines: [
@@ -466,6 +563,11 @@ export function HelpSceneStyles() {
 .nh-port { animation: nh-pulse 4.6s ease-in-out infinite; }
 /* 닿은 자리 — 선이 다 그려진(34%) 뒤에 뜬다. 먼저 뜨면 순서가 거꾸로 읽힌다. */
 .nh-landed { animation: nh-land 4.6s ease-in-out infinite; }
+/* 배지는 실이 이어진 **뒤에** 뜬다 — 순서가 곧 설명이다. */
+.nh-thread { animation: nh-draw 4.4s ease-in-out infinite; }
+.nh-badge { animation: nh-land 4.4s ease-in-out infinite; transform-origin: 108px 44px; }
+/* 귀띔은 카드가 다 쌓인 뒤에 나온다. */
+.nh-coach { animation: nh-fadein 4.4s ease-in-out infinite; }
 .nh-stroke1 { animation: nh-draw 5s ease-in-out infinite; }
 .nh-stroke2 { animation: nh-draw2 5s ease-in-out infinite; }
 .nh-stroke3 { animation: nh-fadein 5s ease-in-out infinite; }
@@ -483,6 +585,7 @@ export function HelpSceneStyles() {
    그림은 거들 뿐이라 정지 상태로도 뜻이 통해야 한다. */
 @media (prefers-reduced-motion: reduce) {
   .nh-typing, .nh-answer, .nh-drag, .nh-link, .nh-port, .nh-stroke1, .nh-stroke2,
+  .nh-thread, .nh-badge, .nh-coach,
   .nh-stroke3, .nh-recognized, .nh-pen-dot, .nh-flyout, .nh-tool-on, .nh-float,
   .nh-ping, .nh-jump, .nh-tap, .nh-popup { animation: none; }
   .nh-typing, .nh-answer, .nh-stroke3, .nh-recognized, .nh-flyout, .nh-jump, .nh-popup { opacity: 1; clip-path: none; }
@@ -490,6 +593,8 @@ export function HelpSceneStyles() {
   /* 끌림도 끄므로 카드는 시작 자리에 선다 — 선이 겨눈 최종 자리로 옮겨 준다. */
   .nh-drag { transform: translate(-34px,-16px); }
   .nh-landed { opacity: 1; transform: scale(1); }
+  .nh-thread { stroke-dashoffset: 0; }
+  .nh-badge, .nh-coach { opacity: 1; transform: none; }
 }
 `}</style>
   );
