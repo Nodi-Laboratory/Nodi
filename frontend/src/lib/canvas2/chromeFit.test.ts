@@ -141,3 +141,70 @@ describe("입력창은 지도가 아래에 올 때만 비킨다", () => {
     expect(fitChrome({ ...기본, stage: { w: 1800, h: 620 }, corner: "br" }).askDx).toBe(0);
   });
 });
+
+describe("넓은 지도는 모서리와 상관없이 도구바를 밀어낸다 (2026-08-10)", () => {
+  /**
+   * 사용자 보고: "미니맵이랑 캔버스 도구 바가 겹친다".
+   *
+   * 예전 규칙은 **"지도가 왼쪽이면 오른쪽 도구바와 만날 일이 없다"**로 곧장
+   * 끝냈다. 그런데 지도는 넓다 — 왼쪽에 붙어도 오른쪽 변까지 닿으면 도구바가
+   * 그 아래 깔린다. 모서리로 단정하지 않고 **가로도 재야** 한다.
+   */
+  const 넓은지도 = { w: 950, h: 380 };
+  const 레일 = { w: 64, h: 700 };
+  const 무대 = { w: 1000, h: 900 };
+
+  it("왼쪽 위 지도가 오른쪽 변까지 닿으면 도구바가 아래로 비킨다", () => {
+    const f = fitChrome({
+      stage: 무대, corner: "tl", map: 넓은지도, rail: 레일,
+      askW: 0, margin: 16, gap: 14,
+    });
+    expect(f.railShift).toBeGreaterThan(0); // 아래로
+    // 지도는 왼쪽 변에 붙어 있어 더 물러날 곳이 없다.
+    expect(f.mapDx).toBe(0);
+  });
+
+  it("왼쪽 아래 지도면 도구바가 위로 비킨다", () => {
+    const f = fitChrome({
+      stage: 무대, corner: "bl", map: 넓은지도, rail: 레일,
+      askW: 0, margin: 16, gap: 14,
+    });
+    expect(f.railShift).toBeLessThan(0); // 위로
+  });
+
+  it("좁은 지도가 왼쪽에 있으면 예전처럼 아무것도 안 한다", () => {
+    const f = fitChrome({
+      stage: 무대, corner: "tl", map: { w: 300, h: 380 }, rail: 레일,
+      askW: 0, margin: 16, gap: 14,
+    });
+    expect(f.railShift).toBe(0);
+  });
+
+  it("비켜서도 화면을 벗어나지 않는다", () => {
+    const f = fitChrome({
+      stage: { w: 1000, h: 500 }, corner: "tl",
+      map: { w: 950, h: 400 }, rail: 레일,
+      askW: 0, margin: 16, gap: 14,
+    });
+    const 위 = (500 - 레일.h) / 2 + f.railShift;
+    expect(위 + 레일.h).toBeLessThanOrEqual(500 - 16 + 0.5);
+  });
+});
+
+describe("상단 바가 떠 있으면 그만큼 내려 본다 (2026-08-10)", () => {
+  /**
+   * 바가 캔버스 위로 올라오면서 위 모서리의 지도가 그만큼 내려 앉는다. 규칙이
+   * 같은 값을 안 보면 **계산이 보는 자리와 화면의 자리가 갈린다.**
+   */
+  it("위 여백만큼 지도가 내려간 것으로 친다", () => {
+    const 공통 = {
+      stage: { w: 1000, h: 900 }, corner: "tr" as const,
+      map: { w: 380, h: 300 }, rail: { w: 64, h: 300 },
+      askW: 0, margin: 16, gap: 14,
+    };
+    const 여백없음 = fitChrome(공통);
+    const 여백있음 = fitChrome({ ...공통, topInset: 73 });
+    // 지도가 73px 내려갔으므로 도구바도 그만큼 더 내려가야 한다.
+    expect(여백있음.railShift).toBeCloseTo(여백없음.railShift + 73, 1);
+  });
+});

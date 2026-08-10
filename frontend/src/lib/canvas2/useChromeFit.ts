@@ -108,6 +108,11 @@ export function useChromeFit(
       askW: a?.width ?? 0,
       margin: SNAP_MARGIN,
       gap: GAP,
+      // 상단 바는 캔버스 위에 떠 있다 — 위 모서리의 지도가 그만큼 내려 앉는다.
+      topInset:
+        document
+          .querySelector<HTMLElement>("[data-canvas-crumb]")
+          ?.getBoundingClientRect().height ?? 0,
     });
     if (
       next.railMode === fitRef.current.railMode &&
