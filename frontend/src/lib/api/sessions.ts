@@ -100,10 +100,3 @@ export async function getSession(id: string): Promise<SessionDetail> {
   return res.json();
 }
 
-// 공간 쿼리 파라미터 헬퍼(listFiles 등 공용).
-export function spaceParams(target: SpaceTarget): URLSearchParams {
-  const params = new URLSearchParams({ space_kind: target.space_kind });
-  if (target.space_ref) params.set("space_ref", target.space_ref);
-  return params;
-}
-

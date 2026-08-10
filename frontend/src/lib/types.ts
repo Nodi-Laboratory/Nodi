@@ -25,14 +25,6 @@ export interface MyClass {
 
 // ── Stage 4b: 교사 컨트롤 패널 ────────────────────────────────────────
 
-export interface TeacherClass {
-  id: string;
-  name: string | null;
-  join_code: string | null;
-  created_at: string;
-  student_count: number;
-}
-
 /** D67: 교사 콘솔 홈 학급 개요(한 행 = 한 학급, 카운트·최근활동 포함). */
 export interface TeacherClassOverview {
   id: string;
