@@ -61,4 +61,30 @@ describe("readAnswer", () => {
     const r = readAnswer("그냥 평범한 한 줄짜리 답입니다.");
     expect(r.rest).toBe("그냥 평범한 한 줄짜리 답입니다.");
   });
+  /**
+   * **실험실 창구가 실제로 돌려준 답** (실측 2026-08-10).
+   *
+   * 사용자가 "응답 박스에 이상하게 다른 내용이 들어간다"고 한 그 모양이다.
+   * 손으로 지어낸 예시가 아니라 `/admin/ink-lab/answer`가 준 것을 그대로
+   * 옮겼다 — 줄 끝의 공백 두 칸까지 살려 뒀다(모델이 실제로 그렇게 준다).
+   */
+  it("실험실이 준 진짜 답에서 표시가 걷힌다", () => {
+    const 진짜 = [
+      "CHAT: 학생이 동그라미를 친 ‘광합성’ 부분을 차근차근 풀어볼게요.  ",
+      "",
+      "@concept: 광합성 | 식물의 생장과 에너지 전환  ",
+      "광합성은 **식물**이 **빛**을 이용해 **양분**을 만드는 과정이에요.",
+      "",
+      "광합성은 크게 두 단계로 나뉘어요.",
+    ].join("\n");
+    const r = readAnswer(진짜);
+    expect(r.reply).toContain("차근차근 풀어볼게요");
+    expect(r.reply).not.toContain("CHAT:");
+    expect(r.cards).toHaveLength(1);
+    expect(r.cards[0].title).toBe("광합성");
+    expect(r.cards[0].tag).toBe("식물의 생장과 에너지 전환");
+    expect(r.cards[0].body).toContain("두 단계로 나뉘어요");
+    // 응답 박스에 새는 것이 하나도 없어야 한다.
+    expect(r.cards[0].body).not.toContain("@concept");
+  });
 });

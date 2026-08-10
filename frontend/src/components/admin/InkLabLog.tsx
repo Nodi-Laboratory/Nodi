@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Eraser } from "lucide-react";
+import { AnswerBox } from "./AnswerBox";
 import type { InkTextSource, InkMarksStatus } from "@/lib/api/ink";
 import type { LabAnswer } from "@/lib/api/adminInkLab";
 import type { InkCapture } from "@/lib/canvas2/inkCapture";
@@ -353,7 +354,24 @@ function RunCard({ run, open }: { run: InkRun; open: boolean }) {
                 {run.answer.error || "답변을 받지 못했습니다."}
               </div>
             )}
-            {run.answer?.ok && <Pre>{run.answer.answer || "(빈 응답)"}</Pre>}
+            {/**
+             * **원문을 그대로 붓지 않는다** (사용자 보고 2026-08-10).
+             *
+             * 실험실도 채팅 턴과 같은 프롬프트로 태우므로(`CONCEPT_CARD_SYSTEM_PROMPT`)
+             * 답은 전선 형식이다 — `CHAT:` 접두사와 `@concept: 제목 | 분류`
+             * 표시가 섞여 있다. 그것을 답변 칸에 그대로 넣으면 운영자 눈에는
+             * **응답에 엉뚱한 내용이 끼어든 것**으로 보인다.
+             *
+             * 대화·로그 탭은 이미 `AnswerBox`로 갈아탔는데 여기만 남아 있었다.
+             * 형식을 어긴 답을 찾는 것이 실험실의 일이므로 원문 보기는 그대로
+             * 남는다 — 기본값만 읽는 모습이다.
+             */}
+            {run.answer?.ok &&
+              (run.answer.answer ? (
+                <AnswerBox raw={run.answer.answer} />
+              ) : (
+                <Pre>(빈 응답)</Pre>
+              ))}
           </Step>
         </div>
       )}
