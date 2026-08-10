@@ -99,6 +99,13 @@ export interface CanvasStreamApi {
   /** 마지막 오류. */
   error: string | null;
   /**
+   * 그 오류를 지운다 — 화면이 배너를 닫을 때 부른다 (2026-08-10).
+   *
+   * 안 내주면 학생이 X를 눌러도 이 안내만 남아 **닫히지 않는 배너**가 된다
+   * (배너는 출처가 넷이고 닫기는 그 넷을 다 알아야 한다).
+   */
+  clearError: () => void;
+  /**
    * 카메라가 따라가야 할 아이템 id.
    *
    * 답이 어디에 생기는지 안 보이면 학생은 화면 밖에서 글이 생기는 것을 놓친다
@@ -717,5 +724,11 @@ export function useCanvasStream({
 
   const clearFocus = useCallback(() => setFocusId(null), []);
 
-  return { reply, busy, send, error, focusId, clearFocus };
+  /**
+   * 화면이 배너를 닫을 때 부른다 (2026-08-10). 안 내주면 학생이 X를 눌러도
+   * 이 안내만 남아 **닫히지 않는 배너**가 된다.
+   */
+  const clearError = useCallback(() => setError(null), []);
+
+  return { reply, busy, send, error, clearError, focusId, clearFocus };
 }

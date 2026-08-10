@@ -2231,13 +2231,42 @@ export function CanvasWorkspace({ spaceId }: Props) {
     flyTo(next);
   }, [layout.positions, layout.sizes, vp, flyTo]);
 
+  /**
+   * **배너는 출처가 넷이다** — 그리기/OCR · 저장 · 스트림 · 씬 정리.
+   *
+   * ⚠️ 닫기 단추가 `store.clearError` 하나만 불렀다(2026-08-10). 그래서
+   * 문구가 다른 셋 중 하나에서 오면 **눌러도 안 닫혔다**(실측: 손글씨 실패
+   * 안내에 X를 눌러도 그대로 남는다). 배너 하나에 출처가 여럿이면 닫기도
+   * 그 여럿을 다 알아야 한다.
+   *
+   * 씬 정리 안내만 상태가 아니라 **계산값**이라 지울 것이 없다 — 그 대신
+   * "이 대화방에서는 닫았다"를 기억한다. 대화방이 바뀌면 다시 뜬다(다른
+   * 방의 깨진 요소는 다른 사실이다).
+   */
+  const [dropDismissed, setDropDismissed] = useState<string | null>(null);
+  /**
+   * ⚠️ **잃는 것이 알려 주는 것보다 앞선다** (2026-08-10).
+   *
+   * 예전에는 `drawError`가 맨 앞이었다. 그래서 "글씨를 알아보지 못했어요"가
+   * 떠 있는 동안 카드 저장이 실패하면 **그 사실이 안 보였다**(실측: 저장을
+   * 500으로 만들어도 배너는 손글씨 안내 그대로였다). 손글씨 안내는 다시 쓰면
+   * 그만이지만 저장 실패는 학생이 쓴 것이 사라지는 일이다 — SaveBanner
+   * 머리말의 "30분 작업한 걸 잃고 나서 아는 상황"이 정확히 이 모양이다.
+   */
   const banner =
-    drawError ??
     store.error ??
+    drawError ??
     stream.error ??
-    (cleaned && cleaned.dropped > 0
+    (cleaned && cleaned.dropped > 0 && dropDismissed !== sessionId
       ? `그림 요소 ${cleaned.dropped}개를 읽지 못해 건너뛰었습니다`
       : null);
+
+  const closeBanner = useCallback(() => {
+    setDrawError(null);
+    store.clearError();
+    stream.clearError();
+    setDropDismissed(sessionId);
+  }, [store, stream, sessionId]);
 
   return (
     /**
@@ -2312,7 +2341,7 @@ export function CanvasWorkspace({ spaceId }: Props) {
               빈 캔버스라고 말하는 셈이다(실측: 191ms부터 4초 내내).
               세션이 잡히고 스냅샷이 도착한 뒤에만 판단한다. */}
           {!!sessionId && !!snapshot && items.length === 0 && <EmptyHint />}
-          {banner && <SaveBanner message={banner} onClose={store.clearError} />}
+          {banner && <SaveBanner message={banner} onClose={closeBanner} />}
           {split &&
             (() => {
               const it = items.find((i) => i.id === split.id);
