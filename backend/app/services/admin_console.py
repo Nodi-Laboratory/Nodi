@@ -481,6 +481,11 @@ async def ensure_setting_rows() -> int:
 # 학생도 부르는 경로이므로 거리 게이트·모델명 같은 운영 값은 절대 넣지 않는다.
 # ---------------------------------------------------------------------------
 CLIENT_KEYS = (
+    # 홈 지도의 움직임 — 배경이라 값 하나에 인상이 크게 달라진다.
+    "home_drift_force",
+    "home_drift_breath",
+    "home_drift_anchor",
+    "home_fit_boost",
     "canvas_cards_per_turn",
     "canvas_type_chars_per_frame",
     "canvas_focus_zoom",

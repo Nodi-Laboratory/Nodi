@@ -11,6 +11,16 @@ import { API_BASE, authHeaders, ensureOk } from "./_core";
 
 export interface ClientSettings {
   /** 한 턴에 만들 개념 카드 수 (D162). */
+  /**
+   * 홈 개념 지도의 떠다니는 움직임 (사용자 지시 2026-08-10).
+   *
+   * 폭(`homeDriftForce`)과 속도(`homeDriftBreath`)를 **따로** 둔다 — 섞여
+   * 있으면 "천천히"와 "덜 흔들리게"를 한 값으로 다투게 된다.
+   */
+  homeDriftForce: number;
+  homeDriftBreath: number;
+  homeDriftAnchor: number;
+  homeFitBoost: number;
   cardsPerTurn: number;
   /** 글자가 나오는 속도(프레임당 글자 수). */
   typeCharsPerFrame: number;
@@ -59,6 +69,10 @@ export interface HandFont {
 }
 
 export const CLIENT_SETTINGS_FALLBACK: ClientSettings = {
+  homeDriftForce: 0.3,
+  homeDriftBreath: 0.006,
+  homeDriftAnchor: 0.8,
+  homeFitBoost: 1.62,
   cardsPerTurn: 1,
   typeCharsPerFrame: 2,
   focusZoom: 2.35,
@@ -98,12 +112,20 @@ interface Row {
   card_min_gap?: number;
   card_push_strength?: number;
   card_push_speed_ms?: number;
+  home_drift_force?: number;
+  home_drift_breath?: number;
+  home_drift_anchor?: number;
+  home_fit_boost?: number;
 }
 
 /** snake_case 경계를 여기 한 곳에만 둔다(다른 api 모듈과 같은 규약). */
 function toSettings(row: Row): ClientSettings {
   const f = CLIENT_SETTINGS_FALLBACK;
   return {
+    homeDriftForce: row.home_drift_force ?? f.homeDriftForce,
+    homeDriftBreath: row.home_drift_breath ?? f.homeDriftBreath,
+    homeDriftAnchor: row.home_drift_anchor ?? f.homeDriftAnchor,
+    homeFitBoost: row.home_fit_boost ?? f.homeFitBoost,
     cardsPerTurn: row.canvas_cards_per_turn ?? f.cardsPerTurn,
     typeCharsPerFrame: row.canvas_type_chars_per_frame ?? f.typeCharsPerFrame,
     focusZoom: row.canvas_focus_zoom ?? f.focusZoom,

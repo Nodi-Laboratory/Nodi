@@ -43,6 +43,7 @@ import {
 import { MapZoomControls } from "@/components/home/MapZoomControls";
 import type { ConceptMapData, ConceptNode } from "@/lib/api/conceptMap";
 import { pastelForTag } from "@/lib/ui/pastel";
+import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 import {
   boundsOf,
   clusterLabels,
@@ -132,6 +133,9 @@ const EDGE_MIN_ZOOM = 0.35;
  * 이웃이 없는 노드는 가운데가 당긴다 — 그쪽은 중력이다.
  */
 const DRIFT_FORCE = 0.3;
+//   ↑ 아래 셋과 `FIT_BOOST`는 **기본값**이다. 관리자가 콘솔에서 바꾸면
+//     (`home_drift_*`·`home_fit_boost`) 그 값이 이긴다 — 서버가 못 내려줄
+//     때만 여기 값으로 돈다(D174와 같은 규약: 값이 없다고 화면이 멈추지 않는다).
 
 /**
  * 한 번 밀고 당기는 데 걸리는 위상 진행(라디안/틱).
@@ -285,6 +289,36 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
    * 안에서** 쓰이기 때문이다.
    */
   const uiTopRef = useRef(0);
+  /**
+   * 움직임 값은 **관리자가 정한다** (사용자 지시 2026-08-10).
+   *
+   * ref에 담는 이유는 이 값들이 렌더가 아니라 **d3 이펙트 안에서** 쓰이기
+   * 때문이다. state로 읽으면 값이 바뀔 때마다 시뮬레이션을 새로 짜게 되는데,
+   * 그러면 배치가 처음부터 다시 잡혀 지도가 통째로 헤엄친다.
+   */
+  const settings = useClientSettings();
+  const tuneRef = useRef({
+    force: DRIFT_FORCE,
+    breath: DRIFT_BREATH,
+    anchor: ANCHOR_STRENGTH,
+    boost: FIT_BOOST,
+  });
+
+  useEffect(() => {
+    tuneRef.current = {
+      force: settings.homeDriftForce,
+      breath: settings.homeDriftBreath,
+      anchor: settings.homeDriftAnchor,
+      boost: settings.homeFitBoost,
+    };
+    // 제자리 스프링은 **이미 걸려 있는 힘**이라 세기를 직접 고쳐 준다 —
+    // 다음 틱부터 새 값으로 당긴다(시뮬레이션을 다시 짜지 않는다).
+    const sim = simRef.current;
+    const fx = sim?.force("x") as { strength?: (v: number) => unknown } | undefined;
+    const fy = sim?.force("y") as { strength?: (v: number) => unknown } | undefined;
+    fx?.strength?.(settings.homeDriftAnchor);
+    fy?.strength?.(settings.homeDriftAnchor);
+  }, [settings]);
 
   /** 화면 변환. React state로 두면 팬/줌마다 전체가 다시 돈다(D124와 같은 이유). */
   const viewRef = useRef({ k: 0.5, x: 0, y: 0 });
@@ -773,8 +807,8 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       sim
         .force("charge", null)
         .force("link", null)
-        .force("x", forceX<SimNode>().x((n) => n.ax ?? 0).strength(ANCHOR_STRENGTH))
-        .force("y", forceY<SimNode>().y((n) => n.ay ?? 0).strength(ANCHOR_STRENGTH));
+        .force("x", forceX<SimNode>().x((n) => n.ax ?? 0).strength(tuneRef.current.anchor))
+        .force("y", forceY<SimNode>().y((n) => n.ay ?? 0).strength(tuneRef.current.anchor));
 
       // 자리가 잡혔다 — 이제부터가 학생이 볼 화면이다.
       sim.on("tick", () => {
@@ -840,7 +874,7 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       // ease-in-out — 뚝 끊기지도, 끝에서 질질 끌지도 않는다.
       const e = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
       driftRef.current = value + (target - value) * e;
-      const amp = driftRef.current * DRIFT_FORCE;
+      const amp = driftRef.current * tuneRef.current.force;
       if (amp < 0.002) {
         if (target !== 0) return;
         /**
@@ -864,7 +898,7 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       }
       const ns = nodesRef.current;
       for (let i = 0; i < ns.length; i++) {
-        phase[i] += DRIFT_BREATH * spin[i];
+        phase[i] += tuneRef.current.breath * spin[i];
         const n = ns[i];
         /**
          * **당기는 쪽은 이웃이다.**
@@ -1011,7 +1045,7 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       const k = Math.min(
         6,
         Math.max(0.12, Math.min((width - pad * 2) / b.w, usableH / b.h)) *
-          (ignoreUi ? 1 : FIT_BOOST),
+          (ignoreUi ? 1 : tuneRef.current.boost),
       );
       /**
        * **넘치는 쪽은 위로 보낸다** (사용자 지시 2026-08-10: "더 확대").
