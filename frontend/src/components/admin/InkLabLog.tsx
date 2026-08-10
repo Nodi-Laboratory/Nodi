@@ -19,7 +19,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Eraser } from "lucide-react";
-import type { InkMarksStatus } from "@/lib/api/ink";
+import type { InkTextSource, InkMarksStatus } from "@/lib/api/ink";
 import type { LabAnswer } from "@/lib/api/adminInkLab";
 import type { InkCapture } from "@/lib/canvas2/inkCapture";
 import type { InkTraceRow, InkVerdict } from "@/lib/canvas2/inkScene";
@@ -36,6 +36,7 @@ export interface InkRun {
         text: string;
         marksNote: string;
         marksStatus: InkMarksStatus;
+        textSource: InkTextSource;
         ms: number;
       }
     | null;
@@ -68,6 +69,13 @@ const SHAPE_LABEL: Record<string, string> = {
   line: "선",
   bracket: "묶음표",
   scribble: "덧칠",
+};
+
+/** 글자를 읽은 길 — 화면에 쓰는 말. */
+const TEXT_SOURCE: Record<string, string> = {
+  varco: "전용 OCR",
+  vision_fallback: "비전 예비",
+  unknown: "알 수 없음",
 };
 
 const MARKS_REASON: Record<InkMarksStatus, string> = {
@@ -311,7 +319,9 @@ function RunCard({ run, open }: { run: InkRun; open: boolean }) {
             title="두 모델 (동시)"
             detail={
               run.reply
-                ? `${ms(run.reply.ms)} · 표시 ${run.reply.marksStatus}`
+                ? `${ms(run.reply.ms)} · 표시 ${run.reply.marksStatus} · 글자 ${
+                    TEXT_SOURCE[run.reply.textSource] ?? run.reply.textSource
+                  }`
                 : "창구가 응답하지 않음"
             }
           />
@@ -398,6 +408,22 @@ function Result({ run }: { run: InkRun }) {
       className="mx-3 mb-3 flex flex-col gap-2 rounded-lg border px-3 py-2.5"
       style={{ borderColor: C.line, background: "#1b1813" }}
     >
+      {/**
+        * **어느 길로 읽었나** (2026-08-10).
+        *
+        * 예비 경로(비전)가 도는 것은 **고장 신호**다 — 학생 화면은 멀쩡해도
+        * 전용 OCR이 내려가 있고 정확도가 낮아져 있다. 안 보여 주면 아무도
+        * 모른 채 품질만 조용히 내려간다.
+        */}
+      {r.textSource === "vision_fallback" && (
+        <div
+          className="rounded px-2 py-1 text-[11px]"
+          style={{ background: "#3a2a12", color: "#e0a32e" }}
+        >
+          ⚠ 전용 OCR(VARCO)이 응답하지 않아 <b>비전 모델로 대신 읽었습니다</b>.
+          글자는 나왔지만 정확도가 평소보다 낮습니다 — OCR 서버를 확인하세요.
+        </div>
+      )}
       <div>
         <div className="text-[10px] uppercase tracking-wide" style={{ color: C.dim }}>
           손글씨 (OCR)

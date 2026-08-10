@@ -37,6 +37,8 @@ import { OcrNotReadyError } from "./ocr";
  * [카드 1]에서 [카드 3]으로 향한다"를 말할 수 없다 — 그 문장은 카드가 아니라
  * 표시에 딸린 사실이라 표시 단위로 보내야 한다.
  */
+export type InkTextSource = "varco" | "vision_fallback" | "unknown";
+
 export interface InkGestureRef {
   i: number;
   shape: string;
@@ -80,6 +82,14 @@ export interface InkInterpretResult {
   marksNote: string;
   /** 위가 비었을 때 **왜** 비었는지. */
   marksStatus: InkMarksStatus;
+  /**
+   * 글자를 어느 길로 읽었나 (2026-08-10).
+   *
+   * `varco` 전용 OCR · `vision_fallback` 예비(비전) · `unknown` 옛 서버.
+   * **예비가 도는 것은 고장 신호다** — 학생 화면은 멀쩡해도 정확도가 내려가
+   * 있다.
+   */
+  textSource: InkTextSource;
 }
 
 const STATUSES: ReadonlySet<string> = new Set([
@@ -148,11 +158,16 @@ export async function interpretInk({
     text?: unknown;
     marks_note?: unknown;
     marks_status?: unknown;
+    text_source?: unknown;
   };
   return {
     text: typeof body.text === "string" ? body.text : "",
     marksNote: typeof body.marks_note === "string" ? body.marks_note : "",
     // 옛 서버(이 필드가 없던 시절)와 붙어도 화면이 깨지지 않게.
+    textSource:
+      body.text_source === "varco" || body.text_source === "vision_fallback"
+        ? body.text_source
+        : "unknown",
     marksStatus:
       typeof body.marks_status === "string" && STATUSES.has(body.marks_status)
         ? (body.marks_status as InkMarksStatus)

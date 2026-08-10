@@ -120,6 +120,26 @@ async def _empty_session(
     # 아무것도 안 잃는다"였다. 이 방은 구분이 된다 — 그러니 새로 만든다.
     if await client.count("nodes", {"session_id": f"eq.{sid}"}):
         return None
+    # 그린 것이 있으면 빈 대화가 아니다 (사용자 지시 2026-08-10).
+    #
+    # 판정이 `canvas_items`·`files`·`nodes`만 봤다. 그런데 학생이 **그리기만**
+    # 한 방은 셋 다 0이다 — 카드도 파일도 턴도 없이 획만 있다. 그 방을 재사용
+    # 하면 "새 대화"를 눌렀는데 **어제 그린 그림이 그대로 있는 방**이 열린다
+    # (실측 2026-08-10: 노드 0·카드 0인데 그림 요소 16개인 방이 재사용됐고,
+    # 손글씨 e2e가 "한 획을 그으면 1획"에서 13을 받았다).
+    #
+    # D202의 근거는 "빈 대화는 서로 구분할 수 없으니 하나를 다시 열어도
+    # 아무것도 안 잃는다"였다. 그림이 있는 방은 **구분이 된다.** 파일을 보는
+    # 이유("자료만 올려 둔 대화를 재사용하면 조용히 딸려 간다")와 같은 자리다.
+    #
+    # ⚠️ 행이 **있는 것**만으로는 판단할 수 없다 — 처음 저장될 때 빈 배열로
+    # 행이 먼저 생긴다. 요소 수를 봐야 한다.
+    drawings = await client.select(
+        "canvas_drawings",
+        {"session_id": f"eq.{sid}", "select": "elements", "limit": "1"},
+    )
+    if drawings and drawings[0].get("elements"):
+        return None
     return recent[0]
 
 
