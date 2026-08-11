@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUp, Expand, Grid2x2, Loader2, MessageSquarePlus, Minimize2 } from "lucide-react";
 import { ConceptMap } from "@/components/home/ConceptMap";
@@ -15,21 +15,6 @@ import { PAGE_BG } from "@/lib/ui/surface";
 /** 비어 있는 집합 하나를 재사용한다 — 렌더마다 새로 만들면 지도 memo가 깨진다. */
 const NO_HIDDEN: ReadonlySet<string> = new Set<string>();
 
-/**
- * 개념이 없어 대화방으로 보내는 중 (D210 2-1).
- *
- * 갓 가입한 학생에게 처음 보이는 화면이 "여기는 비어 있습니다"인 것은 좋은
- * 첫인상이 아니다 — 할 일을 알려 주는 것보다 **할 수 있는 자리로 데려다
- * 주는 것**이 낫다(사용자 지시 2026-08-08).
- */
-function GoingToCanvas() {
-  return (
-    <div className="flex h-full w-full items-center justify-center gap-2 text-sm text-fg-muted">
-      <Loader2 size={16} className="animate-spin" aria-hidden />
-      대화방을 여는 중…
-    </div>
-  );
-}
 
 /**
  * 홈 — **개념 지도를 배경으로 깐 시작 화면** (사용자 지시 2026-08-09).
@@ -76,19 +61,15 @@ export default function HomePage() {
   const [mapOnly, setMapOnly] = useState(false);
 
   /**
-   * **보여 줄 개념이 없으면 홈을 건너뛴다** (D210 2-1, 사용자 지시).
+   * ⚠️ **개념이 없어도 홈에 머문다** (사용자 지시 2026-08-11 — D210 2-1 폐기).
    *
-   * 판정 기준이 "세션 없음"이 아니라 **"개념 카드 0개"**인 것이 요점이다.
-   * 인사만 하고 나간 학생은 세션은 있지만 지도에 올릴 것이 없어 똑같이 빈
-   * 화면을 본다 — 세션 유무로 가르면 그 경우를 놓친다.
+   * 예전에는 개념 카드가 0개면 `/space/personal`로 튕겨 냈다. 그때는 홈에
+   * **지도밖에** 없어서 빈 홈이 곧 빈 화면이었기 때문이다.
    *
-   * `replace`여야 한다. `push`면 뒤로 가기가 다시 이 빈 홈으로 데려오고,
-   * 거기서 또 튕겨 나가 뒤로 가기가 먹지 않는 것처럼 보인다.
+   * 지금 홈에는 인사말과 **질문 입력창**이 있다. 노드가 하나도 없어도 학생이
+   * 여기서 바로 물어볼 수 있으므로 튕겨 낼 이유가 사라졌다 — 오히려 처음
+   * 들어온 학생이 홈을 한 번도 못 보고 캔버스로 끌려가던 쪽이 문제였다.
    */
-  const 개념없음 = !isLoading && !isError && (!map || map.nodes.length === 0);
-  useEffect(() => {
-    if (개념없음) router.replace("/space/personal");
-  }, [개념없음, router]);
 
   const displayName = profile?.display_name ?? profile?.email ?? null;
   const spaceIds = (summary?.spaces ?? []).map((s) =>
@@ -175,10 +156,10 @@ export default function HomePage() {
               잠시 뒤 다시 열어 보세요. 대화 기록은 그대로 있습니다.
             </p>
           </div>
-        ) : 개념없음 || !map ? (
-          /* 판정이 끝나기 전에는 아무 안내도 그리지 않는다 — 빈 지도가 잠깐
-           스쳤다 사라지면 깜빡임으로 보인다. */
-          <GoingToCanvas />
+        ) : !map ? (
+          /* 지도 모양이 아직 없을 때만 비워 둔다. **노드가 0개인 것은 정상**
+             이므로 그대로 그린다 — 빈 지도 위에 인사말과 입력창이 뜬다. */
+          <div className="h-full w-full" aria-hidden />
         ) : (
           <>
             {/**

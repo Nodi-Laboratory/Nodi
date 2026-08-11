@@ -33,6 +33,29 @@ export const EMPTY_ANSWERS: SurveyAnswers = {
   goal: "",
 };
 
+/**
+ * 시안 색 (디자이너 이미지 2026-08-11).
+ *
+ * ⚠️ 앱 토큰(`--accent-deep` 등)을 그대로 쓰면 **버튼이 진초록에 흰 글자**가
+ * 된다. 시안의 버튼은 **밝은 라임에 어두운 글자**이고, 이 화면은 처음 만나는
+ * 인상을 정하는 자리라 시안을 따른다. 대비는 확인했다 —
+ * #2A2A1E on #C6DC50 은 8.6:1로 본문 기준(4.5)을 넉넉히 넘는다.
+ */
+const 색 = {
+  /** 채운 면 — 버튼·현재 단계 동그라미·활성 점 */
+  라임: "#C6DC50",
+  /** 라임 위에 얹는 글자 */
+  라임글자: "#2A2A1E",
+  /** 입력칸 테두리 — 라임보다 옅다 */
+  테두리: "#D8E983",
+  /** 안 지난 단계의 선·동그라미 테두리·꺼진 점 */
+  회색: "#E3E3DE",
+  /** 말풍선 바탕 */
+  말풍선: "#EEF4DC",
+  /** 안 지난 단계의 글자 */
+  흐린글자: "#9A9A90",
+} as const;
+
 type Field = keyof SurveyAnswers;
 
 interface Step {
@@ -141,7 +164,7 @@ export function ProfileSurvey({
   const 적기 = (v: string) => setAnswers((cur) => ({ ...cur, [step.field]: v }));
 
   return (
-    <div className="flex w-full max-w-2xl flex-col items-center gap-10">
+    <div className="flex w-full max-w-[600px] flex-col items-center gap-12">
       {/* ── 진행 막대 ────────────────────────────────────────────────── */}
       <ol className="flex w-full items-start justify-center" data-survey-steps>
         {STEPS.map((s, i) => {
@@ -153,18 +176,18 @@ export function ProfileSurvey({
                     막대가 화면 밖으로 흘러나간 것처럼 보인다. */}
                 <span
                   className={`h-[2px] flex-1 ${i === 0 ? "opacity-0" : ""}`}
-                  style={{ background: i <= at ? "var(--accent-deep)" : "var(--accent-border)" }}
+                  style={{ background: i <= at ? 색.라임 : 색.회색 }}
                 />
                 <span
                   aria-current={i === at ? "step" : undefined}
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold transition-colors"
                   style={
                     done
-                      ? { background: "var(--accent-deep)", color: "var(--accent-fg)" }
+                      ? { background: 색.라임, color: "#FFFFFF" }
                       : {
-                          background: "var(--bg-elevated)",
-                          color: "var(--fg-muted)",
-                          boxShadow: "inset 0 0 0 1.5px var(--accent-border)",
+                          background: "#FFFFFF",
+                          color: 색.흐린글자,
+                          boxShadow: `inset 0 0 0 1.5px ${색.회색}`,
                         }
                   }
                 >
@@ -172,12 +195,12 @@ export function ProfileSurvey({
                 </span>
                 <span
                   className={`h-[2px] flex-1 ${i === STEPS.length - 1 ? "opacity-0" : ""}`}
-                  style={{ background: i < at ? "var(--accent-deep)" : "var(--accent-border)" }}
+                  style={{ background: i < at ? 색.라임 : 색.회색 }}
                 />
               </div>
               <span
                 className="mt-2 text-[13px]"
-                style={{ color: i === at ? "var(--accent-deep)" : "var(--fg-muted)" }}
+                style={{ color: i === at ? "#A6C22B" : 색.흐린글자 }}
               >
                 {s.label}
               </span>
@@ -193,21 +216,21 @@ export function ProfileSurvey({
           src="/onboarding/nodi-caterpillar.svg"
           alt=""
           aria-hidden
-          width={132}
-          height={102}
+          width={124}
+          height={109}
           className="shrink-0 select-none"
           draggable={false}
         />
         <div
           className="relative rounded-2xl px-6 py-4 text-[17px] leading-relaxed"
-          style={{ background: "var(--accent-wash, #f2f8dd)", color: "var(--fg)" }}
+          style={{ background: 색.말풍선, color: "#2A2A1E" }}
         >
           {/* 말풍선 꼬리. 배경과 같은 색의 네모를 돌려 끼운다 — 삼각형
               path보다 모서리 반경과 어울린다. */}
           <span
             aria-hidden
             className="absolute left-[-6px] top-1/2 h-3.5 w-3.5 -translate-y-1/2 rotate-45 rounded-[3px]"
-            style={{ background: "var(--accent-wash, #f2f8dd)" }}
+            style={{ background: 색.말풍선 }}
           />
           {step.lines.map((ln) => (
             <p key={ln}>{ln}</p>
@@ -230,11 +253,11 @@ export function ProfileSurvey({
                   className="rounded-2xl px-5 py-4 text-[15px] font-medium transition-colors"
                   style={
                     on
-                      ? { background: "var(--accent-deep)", color: "var(--accent-fg)" }
+                      ? { background: 색.라임, color: 색.라임글자 }
                       : {
-                          background: "var(--bg-elevated)",
-                          color: "var(--fg)",
-                          boxShadow: "inset 0 0 0 1.5px var(--accent-border)",
+                          background: "#FFFFFF",
+                          color: "#2A2A1E",
+                          boxShadow: `inset 0 0 0 1.5px ${색.테두리}`,
                         }
                   }
                 >
@@ -244,8 +267,9 @@ export function ProfileSurvey({
             })}
           </div>
         ) : (
-          <label className="flex items-center gap-3 rounded-2xl px-6 py-4"
-            style={{ background: "var(--bg-elevated)", boxShadow: "inset 0 0 0 1.5px var(--accent-border)" }}
+          <label
+            className="flex items-center gap-3 rounded-xl px-6 py-5"
+            style={{ background: "#FFFFFF", boxShadow: `inset 0 0 0 1.5px ${색.테두리}` }}
           >
             <span className="sr-only">{step.label}</span>
             <input
@@ -260,7 +284,7 @@ export function ProfileSurvey({
               className="flex-1 bg-transparent text-[16px] outline-none"
             />
             {/* 몇 자까지 쓸 수 있는지 — 시안에 있는 그 표시다. */}
-            <span className="text-[13px] tabular-nums" style={{ color: "var(--fg-muted)" }}>
+            <span className="text-[14px] tabular-nums" style={{ color: 색.흐린글자 }}>
               {value.length} / {step.maxLength}
             </span>
           </label>
@@ -271,8 +295,8 @@ export function ProfileSurvey({
           onClick={다음}
           disabled={busy}
           data-survey-next
-          className="flex items-center justify-center gap-2 rounded-2xl py-4 text-[17px] font-semibold transition-opacity disabled:opacity-50"
-          style={{ background: "var(--accent-deep)", color: "var(--accent-fg)" }}
+          className="flex items-center justify-center gap-3 rounded-xl py-5 text-[18px] font-bold transition-opacity disabled:opacity-50"
+          style={{ background: 색.라임, color: 색.라임글자 }}
         >
           {last ? "시작하기" : "다음"}
           <ArrowRight size={18} />
@@ -283,7 +307,7 @@ export function ProfileSurvey({
          * 그 사실을 화면이 말하지 않으면 학생은 뭔가 적어야 하는 줄 안다.
          */}
         {!value && (
-          <p className="text-center text-[13px]" style={{ color: "var(--fg-muted)" }}>
+          <p className="text-center text-[13px]" style={{ color: 색.흐린글자 }}>
             나중에 정해도 괜찮아요 — 그냥 넘어가도 돼요.
           </p>
         )}
@@ -295,7 +319,7 @@ export function ProfileSurvey({
           <span
             key={s.label}
             className="h-2 w-2 rounded-full transition-colors"
-            style={{ background: i === at ? "var(--accent-deep)" : "var(--accent-border)" }}
+            style={{ background: i === at ? 색.라임 : 색.회색 }}
           />
         ))}
       </div>
