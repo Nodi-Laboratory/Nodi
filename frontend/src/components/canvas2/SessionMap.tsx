@@ -31,7 +31,7 @@ import { Minus, Plus, Maximize2 } from "lucide-react";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Size } from "@/lib/canvas2/useItemLayout";
 import { ITEM_W } from "@/lib/canvas2/layout";
-import { buildTrees, treeEdges, LOOSE_TAG } from "@/lib/canvas2/tree";
+import { buildTrees, treeEdges, descendants, LOOSE_TAG } from "@/lib/canvas2/tree";
 import type { Rect } from "@/lib/canvas2/rect";
 import { PASTEL_COLORS } from "@/lib/ui/pastel";
 
@@ -63,18 +63,32 @@ const NODE_R = 6;
  * 그대로 말한다 — 상자 크기가 이미 들어 있다. 그 값으로 가르면 규칙 하나가
  * 셋을 옳게 다룬다: 좁은 미니맵은 점, 넓은 팝업·페이지는 노드.
  *
- * 값은 **실측에서 왔다**(2026-08-11, 1440×900): 미니맵 258×168에서 배율
- * 0.3008이었고 옛 기준으로 노드가 되는 지점이 zoom 1.8 = 배율 0.541이다.
- * 그래서 0.55를 쓰면 미니맵의 거동이 종전과 같다. 같은 내용이 팝업
- * 1041×666에서는 배율 **1.70**이라 열자마자 노드다.
+ * ## 잣대는 `model.scale`이 **아니다**
  *
- * 카드가 많으면 담을 상자가 커져 배율이 저절로 내려간다 — 전체 화면이어도
- * 150장짜리 방은 점으로 남는다. 계층이 원래 막으려던 것(빽빽한 글자 뭉개짐)이
- * 그대로 지켜진다.
+ * 처음에는 화면 배율(`fit × zoom`)로 갈랐다. 그런데 그 값은 **내용 경계**에
+ * 딸려 있다 — 학생이 노드를 멀리 끌면 경계가 커지고 `fit`이 떨어져, 자기가
+ * 끈 그 동작 때문에 지도가 점으로 되돌아갔다(실측 2026-08-11: 팝업에서
+ * 한 번 끌었더니 노드가 통째로 사라졌다). 화면이 자기 조작에 뒤집히면
+ * 그건 규칙이 아니라 고장으로 읽힌다.
+ *
+ * 그래서 **노드 하나가 갖는 화면 면적**으로 가른다:
+ *
+ *     여유 = 상자넓이 × 상자높이 × zoom² ÷ 노드 수
+ *
+ * 이 값은 상자 크기·배율·노드 수로만 정해져 **끌어도 안 변한다.** 계층이
+ * 원래 막으려던 것(빽빽해서 글자가 뭉개지는 것)도 그대로 지켜진다 — 그것은
+ * 애초에 "한 노드에 자리가 얼마나 있나"의 문제였다.
+ *
+ * 값은 실측에서 왔다(2026-08-11, 1440×900, 노드 3):
+ *   · 미니맵 258×168 → 여유 14,400 (점)
+ *   · 같은 내용이 팝업 1041×666 → 여유 **231,000** (노드)
+ *   · 미니맵을 옛 경계(zoom 1.8)까지 확대하면 46,800 — 그래서 45,000을 쓰면
+ *     미니맵의 거동이 종전과 같다.
+ *   · 팝업이라도 노드 150개면 4,600이라 점으로 남는다.
  */
-const NODE_SCALE = 0.55;
-/** 이 배율부터 노드 **제목**이 아래에 붙는다 (사용자 지시 2026-08-07). */
-const TITLE_SCALE = 0.8;
+const NODE_ROOM = 45_000;
+/** 이만큼 여유가 있으면 노드 **제목**도 붙는다 (옛 zoom 2.6 = 97,700). */
+const TITLE_ROOM = 95_000;
 const ZOOM_MIN = 0.6;
 const ZOOM_MAX = 8;
 const ZOOM_STEP = 1.3;
@@ -156,9 +170,15 @@ export function SessionMap({
   /** 판을 끄는 중. 노드를 끄는 것과 구분한다. */
   const panRef = useRef<{ sx: number; sy: number; cx: number; cy: number } | null>(null);
   /** 노드를 끄는 중 — id와 시작 world 좌표. */
-  const nodeRef = useRef<{ id: string; sx: number; sy: number; x0: number; y0: number } | null>(
-    null,
-  );
+  const nodeRef = useRef<{
+    id: string;
+    /** 함께 움직일 것들 — 자기와 자손 (D154·D161과 같은 규칙). */
+    ids: string[];
+    sx: number;
+    sy: number;
+    x0: number;
+    y0: number;
+  } | null>(null);
   /** 방금 동작이 끌기였나. pointerup이 click보다 먼저 돌아 ref로는 못 본다. */
   const movedRef = useRef(false);
   /**
@@ -315,8 +335,12 @@ export function SessionMap({
     return { nodes, loose, edges, dots, scale: s, cx, cy, boxAll };
   }, [H, W, items, pan, positions, sizes, tagOrder, zoom]);
 
-  const nodeView = (model?.scale ?? 0) >= NODE_SCALE;
-  const titleView = (model?.scale ?? 0) >= TITLE_SCALE;
+  /** 노드 하나가 갖는 화면 면적 — 계층을 가르는 잣대(위 머리말). */
+  const 여유 = model
+    ? (W * H * zoom * zoom) / Math.max(1, model.nodes.length + model.loose.length)
+    : 0;
+  const nodeView = 여유 >= NODE_ROOM;
+  const titleView = 여유 >= TITLE_ROOM;
 
   /** 화면 px → world px. 노드를 끌 때 이동량을 되돌리는 데 쓴다. */
   const toWorld = useCallback(
@@ -324,19 +348,38 @@ export function SessionMap({
     [model],
   );
 
+  /**
+   * 누른 것이 무엇이었나 — **`pointerup`에서 판정한다** (사용자 보고 2026-08-11).
+   *
+   * ⚠️ 예전에는 노드·점에 `onClick`을 달았다. 그런데 아래에서
+   * `setPointerCapture`를 svg에 걸므로, 브라우저는 `click`을 **캡처한
+   * 요소**에 준다 — 노드의 `onClick`은 영영 안 불린다. 실측 2026-08-11:
+   * 팝업에서 노드를 눌러도 카메라가 그대로였고 지도도 안 닫혔다.
+   * 누르기와 끌기가 **같은 제스처의 두 끝**이므로 판정도 한 곳에서 한다.
+   */
+  const tapRef = useRef<string | null>(null);
+
   const onPointerDown = (e: React.PointerEvent) => {
     movedRef.current = false;
-    const target = (e.target as HTMLElement).closest("[data-map-node]");
+    tapRef.current = null;
+    const el = e.target as HTMLElement;
+    const target = el.closest("[data-map-node]");
     if (target && model) {
       const id = target.getAttribute("data-map-node")!;
       const n =
         model.nodes.find((x) => x.id === id) ?? model.loose.find((x) => x.id === id);
       if (n) {
-        nodeRef.current = { id, sx: e.clientX, sy: e.clientY, x0: n.world.x, y0: n.world.y };
+        // 가지가 함께 간다 — 놓았을 때만 따라오면 끄는 동안 선이 늘어난다.
+        const ids = [id, ...descendants(items, id)];
+        nodeRef.current = { id, ids, sx: e.clientX, sy: e.clientY, x0: n.world.x, y0: n.world.y };
+        tapRef.current = id;
         (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
         return;
       }
     }
+    // 태그 점도 누르면 그 트리로 간다. 점은 끌 수 없으므로 표시만 남긴다.
+    const dot = el.closest("[data-map-dot]");
+    if (dot) tapRef.current = dot.getAttribute("data-map-dot");
     if (!model) return;
     panRef.current = { sx: e.clientX, sy: e.clientY, cx: model.cx, cy: model.cy };
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -349,12 +392,37 @@ export function SessionMap({
       const dy = e.clientY - n.sy;
       if (!movedRef.current && Math.hypot(dx, dy) < DRAG_MIN) return;
       movedRef.current = true;
-      // 끄는 동안에는 **그 노드만** 민다.
-      const g = nodeElAt(n.id);
-      if (g) {
+      /**
+       * 끄는 동안 **가지와 연결선이 함께 간다** (사용자 지시 2026-08-11).
+       *
+       * 예전에는 그 노드 하나만 밀었다. 자식은 제자리에 남고 선은 원래 두
+       * 점을 잇고 있으니, 끄는 내내 노드가 자기 선에서 떨어져 나갔다 —
+       * 놓는 순간 전부 제자리를 찾으므로 "어색하다"로만 보인다.
+       *
+       * React를 거치지 않는 이유는 노드 하나를 밀 때와 같다(위 `contentRef`
+       * 머리말) — 매 프레임 지도를 다시 세우면 손보다 늦다.
+       */
+      for (const mid of n.ids) {
+        const g = nodeElAt(mid);
+        if (!g) continue;
         const bx = Number(g.dataset.bx ?? 0);
         const by = Number(g.dataset.by ?? 0);
         g.setAttribute("transform", `translate(${bx + dx},${by + dy})`);
+      }
+      const 움직이는 = new Set(n.ids);
+      for (const line of document.querySelectorAll<SVGLineElement>("[data-map-edge]")) {
+        const from = line.dataset.from ?? "";
+        const to = line.dataset.to ?? "";
+        if (!움직이는.has(from) && !움직이는.has(to)) continue;
+        // 원래 좌표는 data-*에 적어 둔다 — 고친 값을 다시 읽으면 누적된다.
+        const ax = Number(line.dataset.ax ?? 0);
+        const ay = Number(line.dataset.ay ?? 0);
+        const bx2 = Number(line.dataset.bx2 ?? 0);
+        const by2 = Number(line.dataset.by2 ?? 0);
+        line.setAttribute("x1", String(움직이는.has(from) ? ax + dx : ax));
+        line.setAttribute("y1", String(움직이는.has(from) ? ay + dy : ay));
+        line.setAttribute("x2", String(움직이는.has(to) ? bx2 + dx : bx2));
+        line.setAttribute("y2", String(움직이는.has(to) ? by2 + dy : by2));
       }
       return;
     }
@@ -375,6 +443,14 @@ export function SessionMap({
     panRef.current = null;
     if (n && movedRef.current) {
       onMoveNode(n.id, n.x0 + toWorld(e.clientX - n.sx), n.y0 + toWorld(e.clientY - n.sy));
+      tapRef.current = null;
+      return;
+    }
+    // 움직이지 않았으면 **누른 것**이다 — 그 노드로 간다(위 `tapRef` 머리말).
+    if (!movedRef.current && tapRef.current) {
+      const id = tapRef.current;
+      tapRef.current = null;
+      onOpen(id);
       return;
     }
     // 끌어 옮긴 만큼을 **한 번만** state로 올린다. 올리는 순간 모델이 그
@@ -406,9 +482,10 @@ export function SessionMap({
         height={H}
         role="img"
         aria-label="대화방 지도"
-        /* 화면 배율(world px → 화면 px). 계층이 이 값으로 갈리므로(아래
-           `NODE_SCALE`) 시험이 눈이 아니라 숫자로 확인할 수 있어야 한다. */
+        /* 계층을 가르는 값들. 시험이 눈이 아니라 숫자로 확인할 수 있어야
+           한다(`data-strokes`와 같은 태도). */
         data-map-scale={model ? model.scale : 0}
+        data-map-room={Math.round(여유)}
         data-map-nodes={model ? model.nodes.length + model.loose.length : 0}
         style={{ touchAction: "none", cursor: "grab" }}
         onPointerDown={onPointerDown}
@@ -445,6 +522,15 @@ export function SessionMap({
             {model.edges.map((e) => (
               <line
                 key={`${e.from}->${e.to}`}
+                /* 끌 때 손으로 옮기는 대상 — 원래 좌표를 함께 적어 둔다
+                   (고친 값을 다시 읽으면 이동량이 누적된다). */
+                data-map-edge
+                data-from={e.from}
+                data-to={e.to}
+                data-ax={e.a.x}
+                data-ay={e.a.y}
+                data-bx2={e.b.x}
+                data-by2={e.b.y}
                 x1={e.a.x}
                 y1={e.a.y}
                 x2={e.b.x}
@@ -463,7 +549,6 @@ export function SessionMap({
                 data-by={n.y}
                 transform={`translate(${n.x},${n.y})`}
                 style={{ cursor: "grab" }}
-                onClick={() => !movedRef.current && onOpen(n.id)}
               >
                 <title>{`${n.title} — 눌러서 이동 · 끌어서 자리 옮기기`}</title>
                 <circle r={NODE_R + 8} fill="transparent" style={{ pointerEvents: "all" }} />
@@ -486,7 +571,6 @@ export function SessionMap({
                 data-by={n.y}
                 transform={`translate(${n.x},${n.y})`}
                 style={{ cursor: "grab" }}
-                onClick={() => !movedRef.current && onOpen(n.id)}
               >
                 <title>{`${n.title} — 눌러서 이동 · 끌어서 자리 옮기기`}</title>
                 <circle r={NODE_R + 10} fill="transparent" style={{ pointerEvents: "all" }} />
@@ -504,11 +588,9 @@ export function SessionMap({
           model.dots.map((d) => (
             <g
               key={d.tag}
+              data-map-dot={d.goTo ?? undefined}
               transform={`translate(${d.cx},${d.cy})`}
               style={{ cursor: d.goTo ? "pointer" : "default" }}
-              onClick={() => {
-                if (!movedRef.current && d.goTo) onOpen(d.goTo);
-              }}
             >
               <title>
                 {d.goTo

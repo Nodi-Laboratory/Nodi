@@ -1633,9 +1633,15 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
     store.moveMany(moves, "지도에서 옮김");
   });
 
-  /** 지도에서 노드를 눌렀다 — 그 카드로 날아간다. */
+  /**
+   * 지도에서 노드를 눌렀다 — 그 카드로 날아간다.
+   *
+   * **미니맵은 안 닫는다** (사용자 지시 2026-08-11). 예전에는 여기서 지도를
+   * 통째로 닫았다 — 미니맵에서 한 곳을 짚을 때마다 지도가 사라져 다시 열어야
+   * 했다. 짚어서 옮겨 가는 일은 연달아 하는 일이다. 전체 화면(팝업)은 도착한
+   * 화면을 가리므로 그쪽만 닫는다(`MiniMapOverlay`).
+   */
   const openFromMap = useEventCallback((id: string) => {
-    setMapOpen(false);
     goToNode(id);
   });
 

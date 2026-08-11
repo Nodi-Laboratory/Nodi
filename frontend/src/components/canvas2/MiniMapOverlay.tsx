@@ -254,7 +254,18 @@ export function MiniMapOverlay({
       tagOrder={tagOrder}
       box={{ w: box.w, h: box.h - 30 }}
       compact={box.w <= MINI.w}
-      onOpen={onOpenNode}
+      /**
+       * **누른 곳에 따라 닫는 것이 다르다** (사용자 지시 2026-08-11).
+       *
+       * 전체 화면(팝업)에서 누르면 그 노드를 보러 가는 것이므로 팝업은
+       * 비켜야 한다 — 안 닫으면 도착한 화면이 팝업에 가려 안 보인다.
+       * 미니맵에서 누르는 것은 **잠깐 짚어 옮겨 가는 일**이라 지도는 그대로
+       * 둔다(연달아 다른 곳을 짚을 수 있어야 한다).
+       */
+      onOpen={(id) => {
+        if (big) setBig(false);
+        onOpenNode(id);
+      }}
       onMoveNode={onMoveNode}
     />
   );
