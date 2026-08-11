@@ -423,17 +423,77 @@ export function layoutItems(
     arr.push(it);
     kidsOfParent.set(it.parentItemId, arr);
   }
+  /**
+   * 이미 자리를 잡아 준 첨부 열들 (2026-08-11).
+   *
+   * ⚠️ 열을 **전부 정한 뒤에** 실제 배치(아래 3)가 일어나므로, 이 시점의
+   * `blocks`에는 다른 카드의 첨부가 아직 없다. 그것만 보고 "왼쪽이 비었다"고
+   * 판단하면 옆 카드가 오른쪽으로 뻗어 둔 열에 그대로 겹쳐 든다 — `pushDown`이
+   * 아래로 밀어 주긴 하지만, 그러면 옆이 아니라 저 아래가 된다. 정한 것을
+   * 여기 적어 두고 다음 판단이 함께 본다.
+   */
+  const 예약: Rect[] = [];
   for (const [pid, kids] of kidsOfParent) {
     const parent = positions.get(pid);
     const parentItem = items.find((p) => p.id === pid);
     if (!parent || !parentItem) continue;
-    let x = parent.x + parentItem.width + CHILD_GAP;
     const cols = new Map<string, number>();
-    for (const kind of attachOrder) {
-      const mine = kids.filter((k) => k.kind === kind);
-      if (!mine.length) continue;
-      cols.set(kind, x);
-      x += Math.max(...mine.map((k) => k.width)) + ATTACH_GAP;
+
+    /**
+     * **딸린 것은 카드의 좌우 어느 쪽에나 붙는다** (사용자 지시 2026-08-11).
+     *
+     * D163은 전부 오른쪽에 세웠다. 종류가 둘이면 두 번째 열이 카드에서
+     * `카드폭 + 첫 열 폭`만큼 떨어지는데, 그 거리가 곧 "저 멀리 있는 것"이라
+     * 235% 줌(D162)에서는 화면 밖이다 — 검색은 됐는데 아무것도 안 뜬 것과
+     * 같아진다(D163이 UNTAGGED 열에서 겪은 바로 그 문제가 한 칸 안쪽에서
+     * 되풀이됐다).
+     *
+     * 좌우로 나누면 **둘 다 카드에 맞닿는다.** 묶음의 가로 폭도 카드를
+     * 가운데 두고 반씩 벌어져, 초점 카메라(D166)가 같은 것을 담는 데 필요한
+     * 축소가 줄어든다.
+     *
+     * ⚠️ **왼쪽이 언제나 비어 있지는 않다.** 열 간격(COL_GAP)에서 카드 폭을
+     * 뺀 자리는 첨부 하나가 들어갈 만큼 넓지 않을 때가 많고, 그러면
+     * `pushDown`이 겹침을 피하느라 저 아래로 미끄러진다 — 옆에 붙은 것이
+     * 아니게 된다. 그래서 **왼쪽에 실제로 자리가 있을 때만** 나눈다.
+     * 아니면 예전처럼 전부 오른쪽이다. 무겹침은 어느 쪽이든 `pushDown`이
+     * 지키므로 이 판단이 틀려도 그림이 깨지지는 않는다(D123의 태도).
+     */
+    const 있는종류 = attachOrder.filter((k) => kids.some((c) => c.kind === k));
+    const 폭 = new Map(
+      있는종류.map((k) => [
+        k,
+        Math.max(...kids.filter((c) => c.kind === k).map((c) => c.width)),
+      ]),
+    );
+    /** 그 종류를 한 열로 쌓았을 때의 높이 — 자리가 있나 보는 데 쓴다. */
+    const 열높이 = (k: string) => {
+      const mine = kids.filter((c) => c.kind === k);
+      return mine.reduce((s, c) => s + c.height, 0) + ATTACH_GAP * (mine.length - 1);
+    };
+    /** 카드 왼쪽의 그 자리가 무엇과도 안 겹치나(이미 정해 둔 열 포함). */
+    const 왼쪽빈다 = (w: number, h: number) => {
+      const x = parent.x - w - CHILD_GAP;
+      const y0 = parent.y;
+      const y1 = parent.y + Math.max(parentItem.height, h);
+      const 겹침 = (b: Rect) =>
+        b.x < x + w && b.x + b.w > x && b.y < y1 && b.y + b.h > y0;
+      return !blocks.some(겹침) && !예약.some(겹침);
+    };
+
+    // 종류가 둘이고 왼쪽이 비면 **먼 쪽(도판)을 왼쪽으로** 보낸다. 클립은
+    // 오른쪽에 남긴다 — 지금 물은 것에 대한 추천이라 시선이 먼저 가는 쪽이다.
+    const 뒤 = 있는종류.length === 2 ? 있는종류[1] : null;
+    const 왼쪽으로 =
+      뒤 && 왼쪽빈다(폭.get(뒤) ?? 0, 열높이(뒤)) ? 뒤 : null;
+
+    let x = parent.x + parentItem.width + CHILD_GAP;
+    for (const kind of 있는종류) {
+      const w = 폭.get(kind) ?? 0;
+      const 자리 = kind === 왼쪽으로 ? parent.x - w - CHILD_GAP : x;
+      if (kind !== 왼쪽으로) x += w + ATTACH_GAP;
+      cols.set(kind, 자리);
+      예약.push({ x: 자리, y: parent.y, w, h: 열높이(kind) });
     }
     attachCols.set(pid, cols);
   }

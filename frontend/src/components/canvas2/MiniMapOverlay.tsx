@@ -24,7 +24,7 @@ import { Maximize2, X } from "lucide-react";
 import { SessionMap } from "./SessionMap";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Size } from "@/lib/canvas2/useItemLayout";
-import { cornerPos, nearestCorner, type Corner } from "@/lib/canvas2/cornerSnap";
+import { CORNERS, cornerPos, nearestCorner, type Corner } from "@/lib/canvas2/cornerSnap";
 import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
 import { scaled } from "@/lib/ui/scale";
 
@@ -44,9 +44,17 @@ const CORNER_KEY = "nodi.map.corner";
 function loadCorner(): Corner {
   if (typeof window === "undefined") return "br";
   const v = window.localStorage.getItem(CORNER_KEY);
-  // 좌상단은 더 이상 허용하지 않는다(D211 9) — 예전에 거기 두었던 학생도
-  // 다음에 열면 오른쪽 아래에서 시작한다.
-  return v === "tr" || v === "bl" || v === "br" ? v : "br";
+  /**
+   * ⚠️ **`CORNERS`와 같은 목록을 봐야 한다** (사용자 보고 2026-08-11).
+   *
+   * 여기만 좌상단을 걸러 내고 있었다 — D211 9에서 뺐던 시절의 잔재다. 좌상단은
+   * 2026-08-09에 돌아왔는데(`cornerSnap.CORNERS`) **기억하는 쪽이 안 따라왔다.**
+   * 그래서 학생이 지도를 좌상단에 둬도 다음에 열면 우하단에서 시작했다. 붙기는
+   * 되는데 기억이 안 되니, 눈에는 "거기엔 안 붙는다"로 보인다.
+   *
+   * 목록을 두 번 적지 않는다 — 늘어나거나 줄어들 때 반드시 한쪽만 고친다.
+   */
+  return (CORNERS as readonly string[]).includes(v ?? "") ? (v as Corner) : "br";
 }
 
 interface Props {
@@ -146,14 +154,13 @@ export function MiniMapOverlay({
   }, [open, big, onClose]);
 
   /**
-   * 위쪽 상단 바가 먹는 높이 (2026-08-10).
+   * 붙을 자리. **위 모서리는 화면 위 변에 딱 붙는다** (사용자 지시 2026-08-11).
    *
-   * 바가 캔버스 위로 올라오면서(사용자 지시) 위 두 모서리가 그 밑에 깔린다.
-   * **재서** 받는다 — 문구가 한 줄 늘거나 크롬 배율이 바뀌면 높이가 달라지고,
-   * 상수로 박아 둔 숫자는 반드시 어긋난다.
+   * 2026-08-10까지는 상단 바 높이만큼 내려앉았다 — 그때 바는 화면 폭을
+   * 가로지르는 띠라 피할 도리가 없었다. 지금은 왼쪽 알약 하나라 **바가**
+   * 비켜선다(`chromeFit.crumbDx`).
    */
-  const topInset = useTopBarHeight();
-  const at = cornerPos(corner, vp, MINI, topInset);
+  const at = cornerPos(corner, vp, MINI);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -208,7 +215,6 @@ export function MiniMapOverlay({
         { x: d.x + (e.clientX - d.sx), y: d.y + (e.clientY - d.sy) },
         vp,
         MINI,
-        topInset,
       );
       /**
        * ⚠️ **인라인 좌표를 지우면 안 된다** (D211 8, 사용자 보고 2026-08-08).
@@ -222,7 +228,7 @@ export function MiniMapOverlay({
        * 목표 좌표를 **직접 쓴다.** React의 인라인 값과 같아지므로 다시 그리든
        * 안 그리든 자리가 같다.
        */
-      const at2 = cornerPos(next, vp, MINI, topInset);
+      const at2 = cornerPos(next, vp, MINI);
       el.style.transition = "";
       el.style.left = `${at2.x}px`;
       el.style.top = `${at2.y}px`;
@@ -230,7 +236,7 @@ export function MiniMapOverlay({
       window.localStorage.setItem(CORNER_KEY, next);
       onCornerChange?.(next);
     },
-    [vp, topInset, onCornerChange],
+    [vp, onCornerChange],
   );
 
   if (!open) return null;
@@ -373,34 +379,4 @@ export function MiniMapOverlay({
       )}
     </>
   );
-}
-
-
-/**
- * 캔버스 위에 떠 있는 상단 바의 높이 (2026-08-10).
- *
- * 미니맵이 위 모서리에 붙을 때 이만큼 내려 앉아야 바에 안 가린다. **재는**
- * 이유는 그 높이가 고정이 아니기 때문이다 — 문구가 한 줄 늘거나 크롬 배율
- * (`--ui-scale`)이 바뀌면 달라지고, 상수로 박아 둔 숫자는 반드시 어긋난다.
- *
- * 바가 없는 화면(지도 페이지)에서는 0이다.
- */
-function useTopBarHeight(): number {
-  const [h, setH] = useState(0);
-  useEffect(() => {
-    const el = document.querySelector("[data-canvas-crumb]");
-    if (!el) return;
-    // ⚠️ 여기서 `setH`를 **동기로 부르지 않는다** — React Compiler가 막고,
-    // 부를 필요도 없다: ResizeObserver는 관찰을 시작할 때 현재 크기로 한 번
-    // 불린다. 그 콜백 하나가 첫 값과 이후 변화를 모두 준다.
-    //
-    // ⚠️ **`contentRect`를 쓰면 안 된다.** 그건 padding과 `zoom`을 뺀 값이라
-    // 화면에서 이 바가 실제로 먹는 높이와 다르다 — 실측 2026-08-10: 화면에는
-    // 90px인데 `contentRect`는 52px이라, 지도가 38px만큼 바 밑에 깔렸다.
-    // 미니맵은 화면 좌표로 앉으므로 화면 기준으로 재야 한다.
-    const ro = new ResizeObserver(() => setH(el.getBoundingClientRect().height));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return h;
 }

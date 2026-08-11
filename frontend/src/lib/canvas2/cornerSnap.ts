@@ -41,24 +41,27 @@ export const SNAP_MARGIN = 16;
 /**
  * 그 모서리에 붙었을 때의 좌상단 좌표.
  *
- * `topInset`은 **위쪽에 이미 뭔가 떠 있는 높이**다 (2026-08-10). 상단 바가
- * 캔버스 위로 올라오면서(사용자 지시: 바 뒤로 캔버스가 보이게) 위 두 모서리가
- * 그 바에 가리게 됐다 — 예전에는 바가 한 줄을 차지해 이 문제가 없었다(D218).
+ * ## 위 모서리는 **화면 위 변에 붙는다** (사용자 지시 2026-08-11)
  *
- * 바 높이를 여기서 상수로 박지 않고 **받는다.** 문구가 한 줄 늘거나 크롬 배율이
- * 바뀌면 높이가 달라지는데, 박아 두면 그 숫자는 반드시 어긋난다.
+ * 2026-08-10에는 상단 바 높이(`topInset`)만큼 내려앉았다. 그때 바는 화면
+ * 폭을 가로지르는 띠라 피할 도리가 없었기 때문이다. 지금 바는 **왼쪽의
+ * 알약 하나**라 옆으로 비켜설 수 있고(`chromeFit.crumbDx`), 그래서 지도가
+ * 위 변에 딱 붙는다 — 비켜서는 쪽이 뒤집혔다.
+ *
+ * ⚠️ **여기와 `chromeFit`이 같은 자리를 봐야 한다.** 한쪽만 고치면 계산이
+ * 보는 지도 자리와 화면의 지도 자리가 갈려서, 겹치는데 안 겹친다고 하거나
+ * 그 반대가 된다.
  */
 export function cornerPos(
   corner: Corner,
   vp: Viewport,
   box: Box,
-  topInset = 0,
 ): { x: number; y: number } {
   const right = Math.max(SNAP_MARGIN, vp.w - box.w - SNAP_MARGIN);
   const bottom = Math.max(SNAP_MARGIN, vp.h - box.h - SNAP_MARGIN);
-  // 위 여백이 화면을 다 먹으면(아주 낮은 화면) 아래 여백보다 커질 수 있다 —
-  // 그때는 붙일 자리가 없으므로 아래 한계를 넘지 않게 묶는다.
-  const top = Math.min(bottom, SNAP_MARGIN + topInset);
+  // 아주 낮은 화면에서는 위 여백이 아래 한계를 넘을 수 있다 — 그때는 붙일
+  // 자리가 없으므로 아래 한계로 묶는다.
+  const top = Math.min(bottom, SNAP_MARGIN);
   switch (corner) {
     case "tl":
       return { x: SNAP_MARGIN, y: top };
@@ -80,14 +83,13 @@ export function nearestCorner(
   at: { x: number; y: number },
   vp: Viewport,
   box: Box,
-  topInset = 0,
 ): Corner {
   const cx = at.x + box.w / 2;
   const cy = at.y + box.h / 2;
   let best: Corner = "br";
   let bestD = Infinity;
   for (const c of CORNERS) {
-    const p = cornerPos(c, vp, box, topInset);
+    const p = cornerPos(c, vp, box);
     const d = Math.hypot(p.x + box.w / 2 - cx, p.y + box.h / 2 - cy);
     if (d < bestD) {
       bestD = d;

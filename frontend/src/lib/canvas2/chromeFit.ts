@@ -43,14 +43,16 @@ export interface ChromeInput {
   /** 크롬끼리 남길 틈. */
   gap: number;
   /**
-   * 위쪽에 떠 있는 상단 바의 높이 (2026-08-10).
+   * 상단 바 알약의 자리·크기 (2026-08-11). 무대 좌상단 기준.
    *
-   * 바가 캔버스 위로 올라오면서(사용자 지시) 위 모서리의 지도가 그만큼 내려
-   * 앉는다(`cornerSnap.cornerPos`). 여기서 같은 값을 안 보면 **계산이 보는
-   * 지도 자리와 화면의 지도 자리가 갈린다** — 겹치는데 안 겹친다고 하거나
-   * 그 반대가 된다.
+   * **누가 누구를 피하는지가 뒤집혔다** (사용자 지시). 2026-08-10에는 바가
+   * 자리를 지키고 지도가 그만큼 내려앉았다(`topInset`) — 그때 바는 화면 폭을
+   * 가로지르는 띠였으니 피할 도리가 없었다. 지금 바는 **왼쪽의 알약 하나**라
+   * 옆으로 비켜설 수 있고, 그러면 지도가 위 모서리에 **딱 붙는다.**
+   *
+   * 없으면(지도 페이지처럼 바가 없는 화면) 비켜설 것도 없다.
    */
-  topInset?: number;
+  crumb?: { x: number; y: number; w: number; h: number };
 }
 
 export type RailMode =
@@ -85,6 +87,13 @@ export interface ChromeFit {
    * 양보한다. 지도와 도구바는 정해진 크기다.
    */
   askMaxW: number | null;
+  /**
+   * 상단 바 알약을 **오른쪽으로** 밀 양(px, 0 이상) (2026-08-11).
+   *
+   * 지도가 좌상단에 붙으면 알약과 같은 자리를 다툰다. 지도는 크기가 정해져
+   * 있고 알약은 글자라 줄일 수 있으므로, 비켜서는 쪽은 알약이다.
+   */
+  crumbDx: number;
 }
 
 const NONE: ChromeFit = {
@@ -93,6 +102,7 @@ const NONE: ChromeFit = {
   mapDx: 0,
   askDx: 0,
   askMaxW: null,
+  crumbDx: 0,
 };
 
 /** 두 구간이 겹치나. */
@@ -101,16 +111,46 @@ function overlaps(a0: number, a1: number, b0: number, b1: number): boolean {
 }
 
 export function fitChrome(input: ChromeInput): ChromeFit {
-  const { stage, corner, map, rail, askW, margin, gap, topInset = 0 } = input;
+  const { stage, corner, map, rail, askW, margin, gap, crumb } = input;
   if (!corner) return NONE;
 
   const top = corner === "tl" || corner === "tr";
-  const mapTop = top ? margin + topInset : stage.h - margin - map.h;
+  // 위 모서리의 지도는 **화면 위 변에 붙는다** — 상단 바가 비켜선다(아래).
+  const mapTop = top ? margin : stage.h - margin - map.h;
   const mapBottom = mapTop + map.h;
   /** 지도의 가로 자리. 왼쪽 모서리면 왼쪽 변에, 오른쪽이면 오른쪽 변에 붙는다. */
   const mapLeft =
     corner === "tl" || corner === "bl" ? margin : stage.w - margin - map.w;
   const mapRight = mapLeft + map.w;
+
+  /**
+   * **알약이 지도를 피한다** (사용자 지시 2026-08-11).
+   *
+   * 지도가 좌상단에 붙으면 상단 바 알약과 같은 자리를 다툰다. 겹치는 만큼만
+   * 오른쪽으로 민다 — 필요 이상으로 밀면 "어디 있는 대화방인지"가 화면
+   * 한복판으로 걸어 나온다.
+   *
+   * 이 계산은 **도구바 판정보다 앞**이다. 도구바와 안 겹쳐 일찍 끝나는 길이
+   * 있는데, 알약은 그때도 비켜서야 한다.
+   *
+   * 좌우 **둘 다** 겹칠 때만 민다 — 지도가 우상단이면 알약과 가로로 만나지
+   * 않으므로 아무 일도 일어나지 않는다.
+   *
+   * 화면 밖으로는 안 민다. 좁은 화면에서 겹친 만큼 그대로 밀면 알약이 오른쪽
+   * 변을 넘어간다(입력창이 -117px까지 밀려났던 그 함정과 같은 모양이다).
+   * 남은 자리까지만 밀고, 모자라면 덜 민 채로 둔다 — 가려지는 것이 사라지는
+   * 것보다 낫다.
+   */
+  let crumbDx = 0;
+  if (crumb && crumb.w > 0) {
+    const 세로겹침 = overlaps(crumb.y, crumb.y + crumb.h, mapTop, mapBottom);
+    const 가로겹침 = overlaps(crumb.x, crumb.x + crumb.w, mapLeft, mapRight);
+    if (세로겹침 && 가로겹침) {
+      const 필요 = mapRight + gap - crumb.x;
+      const 여유 = Math.max(0, stage.w - margin - crumb.w - crumb.x);
+      crumbDx = Math.max(0, Math.min(필요, 여유));
+    }
+  }
 
   // 도구바는 오른쪽 변에 붙어 있다.
   const railRight = stage.w - margin;
@@ -126,8 +166,8 @@ export function fitChrome(input: ChromeInput): ChromeFit {
    * 그런데 지도는 **넓다** — 왼쪽에 붙어도 오른쪽 변까지 닿으면 도구바가 그
    * 아래 깔린다. 가로도 세로처럼 **재서** 판단한다.
    */
-  if (!overlaps(railLeft, railRight, mapLeft, mapRight)) return NONE;
-  if (!overlaps(railTop, railBottom, mapTop, mapBottom)) return NONE;
+  if (!overlaps(railLeft, railRight, mapLeft, mapRight)) return { ...NONE, crumbDx };
+  if (!overlaps(railTop, railBottom, mapTop, mapBottom)) return { ...NONE, crumbDx };
 
 
   // ── 1단계: 겹친 만큼만 민다 ────────────────────────────────────────
@@ -138,7 +178,7 @@ export function fitChrome(input: ChromeInput): ChromeFit {
   const movedBottom = railBottom + shift;
   // 밀어서 화면 안에 다 들어오면 그것으로 끝이다(평소 방식).
   if (movedTop >= margin && movedBottom <= stage.h - margin) {
-    return { railMode: "center", railShift: shift, mapDx: 0, askDx: 0, askMaxW: null };
+    return { railMode: "center", railShift: shift, mapDx: 0, askDx: 0, askMaxW: null, crumbDx };
   }
 
   /**
@@ -153,7 +193,7 @@ export function fitChrome(input: ChromeInput): ChromeFit {
     const 한계 = top
       ? Math.min(shift, stage.h - margin - railBottom)
       : Math.max(shift, margin - railTop);
-    return { railMode: "center", railShift: 한계, mapDx: 0, askDx: 0, askMaxW: null };
+    return { railMode: "center", railShift: 한계, mapDx: 0, askDx: 0, askMaxW: null, crumbDx };
   }
 
   // ── 2단계: 나란히 서고 지도를 왼쪽으로 물린다 ─────────────────────
@@ -189,5 +229,5 @@ export function fitChrome(input: ChromeInput): ChromeFit {
     // 입력창이 화면 밖으로 나갔다.
     askDx = Math.max(0, Math.min(넘침, 왼쪽 - margin));
   }
-  return { railMode, railShift: 0, mapDx, askDx, askMaxW };
+  return { railMode, railShift: 0, mapDx, askDx, askMaxW, crumbDx };
 }

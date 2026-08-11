@@ -1879,14 +1879,46 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 보내면 답이 갈 곳이 없다(D148: 공간이 안 맞으면 세션은 없는 것으로
    * 친다). 그래서 `sessionId`를 조건에 둔다.
    *
-   * ⚠️ **먼저 비우고 보낸다.** 보내고 비우면 그 사이에 이펙트가 다시 돌아
-   * 같은 질문이 두 번 나갈 수 있다 — 답이 두 벌 생기면 학생은 무엇이
-   * 자기 질문이었는지 알 수 없다.
+   * ## ⚠️ 이 이펙트의 의존성은 **값만**이어야 한다 (사용자 보고 2026-08-11)
+   *
+   * 원래 `handleSend`와 `clearSeed`가 의존성에 있었다. `handleSend`는
+   * `stream`에 묶여 있고 `useCanvasStream`은 **매 렌더 새 객체를 돌려준다** —
+   * 그래서 `handleSend`의 신원이 렌더마다 바뀌고, 이 이펙트도 렌더마다 다시
+   * 돈다. 그 자체는 낭비일 뿐이지만 아래가 `requestAnimationFrame`이라
+   * 이야기가 달라진다: 정리 함수가 **아직 안 터진 프레임을 취소**한다.
+   *
+   * 렌더가 프레임마다 이어지는 동안에는 예약 → 취소 → 예약 → 취소가 반복되어
+   * **그 프레임이 한 번도 안 터진다.** 캔버스가 들어오는 순간은 정확히 그런
+   * 때다(수화·카메라·스트림 상태가 연달아 바뀐다). 학생 눈에는 홈에서 질문을
+   * 보냈는데 새 방만 열리고 **아무 일도 안 일어나는 것**으로 보이고, 화면에도
+   * 로그에도 아무 흔적이 없다. 기계가 빠르면 렌더 사이에 프레임이 끼어들어
+   * 정상 동작하므로 재현도 갈린다.
+   *
+   * 그래서 보내는 일은 `useEventCallback`으로 신원을 고정하고, 의존성에는
+   * **문자열·불리언만** 남긴다. 이제 이 이펙트는 정말로 값이 바뀔 때만 돈다.
+   *
+   * ⚠️ **보내고 나서 비운다.** 예전에는 비우고 보냈다 — 두 번 나가는 것을
+   * 막으려는 것이었는데, 그 일은 바로 아래 `sentSeedRef`가 이미 한다. 순서를
+   * 되돌리면 `stream.send`가 어떤 이유로든 받지 않았을 때(그 함수는 빈손으로
+   * 조용히 돌아온다) 질문이 **영영 사라진다.**
    */
   const sentSeedRef = useRef<string | null>(null);
+  /**
+   * 신원이 고정된 손잡이. 이 안에서 읽는 `handleSend`·`clearSeed`는 언제나
+   * 최신 것이다(`useEventCallback`의 성질) — 낡은 클로저 걱정이 없다.
+   */
+  const sendSeed = useEventCallback((q: string) => {
+    handleSend(q);
+    clearSeed();
+  });
   useEffect(() => {
     if (!seed || !sessionId || stream.busy) return;
-    if (sentSeedRef.current === seed) return;
+    /**
+     * **세션까지 함께 기억한다.** 질문 글자로만 기억하면 같은 질문을 다른
+     * 방에서 다시 보낼 때 조용히 무시된다 — 학생은 같은 것을 두 번 묻는다.
+     */
+    const 표 = `${sessionId}::${seed}`;
+    if (sentSeedRef.current === 표) return;
     /**
      * **한 프레임 미룬다.** 이펙트 본문에서 바로 보내면 React Compiler가
      * 막는 동기 setState가 되고(억제하지 않고 구조로 푼다), 그보다 실질적
@@ -1894,12 +1926,11 @@ export function CanvasWorkspace({ spaceId }: Props) {
      * `pendingFocusItemId`를 소비하는 이펙트와 **같은 모양**이다.
      */
     const id = requestAnimationFrame(() => {
-      sentSeedRef.current = seed;
-      clearSeed();
-      handleSend(seed);
+      sentSeedRef.current = 표;
+      sendSeed(seed);
     });
     return () => cancelAnimationFrame(id);
-  }, [seed, sessionId, stream.busy, clearSeed, handleSend]);
+  }, [seed, sessionId, stream.busy, sendSeed]);
 
   const handleShapeDrag = useCallback(
     (dx: number, dy: number, done: boolean) => {

@@ -49,6 +49,8 @@ export default function HomePage() {
 
   const [question, setQuestion] = useState("");
   const [starting, setStarting] = useState(false);
+  /** 새 대화를 못 연 이유. 조용히 넘어가지 않는다(아래 `startChat` 참조). */
+  const [startError, setStartError] = useState<string | null>(null);
   /**
    * **온전한 지도 보기** (사용자 지시 2026-08-10).
    *
@@ -114,6 +116,7 @@ export default function HomePage() {
   const startChat = async (seed: string | null) => {
     if (starting) return;
     setStarting(true);
+    setStartError(null);
     try {
       const s = await createSession({ space_kind: "personal" });
       setActiveSpace("personal");
@@ -126,9 +129,18 @@ export default function HomePage() {
       });
       router.push("/space/personal");
     } catch {
-      // 방을 못 만들었으면 그냥 대화방으로 보낸다 — 거기서 다시 시도한다.
+      /**
+       * **못 만들었으면 여기 남아 그렇다고 말한다** (사용자 보고 2026-08-11).
+       *
+       * 예전에는 조용히 `/space/personal`로 보냈다. 그러면 학생은 **묻지도
+       * 않은 옛 방**에 도착한다 — 새 방도 없고 질문도 안 갔는데 화면에는
+       * 아무 말이 없으니, 보이는 것은 "홈에서 질문했더니 그냥 대화방이
+       * 열렸다"뿐이다. 어디가 잘못됐는지 학생도 우리도 알 수 없다.
+       *
+       * 질문은 입력창에 그대로 남는다 — 다시 치게 만들지 않는다.
+       */
       setStarting(false);
-      router.push("/space/personal");
+      setStartError("지금은 새 대화를 열 수 없어요. 잠시 뒤 다시 해 주세요.");
     }
   };
 
@@ -317,6 +329,18 @@ export default function HomePage() {
                     )}
                   </button>
                 </form>
+
+                {/* 실패는 입력창 **바로 아래**에 붙는다 — 방금 누른 곳에서
+                    시선이 안 떠난다. `role="status"`라 낭독기도 읽는다. */}
+                {startError && (
+                  <p
+                    role="status"
+                    className="-mt-5 text-center text-[13px]"
+                    style={{ color: "var(--danger)" }}
+                  >
+                    {startError}
+                  </p>
+                )}
 
                 <div className="flex items-center gap-3">
                   <button

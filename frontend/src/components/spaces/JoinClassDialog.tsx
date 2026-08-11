@@ -33,17 +33,44 @@ export function JoinClassDialog({
 
   const joined = code.join("").trim();
 
-  const setAt = (i: number, v: string) => {
-    const c = v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 1);
+  const 칸에집중 = (i: number) =>
+    document
+      .querySelector<HTMLInputElement>(`[data-join-cell="${Math.min(i, CODE_LEN - 1)}"]`)
+      ?.focus();
+
+  /**
+   * **여러 글자를 한 번에 받는다** (사용자 보고 2026-08-11: "붙여넣기가 안 돼서
+   * 하나하나 입력하는 게 불편하다").
+   *
+   * 한 칸이 한 글자만 받는다고 해서 **입력이 한 글자씩 온다는 뜻은 아니다** —
+   * 붙여넣기·자동완성·문자 인증 채우기는 통째로 들어온다. 예전에는
+   * `slice(0, 1)`이 나머지를 버려서, 여섯 자리를 복사해 붙여도 첫 글자만
+   * 남았다. 이제 받은 만큼 **이어지는 칸에 흘려 담는다.**
+   *
+   * 대문자·영숫자 정규화는 여기 한 곳에서만 한다(D170). 붙여넣기 경로와
+   * 타이핑 경로가 각자 정규화하면 반드시 갈린다.
+   */
+  const 채우기 = (from: number, raw: string) => {
+    const 글자 = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!글자) {
+      // 지우는 것도 이 길로 온다 — 빈 값이면 그 칸만 비운다.
+      setCode((cur) => {
+        const next = [...cur];
+        next[from] = "";
+        return next;
+      });
+      return;
+    }
+    const 쓸것 = 글자.slice(0, CODE_LEN - from);
     setCode((cur) => {
       const next = [...cur];
-      next[i] = c;
+      for (let k = 0; k < 쓸것.length; k++) next[from + k] = 쓸것[k];
       return next;
     });
-    if (c && i < CODE_LEN - 1) {
-      document.querySelector<HTMLInputElement>(`[data-join-cell="${i + 1}"]`)?.focus();
-    }
+    칸에집중(from + 쓸것.length);
   };
+
+  const setAt = (i: number, v: string) => 채우기(i, v);
 
   const 닫기 = () => {
     setCode(Array(CODE_LEN).fill(""));
@@ -114,6 +141,18 @@ export function JoinClassDialog({
                 data-join-cell={i}
                 value={code[i]}
                 onChange={(e) => setAt(i, e.target.value)}
+                /**
+                 * ⚠️ **`maxLength={1}`이 붙여넣기를 먼저 자른다.** 그래서
+                 * `onChange`만으로는 여섯 자리를 못 받는다 — 브라우저가 값을
+                 * 한 글자로 줄인 뒤에 부르기 때문이다. 클립보드에서 직접
+                 * 읽어 우리가 흘려 담는다.
+                 */
+                onPaste={(e) => {
+                  const t = e.clipboardData.getData("text");
+                  if (!t) return;
+                  e.preventDefault();
+                  채우기(i, t);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Backspace" && !code[i] && i > 0) {
                     document

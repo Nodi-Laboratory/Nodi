@@ -378,10 +378,15 @@ describe("카드에 딸린 클립·도판 (D163)", () => {
     ];
     const { positions } = layoutItems(items);
     const c1 = positions.get("c1")!;
-    // 클립이 카드에 제일 가깝다 — 지금 물은 것에 대한 추천이다.
+    // 클립은 오른쪽 — 지금 물은 것에 대한 추천이라 시선이 먼저 가는 쪽이다.
     expect(positions.get("k0")!.x).toBe(c1.x + ITEM_W + CHILD_GAP);
-    // 도판은 클립 열 너머다(클립 폭 340 + ATTACH_GAP).
-    expect(positions.get("f0")!.x).toBe(c1.x + ITEM_W + CHILD_GAP + 340 + ATTACH_GAP);
+    /**
+     * **도판은 왼쪽이다** (사용자 지시 2026-08-11). 예전에는 클립 열 **너머**
+     * 오른쪽이라 카드에서 `ITEM_W + 340 + 간격`만큼 떨어졌다 — 그 거리가 곧
+     * 235% 줌에서 화면 밖이다. 좌우로 나누면 둘 다 카드에 맞닿는다.
+     */
+    expect(positions.get("f0")!.x).toBe(c1.x - 320 - CHILD_GAP);
+    expect(positions.get("f0")!.x).toBeLessThan(c1.x);
     // 두 종류 모두 카드 윗변에서 시작한다 — 한쪽이 다른 쪽 아래로 밀리지 않는다.
     expect(positions.get("k0")!.y).toBe(c1.y);
     expect(positions.get("f0")!.y).toBe(c1.y);
@@ -391,6 +396,32 @@ describe("카드에 딸린 클립·도판 (D163)", () => {
       return p.y + (id.startsWith("k") ? 150 : 260);
     });
     expect(Math.max(...bottoms) - c1.y).toBeLessThan(900);
+    expect(overlaps(items).bad).toEqual([]);
+  });
+
+  /**
+   * 좌우로 나누는 것은 **왼쪽이 실제로 빌 때만**이다 (2026-08-11).
+   *
+   * 카드 왼쪽에 다른 열이 바짝 붙어 있으면, 거기 밀어 넣어 봐야 `pushDown`이
+   * 겹침을 피하느라 저 아래로 미끄러진다 — "옆에 딸린 것"이 아니게 된다.
+   * 그럴 때는 예전처럼 둘 다 오른쪽이어야 한다.
+   */
+  it("왼쪽이 막혔으면 딸린 것은 둘 다 오른쪽에 선다", () => {
+    const items = [
+      // 앞 열의 카드가 **오른쪽으로 클립 열을 뻗어** 열 사이 빈틈을 메운다.
+      card({ id: "a", seq: 0, tag: "앞", height: 400 }),
+      item({ id: "ak", seq: 1, kind: "clip", source: "ai", parentItemId: "a",
+             width: 340, height: 300 }),
+      card({ id: "c1", seq: 2, tag: "뒤", height: 208 }),
+      item({ id: "f0", seq: 3, kind: "figure", source: "ai", parentItemId: "c1",
+             width: 320, height: 260 }),
+      item({ id: "k0", seq: 4, kind: "clip", source: "ai", parentItemId: "c1",
+             width: 340, height: 150 }),
+    ];
+    const { positions } = layoutItems(items);
+    const c1 = positions.get("c1")!;
+    expect(positions.get("k0")!.x).toBe(c1.x + ITEM_W + CHILD_GAP);
+    expect(positions.get("f0")!.x).toBe(c1.x + ITEM_W + CHILD_GAP + 340 + ATTACH_GAP);
     expect(overlaps(items).bad).toEqual([]);
   });
 

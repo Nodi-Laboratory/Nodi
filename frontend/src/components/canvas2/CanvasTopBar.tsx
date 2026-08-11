@@ -30,6 +30,7 @@
  */
 
 import { Menu } from "lucide-react";
+import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
 
 interface Props {
   /** 학급 이름. 개인 세션이면 null. */
@@ -47,6 +48,16 @@ export function CanvasTopBar({
   historyOpen,
   onToggleHistory,
 }: Props) {
+  /**
+   * **지도가 좌상단이면 알약이 오른쪽으로 비켜선다** (사용자 지시 2026-08-11).
+   *
+   * 예전에는 반대였다 — 바가 자리를 지키고 지도가 그 높이만큼 내려앉았다.
+   * 그때 이 바는 화면 폭을 가로지르는 띠라 피할 수가 없었는데, 지금은 왼쪽의
+   * 알약 하나라 옆으로 물러설 수 있다. 그래서 지도가 화면 위 변에 딱 붙는다.
+   *
+   * 미는 양은 `chromeFit`이 정한다(겹친 만큼만, 화면 밖으로는 안 나간다).
+   */
+  const chrome = useChromeFitValue();
   return (
     <div
       data-no-pan
@@ -93,6 +104,7 @@ export function CanvasTopBar({
          */}
         <button
           type="button"
+          data-crumb-pill
           onClick={onToggleHistory}
           aria-label="지난 대화"
           aria-pressed={historyOpen}
@@ -100,6 +112,14 @@ export function CanvasTopBar({
           style={{
             background: historyOpen ? "var(--accent-soft)" : "#ffffff",
             boxShadow: "var(--shadow-float)",
+            /* 크롬 배율(`zoom`) 안이라 화면 px을 배율로 나눠 옮긴다 —
+               입력창이 `askDx`를 쓰는 방식과 같다. */
+            ...(chrome.crumbDx
+              ? {
+                  transform: `translateX(calc(${chrome.crumbDx}px / var(--ui-scale, 1)))`,
+                  transition: "transform 160ms ease-out",
+                }
+              : {}),
           }}
         >
           <span

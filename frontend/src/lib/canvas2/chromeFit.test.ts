@@ -191,20 +191,58 @@ describe("넓은 지도는 모서리와 상관없이 도구바를 밀어낸다 (
   });
 });
 
-describe("상단 바가 떠 있으면 그만큼 내려 본다 (2026-08-10)", () => {
+describe("지도가 위 변에 붙고 상단 바 알약이 비켜선다 (사용자 지시 2026-08-11)", () => {
+  const 공통 = {
+    stage: { w: 1000, h: 900 },
+    map: { w: 380, h: 300 },
+    rail: { w: 64, h: 300 },
+    askW: 0,
+    margin: 16,
+    gap: 14,
+  };
+  /** 좌상단의 알약. 무대 기준 좌표다. */
+  const 알약 = { x: 20, y: 12, w: 260, h: 56 };
+
+  it("좌상단 지도는 알약을 오른쪽으로 민다", () => {
+    const f = fitChrome({ ...공통, corner: "tl", crumb: 알약 });
+    // 지도 오른쪽 변(16+380=396)에서 한 틈(14) 뒤로 — 알약 왼쪽 변(20) 기준.
+    expect(f.crumbDx).toBeCloseTo(396 + 14 - 20, 1);
+  });
+
+  it("우상단 지도는 알약과 가로로 안 만나므로 아무 일도 없다", () => {
+    expect(fitChrome({ ...공통, corner: "tr", crumb: 알약 }).crumbDx).toBe(0);
+  });
+
+  it("아래 모서리 지도는 알약과 세로로 안 만난다", () => {
+    expect(fitChrome({ ...공통, corner: "bl", crumb: 알약 }).crumbDx).toBe(0);
+  });
+
   /**
-   * 바가 캔버스 위로 올라오면서 위 모서리의 지도가 그만큼 내려 앉는다. 규칙이
-   * 같은 값을 안 보면 **계산이 보는 자리와 화면의 자리가 갈린다.**
+   * 겹친 만큼 그대로 밀면 좁은 화면에서 알약이 오른쪽 변을 넘어간다 —
+   * 입력창이 -117px까지 밀려났던 그 함정과 같은 모양이다.
    */
-  it("위 여백만큼 지도가 내려간 것으로 친다", () => {
-    const 공통 = {
-      stage: { w: 1000, h: 900 }, corner: "tr" as const,
-      map: { w: 380, h: 300 }, rail: { w: 64, h: 300 },
-      askW: 0, margin: 16, gap: 14,
-    };
-    const 여백없음 = fitChrome(공통);
-    const 여백있음 = fitChrome({ ...공통, topInset: 73 });
-    // 지도가 73px 내려갔으므로 도구바도 그만큼 더 내려가야 한다.
-    expect(여백있음.railShift).toBeCloseTo(여백없음.railShift + 73, 1);
+  it("화면 밖으로는 안 민다", () => {
+    const f = fitChrome({
+      ...공통,
+      stage: { w: 560, h: 900 },
+      corner: "tl",
+      crumb: 알약,
+    });
+    expect(f.crumbDx).toBeLessThanOrEqual(560 - 16 - 알약.w - 알약.x + 0.5);
+    expect(f.crumbDx).toBeGreaterThanOrEqual(0);
+  });
+
+  it("알약이 없는 화면(지도 페이지)에서는 0이다", () => {
+    expect(fitChrome({ ...공통, corner: "tl" }).crumbDx).toBe(0);
+  });
+
+  /**
+   * 지도가 더 이상 바 높이만큼 내려앉지 않는다 — 위 모서리의 지도는 여백에
+   * 바로 붙는다. 도구바 비켜서기가 그 자리를 기준으로 계산된다.
+   */
+  it("위 모서리 지도는 바 높이와 무관하게 같은 자리로 친다", () => {
+    const a = fitChrome({ ...공통, corner: "tr" });
+    const b = fitChrome({ ...공통, corner: "tr", crumb: 알약 });
+    expect(b.railShift).toBeCloseTo(a.railShift, 1);
   });
 });

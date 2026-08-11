@@ -24,6 +24,7 @@ const NONE: ChromeFit = {
   railShift: 0,
   mapDx: 0,
   askDx: 0,
+  crumbDx: 0,
   askMaxW: null,
 };
 
@@ -46,6 +47,7 @@ function publish(next: ChromeFit): void {
     Math.abs(next.railShift - current.railShift) < 0.5 &&
     Math.abs(next.mapDx - current.mapDx) < 0.5 &&
     Math.abs(next.askDx - current.askDx) < 0.5 &&
+    Math.abs(next.crumbDx - current.crumbDx) < 0.5 &&
     next.askMaxW === current.askMaxW
   ) {
     return;
@@ -108,17 +110,28 @@ export function useChromeFit(
       askW: a?.width ?? 0,
       margin: SNAP_MARGIN,
       gap: GAP,
-      // 상단 바는 캔버스 위에 떠 있다 — 위 모서리의 지도가 그만큼 내려 앉는다.
-      topInset:
-        document
-          .querySelector<HTMLElement>("[data-canvas-crumb]")
-          ?.getBoundingClientRect().height ?? 0,
+      /**
+       * 상단 바 **알약**의 자리 (2026-08-11). 무대 기준 좌표로 넘긴다.
+       *
+       * ⚠️ 재는 것은 띠(`[data-canvas-crumb]`)가 아니라 그 안의 알약이다.
+       * 띠는 화면 폭을 다 쓰고 `pointer-events: none`이라 가리는 것이 없다 —
+       * 띠로 재면 지도가 우상단일 때도 겹쳤다고 판정한다.
+       */
+      crumb: (() => {
+        const c = document
+          .querySelector<HTMLElement>("[data-crumb-pill]")
+          ?.getBoundingClientRect();
+        return c
+          ? { x: c.left - stage.left, y: c.top - stage.top, w: c.width, h: c.height }
+          : undefined;
+      })(),
     });
     if (
       next.railMode === fitRef.current.railMode &&
       Math.abs(next.railShift - fitRef.current.railShift) < 0.5 &&
       Math.abs(next.mapDx - fitRef.current.mapDx) < 0.5 &&
       Math.abs(next.askDx - fitRef.current.askDx) < 0.5 &&
+      Math.abs(next.crumbDx - fitRef.current.crumbDx) < 0.5 &&
       next.askMaxW === fitRef.current.askMaxW
     ) {
       return;

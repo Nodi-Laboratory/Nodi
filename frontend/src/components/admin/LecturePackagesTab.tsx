@@ -318,11 +318,11 @@ function VideosPanel({
         <span className="text-sm text-[#e7e3d8]">
           {adding ? "올리는 중…" : "파싱 파일(.json)을 여기에 끌어다 놓으세요"}
         </span>
+        {/* 만드는 스크립트 경로는 안 적는다(사용자 지시 2026-08-11). 저장소
+            밖 오프라인 도구라(D221) 이 화면을 보는 사람에게는 없는 파일이고,
+            내부 경로가 콘솔에 그대로 드러날 이유도 없다. */}
         <span className="text-[11px] leading-relaxed text-[#6f6a62]">
-          여러 개를 한 번에 놓을 수 있습니다. 파일은
-          {" "}
-          <code className="rounded bg-black/30 px-1">.claude/scripts/parse_lectures.py</code>
-          {" "}로 만듭니다.
+          여러 개를 한 번에 놓을 수 있습니다.
         </span>
         <button
           type="button"
