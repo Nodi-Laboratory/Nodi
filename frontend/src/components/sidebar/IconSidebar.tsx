@@ -138,7 +138,15 @@ export default function IconSidebar() {
        * 폭 112px × 0.95 = 106px으로 목표(105~115px) 안에 든다.
        */
       style={{ zoom: "var(--ui-scale, 1)" }}
-      className="flex h-full w-28 shrink-0 flex-col items-center gap-1 border-r border-line/60 bg-bg-sidebar px-3 py-4"
+      /**
+       * **좁은 화면에서는 아이콘만** (사용자 지시 2026-08-11).
+       *
+       * 112px는 390px 폰에서 화면의 **29%**다. D219가 1.4배 시절에 겪은
+       * 그 문제(사이드바가 23%를 먹어 [보내기]가 화면 밖으로 나갔다)와
+       * 같은 자리다 — 그때는 배율을 낮춰 풀었는데, 개편에서 글자를 붙이며
+       * 폭이 다시 늘었다. 낱말은 넓은 화면에서만 보인다.
+       */
+      className="flex h-full w-28 shrink-0 flex-col items-center gap-1 border-r border-line/60 bg-bg-sidebar px-3 py-4 max-[900px]:w-16 max-[900px]:px-1"
     >
       {/**
        * 브랜드 마크 — **누를 수 없다** (사용자 지시 2026-08-09).

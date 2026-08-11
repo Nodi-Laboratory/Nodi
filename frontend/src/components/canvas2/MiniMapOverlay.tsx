@@ -35,8 +35,17 @@ import { scaled } from "@/lib/ui/scale";
  * 떠 있는 것이라 작을수록 좋고, 자세히 볼 때는 팝업이 있다.
  */
 const MINI = { w: scaled(272), h: scaled(208) };
-/** 팝업은 뷰포트의 이 비율까지만 — 뒤쪽 캔버스가 테두리처럼 보여야 한다. */
+/**
+ * 팝업은 뷰포트의 이 비율까지만 — 뒤쪽 캔버스가 테두리처럼 보여야 한다.
+ *
+ * **좁은 화면에서는 거의 꽉 채운다** (사용자 지시 2026-08-11). 390px 폰에서
+ * 0.78은 304px이라 "크게 보기"가 미니맵보다 별로 안 크다 — 뒤가 보이는 값보다
+ * 지도가 보이는 값이 먼저다. 넓은 화면은 그대로 0.78이다.
+ */
 const POPUP_RATIO = 0.78;
+const POPUP_RATIO_NARROW = 0.96;
+/** 이 폭 아래를 좁은 화면으로 친다(크롬 배율이 1이 되는 지점과 같다). */
+const NARROW = 900;
 const POPUP_MAX = { w: 1200, h: 800 };
 /** 붙은 모서리를 기억하는 키. */
 const CORNER_KEY = "nodi.map.corner";
@@ -241,9 +250,10 @@ export function MiniMapOverlay({
 
   if (!open) return null;
 
+  const 비율 = vp.w <= NARROW ? POPUP_RATIO_NARROW : POPUP_RATIO;
   const popup = {
-    w: Math.min(POPUP_MAX.w, Math.round(vp.w * POPUP_RATIO)),
-    h: Math.min(POPUP_MAX.h, Math.round(vp.h * POPUP_RATIO)),
+    w: Math.min(POPUP_MAX.w, Math.round(vp.w * 비율)),
+    h: Math.min(POPUP_MAX.h, Math.round(vp.h * 비율)),
   };
 
   const 지도 = (box: { w: number; h: number }) => (
@@ -295,6 +305,15 @@ export function MiniMapOverlay({
           boxShadow: "var(--shadow-float)",
           // 모서리로 붙는 움직임 — 즉시 튀면 어디로 갔는지 안 보인다.
           transition: "left .28s cubic-bezier(.16,1,.3,1), top .28s cubic-bezier(.16,1,.3,1)",
+          /**
+           * ⚠️ **손가락 제스처를 브라우저에 뺏기지 않는다** (2026-08-11).
+           *
+           * `touch-action`이 기본값이면 모바일 브라우저가 이 위에서 시작한
+           * 끌기를 스크롤·확대로 해석해 **포인터를 취소한다**(pointercancel).
+           * 그러면 지도를 끌어 옮기거나 노드를 옮기는 일이 손가락에서만
+           * 조용히 안 된다 — 마우스로는 멀쩡해서 눈치채기 어렵다.
+           */
+          touchAction: "none",
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -364,7 +383,8 @@ export function MiniMapOverlay({
            */
           data-no-pan
           className="fixed inset-0 z-40 flex items-center justify-center"
-          style={{ background: "var(--c-overlay)" }}
+          // touchAction: 위 미니맵 상자와 같은 이유(손가락 제스처 보존).
+          style={{ background: "var(--c-overlay)", touchAction: "none" }}
           // 바깥을 누르면 닫힌다.
           onClick={() => setBig(false)}
         >

@@ -40,8 +40,21 @@ const LONG_PRESS_MS = 420;
  * 되는 지점이다.
  */
 const MOUSE_HOLD_MS = 700;
-/** 이보다 움직이면 "누르고 있는 것"이 아니다(화면 px). */
+/**
+ * 이만큼 움직이면 "가만히 누르고 있는 것"이 아니다 — 화면 이동이 시작된다.
+ *
+ * ⚠️ **손가락과 마우스의 값이 다르다** (사용자 보고 2026-08-11: "모바일에서
+ * 화면 이동이 버벅거린다"). 10px은 마우스에서는 안 느껴지지만 손가락에서는
+ * **처음 10px이 통째로 죽은 구간**이다 — 그동안 화면이 한 톨도 안 움직이므로
+ * 눈에는 "따라오다 만다"로 읽힌다. 손가락은 접촉면이 넓어 누르는 순간부터
+ * 몇 px씩 흔들리므로 문턱 자체는 필요하지만, 4px이면 충분하다(지도가 끌기로
+ * 치는 값과 같다).
+ *
+ * 마우스는 10px 그대로다 — 0.7초 누르고 끄는 선택 상자와 갈라야 해서, 짧게
+ * 잡으면 옮기려던 것이 자꾸 상자가 된다(D218).
+ */
 const HOLD_SLOP = 10;
+const HOLD_SLOP_TOUCH = 4;
 /** 이보다 작은 상자는 선택이 아니라 탭이다. */
 const MARQUEE_MIN_PX = 8;
 
@@ -150,6 +163,31 @@ export function useTouchNavigate({
       timer: number;
     } | null = null;
 
+    /**
+     * **화면 이동은 프레임당 한 번만 반영한다** (사용자 보고 2026-08-11).
+     *
+     * 모바일 브라우저는 한 프레임에 `pointermove`를 여러 번 준다(고주사율
+     * 화면·이벤트 합침). 그때마다 카메라를 쓰면 같은 프레임에 여러 번 고쳐
+     * 놓고 결국 마지막 것만 그려진다 — 그린 만큼이 아니라 **버린 만큼이 지연**
+     * 으로 쌓인다. 이동량을 더해 두었다가 다음 프레임에 한 번 민다.
+     *
+     * ⚠️ 이동량은 **누적**한다. 프레임을 건너뛰며 마지막 값만 쓰면 그 사이의
+     * 움직임이 사라져 화면이 손보다 덜 간다.
+     */
+    let 밀량 = { x: 0, y: 0 };
+    let 밀프레임 = 0;
+    const 밀기예약 = (dx: number, dy: number) => {
+      밀량.x += dx;
+      밀량.y += dy;
+      if (밀프레임) return;
+      밀프레임 = requestAnimationFrame(() => {
+        밀프레임 = 0;
+        const { x, y } = 밀량;
+        밀량 = { x: 0, y: 0 };
+        if (x || y) panByScreen(x, y);
+      });
+    };
+
     /** 선택 상자. 필요할 때만 만든다 — 평소에 DOM을 하나 더 두지 않는다. */
     let boxEl: HTMLDivElement | null = null;
     const showBox = () => {
@@ -204,7 +242,18 @@ export function useTouchNavigate({
        * 도형을 같은 드래그로 잡아야 하므로 가로채면 안 된다.
        */
       if (isMouse && !(mouse && activeTool === "hand")) return;
-      if (!isMouse && !enabled) return;
+      /**
+       * ⚠️ **`enabled`(=`pointer: coarse`)로 손가락을 거르지 않는다**
+       * (2026-08-11).
+       *
+       * 터치가 되는데 `pointer: coarse`를 **안** 보고하는 기기가 있다 —
+       * 펜과 터치를 함께 쓰는 윈도 태블릿·크롬북이 대표적이고, 그런 기기는
+       * 주 포인터를 `fine`으로 답한다. 그러면 이 훅이 손가락 이동을 통째로
+       * 안 받아 **화면이 안 움직인다.** 여기까지 온 non-mouse 포인터는 이미
+       * 도구가 합친 도구이고 우리 UI 위도 아니므로, 받아서 미는 것이 맞다.
+       *
+       * `enabled`는 훅을 붙일지 정하는 데만 남는다(마우스도 `mouse`로 붙는다).
+       */
       // 가운데 버튼 끌기는 팬 전용이다(`useMiddleDragPan`).
       if (isMouse && e.button !== 0) return;
       if (!e.isPrimary) return;
@@ -261,7 +310,8 @@ export function useTouchNavigate({
       e.stopPropagation();
       const dx = e.clientX - g.lx;
       const dy = e.clientY - g.ly;
-      if (!g.moved && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) > HOLD_SLOP) {
+      const 문턱 = e.pointerType === "mouse" ? HOLD_SLOP : HOLD_SLOP_TOUCH;
+      if (!g.moved && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) > 문턱) {
         g.moved = true;
         window.clearTimeout(g.timer);
       }
@@ -271,7 +321,7 @@ export function useTouchNavigate({
         moveBox(e.clientX, e.clientY);
         return;
       }
-      if (g.moved) panByScreen(dx, dy);
+      if (g.moved) 밀기예약(dx, dy);
     };
 
     const onUp = (e: PointerEvent) => {
@@ -344,6 +394,7 @@ export function useTouchNavigate({
       // 다시 붙는데, 카드를 짚으면 그 일이 제스처 **도중에** 일어난다 —
       // 치우면 첫 손가락이 사라져 카드 위 확대가 다시 안 된다(그 결함을
       // 고치려고 장부를 ref로 뺀 것이다). 청소는 화면이 가려질 때만 한다.
+      if (밀프레임) cancelAnimationFrame(밀프레임);
       root.removeEventListener("pointerdown", onDown, { capture: true });
       document.removeEventListener("visibilitychange", onHide);
       window.removeEventListener("blur", 비우기);

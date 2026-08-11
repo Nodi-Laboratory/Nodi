@@ -382,7 +382,6 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
    * 도구 선택(`bridge.activeTool`)과 **따로 둔다**: 인식이 끝난 뒤에도 도구는
    * 질문하는 펜인 채로 두어야 "다시 쓰기"가 곧바로 이어진다.
    */
-  const [inkRecognized, setInkRecognized] = useState(false);
   const [inkCount, setInkCount] = useState(0);
   const [inkBusy, setInkBusy] = useState(false);
   /**
@@ -392,7 +391,15 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
    * 툴팁(`askedQuestion`)과 기록이 맞는다. 표시 설명을 거기 이어 붙이면
    * 저장된 질문이 벽이 된다.
    */
-  const [inkContext, setInkContext] = useState<{
+  /**
+   * ⚠️ **ref다** (사용자 지시 2026-08-11로 바뀜).
+   *
+   * 화면에 안 그려지고 보낼 때 한 번 읽힐 뿐인데 state로 들고 있었다.
+   * 그래서 인식한 **그 자리에서 바로 보내면** 아직 옛 값(대개 null)이
+   * 읽혀 학생이 카드를 짚으며 쓴 질문에서 그 표시가 통째로 사라진다.
+   * ref는 쓰는 즉시 보이므로 그 어긋남이 성립하지 않는다.
+   */
+  const inkContextRef = useRef<{
     marksNote: string;
     cardIds: string[];
     /** 기하가 센 짚은 카드 번호. 서버 프롬프트가 단정문으로 쓴다. */
@@ -405,6 +412,24 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
      */
     parentId: string | null;
   } | null>(null);
+  const setInkContext = useCallback(
+    (v: {
+    marksNote: string;
+    cardIds: string[];
+    /** 기하가 센 짚은 카드 번호. 서버 프롬프트가 단정문으로 쓴다. */
+    pointed: number[];
+    /**
+     * 학생이 짚은 카드의 **아이템 id** — 이 턴의 답이 그 카드의 자식이 된다.
+     *
+     * 여럿을 짚었으면 **첫 번째**만 부모로 쓴다(D151: 부모는 최대 하나).
+     * 개념 카드가 아니면(도판·클립) 비운다 — 이어 붙일 트리가 없다.
+     */
+    parentId: string | null;
+    } | null) => {
+      inkContextRef.current = v;
+    },
+    [],
+  );
   /**
    * 질문하는 펜을 **켠 순간** 캔버스에 있던 획들.
    *
@@ -1513,11 +1538,14 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
    * 어긋나는 순간이 생기고(렌더 한 번 사이), React Compiler도 막는다.
    */
   const askPen = bridge.activeTool === "askpen";
-  const inkPhase: "writing" | "review" | null = !askPen
-    ? null
-    : inkRecognized
-      ? "review"
-      : "writing";
+  /**
+   * 단계는 **하나뿐이다** (사용자 지시 2026-08-11).
+   *
+   * 예전에는 쓰기 → 확인(review) 둘이었다: [글자 인식]으로 글자를 넣고,
+   * 학생이 읽어 본 뒤 [AI에게 묻기]를 다시 눌렀다. 손으로 쓴 뒤 **두 번
+   * 더 누르는** 셈이라 한 번으로 줄였다.
+   */
+  const inkPhase: "writing" | null = askPen ? "writing" : null;
 
   /**
    * 캔버스에 남아 있는 질문 획 전부 — **표시로 고른다**(시점이 아니라).
@@ -1660,7 +1688,6 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
       // 고르면 자동 전환도 되살아난다 — 그게 "평소 상태"다.
       if (tool === "selection") setAutoSelect(false);
       else if (tool === "hand") setAutoSelect(true);
-      setInkRecognized(false);
       setInkCount(0);
       // 도구를 바꾸면 방금 읽은 표시도 버린다 — 그 표시는 지워진 획의 것이고,
       // 남겨 두면 **다음에 자판으로 친 질문에 엉뚱한 카드가 딸려 간다.**
@@ -1675,7 +1702,7 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
       }
       bridge.setTool(tool);
     },
-    [bridge, markPending],
+    [bridge, markPending, setInkContext],
   );
 
   /**
@@ -1713,7 +1740,64 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
    * 와 질문과 가르는 일이 새로 생긴다), 비전으로는 **획 + 카드**(가리킨
    * 대상이 그림에 없으면 무엇을 가리키는지 물을 수 없다).
    */
-  const recognizeInk = useCallback(async () => {
+
+
+  const handleSend = useCallback(
+    (question: string) => {
+      const from = pickedId;
+      const tag = pickedItem?.tag ?? null;
+      /**
+       * 표시는 **이 턴에만** 실린다 (D178). 비워 두지 않으면 다음 질문에도
+       * 같은 카드가 딸려 가서, 학생이 이미 지운 화살표가 계속 답을 끌어당긴다.
+       */
+      const ink = inkContextRef.current;
+      setInkContext(null);
+      /**
+       * **짚은 카드가 있으면 그 가지에서 이어 나간다** — 학생이 고른 노드보다
+       * 우선한다. 손으로 그 카드를 가리키며 물은 것이 더 직접적인 의사표시다.
+       */
+      const parent = ink?.parentId ?? from;
+      const parentTag = ink?.parentId
+        ? (items.find((i) => i.id === ink.parentId)?.tag ?? tag)
+        : tag;
+      void stream.send(question, { pickedId: parent, ink }).then((created) => {
+        /**
+         * **학생이 기다리는 동안 고른 것을 덮어쓰지 않는다** (D187).
+         *
+         * 답이 오면 방금 받은 답 뒤로 초점을 옮기는 것이 기본이다. 그런데
+         * 예전에는 그것을 **무조건** 했다 — 학생이 스트리밍 중에 다른 카드를
+         * 눌러 두었어도 이 줄이 그 뜻을 지웠다. 게다가 아무것도 안 골랐던
+         * 턴이면 `nextFocus(null, null, …)`가 null을 돌려주므로, 학생이 방금
+         * 누른 카드의 인용 칩이 **답이 끝나는 순간 사라진다.**
+         *
+         * 실측 2026-08-06: 답이 뜨자마자 카드를 누르면 칩이 붙었다가 스트림이
+         * 끝나면서 없어졌다. 학생 눈에는 "눌렀는데 표시가 사라진다"이고,
+         * 그대로 질문을 보내면 답이 엉뚱한 자리(뿌리)에 붙는다.
+         *
+         * 보낼 때와 같으면 우리가 옮기고, 달라졌으면 **학생 쪽이 이긴다** —
+         * 방금 한 조작이 우리가 예정해 둔 이동보다 늦고 더 직접적이다.
+         */
+        setPickedId((cur) => (cur === from ? nextFocus(parent, parentTag, created) : cur));
+        void coach.run(created);
+      });
+    },
+    // coach.run은 useEventCallback이라 신원이 고정이다 — 넣어도 묶음이 안 깨진다.
+    [setInkContext, items, pickedId, pickedItem, stream, coach],
+  );
+
+  /**
+   * 손으로 쓴 질문을 읽어 **그대로 보낸다** (사용자 지시 2026-08-11).
+   *
+   * 예전에는 여기서 멈췄다 — 글자를 입력창에 넣고 학생이 읽어 본 뒤 다시
+   * 눌렀다(D176의 "곧바로 보내지 않는다"). 그 조항을 사용자 지시로
+   * 뒤집었다: **인식된 글자는 못 고친다.** OCR이 "빛"을 "및"으로 읽으면
+   * 그대로 나간다는 뜻이고, 값을 알고 내린 결정이다(그 문장은 입력창에
+   * 남으므로 학생이 이어서 고쳐 물을 수 있다).
+   *
+   * ⚠️ **`handleSend`보다 뒤에 있어야 한다.** 앞에 두고 부르면 React
+   * Compiler가 "선언 전 접근"으로 막는다(이벤트 콜백 안이어도 막는다).
+   */
+  const recognizeInk = useEventCallback(async () => {
     if (inkBusy) return;
     // 획이 끝난 뒤의 순간이다 — 여기서 표시를 찍어 둔다(그리는 중이 아니라).
     markPending();
@@ -1784,6 +1868,8 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
       bridge.api?.updateScene({ elements: rest });
       setInkCount(0);
       askBarRef.current?.appendText(clean);
+      // 표시(`setInkContext`)까지 정해진 **뒤에** 보낸다 — 아래 참조.
+      const 보낼것 = clean;
       /**
        * 표시 해석은 **다음에 보낼 질문에 실린다.** 입력창에 붙이지 않는다 —
        * 저장되는 질문은 학생이 쓴 것 그대로여야 툴팁·기록이 맞는다.
@@ -1815,79 +1901,19 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
             }
           : null,
       );
-      setInkRecognized(true);
-      setDrawError(null);
+        setDrawError(null);
+      /**
+       * **여기서 바로 보낸다.** 표시 해석이 바로 위에서 ref에 실렸으므로
+       * 이 턴의 질문이 그것을 갖고 나간다 — state였다면 아직 옛 값이라
+       * 학생이 카드를 짚으며 쓴 질문에서 표시가 통째로 빠졌다.
+       */
+      handleSend(보낼것);
     } catch (err) {
       setDrawError(ocrErrorMessage(err));
     } finally {
       setInkBusy(false);
     }
-  }, [
-    askStrokes,
-    bridge.api,
-    bridge.cameraRef,
-    clientSettings,
-    inkBusy,
-    items,
-    layout.positions,
-    layout.sizes,
-    markPending,
-  ]);
-
-  /** 다시 쓰기 — 빈 화면에서 새로 (인식 때 이미 지워졌다). */
-  const writeInkAgain = useCallback(() => {
-    const gone = new Set(askStrokes().map((e) => e.id));
-    if (gone.size) {
-      const rest = withoutStrokes(bridge.api?.getSceneElements() ?? [], gone);
-      bridge.api?.updateScene({ elements: rest });
-    }
-    setInkCount(0);
-    setInkRecognized(false);
-    setInkContext(null);
-  }, [askStrokes, bridge.api]);
-
-  const handleSend = useCallback(
-    (question: string) => {
-      const from = pickedId;
-      const tag = pickedItem?.tag ?? null;
-      /**
-       * 표시는 **이 턴에만** 실린다 (D178). 비워 두지 않으면 다음 질문에도
-       * 같은 카드가 딸려 가서, 학생이 이미 지운 화살표가 계속 답을 끌어당긴다.
-       */
-      const ink = inkContext;
-      setInkContext(null);
-      /**
-       * **짚은 카드가 있으면 그 가지에서 이어 나간다** — 학생이 고른 노드보다
-       * 우선한다. 손으로 그 카드를 가리키며 물은 것이 더 직접적인 의사표시다.
-       */
-      const parent = ink?.parentId ?? from;
-      const parentTag = ink?.parentId
-        ? (items.find((i) => i.id === ink.parentId)?.tag ?? tag)
-        : tag;
-      void stream.send(question, { pickedId: parent, ink }).then((created) => {
-        /**
-         * **학생이 기다리는 동안 고른 것을 덮어쓰지 않는다** (D187).
-         *
-         * 답이 오면 방금 받은 답 뒤로 초점을 옮기는 것이 기본이다. 그런데
-         * 예전에는 그것을 **무조건** 했다 — 학생이 스트리밍 중에 다른 카드를
-         * 눌러 두었어도 이 줄이 그 뜻을 지웠다. 게다가 아무것도 안 골랐던
-         * 턴이면 `nextFocus(null, null, …)`가 null을 돌려주므로, 학생이 방금
-         * 누른 카드의 인용 칩이 **답이 끝나는 순간 사라진다.**
-         *
-         * 실측 2026-08-06: 답이 뜨자마자 카드를 누르면 칩이 붙었다가 스트림이
-         * 끝나면서 없어졌다. 학생 눈에는 "눌렀는데 표시가 사라진다"이고,
-         * 그대로 질문을 보내면 답이 엉뚱한 자리(뿌리)에 붙는다.
-         *
-         * 보낼 때와 같으면 우리가 옮기고, 달라졌으면 **학생 쪽이 이긴다** —
-         * 방금 한 조작이 우리가 예정해 둔 이동보다 늦고 더 직접적이다.
-         */
-        setPickedId((cur) => (cur === from ? nextFocus(parent, parentTag, created) : cur));
-        void coach.run(created);
-      });
-    },
-    // coach.run은 useEventCallback이라 신원이 고정이다 — 넣어도 묶음이 안 깨진다.
-    [inkContext, items, pickedId, pickedItem, stream, coach],
-  );
+  });
 
   /**
    * 지도에서 무언가를 누르면 **그것이 화면을 채우도록** 옮긴다 (D155).
@@ -2497,7 +2523,6 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
             inkReady={inkCount > 0}
             inkBusy={inkBusy}
             onRecognize={recognizeInk}
-            onWriteAgain={writeInkAgain}
             onAttach={handleAttach}
             busy={stream.busy}
             reply={stream.reply}

@@ -11,12 +11,10 @@
 import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
 import {
   ArrowUp,
-  Check,
   Keyboard,
   Lightbulb,
   Loader2,
   Paperclip,
-  Pencil,
   PenLine,
   Quote,
   X,
@@ -56,8 +54,8 @@ interface Props {
    * 질문 필기의 단계 (D176). 보내기 버튼 자리가 이걸 따라 바뀐다.
    *
    *   null      평소 — [보내기]
-   *   "writing" 질문하는 펜으로 쓰는 중 — [글자 인식]
-   *   "review"  인식이 끝나 글자가 입력창에 들어옴 — [다시 쓰기] [AI에게 묻기]
+   *   "writing" 질문하는 펜으로 쓰는 중 — [AI에게 묻기] 하나뿐이다
+   *             (사용자 지시 2026-08-11: 인식과 보내기를 한 번으로 줄였다)
    */
   inkPhase: "writing" | "review" | null;
   /** 지금 인식할 만큼 썼나 — 획이 없으면 버튼을 누를 수 없다. */
@@ -65,7 +63,6 @@ interface Props {
   /** 인식 중(모델 왕복 3~8초). */
   inkBusy: boolean;
   onRecognize: () => void;
-  onWriteAgain: () => void;
   /**
    * 손으로 써서 묻는 중인가 (사용자 지시 2026-08-09).
    *
@@ -103,7 +100,6 @@ export function AskBar({
   inkReady,
   inkBusy,
   onRecognize,
-  onWriteAgain,
   askPen,
   onToggleAskPen,
   ref,
@@ -405,9 +401,10 @@ export function AskBar({
         {/**
           * **버튼 자리가 단계를 말한다** (D176, 사용자 지시 2026-08-04).
           *
-          * 질문하는 펜을 고르면 보내기가 **글자 인식**으로 바뀌고(색도 학생의
-          * 틸로), 인식이 끝나면 **둘로 갈라진다**: 다시 쓰기 · AI에게 묻기.
-          * 한 자리에서 바뀌므로 학생이 다음에 무엇을 할지 찾아다닐 필요가 없다.
+          * 질문하는 펜을 고르면 보내기가 **[AI에게 묻기]**로 바뀐다. 누르면
+          * 읽고 곧바로 보낸다 — 예전에는 [글자 인식] 뒤에 [다시 쓰기]
+          * [AI에게 묻기]로 갈라졌는데, 손으로 쓴 뒤 두 번 더 누르는 셈이라
+          * 사용자 지시로 한 번으로 줄였다(인식된 글자는 못 고친다).
           */}
         {inkPhase === "writing" ? (
           <button
@@ -415,45 +412,20 @@ export function AskBar({
             onClick={onRecognize}
             disabled={!inkReady || inkBusy || disabled}
             data-testid="ink-recognize"
+            aria-label="AI에게 묻기"
             /* 손가락에는 32px가 최소다 — 배율(0.95)을 먹으므로 한 단계 키운다. */
             className="flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] transition-opacity disabled:opacity-30"
-            // 학생이 쓴 것이므로 틸이다(D120의 색 규칙) — 보내기(오커)와 갈린다.
-            style={{ background: "var(--c-hand)", color: "var(--c-paper)" }}
+            /* 보내는 버튼이므로 **보내기의 색**이다. 예전에는 인식이 학생의
+               틸이었는데, 이제 이 버튼이 하는 일은 질문을 보내는 것이다. */
+            style={{ background: "var(--c-live-deep)", color: "var(--c-paper)" }}
           >
             {inkBusy ? (
               <Loader2 size={13} className="animate-spin" />
             ) : (
-              <Check size={13} strokeWidth={2.4} />
-            )}
-            글자 인식
-          </button>
-        ) : inkPhase === "review" ? (
-          <>
-            <button
-              type="button"
-              onClick={onWriteAgain}
-              disabled={disabled}
-              data-testid="ink-again"
-              aria-label="다시 쓰기"
-              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] transition-colors hover:bg-[var(--c-sunk)]"
-              style={{ borderColor: "var(--c-rule)", color: "var(--c-ink-soft)" }}
-            >
-              <Pencil size={13} />
-              다시 쓰기
-            </button>
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!value.trim() || busy || disabled}
-              data-testid="ink-send"
-              aria-label="AI에게 묻기"
-              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] transition-opacity disabled:opacity-30"
-              style={{ background: "var(--c-live-deep)", color: "var(--c-paper)" }}
-            >
               <ArrowUp size={13} strokeWidth={2.4} />
-              AI에게 묻기
-            </button>
-          </>
+            )}
+            AI에게 묻기
+          </button>
         ) : (
           <button
             type="button"

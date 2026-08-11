@@ -51,6 +51,17 @@ const PAD = 44;
 /** 노드 점 반지름. */
 const NODE_R = 6;
 /**
+ * 잡는 자리의 반지름 (2026-08-11).
+ *
+ * 손가락은 마우스보다 뭉툭하다 — 접촉면이 대략 지름 9mm이고, 화면에서
+ * 44px(애플·구글이 함께 권하는 최소 터치 목표)에 해당한다. 보이는 점은
+ * 그대로 두고 **투명한 히트 원만** 키운다.
+ */
+const HIT_R =
+  typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches
+    ? 22
+    : NODE_R + 8;
+/**
  * 계층은 **화면 배율**로 가른다 (사용자 보고 2026-08-11).
  *
  * 예전에는 `zoom`으로 갈랐다(1.8 / 2.6). `zoom`은 1에서 시작하므로 지도는
@@ -551,7 +562,9 @@ export function SessionMap({
                 style={{ cursor: "grab" }}
               >
                 <title>{`${n.title} — 눌러서 이동 · 끌어서 자리 옮기기`}</title>
-                <circle r={NODE_R + 8} fill="transparent" style={{ pointerEvents: "all" }} />
+                {/* 손가락은 마우스보다 뭉툭하다 — coarse 포인터에서는 잡는
+                    자리를 키운다(보이는 점은 그대로). */}
+                <circle r={HIT_R} fill="transparent" style={{ pointerEvents: "all" }} />
                 <circle
                   r={NODE_R - 1}
                   fill="var(--c-raised)"

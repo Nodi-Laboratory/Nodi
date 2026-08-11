@@ -166,29 +166,32 @@ test("인식하면 필기가 사라지고 버튼이 둘로 갈린다", async ({ 
   await write(page);
   await expect.poll(() => strokes(page)).toBe(3);
 
+  /**
+   * **한 번에 간다** (사용자 지시 2026-08-11).
+   *
+   * 예전에는 [글자 인식] → (확인) → [AI에게 묻기] 셋이었다. 지금은 버튼이
+   * 하나이고, 누르면 읽어서 입력창에 넣고 **그대로 보낸다.** 인식된 글자를
+   * 고치는 자리는 없다 — 그 값을 알고 내린 결정이다.
+   */
   await page.locator('[data-testid="ink-recognize"]').click();
   await expect(page.getByLabel("질문 입력")).toHaveValue("빛의 굴절이 뭐야?");
 
   // **필기는 사라진다** — 글자가 되는 순간 캔버스에서 지워진다(사용자 결정).
   await expect.poll(() => strokes(page)).toBe(0);
-  expect(await phase(page)).toBe("review");
-  // **보내지 않는다** — 손글씨 OCR은 틀리고, 학생이 고칠 자리가 있어야 한다.
-  await expect(page.locator("[data-canvas-item]")).toHaveCount(itemsBefore);
-
-  await expect(page.locator('[data-testid="ink-recognize"]')).toBeHidden();
-  await expect(page.locator('[data-testid="ink-again"]')).toBeVisible();
-  await expect(page.locator('[data-testid="ink-send"]')).toBeVisible();
-
-  // "다시 쓰기"는 **빈 화면에서 새로** — 인식 버튼이 돌아온다.
-  await page.locator('[data-testid="ink-again"]').click();
+  // 단계는 하나뿐이다 — 확인 단계가 없어졌다.
   expect(await phase(page)).toBe("writing");
-  await expect(page.locator('[data-testid="ink-recognize"]')).toBeVisible();
 
-  // 두 번째 구절은 **덧붙는다**. 덮어쓰면 앞서 쓴 것이 사라진다.
-  await write(page);
-  await expect.poll(() => strokes(page)).toBe(3);
-  await page.locator('[data-testid="ink-recognize"]').click();
-  await expect(page.getByLabel("질문 입력")).toHaveValue("빛의 굴절이 뭐야? 빛의 굴절이 뭐야?");
+  // **보낸다** — 답이 와서 카드가 는다(예전에는 여기서 멈췄다).
+  await expect
+    .poll(() => page.locator("[data-canvas-item]").count(), { timeout: 90_000 })
+    .toBeGreaterThan(itemsBefore);
+
+  // 갈라지던 두 버튼은 없다.
+  await expect(page.locator('[data-testid="ink-again"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="ink-send"]')).toHaveCount(0);
+  // 버튼은 제자리에 남아 다음 필기를 기다린다(획이 없으니 꺼져 있다).
+  await expect(page.locator('[data-testid="ink-recognize"]')).toBeVisible();
+  await expect(page.locator('[data-testid="ink-recognize"]')).toBeDisabled();
 });
 
 test("일반 펜 획은 질문에 안 섞이고, 도구를 오가도 질문 획은 남는다", async ({ page }) => {
@@ -300,7 +303,8 @@ test("창구가 없으면 준비 중이라고 말하고, 쓴 것을 지우지 �
   // **실패했다고 지우면 다시 써야 한다.**
   expect(await strokes(page)).toBe(3);
   expect(await phase(page)).toBe("writing");
-  await expect(page.locator('[data-testid="ink-send"]')).toBeHidden();
+  // 보내는 버튼은 하나뿐이고, 실패했으니 질문도 안 나갔다.
+  await expect(page.locator('[data-testid="ink-send"]')).toHaveCount(0);
   await expect(page.getByLabel("질문 입력")).toHaveValue("");
 });
 

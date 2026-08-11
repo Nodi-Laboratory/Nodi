@@ -283,7 +283,13 @@ export function CanvasStage({
        * 같은 이벤트를 보면 손가락으로 끌 때 화면이 움직이면서 선택 상자까지
        * 잡힌다. `useTouchNavigate`가 캡처 단계에서 먼저 가져간다.
        */
-      if (coarse && e.pointerType !== "mouse") return;
+      /**
+       * ⚠️ `coarse`를 **안 본다** (2026-08-11). 터치가 되는데 `pointer: coarse`를
+       * 안 보고하는 기기가 있어서(윈도 태블릿·크롬북), 그 조건을 달아 두면
+       * 그런 기기에서 손가락 끌기가 올가미와 화면 이동 **양쪽에** 잡힌다.
+       * 손가락·펜은 언제나 `useTouchNavigate`의 것이다(D208).
+       */
+      if (e.pointerType !== "mouse") return;
 
       if (activeTool === "note") {
         e.preventDefault();

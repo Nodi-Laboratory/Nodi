@@ -136,7 +136,26 @@ const COLORS = [
  */
 const HIGHLIGHT_STYLE = { opacity: 40, strokeWidth: 6, roughness: 0 } as const;
 /** 펜·도형은 Excalidraw 기본값으로 되돌린다(형광펜을 쓴 뒤 그대로 남지 않게). */
-const PEN_STYLE = { opacity: 100, strokeWidth: 2, roughness: 1 } as const;
+const PEN_STYLE = { opacity: 100, roughness: 1 } as const;
+
+/**
+ * 펜 굵기 (사용자 지시 2026-08-11).
+ *
+ * 색과 **같은 패널**에서 고른다. 굵기는 색과 마찬가지로 "무엇으로 그릴까"가
+ * 아니라 "어떻게 그릴까"라서, 도구를 바꿔도 그대로 남아야 한다(색이 이미
+ * 그렇다). 도구 묶음을 하나 더 만들면 여섯 줄로 줄여 둔 레일이 다시 는다.
+ *
+ * 값은 Excalidraw의 눈금이다 — 자유선은 `strokeWidth * 4.25`px로 그려지므로
+ * 1·2·4가 각각 약 4·9·17px이다. 형광펜(6 ≈ 25px)은 여기서 안 고른다: 그건
+ * 굵기가 아니라 도구의 성질이다.
+ */
+const WIDTHS = [
+  { name: "얇게", value: "1" },
+  { name: "중간", value: "2" },
+  { name: "굵게", value: "4" },
+] as const;
+/** 처음 굵기는 **중간**이다 (사용자 지시). */
+const WIDTH_DEFAULT = "2";
 
 /** 지금 펼쳐 둔 묶음. null이면 아무것도 안 펼쳤다. */
 type OpenGroup = "pen" | "shape" | "color" | null;
@@ -173,6 +192,11 @@ export function ToolRail({
     COLORS.map((c) => c.value),
     COLORS[0].value,
   );
+  const width = useStickyChoice(
+    "draw.width",
+    WIDTHS.map((w) => w.value),
+    WIDTH_DEFAULT,
+  );
   const [openGroup, setOpenGroup] = useState<OpenGroup>(null);
   const highlighting = active === "highlighter";
 
@@ -185,9 +209,12 @@ export function ToolRail({
    */
   useEffect(() => {
     if (!isColorableTool(active)) return;
-    const s = highlighting ? HIGHLIGHT_STYLE : PEN_STYLE;
+    // 형광펜은 굵기가 도구의 성질이라 학생이 고른 값을 안 탄다(위 주석).
+    const s = highlighting
+      ? HIGHLIGHT_STYLE
+      : { ...PEN_STYLE, strokeWidth: Number(width.value) };
     setDrawStyle({ strokeColor: color.value, ...s });
-  }, [active, highlighting, color.value, setDrawStyle]);
+  }, [active, highlighting, color.value, width.value, setDrawStyle]);
 
   /**
    * 접었다 펼 수 있다 (D140, 사용자 지시). 접으면 **지금 켜진 도구 하나만**
@@ -316,7 +343,14 @@ export function ToolRail({
       }
     >
       {openGroup === "color" ? (
-        <Palette colors={COLORS} value={color.value} onPick={color.set} />
+        <Palette
+          colors={COLORS}
+          value={color.value}
+          onPick={color.set}
+          widths={WIDTHS}
+          width={width.value}
+          onPickWidth={width.set}
+        />
       ) : openGroup ? (
         <Flyout
           tools={openGroup === "pen" ? PEN_GROUP : SHAPE_GROUP}
@@ -534,10 +568,16 @@ function Palette({
   colors,
   value,
   onPick,
+  widths,
+  width,
+  onPickWidth,
 }: {
   colors: readonly { name: string; value: string }[];
   value: string;
   onPick: (v: string) => void;
+  widths: readonly { name: string; value: string }[];
+  width: string;
+  onPickWidth: (v: string) => void;
 }) {
   return (
     <div
@@ -580,6 +620,52 @@ function Palette({
           </button>
         );
       })}
+
+      {/**
+       * **굵기도 여기서 고른다** (사용자 지시 2026-08-11).
+       *
+       * 색과 한 패널에 둔다 — 둘 다 "무엇으로"가 아니라 "어떻게 그릴까"이고,
+       * 도구 묶음을 하나 더 만들면 여섯 줄로 줄여 둔 레일이 다시 는다.
+       * 구분선은 색과 굵기가 **다른 것을 고르는 줄**임을 말한다.
+       */}
+      <span
+        aria-hidden
+        className="mx-1 my-0.5 block h-px shrink-0"
+        style={{ background: "var(--c-rule)" }}
+      />
+      <div role="radiogroup" aria-label="펜 굵기" className="flex flex-col gap-1">
+        {widths.map((w) => {
+          const on = w.value === width;
+          return (
+            <button
+              key={w.value}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              aria-label={`펜 굵기 ${w.name}`}
+              title={`펜 굵기 — ${w.name}`}
+              data-pen-width={w.value}
+              onClick={() => onPickWidth(w.value)}
+              className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+              style={{ background: on ? "var(--c-sunk)" : "transparent" }}
+            >
+              {/* 굵기는 **굵기로** 보여 준다 — 낱말보다 빠르고, 좁은 레일에
+                  글자를 넣으면 세로로 찌그러진다. 지금 고른 색으로 그린다. */}
+              <span
+                className="block rounded-full transition-all"
+                style={{
+                  width: 20,
+                  // Excalidraw 자유선은 `strokeWidth * 4.25`px다 — 화면의
+                  // 굵기와 실제 획이 어긋나지 않게 같은 비율로 그린다.
+                  height: Math.max(2, Math.round(Number(w.value) * 4.25) / 2),
+                  background: value,
+                  boxShadow: "inset 0 0 0 1px rgba(0,0,0,.18)",
+                }}
+              />
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
