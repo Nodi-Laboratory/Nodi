@@ -1031,7 +1031,24 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       // 전부 껐으면 안내 문구가 덮으므로 배율은 아무래도 좋다 — 그래도
       // 전체로 맞춰 두어야 다시 켰을 때 엉뚱한 자리에 있지 않다.
       const b = boundsOf(shown.length ? shown : nodesRef.current);
-      if (!b) return;
+      /**
+       * **그릴 것이 없으면 식을 것도 없다** (사용자 보고 2026-08-11:
+       * "회원가입하고 처음 홈에 들어가면 '지도를 그리는 중'이 계속 뜬다").
+       *
+       * 덮개(`settling`)가 하는 일은 노드가 자리를 찾느라 꿈틀대는 장면을
+       * 가리는 것이다(D211 1). 그런데 걷는 자리가 **여기 하나뿐**이라,
+       * 개념이 0개면 `boundsOf`가 null을 주고 이 함수가 덮개를 걷기 전에
+       * 되돌아갔다 — 갓 가입한 학생은 지도가 아니라 "지도를 그리는 중…"만
+       * 보게 된다. 계산은 이미 끝났는데 화면만 영영 기다린다.
+       *
+       * ⚠️ `fitted`는 **안 세운다.** 첫 대화를 하고 개념이 생기면 그때
+       * 제대로 맞춰야 하는데, 여기서 세워 두면 "이미 맞췄다"는 빗장에 걸려
+       * 지도가 엉뚱한 배율로 남는다.
+       */
+      if (!b) {
+        setSettling(false);
+        return;
+      }
       fitted = true;
       // 자리가 잡힌 그 순간이 곧 보여 줄 때다 — 따로 재지 않는다.
       setSettling(false);
@@ -1233,8 +1250,26 @@ export function ConceptMap({ data, onOpen, hiddenSessions, quiet = false }: Conc
       */}
       {visibleCount === 0 && (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 bg-bg-elevated/80 px-4 text-center">
-          <p className="text-sm font-medium text-fg">지도에 띄운 대화가 없습니다</p>
-          <p className="text-xs text-fg-muted">왼쪽 목록에서 볼 대화를 켜세요.</p>
+          {/**
+           * **"켤 것이 없다"와 "꺼 놓았다"는 다른 말이다** (2026-08-11).
+           *
+           * 문구가 하나였을 때는 갓 가입한 학생에게 "왼쪽 목록에서 볼 대화를
+           * 켜세요"라고 했다 — 켤 대화가 아직 없고, 홈에는 그 목록도 없다.
+           * 덮개가 안 걷히던 결함에 가려 안 보이던 자리다.
+           */}
+          {data.nodes.length === 0 ? (
+            <>
+              <p className="text-sm font-medium text-fg">아직 지도에 그릴 개념이 없어요</p>
+              <p className="text-xs text-fg-muted">
+                무엇이든 물어보면 여기에 개념이 쌓입니다.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-medium text-fg">지도에 띄운 대화가 없습니다</p>
+              <p className="text-xs text-fg-muted">왼쪽 목록에서 볼 대화를 켜세요.</p>
+            </>
+          )}
         </div>
       )}
 
