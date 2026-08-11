@@ -24,9 +24,25 @@ export const dynamic = "force-dynamic";
 
 export default async function SpacePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ spaceId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { spaceId } = await params;
-  return <SpaceClient spaceId={spaceId || "personal"} />;
+  /**
+   * `?map=1`이면 **지도를 연 채로** 연다 (2026-08-11).
+   *
+   * 지도 페이지(`/space/[id]/map`)는 배치 사진이 없으면 아무것도 못 그려서
+   * 주소로 들어오면 막다른 길이었다. 이제 그 페이지가 이리로 넘기는데,
+   * "지도를 보러 왔다"는 뜻이 함께 와야 한다.
+   *
+   * ⚠️ **여기(서버)에서 읽는다.** 클라이언트에서 `window.location`을 읽으면
+   * 넘어온 직후 한 프레임 동안 옛 주소일 수 있다 — 실측 2026-08-11: 넘김은
+   * 됐는데 지도가 안 열렸다.
+   */
+  const sp = await searchParams;
+  return (
+    <SpaceClient spaceId={spaceId || "personal"} openMap={sp.map === "1"} />
+  );
 }

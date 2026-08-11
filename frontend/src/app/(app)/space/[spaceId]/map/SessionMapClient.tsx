@@ -17,6 +17,7 @@ import { ArrowLeft } from "lucide-react";
 import { SessionMap } from "@/components/canvas2/SessionMap";
 import { patchItems } from "@/lib/api/canvas";
 import { pushAway, type PushCandidate } from "@/lib/canvas2/pushAway";
+import { descendants } from "@/lib/canvas2/tree";
 import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 import { isRealId } from "@/lib/ids";
 import type { CanvasItem } from "@/lib/canvas2/types";
@@ -65,6 +66,18 @@ export function SessionMapClient({ spaceId }: { spaceId: string }) {
 
   const mine = snapshot && snapshot.spaceId === spaceId ? snapshot : null;
 
+  /**
+   * 사진이 없으면 **캔버스에서 지도를 연다** (2026-08-11, 위 빈손 분기 참조).
+   *
+   * `replace`다 — `push`면 뒤로 가기가 이 페이지로 되돌아오고, 여기는 다시
+   * 넘기므로 학생이 뒤로 못 나간다.
+   */
+  useEffect(() => {
+    if (!snapshot || snapshot.spaceId !== spaceId) {
+      router.replace(`/space/${spaceId}?map=1`);
+    }
+  }, [snapshot, spaceId, router]);
+
   const positions = useMemo(() => {
     const m = new Map<string, { x: number; y: number }>(mine?.positions ?? []);
     for (const [id, at] of moved) m.set(id, at);
@@ -110,16 +123,45 @@ export function SessionMapClient({ spaceId }: { spaceId: string }) {
        * 지도는 축소된 화면이라 손짓 몇 px이 월드에서는 수백 px이다. 그만큼
        * 엉뚱한 자리에 놓이기 쉬우므로 여기서 정리해 주는 값이 더 크다.
        */
+      /**
+       * **가지가 따라온다** (사용자 지시 2026-08-11).
+       *
+       * 캔버스에서 글을 끌면 자손이 함께 간다(D154). 지도에서만 혼자
+       * 움직이면 같은 동작이 어디서 시작했느냐에 따라 다르게 굴어, 학생이
+       * 규칙을 배울 수 없다. 옮기는 양(delta)으로 밀어 **가지의 모양은
+       * 그대로 두고 통째로** 옮긴다.
+       */
+      const 처음 = positions.get(id);
+      const dx = 처음 ? x - 처음.x : 0;
+      const dy = 처음 ? y - 처음.y : 0;
+      const 가지 = new Map<string, { x: number; y: number }>([[id, { x, y }]]);
+      if (처음) {
+        for (const kid of descendants(items, id)) {
+          const at = positions.get(kid);
+          if (at) 가지.set(kid, { x: at.x + dx, y: at.y + dy });
+        }
+      }
+
+      /**
+       * 비켜설 후보에서 **가지는 뺀다.** 함께 움직이는 것들끼리 서로를
+       * 장애물로 보면, 부모를 옮기는 순간 자식이 부모를 밀어내려 든다.
+       */
       const others: PushCandidate[] = [];
       for (const [otherId, at] of positions) {
-        if (otherId === id) continue;
+        if (가지.has(otherId)) continue;
         const sz = sizes.get(otherId);
         if (!sz) continue;
         others.push({ id: otherId, rect: { x: at.x, y: at.y, w: sz.w, h: sz.h } });
       }
+      // 움직이는 것 **전부**가 남을 밀어낸다 — 부모만 넘기면 자식이 남의
+      // 위에 그대로 얹힌다.
+      const 움직임 = [...가지.entries()].flatMap(([mid, at]) => {
+        const sz = mid === id ? size : sizes.get(mid);
+        return sz ? [{ x: at.x, y: at.y, w: sz.w, h: sz.h }] : [];
+      });
       const 밀림 =
-        size && others.length
-          ? pushAway([{ x, y, w: size.w, h: size.h }], others, {
+        움직임.length && others.length
+          ? pushAway(움직임, others, {
               gap: settings.cardMinGap,
               strength: settings.cardPushStrength,
             })
@@ -128,7 +170,8 @@ export function SessionMapClient({ spaceId }: { spaceId: string }) {
       // 저장을 기다리지 않고 화면부터 옮긴다 — 손을 뗀 자리에 그대로 있어야
       // "내가 옮겼다"로 읽힌다.
       setMoved((prev) => {
-        const next = new Map(prev).set(id, { x, y });
+        const next = new Map(prev);
+        for (const [mid, at] of 가지) next.set(mid, at);
         for (const [pid, d] of 밀림) {
           const at = positions.get(pid);
           if (at) next.set(pid, { x: at.x + d.dx, y: at.y + d.dy });
@@ -137,7 +180,10 @@ export function SessionMapClient({ spaceId }: { spaceId: string }) {
       });
       setSaveError(null);
       const 저장 = [
-        { id, patch: { x, y, pinned: true } },
+        ...[...가지.entries()].map(([mid, at]) => ({
+          id: mid,
+          patch: { x: at.x, y: at.y, pinned: true },
+        })),
         ...[...밀림.entries()].flatMap(([pid, d]) => {
           const at = positions.get(pid);
           return at
@@ -151,7 +197,7 @@ export function SessionMapClient({ spaceId }: { spaceId: string }) {
         setSaveError("자리를 저장하지 못했어요. 잠시 뒤 다시 옮겨 보세요.");
       });
     },
-    [mine, positions, settings.cardMinGap, settings.cardPushStrength, sizes],
+    [items, mine, positions, settings.cardMinGap, settings.cardPushStrength, sizes],
   );
 
   return (
@@ -208,17 +254,20 @@ export function SessionMapClient({ spaceId }: { spaceId: string }) {
             />
           </div>
         ) : (
+          /**
+           * **막다른 길이 아니다** (2026-08-11).
+           *
+           * 배치 사진은 캔버스가 만든다 — 주소를 직접 치거나 새로고침하면
+           * 언제나 없다. 그러니 이 화면은 그 경로에서 **한 번도 지도를 보여
+           * 준 적이 없고**, 학생이 본 것은 "캔버스를 한 번 열어야 해요"라는
+           * 안내와 버튼 하나뿐이었다. 지도를 보러 온 사람에게 지도를 안 주는
+           * 것은 고장과 다르지 않다.
+           *
+           * 지도는 이제 캔버스 위에 뜨므로(D210 5-1) 거기로 넘긴다.
+           * `?map=1`이 "지도를 보러 왔다"를 전한다.
+           */
           <div className="text-center">
-            <p className="text-sm text-fg-muted">
-              지도를 그리려면 캔버스를 한 번 열어야 해요.
-            </p>
-            <button
-              type="button"
-              onClick={back}
-              className="mt-3 rounded-lg bg-accent-deep px-4 py-2 text-sm text-white"
-            >
-              캔버스로 가기
-            </button>
+            <p className="text-sm text-fg-muted">지도를 여는 중…</p>
           </div>
         )}
       </div>

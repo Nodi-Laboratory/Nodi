@@ -50,10 +50,31 @@ const FALLBACK: Size = { w: ITEM_W, h: 180 };
 const PAD = 44;
 /** 노드 점 반지름. */
 const NODE_R = 6;
-/** 이 배율부터 낱개 노드 지도로 바뀐다. 아래로는 태그 덩어리만 보인다. */
-const NODE_ZOOM = 1.8;
+/**
+ * 계층은 **화면 배율**로 가른다 (사용자 보고 2026-08-11).
+ *
+ * 예전에는 `zoom`으로 갈랐다(1.8 / 2.6). `zoom`은 1에서 시작하므로 지도는
+ * **어느 크기로 열든 언제나 태그 점**이었다 — 미니맵이든 전체 화면이든.
+ * 그런데 점에는 `data-map-node`가 없어서 끌기가 아예 안 잡히고, 누르면 그
+ * 태그의 대표 항목으로 간다. 전체 화면으로 크게 펼쳐 놓고도 **노드를 누르거나
+ * 옮길 방법이 없었다.**
+ *
+ * `model.scale`(= 상자에 맞춘 배율 × zoom)은 "화면에서 얼마나 크게 그려지나"를
+ * 그대로 말한다 — 상자 크기가 이미 들어 있다. 그 값으로 가르면 규칙 하나가
+ * 셋을 옳게 다룬다: 좁은 미니맵은 점, 넓은 팝업·페이지는 노드.
+ *
+ * 값은 **실측에서 왔다**(2026-08-11, 1440×900): 미니맵 258×168에서 배율
+ * 0.3008이었고 옛 기준으로 노드가 되는 지점이 zoom 1.8 = 배율 0.541이다.
+ * 그래서 0.55를 쓰면 미니맵의 거동이 종전과 같다. 같은 내용이 팝업
+ * 1041×666에서는 배율 **1.70**이라 열자마자 노드다.
+ *
+ * 카드가 많으면 담을 상자가 커져 배율이 저절로 내려간다 — 전체 화면이어도
+ * 150장짜리 방은 점으로 남는다. 계층이 원래 막으려던 것(빽빽한 글자 뭉개짐)이
+ * 그대로 지켜진다.
+ */
+const NODE_SCALE = 0.55;
 /** 이 배율부터 노드 **제목**이 아래에 붙는다 (사용자 지시 2026-08-07). */
-const TITLE_ZOOM = 2.6;
+const TITLE_SCALE = 0.8;
 const ZOOM_MIN = 0.6;
 const ZOOM_MAX = 8;
 const ZOOM_STEP = 1.3;
@@ -294,8 +315,8 @@ export function SessionMap({
     return { nodes, loose, edges, dots, scale: s, cx, cy, boxAll };
   }, [H, W, items, pan, positions, sizes, tagOrder, zoom]);
 
-  const nodeView = zoom >= NODE_ZOOM;
-  const titleView = zoom >= TITLE_ZOOM;
+  const nodeView = (model?.scale ?? 0) >= NODE_SCALE;
+  const titleView = (model?.scale ?? 0) >= TITLE_SCALE;
 
   /** 화면 px → world px. 노드를 끌 때 이동량을 되돌리는 데 쓴다. */
   const toWorld = useCallback(
@@ -385,6 +406,10 @@ export function SessionMap({
         height={H}
         role="img"
         aria-label="대화방 지도"
+        /* 화면 배율(world px → 화면 px). 계층이 이 값으로 갈리므로(아래
+           `NODE_SCALE`) 시험이 눈이 아니라 숫자로 확인할 수 있어야 한다. */
+        data-map-scale={model ? model.scale : 0}
+        data-map-nodes={model ? model.nodes.length + model.loose.length : 0}
         style={{ touchAction: "none", cursor: "grab" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

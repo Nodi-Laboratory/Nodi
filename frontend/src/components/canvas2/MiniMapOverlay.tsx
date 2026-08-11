@@ -339,6 +339,19 @@ export function MiniMapOverlay({
        */}
       {big && (
         <div
+          /**
+           * ⚠️ **`data-no-pan`이 없으면 지도 안에서 아무것도 못 잡는다**
+           * (사용자 보고 2026-08-11, 실측으로 확인).
+           *
+           * 캔버스가 화면 전체에서 포인터를 먼저 본다(`CanvasStage`의 올가미 ·
+           * `useTouchNavigate`의 화면 이동). 그 규칙은 `[data-no-pan]` 안에서만
+           * 손을 뗀다 — 미니맵 상자에는 그 표시가 있는데 **이 팝업에는
+           * 없었다.** 그래서 팝업 지도의 svg에는 `pointerdown`이 한 번도 오지
+           * 않았고(실측: down 0 · move 1 · up 0), 노드를 끌어 옮기는 일이
+           * 통째로 죽어 있었다. 누르기는 별도의 `onClick`이라 살아 있어서
+           * "클릭은 되는데 끌기만 안 된다"로 보였다.
+           */
+          data-no-pan
           className="fixed inset-0 z-40 flex items-center justify-center"
           style={{ background: "var(--c-overlay)" }}
           // 바깥을 누르면 닫힌다.

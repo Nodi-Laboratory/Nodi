@@ -95,6 +95,8 @@ import { keyboardInset, watchKeyboardInset } from "@/lib/ui/keyboardInset";
 
 interface Props {
   spaceId: string;
+  /** 지도를 연 채로 시작한다 (`?map=1` — 지도 페이지에서 넘어온 경우). */
+  mapOnLoad?: boolean;
 }
 
 const FALLBACK_H = 180;
@@ -284,7 +286,7 @@ function useViewport(): { w: number; h: number } {
   return vp;
 }
 
-export function CanvasWorkspace({ spaceId }: Props) {
+export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
   const bridge = useExcalidrawBridge();
   // 스프링은 아이템으로 카메라를 옮길 때 쓴다(전체 보기·확대/축소).
   // 초기 카메라는 여기 쓰지 않는다 — ExcalidrawLayer의 initialData가 맡는다.
@@ -1570,7 +1572,19 @@ export function CanvasWorkspace({ spaceId }: Props) {
    * 값이 크다. 페이지는 남겨 둔다(주소로 들어오는 길). 같은 `SessionMap`을
    * 쓰므로 둘이 갈라지지 않는다.
    */
-  const [mapOpen, setMapOpen] = useState(false);
+  /**
+   * 주소에 `?map=1`이 있으면 **열린 채로 시작한다** (2026-08-11).
+   *
+   * 지도 페이지(`/space/[id]/map`)는 배치 사진이 없으면 아무것도 못 그린다 —
+   * 사진은 캔버스가 만든다. 주소를 직접 치고 들어온 학생은 "캔버스를 한 번
+   * 열어야 해요"라는 막다른 길을 만났다. 이제 그 페이지가 이리로 넘기고,
+   * 이 한 줄이 넘겨받은 뜻(지도를 보러 왔다)을 지킨다.
+   *
+   * ⚠️ 주소는 **서버 껍데기가 읽어 프롭으로 준다**(`page.tsx`). 여기서
+   * `window.location`을 읽으면 넘어온 직후 한 프레임 동안 옛 주소일 수
+   * 있다 — 실측 2026-08-11: 넘김은 됐는데 지도가 안 열렸다.
+   */
+  const [mapOpen, setMapOpen] = useState(mapOnLoad);
   /**
    * 미니맵이 붙은 모서리 — 도구바가 비켜설지 정한다 (D211 9).
    *
@@ -1593,9 +1607,30 @@ export function CanvasWorkspace({ spaceId }: Props) {
     setMapOpen((v) => !v);
   }, [items, layout.positions, layout.sizes, layout.tagOrder, sessionId, setMapSnapshot, spaceId]);
 
-  /** 지도에서 노드를 끌어 옮겼다 — 캔버스 좌표를 그대로 옮긴다. */
+  /**
+   * 지도에서 노드를 끌어 옮겼다 — 캔버스 좌표를 그대로 옮긴다.
+   *
+   * **가지가 따라온다** (사용자 지시 2026-08-11). 캔버스에서 글을 끌면 자손이
+   * 함께 가고(D154) 도형과 함께 끌 때도 그렇다(D161). 지도에서만 혼자 움직이면,
+   * 같은 동작이 **어디서 시작했느냐에 따라 다르게 굴어** 학생이 규칙을 배울 수
+   * 없다 — D161이 도형 경로를 메울 때 쓴 것과 같은 근거다.
+   *
+   * 옮기는 양(delta)으로 민다. 자손의 절대 좌표를 다시 계산하면 부모와의
+   * 상대 자리가 흐트러진다 — 가지의 모양은 그대로 두고 통째로 옮기는 것이
+   * "가지를 옮겼다"의 뜻이다.
+   */
   const moveFromMap = useEventCallback((id: string, x: number, y: number) => {
-    store.moveMany([{ id, x, y }], "지도에서 옮김");
+    const from = layout.positions.get(id);
+    const moves = [{ id, x, y }];
+    if (from) {
+      const dx = x - from.x;
+      const dy = y - from.y;
+      for (const kid of descendants(items, id)) {
+        const at = layout.positions.get(kid);
+        if (at) moves.push({ id: kid, x: at.x + dx, y: at.y + dy });
+      }
+    }
+    store.moveMany(moves, "지도에서 옮김");
   });
 
   /** 지도에서 노드를 눌렀다 — 그 카드로 날아간다. */
