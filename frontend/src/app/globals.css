@@ -187,8 +187,18 @@ body {
  * 없는 요소는 링을 그대로 둔다(위 규칙). 키보드 사용자가 잃는 것이 없다.
  */
 textarea:focus-visible,
-input[type="text"]:focus-visible,
-input[type="search"]:focus-visible {
+[contenteditable="true"]:focus-visible,
+/*
+ * ⚠️ **`input[type="text"]`으로 적으면 대부분을 놓친다** (실측 2026-08-11).
+ *
+ * HTML에서 `type`을 안 쓴 `<input>`은 기본이 text지만 그 선택자에 **안
+ * 걸린다.** 그래서 홈 질문칸·온보딩 설문칸·로그인 이메일/비밀번호에는 링이
+ * 그대로 떴다(캔버스는 textarea라 우연히 멀쩡했다). 화면마다 재서 확인했다.
+ *
+ * 그래서 **캐럿이 없는 것만 빼고** 전부 끈다 — 체크박스·라디오·슬라이더·
+ * 파일·색은 눌린 자리를 알려 줄 캐럿이 없으므로 링이 유일한 신호다.
+ */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):focus-visible {
   outline: none;
 }
 
