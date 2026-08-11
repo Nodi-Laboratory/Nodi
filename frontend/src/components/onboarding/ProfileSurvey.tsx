@@ -211,13 +211,22 @@ export function ProfileSurvey({
 
       {/* ── 애벌레와 말풍선 ──────────────────────────────────────────── */}
       <div className="flex items-center gap-4">
-        {/* eslint-disable-next-line @next/next/no-img-element -- public의 정적 SVG라 next/image가 줄 이득이 없다 */}
+        {/**
+         * 디자이너가 준 캐릭터 그림 그대로다 (2026-08-11).
+         *
+         * 흰 배경은 **바깥에서 물을 채워** 지웠다 — 색만 보고 흰 픽셀을
+         * 지우면 눈알과 안경 알이 뚫린다(둘 다 흰색이다). 검은 테로 막혀
+         * 바깥과 안 이어지는 흰 영역은 그대로 남는다.
+         *
+         * 원본 147×139을 그대로 두 배 해상도로 쓴다(`width`의 두 배가 원본).
+         */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- public의 정적 PNG라 next/image가 줄 이득이 없다 */}
         <img
-          src="/onboarding/nodi-caterpillar.svg"
+          src="/onboarding/nodi-caterpillar.png"
           alt=""
           aria-hidden
           width={124}
-          height={109}
+          height={117}
           className="shrink-0 select-none"
           draggable={false}
         />
