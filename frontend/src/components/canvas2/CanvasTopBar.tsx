@@ -70,28 +70,51 @@ export function CanvasTopBar({
         * 자리가 종이가 아니라 페이지 배경이었다 — 화면을 가로지르는 띠로 보였다.
         * 캔버스를 위까지 올리고 색을 뺐다. 글자는 종이 위에 바로 앉는다.
         */}
-      <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5">
+      <div className="flex items-center gap-3 px-1 py-1">
+        {/**
+         * **지난 대화 pill** (UI 개편 2026-08-11).
+         *
+         * 테두리 두른 원이었다. 참조 시안은 **둥근 흰 배경 + 그림자 + 라임
+         * 포인트**의 작은 알약이라 그쪽으로 옮긴다 — 개편의 한 줄이 "라임
+         * 테두리로 둘러싼 상자를 없앤다"이고 이 원이 그중 하나였다.
+         *
+         * 글자를 함께 둔다. 삼선 하나만으로는 무엇이 열리는지 눌러 봐야 알았다.
+         */}
         <button
           type="button"
           onClick={onToggleHistory}
           aria-label="지난 대화"
           aria-pressed={historyOpen}
-          title="지난 대화"
-          className="pointer-events-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-colors"
+          className="pointer-events-auto flex shrink-0 items-center gap-2 rounded-full py-2 pl-3 pr-4 text-[13px] font-semibold transition-colors"
           style={{
-            borderColor: "var(--accent-border)",
-            background: historyOpen ? "var(--accent)" : "transparent",
+            background: historyOpen ? "var(--accent-soft)" : "#ffffff",
+            border: "1px solid var(--line)",
+            boxShadow: "var(--shadow-float)",
             color: "var(--fg)",
           }}
         >
-          <Menu size={16} />
+          <Menu size={15} style={{ color: "var(--accent-mid)" }} aria-hidden />
+          지난 대화
         </button>
 
-        <span className="truncate text-[15px] font-semibold" style={{ color: "var(--fg)" }}>
-          {spaceName ? `${spaceName} 학급` : "개인 세션"}
-          <span className="mx-1.5 opacity-40">·</span>
-          <span style={{ fontWeight: 500 }}>{sessionTitle}</span>
-          <span className="opacity-60"> 대화방</span>
+        {/**
+         * **위계로 나눈다** (요구사항 2-2).
+         *
+         * 예전에는 "개인 세션 · 제목 없는 대화 대화방"이 전부 같은 크기라 어느
+         * 것이 지금 방 이름인지 읽어 내야 했다. 이제 소속은 작고 연하게, 방
+         * 이름은 크고 진하게 — 자리는 그대로 두고 굵기와 크기만 쓴다.
+         *
+         * ⚠️ 이 바 자체는 **유지한다**(사용자 결정). 사이드바에서 학급 표시가
+         * 사라져(D217) "지금 어디인지" 알 길이 이것뿐이다 — 없애면 그때 고친
+         * 문제가 그대로 돌아온다.
+         */}
+        <span className="flex min-w-0 flex-col leading-tight">
+          <span className="truncate text-[11px]" style={{ color: "var(--fg-muted)" }}>
+            {spaceName ? `${spaceName} 학급` : "개인 세션"}
+          </span>
+          <span className="truncate text-[16px] font-bold" style={{ color: "var(--fg)" }}>
+            {sessionTitle}
+          </span>
         </span>
       </div>
     </div>

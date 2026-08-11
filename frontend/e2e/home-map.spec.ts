@@ -178,8 +178,15 @@ test("'내 세션 보기'는 세션 선택 화면으로 간다 (D217)", async ({
   await page.goto("/home");
   await page.getByRole("button", { name: "내 세션 보기" }).click();
   await page.waitForURL(/\/sessions/, { timeout: 30_000 });
-  // 학급 코드는 **칸 여섯**이다(사용자 지시 2026-08-09 재디자인) — 첫 칸으로 잰다.
-  await expect(page.getByLabel("학급 코드 1번째 자리")).toBeVisible({ timeout: 30_000 });
+  /**
+   * 도착했는지는 **세션 카드**로 잰다 (UI 개편 2026-08-11).
+   *
+   * 예전에는 학급 코드 첫 칸으로 쟀는데, 그 6칸 상자가 상시 노출에서
+   * `+ 학급 추가하기` 팝업 안으로 들어갔다(요구사항 3-4) — 이제 누르기 전에는
+   * 화면에 없다. 이 시험이 볼 것은 "세션 화면에 도착했나"이므로 그 화면에
+   * 언제나 있는 것으로 재는 편이 애초에 옳았다.
+   */
+  await expect(page.locator("[data-space-card]").first()).toBeVisible({ timeout: 30_000 });
 });
 
 /**

@@ -27,17 +27,20 @@
  */
 
 import { useMemo, useState } from "react";
+import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { classAvatarUrl, getSpacesOverview, type SpaceOverview } from "@/lib/api/spaces";
 import { getRecentRooms, getSpaceRooms, type RoomRow } from "@/lib/api/rooms";
-import { deleteSession, joinClass, patchSession } from "@/lib/api";
+import { deleteSession, patchSession } from "@/lib/api";
 import { PAGE_BG, PERSONAL_CARD_BG } from "@/lib/ui/surface";
 import { useAuthedImage } from "@/lib/ui/useAuthedImage";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
+import { useProfile } from "@/lib/hooks";
 import { ConceptChips } from "./ConceptChips";
-import { RoomList } from "./RoomList";
 import { RoomsDialog } from "./RoomsDialog";
+import { RecentChatsDialog } from "./RecentChatsDialog";
+import { JoinClassDialog } from "./JoinClassDialog";
 
 /**
  * 한 카드에 넣을 분류 수 상한. 넘치면 `…`로 접는다.
@@ -47,8 +50,6 @@ import { RoomsDialog } from "./RoomsDialog";
  */
 const CHIP_CAP = 3;
 
-/** 학급 코드 칸 수. 이미지의 `___ - ___` 모양을 그대로 따른다. */
-const CODE_LEN = 6;
 
 /**
  * 폴더 그림.
@@ -141,12 +142,11 @@ function SpaceCard({ space, onOpen }: { space: SpaceOverview; onOpen: () => void
 export function SpacePicker() {
   const router = useRouter();
   const qc = useQueryClient();
-  const [code, setCode] = useState<string[]>(Array(CODE_LEN).fill(""));
-  const [msg, setMsg] = useState<string | null>(null);
   /** 팝업으로 펼친 공간. null이면 안 펼쳤다. */
   const [picked, setPicked] = useState<SpaceOverview | null>(null);
   /** 방을 고치다 생긴 말 — 팝업 안에 뜬다. */
   const [roomMsg, setRoomMsg] = useState<string | null>(null);
+  const { data: profile } = useProfile();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
 
@@ -164,31 +164,24 @@ export function SpacePicker() {
     staleTime: 30_000,
   });
 
-  const { data: recent } = useQuery({
+  /** 팝업 둘 — 최근 대화 · 학급 추가. 주소를 안 바꾸므로 상태로 든다. */
+  const [recentOpen, setRecentOpen] = useState(false);
+  const [joinOpen, setJoinOpen] = useState(false);
+
+  const {
+    data: recent,
+    isLoading: recentLoading,
+    isError: recentError,
+    refetch: refetchRecent,
+  } = useQuery({
     queryKey: ["spaces", "recent"],
     queryFn: getRecentRooms,
     staleTime: 30_000,
   });
 
-  const join = useMutation({
-    mutationFn: (c: string) => joinClass(c),
-    onSuccess: async () => {
-      setCode(Array(CODE_LEN).fill(""));
-      setMsg("학급에 들어갔어요.");
-      await qc.invalidateQueries({ queryKey: ["spaces", "overview"] });
-      await qc.invalidateQueries({ queryKey: ["my-classes"] });
-    },
-    // 코드가 틀린 것과 서버가 안 되는 것은 학생에게 다른 말이어야 한다.
-    onError: (e: unknown) =>
-      setMsg(
-        (e as { status?: number })?.status === 404
-          ? "그런 학급 코드가 없어요. 선생님께 다시 확인해 주세요."
-          : "지금은 들어갈 수 없어요. 잠시 뒤 다시 해 주세요.",
-      ),
-  });
 
+  const profileName = profile?.display_name?.trim() || null;
   const spaces = useMemo(() => data ?? [], [data]);
-  const joined = code.join("").trim();
 
   /** 라우트에서 쓰는 공간 id — 개인은 'personal', 학급은 uuid다. */
   const routeId = (r: { space_kind: string; space_ref: string }) =>
@@ -253,22 +246,6 @@ export function SpacePicker() {
     }
   };
 
-  /**
-   * 칸 하나에 글자 하나. 채우면 다음 칸으로, 지우면 앞 칸으로 간다 —
-   * 여섯 칸을 손으로 옮겨 다니게 하면 입력이 일이 된다.
-   */
-  const setAt = (i: number, v: string) => {
-    const ch = v.replace(/\s/g, "").slice(-1).toUpperCase();
-    setCode((prev) => {
-      const next = [...prev];
-      next[i] = ch;
-      return next;
-    });
-    if (ch) {
-      const el = document.querySelector<HTMLInputElement>(`[data-code-cell="${i + 1}"]`);
-      el?.focus();
-    }
-  };
 
   return (
     /**
@@ -278,73 +255,42 @@ export function SpacePicker() {
     <div className="min-h-full w-full" style={{ background: PAGE_BG }}>
       {/* 레이아웃이 이미 `<main>`이다 — 여기서 또 쓰면 랜드마크가 둘이 된다. */}
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-7 px-12 py-10">
-        <header>
-          <h1 className="text-[30px] font-bold text-fg">내 세션</h1>
-          <p className="mt-1 text-[15px] text-fg-muted">
-            속한 학급을 확인하고 관리할 수 있어요.
+        {/**
+         * **`내 세션` 대제목을 걷어냈다** (요구사항 3-1).
+         *
+         * 사이드바에 이미 `세션`이 켜져 있어 같은 말을 두 번 하고 있었고,
+         * 그 한 줄이 카드 목록을 아래로 밀었다. 안내 문구만 남긴다.
+         */}
+        <header className="flex items-start justify-between gap-4">
+          <p className="text-[22px] font-bold leading-snug text-fg">
+            속한 학급을 확인하고
+            <br />
+            관리할 수 있어요.
           </p>
-        </header>
 
-        {/* 학급 코드로 들어가기 — 이미지의 그 상자다. */}
-        <section className="flex flex-wrap items-center gap-4 rounded-2xl border border-accent-border/40 bg-accent-soft/25 px-7 py-6">
-          <div className="mr-auto">
-            <div className="text-[17px] font-semibold text-fg">내 학급 추가하기</div>
-            <p className="mt-0.5 text-[14px] text-fg-muted">
-              선생님께 받은 PIN 번호를 입력해주세요.
-            </p>
-          </div>
-
-          <form
-            /**
-             * ⚠️ **줄이 넘치면 접힌다.** 칸 여섯 + 하이픈 + [추가하기]는 400px
-             * 남짓이라 폰(390px)에서는 뒤쪽 두 칸과 버튼이 **잘려 나갔다**
-             * (실측 2026-08-10) — 학급 코드를 아예 넣을 수 없었다.
-             */
-            className="flex flex-wrap items-center justify-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!joined || join.isPending) return;
-              setMsg(null);
-              join.mutate(joined);
+          {/**
+           * 최근 대화는 **눌러야 나온다**(요구사항 4-1). N은 실제 데이터다 —
+           * 숫자가 붙어 있는데 실제와 다르면 그 버튼을 못 믿게 된다.
+           */}
+          <button
+            type="button"
+            onClick={() => setRecentOpen(true)}
+            className="flex shrink-0 items-center gap-2 rounded-full px-5 py-3 text-[15px] font-semibold text-fg transition-colors"
+            style={{
+              background: "#ffffff",
+              border: "1px solid var(--line)",
+              boxShadow: "var(--shadow-float)",
             }}
           >
-            {Array.from({ length: CODE_LEN }, (_, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <input
-                  data-code-cell={i}
-                  value={code[i]}
-                  onChange={(e) => setAt(i, e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Backspace" && !code[i] && i > 0) {
-                      document
-                        .querySelector<HTMLInputElement>(`[data-code-cell="${i - 1}"]`)
-                        ?.focus();
-                    }
-                  }}
-                  inputMode="text"
-                  maxLength={1}
-                  aria-label={`학급 코드 ${i + 1}번째 자리`}
-                  // 좁은 화면에서는 칸도 조금 줄인다 — 여섯이 한 줄에 들어가야
-                  // "코드 여섯 자리"라는 모양이 유지된다.
-                  className="h-13 w-12 rounded-xl border border-accent-border/60 bg-bg-elevated py-3 text-center text-xl font-semibold text-fg outline-none focus-visible:ring-2 focus-visible:ring-accent-deep max-[520px]:h-11 max-[520px]:w-9 max-[520px]:text-base"
-                />
-                {/* 이미지의 가운데 하이픈 — 여섯 자리를 셋씩 끊어 읽게 한다. */}
-                {i === 2 && <span className="px-1 text-fg-muted">–</span>}
-              </div>
-            ))}
-            <button
-              type="submit"
-              disabled={!joined || join.isPending}
-              className="ml-2 rounded-full bg-accent-deep px-6 py-3 text-[15px] font-semibold text-accent-fg transition-opacity disabled:opacity-40"
-            >
-              {join.isPending ? "넣는 중…" : "추가하기"}
-            </button>
-          </form>
-        </section>
-        {msg && <p className="text-[14px] text-fg-muted">{msg}</p>}
+            최근 대화
+            <span style={{ color: "var(--accent-mid)" }}>{recent?.length ?? 0}</span>
+          </button>
+        </header>
 
         <section className="flex flex-col gap-4">
-          <h2 className="text-[17px] font-semibold text-fg">나의 세션 목록</h2>
+          <h2 className="text-[15px] font-semibold text-fg">
+            {profileName ? `${profileName}님의 세션 목록` : "나의 세션 목록"}
+          </h2>
 
           {isLoading && <p className="text-sm text-fg-muted">불러오는 중이에요…</p>}
           {isError && (
@@ -363,27 +309,41 @@ export function SpacePicker() {
                 onOpen={() => setPicked(s)}
               />
             ))}
+
+            {/**
+             * **학급 추가하기 카드** (요구사항 3-4).
+             *
+             * 상시 노출되던 6칸 PIN 상자를 걷어낸 자리다. 그 상자는 학급을
+             * 넣을 때만 쓰는데 화면 맨 위에서 늘 자리를 차지했다 — 목록을
+             * 보러 온 사람에게는 매번 넘겨야 하는 줄이었다.
+             *
+             * 점선 테두리는 "여기에 더 넣을 수 있다"는 뜻이다. 채워진 카드와
+             * 같은 실선이면 이미 있는 학급처럼 보인다.
+             */}
+            <button
+              type="button"
+              onClick={() => setJoinOpen(true)}
+              data-add-class
+              className="flex min-h-[150px] flex-col items-center justify-center gap-1.5 rounded-2xl transition-colors hover:bg-accent-soft/25"
+              style={{
+                background: "#ffffff",
+                border: "1.5px dashed var(--accent-border)",
+              }}
+            >
+              <Plus size={26} style={{ color: "var(--accent-mid)" }} aria-hidden />
+              <span
+                className="text-[15px] font-semibold"
+                style={{ color: "var(--accent-deep)" }}
+              >
+                학급 추가하기
+              </span>
+              <span className="text-[13px] text-fg-muted">
+                PIN 번호로 학급을 추가해요.
+              </span>
+            </button>
           </div>
         </section>
 
-        {/**
-         * 최근 대화 — **공간을 안 고르고 바로 잇는 길** (사용자 지시).
-         *
-         * 위 목록이 "어디로 갈까"라면 여기는 "하던 것 잇기"다. ⋮는 없다 —
-         * 여러 공간의 방이 섞여 있어 지우고 나면 어디 것을 지웠는지 되짚을
-         * 자리가 없다.
-         */}
-        <section className="flex flex-col gap-3">
-          <h2 className="text-[17px] font-semibold text-fg">최근 대화</h2>
-          <div className="rounded-2xl border border-accent-border/40 bg-bg-elevated px-3 py-2">
-            <RoomList
-              rooms={recent ?? []}
-              onOpen={openRoom}
-              showSpace
-              empty="아직 대화가 없어요. 위에서 세션을 골라 시작해 보세요."
-            />
-          </div>
-        </section>
       </div>
 
       {picked && (
@@ -401,6 +361,30 @@ export function SpacePicker() {
           }}
         />
       )}
+
+      {/**
+       * 최근 대화 — 우상단 버튼으로만 연다(요구사항 4-1). 데이터는 이 화면이
+       * 이미 갖고 있으므로 팝업은 **그리기만** 한다.
+       */}
+      <RecentChatsDialog
+        open={recentOpen}
+        onClose={() => setRecentOpen(false)}
+        rooms={recent ?? []}
+        loading={recentLoading}
+        error={recentError}
+        onRetry={() => void refetchRecent()}
+        onOpenRoom={(r) => {
+          setRecentOpen(false);
+          openRoom(r);
+        }}
+        /* "전체 대화 보기" — 방 목록을 여는 것이 곧 전체 보기다. */
+        onSeeAll={() => {
+          setRecentOpen(false);
+          setPicked(spaces[0] ?? null);
+        }}
+      />
+
+      <JoinClassDialog open={joinOpen} onClose={() => setJoinOpen(false)} />
     </div>
   );
 }

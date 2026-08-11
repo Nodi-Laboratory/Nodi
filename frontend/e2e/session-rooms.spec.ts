@@ -51,13 +51,26 @@ test("방 줄의 ⋮에 이름 변경·삭제가 있다", async ({ page }) => {
   await page.keyboard.press("Escape");
 });
 
-test("최근 대화는 공간이 섞여 있고 ⋮가 없다", async ({ page }) => {
+test("최근 대화는 팝업으로 열리고 ⋮가 없다", async ({ page }) => {
+  /**
+   * **화면 하단 목록에서 팝업으로 옮겼다** (UI 개편 2026-08-11, 요구사항 4-1).
+   *
+   * 그 목록은 "어디로 갈까"(세션 카드)와 "하던 것 잇기"를 한 화면에 나란히
+   * 두고 있어서, 카드를 고르러 온 사람에게도 늘 자리를 차지했다.
+   */
   await page.goto("/sessions");
-  const recent = page.locator("main section").filter({ hasText: "최근 대화" }).last();
-  await expect(recent).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("[data-space-card]").first()).toBeVisible({ timeout: 30_000 });
+
+  await page.getByRole("button", { name: /최근 대화/ }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
 
   // ⋮가 여기 있으면 "어디 것을 지웠는지" 되짚을 자리가 없다(사용자 지시).
-  await expect(recent.locator("button[aria-label$='메뉴']")).toHaveCount(0);
+  await expect(dialog.locator("button[aria-label$='메뉴']")).toHaveCount(0);
+
+  // 팝업이 키의 주인이다(`lib/ui/modalLayer.ts`) — ESC로 닫힌다.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden({ timeout: 10_000 });
 });
 
 test("개념 칩은 지도와 같은 색이고, 넘치면 …로 접힌다", async ({ page }) => {

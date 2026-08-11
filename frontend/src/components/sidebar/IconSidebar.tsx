@@ -17,38 +17,52 @@ import { HelpDialog } from "@/components/help/HelpDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 
 /**
- * 좌측 64px 아이콘 사이드바.
+ * 좌측 사이드바 (UI 개편 2026-08-11).
  *
- * ## 학급 동그라미를 걷어냈다 (사용자 지시 2026-08-09)
+ * ## 아이콘만 있던 기둥에서 아이콘 + 글자로
  *
- * 예전에는 가입한 학급마다 배지가 하나씩 쌓였다. 학급이 늘수록 **무슨 반인지
- * 알아볼 수 없다** — 이름 첫 글자 하나로는 "3학년 1반"과 "3학년 2반"이 같아
- * 보이고, 많아지면 목록이 스크롤로 밀린다.
+ * 64px 아이콘 기둥이었다. 요구사항이 **작은 `nodi` 워드마크 + 아이콘/텍스트
+ * 조합**을 요구했고, 그 편이 실제로 낫다 — 아이콘만으로는 "세션"이 무엇인지
+ * 눌러 봐야 알고, 툴팁은 손가락에서는 아예 안 뜬다.
  *
- * 이제 사이드바에 있는 것은 다섯뿐이다:
+ * 활성 표시도 바뀌었다. 왼쪽에 붙던 라임 막대를 빼고 **아주 연한 라임 사각형
+ * 배경 + 라임 아이콘**만 남긴다(테두리 없음) — 개편의 한 줄이 "라임 테두리로
+ * 둘러싼 상자들을 흰 바탕 위 부드러운 레이어로"이고, 막대는 그 테두리 계열의
+ * 마지막 잔재였다.
  *
- *   로고    아무 기능 없음 (여기가 어디인지 말해 주는 표식)
- *   홈      홈으로
- *   세션    세션 선택 페이지로 — 학급을 사진으로 골라 들어간다
- *   설정    **팝업**으로 연다 (사용자 지시 2026-08-10)
- *   도움말  **팝업**으로 연다
+ * ## 메뉴 구성 — 둘을 그대로 둔다 (판단 근거)
  *
- * **기록은 여기 있다가 캔버스 상단 바로 옮겼다**(사용자 지시 2026-08-09).
- * 대화방을 오가는 일은 캔버스 **안**에서 하는 일이고, 사이드바는 화면을
- * 통째로 바꾸는 것들만 두는 편이 갈래가 분명하다.
+ * 참조 시안은 `홈 / 새 대화 / 내 학습` 셋이다. 그런데 **`새 대화`는 목적지가
+ * 아니라 행동**이고, 이미 두 곳에서 할 수 있다 — 홈 입력창에 쓰고 보내면 새
+ * 방이 열리고, 캔버스 상단 바의 지난 대화 서랍에 [새 대화]가 있다. 세 번째
+ * 길을 내면 "어느 쪽이 무엇을 하는지" 배우는 데만 시간이 든다. 이 파일은 같은
+ * 이유로 **로고에서 홈 링크를 이미 뺐다**(2026-08-09) — 바로 아래에 홈이
+ * 있는데 같은 곳으로 가는 길을 둘 둘 이유가 없다는 판단이었다. 그 판단을
+ * 여기서 뒤집을 근거가 없다.
  *
- * 하단의 프로필 머리글자도 뺐다 — **아무것도 안 하는 표시**였고, 그 자리를
- * 도움말이 쓴다.
+ * `내 학습`은 `세션`의 다른 이름인데, 그 페이지 자신이 "OO님의 **세션** 목록"
+ * 이라고 부른다(참조 시안도 그렇게 적혀 있다). 사이드바만 다른 낱말을 쓰면
+ * 같은 것을 두 이름으로 부르게 된다.
  *
- * ## 설정·도움말은 **화면을 안 바꾼다** (사용자 지시 2026-08-10)
+ * 그래서 **화면을 통째로 바꾸는 것만 둔다**는 원래 규칙을 지킨다: 홈 · 세션.
+ * 설정·도움말은 팝업이라 주소를 안 바꾸지만 하단에 따로 모여 있어 갈래가
+ * 구분된다(사용자 지시 2026-08-10).
  *
- * 둘 다 페이지였는데 팝업으로 옮기고 `/profile`·`/help`는 지웠다. 거기서 하는
- * 일은 전부 **한 번 하고 돌아가는 일**이라(이름 바꾸기·학급 넣기·사용법 보기)
- * 하던 대화를 떠날 값이 없다 — 캔버스에서 열면 뒤에 그대로 남는다.
- *
- * 교사·관리자 콘솔 버튼은 그대로 둔다. 그 둘은 학생 화면의 일부가 아니라
- * 다른 앱에 가까워서, 세션 선택 페이지에 섞으면 오히려 찾기 어려워진다.
+ * 교사·관리자 콘솔 버튼은 그대로다 — 학생 화면의 일부가 아니라 다른 앱에
+ * 가까워서, 세션 선택 페이지에 섞으면 오히려 찾기 어려워진다.
  */
+
+/** 활성/비활성 한 벌 — 링크와 버튼이 같은 모습이어야 한다. */
+function itemClass(active: boolean): string {
+  return [
+    "flex w-full flex-col items-center gap-1.5 rounded-2xl px-2 py-2.5",
+    "text-[12px] font-medium transition-colors",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep",
+    active
+      ? "bg-accent-soft text-accent-deep"
+      : "text-fg-muted hover:bg-accent-soft/50 hover:text-fg",
+  ].join(" ");
+}
 
 function NavIcon({
   href,
@@ -64,19 +78,12 @@ function NavIcon({
   return (
     <Link
       href={href}
-      title={label}
       aria-label={label}
       aria-current={active ? "page" : undefined}
-      className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep ${
-        active
-          ? "bg-accent-soft text-sidebar-fg-active"
-          : "text-sidebar-fg hover:bg-accent-soft/60 hover:text-sidebar-fg-active"
-      }`}
+      className={itemClass(active)}
     >
-      {active ? (
-        <span className="absolute -left-2 h-5 w-1 rounded-full bg-accent-deep" />
-      ) : null}
-      <Icon size={20} strokeWidth={2} />
+      <Icon size={21} strokeWidth={active ? 2.2 : 1.8} aria-hidden />
+      <span>{label}</span>
     </Link>
   );
 }
@@ -84,11 +91,13 @@ function NavIcon({
 /** 페이지를 안 옮기고 **그 자리에서 여는** 버튼 (설정·도움말). */
 function NavButton({
   label,
+  srLabel,
   icon: Icon,
   active,
   onClick,
 }: {
   label: string;
+  srLabel?: string;
   icon: LucideIcon;
   active: boolean;
   onClick: () => void;
@@ -97,16 +106,12 @@ function NavButton({
     <button
       type="button"
       onClick={onClick}
-      title={label}
-      aria-label={label}
+      aria-label={srLabel ?? label}
       aria-pressed={active}
-      className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep ${
-        active
-          ? "bg-accent-soft text-sidebar-fg-active"
-          : "text-sidebar-fg hover:bg-accent-soft/60 hover:text-sidebar-fg-active"
-      }`}
+      className={itemClass(active)}
     >
-      <Icon size={20} strokeWidth={2} />
+      <Icon size={21} strokeWidth={active ? 2.2 : 1.8} aria-hidden />
+      <span>{label}</span>
     </button>
   );
 }
@@ -125,26 +130,29 @@ export default function IconSidebar() {
   return (
     <nav
       aria-label="주 메뉴"
+      data-app-sidebar
       /**
-       * 크롬 배율 (사용자 지시 2026-08-08). `zoom`은 이 안에 좌표 계산이 없을
-       * 때만 안전하다 — 사이드바는 버튼뿐이라 괜찮다(캔버스에는 절대 못 건다,
-       * `lib/ui/scale.ts` 참조).
+       * 크롬 배율. `zoom`은 이 안에 좌표 계산이 없을 때만 안전하다 — 사이드바는
+       * 버튼뿐이라 괜찮다(캔버스에는 절대 못 건다, `lib/ui/scale.ts` 참조).
+       *
+       * 폭 112px × 0.95 = 106px으로 목표(105~115px) 안에 든다.
        */
       style={{ zoom: "var(--ui-scale, 1)" }}
-      className="flex h-full w-16 shrink-0 flex-col items-center gap-3 border-r border-accent-border/40 bg-bg-sidebar py-3"
+      className="flex h-full w-28 shrink-0 flex-col items-center gap-1 border-r border-line/60 bg-bg-sidebar px-3 py-4"
     >
       {/**
        * 브랜드 마크 — **누를 수 없다** (사용자 지시 2026-08-09).
        *
-       * 예전에는 홈으로 가는 링크였는데 바로 아래에 홈 버튼이 따로 있다.
-       * 같은 곳으로 가는 길이 둘이면 하나는 없는 것과 같고, 어느 쪽이 무엇을
-       * 하는지 배우는 데만 시간이 든다.
+       * 큰 연두 원형 `n`이었다. 요구사항대로 작은 `nodi` 워드마크로 바꾼다 —
+       * 원형 배지는 이 화면에서 가장 진한 연두 면이라, "라임 면적을 줄인다"의
+       * 첫 대상이었다. 여기가 어디인지 말해 주는 일은 글자로도 된다.
        */}
       <div
         aria-hidden="true"
-        className="mb-1 flex h-9 w-9 select-none items-center justify-center rounded-full bg-accent font-bold text-accent-fg"
+        className="mb-4 select-none self-start pl-1 text-[22px] font-extrabold lowercase leading-none tracking-tight"
+        style={{ color: "var(--accent-mid)" }}
       >
-        n
+        nodi
       </div>
 
       {isStudent && (
@@ -171,16 +179,17 @@ export default function IconSidebar() {
       {role === "admin" ? (
         <NavIcon
           href="/admin"
-          label="관리자 콘솔"
+          label="관리자"
           icon={Shield}
           active={isActive("/admin")}
         />
       ) : null}
 
       {/* 설정·도움말 (하단 고정) — 팝업이라 주소가 안 바뀐다. */}
-      <div className="mt-auto flex flex-col items-center gap-1">
+      <div className="mt-auto flex w-full flex-col items-center gap-1">
         <NavButton
-          label={profile?.display_name ? `설정 (${profile.display_name})` : "설정"}
+          label="설정"
+          srLabel={profile?.display_name ? `설정 (${profile.display_name})` : "설정"}
           icon={Settings}
           active={settingsOpen}
           onClick={() => setSettingsOpen(true)}
@@ -195,8 +204,8 @@ export default function IconSidebar() {
 
       {/**
        * ⚠️ 팝업은 이 `nav` 안에 그려지지만 **몸통으로 포털된다**(`Dialog`).
-       * 여기에는 `zoom`이 걸려 있어서, 그대로 그리면 64px 기둥 안에 배율까지
-       * 먹은 채로 뜬다.
+       * 여기에는 `zoom`이 걸려 있어서, 그대로 그리면 기둥 안에 배율까지 먹은
+       * 채로 뜬다.
        */}
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />

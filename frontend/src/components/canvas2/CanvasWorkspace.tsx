@@ -2572,15 +2572,16 @@ function MapDoor({ onOpen }: { onOpen: () => void }) {
       aria-label="개념 지도 열기"
       title="개념 지도"
       /* 크롬 배율 (사용자 지시 2026-08-08) — `lib/ui/scale.ts`. */
+      /* 2px 테두리를 걷어냈다(요구사항 §8) — 떠 있는 것은 그림자로만 뜬다. */
       className="ui absolute right-4 top-4 z-30 flex flex-col items-center
-                 justify-center gap-1 rounded-2xl border-2 transition-colors"
+                 justify-center gap-1 rounded-2xl transition-colors"
       style={{
-        width: scaled(72),
-        height: scaled(72),
-        background: "var(--c-raised)",
-        borderColor: "var(--c-rule)",
-        color: "var(--c-live)",
-        boxShadow: "var(--c-shadow-md)",
+        width: scaled(66),
+        height: scaled(66),
+        background: "#ffffff",
+        border: "1px solid var(--line)",
+        color: "var(--accent-mid)",
+        boxShadow: "var(--shadow-float)",
         transform: chrome.mapDx ? `translateX(${-chrome.mapDx}px)` : undefined,
       }}
     >

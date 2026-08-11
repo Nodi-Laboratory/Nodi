@@ -25,10 +25,20 @@ import { useEffect, useRef } from "react";
  * 합성되므로 밝은 크림에서 진한 라임 순으로 늘어놓는다.
  */
 const VEIL_COLORS = {
-  color1: "#FDFDE7", // 크림
-  color2: "#E4FF8C", // 연한 라임
-  color3: "#CEFF04", // 라임
-  color4: "#92FF04", // 진한 라임
+  /**
+   * 크림 — **거의 안 건드린다.** 이 색은 밝은 바탕 노릇을 하므로 채도를
+   * 올리면 막 전체가 노래진다 — 실측 2026-08-11: E7 → E0으로 한 칸 밀었더니
+   * 화면이 통째로 누렇게 떴다. **원래 값 그대로 둔다.**
+   */
+  color1: "#FDFDE7",
+  /**
+   * 아래 셋은 **채도를 올려 네온 쪽으로 민다** (사용자 지시 2026-08-11:
+   * "더 형광으로"). 초록을 255에 붙이고 빨강을 내려 초록–빨강 거리를 벌린
+   * 것이 형광으로 읽히는 이유다 — 밝기는 그대로 두고 채도만 올린다.
+   */
+  color2: "#DBFF6B", // 연한 라임
+  color3: "#C2FF00", // 라임
+  color4: "#7CFF00", // 진한 라임
 } as const;
 
 const VERTEX_SHADER = `
@@ -105,7 +115,15 @@ const FRAGMENT_SHADER = `
 
     float frequency = 5.0;
     float amplitude = 30.0;
-    float speed = iTime * 2.0;
+    /**
+     * 물결 왜곡 속도 — **흐르는 느낌의 주범**이다 (사용자 지시 2026-08-11:
+     * "그라데이션을 더 빠르게"). 2.0 → 3.4.
+     *
+     * ⚠️ 회전 노이즈(위 iTime * 0.1)만 올리면 색이 **빙빙 돌기만 하고
+     * 흐르지는 않는다.** 전역 시간을 올리면 둘 다 같이 빨라지는데, 그러면
+     * 회전이 먼저 눈에 띄어 배경이 시선을 끈다. 그래서 여기만 올린다.
+     */
+    float speed = iTime * 3.4;
 
     tuv.x += sin(tuv.y * frequency + speed) / amplitude;
     tuv.y += sin(tuv.x * frequency * 1.5 + speed) / (amplitude * 0.5);

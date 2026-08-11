@@ -79,11 +79,19 @@
  *     키우면 삐져나온다. 위아래로 이웃이 없어 겹칠 걱정도 없다.
  */
 @media (pointer: coarse) {
+  /**
+   * ⚠️ **배율을 되나눈다** (2026-08-11).
+   *
+   * 이 버튼들은 `zoom: var(--ui-scale)`가 걸린 상자 안에 있다. 44px을 그대로
+   * 적으면 화면에서는 `44 × 배율`이 되는데, UI 개편에서 배율이 1.4 → 0.95로
+   * 내려가며 **42px로 밀렸다**(실측: e2e가 잡았다). 44는 손가락 끝의 크기라
+   * 화면 기준이어야 하므로 배율로 나눠 적는다.
+   */
   [data-ask-mode] button,
   [data-ask-send],
   [data-canvas-crumb] button {
-    width: 44px;
-    height: 44px;
+    width: calc(44px / var(--ui-scale, 1));
+    height: calc(44px / var(--ui-scale, 1));
   }
 
   /**
@@ -136,8 +144,8 @@
 
   [data-hover-only] {
     opacity: 1 !important;
-    min-width: 44px;
-    min-height: 44px;
+    min-width: calc(44px / var(--ui-scale, 1));
+    min-height: calc(44px / var(--ui-scale, 1));
   }
 
   [data-rail-collapse] {
@@ -203,6 +211,28 @@
   --accent-soft: #e7f7bc;   /* 아주 옅은 연두 — 칩 배경·hover 면 */
   --accent-deep: #5d7a12;   /* 버튼·링·강조선. 흰 글자 4.93 · 앱 배경 4.61 */
   --accent-fg: #2c3a10;     /* 연두 위 텍스트 (밝은 연두 8.20 · 중간 6.31) */
+
+  /**
+   * ── UI 개편 2026-08-11: 중립 한 벌 ────────────────────────────────
+   *
+   * 개편의 한 문장은 "라임 테두리로 둘러싼 상자들을 **흰 바탕 위의 부드러운
+   * 레이어**로 바꾼다"이다. 그러려면 상자를 그리는 수단이 라임 말고 하나
+   * 더 있어야 한다 — 그게 없어서 지금까지 전부 `--accent-border`를 썼다.
+   *
+   * 라임은 이제 **선택 상태 · 좌측 세로 포인트 라인 · 주요 CTA**에만 쓴다.
+   */
+  --line: #ececea;          /* 중립 테두리 — 있는 줄 알겠는 정도만 */
+  --line-strong: #dedddb;   /* 눌러야 하는 것의 테두리(입력칸 등) */
+  --surface: #fcfcfc;       /* 캔버스·페이지 바탕 (요구사항 §7) */
+
+  /**
+   * 떠 있는 것의 그림자 — **한 종류만** 쓴다(요구사항 §8).
+   *
+   * 미니맵·입력창·툴바처럼 **떠 있는 것에만** 건다. 캔버스 카드는 그림자
+   * 없이 플랫하게 둔다 — 그 차이가 곧 "학습 내용"과 "떠 있는 UI"의 층을
+   * 가르는 장치다. 색을 입히지 않은 중성 회색이다(색 그림자는 화면을 물들인다).
+   */
+  --shadow-float: 0 6px 24px rgba(23, 23, 18, 0.07), 0 1px 3px rgba(23, 23, 18, 0.04);
   --accent-border: #a8cc4e; /* 연두 요소 테두리 */
 
   /* 사이드바 — **밝은 레일**(디자이너 시안 2026-08-07). 짙은 올리브였는데
@@ -249,9 +279,30 @@
   --color-fg: var(--fg);
   --color-fg-muted: var(--fg-muted);
 
+  /* UI 개편 2026-08-11 — 중립. `border-line`·`bg-surface`로 쓴다. */
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-surface: var(--surface);
+
   --font-sans:
     "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont,
     "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+}
+
+/**
+ * 라운드는 **세 단계만** 쓴다 (요구사항 §8).
+ *
+ * 값이 흩어지면 같은 화면에서 8·10·12·14·16이 섞이고, 그 미세한 차이가
+ * "정돈되지 않은" 인상의 큰 몫이다. Tailwind 클래스로 쓸 때는
+ * `rounded-[--r-sm]`처럼 부르지 말고 아래 대응을 지킨다:
+ *
+ *   작은 컨트롤   10~12px → `rounded-xl`  (12px)
+ *   카드·버튼     16~20px → `rounded-2xl` (16px)
+ *   pill          999px   → `rounded-full`
+ */
+:root {
+  --r-control: 12px;
+  --r-card: 16px;
 }
 
 html,
@@ -400,7 +451,19 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="
   --c-ink: #1e2418; /* 본문 */
   --c-ink-soft: #5f6656; /* 보조 · 비활성 아이콘 */
   --c-ink-faint: #828976; /* 캡션 · 플레이스홀더. 종이 대비 3.54 */
-  --c-rule: #d3e6a5; /* 괘선 · 도트 그리드 · 경계. 종이가 밝아진 만큼 한 단계 진하게 */
+  /**
+   * 괘선 · 도트 그리드 · 경계 (UI 개편 2026-08-11에 **중립으로** 바꿨다).
+   *
+   * `#d3e6a5`였다 — 연두다. 이 토큰 하나가 캔버스 격자 · 무대 경계 · 도구
+   * 레일 · 지도 버튼 테두리를 전부 칠하고 있어서, 화면에 초록 선이 사방에
+   * 있는 인상의 큰 몫이었다(요구사항 §7: "올리브/연두/초록 테두리가 동시에
+   * 등장하는 구조를 없앤다").
+   *
+   * ⚠️ **좌측 세로 포인트 라인은 그대로 라임이다.** 그건 출처를 말하는
+   * 정보이지 상자를 그리는 선이 아니다(D120) — `--c-live`·`--c-hand`가 맡고
+   * 이 토큰과 무관하다.
+   */
+  --c-rule: #ececea;
 
   /* 두 축 — 상호 대비 4.11로 색만으로도 기준(3.0)을 넉넉히 넘는다 */
   --c-live: #789e18; /* AI — 초록. 종이 대비 3.05 */
@@ -499,7 +562,8 @@ a {
   inset: 0;
   pointer-events: none;
   background-image: radial-gradient(circle at 1px 1px, var(--c-rule) 1px, transparent 0);
-  opacity: 0.55;
+  /* 중립이 되면서 같은 값으로도 더 또렷해졌다 — 배경은 있는 줄만 알면 된다. */
+  opacity: 0.4;
 }
 
 /* Excalidraw 기본 UI 잔재 제거 — zenMode로도 남는 것들.

@@ -526,13 +526,20 @@ export function ConnectorLayer({ items, positions, sizes, onCut }: Props) {
               d={shiftPath(g, minX, minY)}
               fill="none"
               stroke="currentColor"
-              // 1.1/0.28이었다 — 카드가 커지니 실오라기처럼 보였다
-              // (사용자 지시 2026-08-03: "연결선을 더 굵게").
-              strokeWidth={l.attach ? 1.6 : l.tree ? 2.6 : 2}
+              /**
+               * 1.1/0.28 → 1.6~2.6이었다가(2026-08-03 "더 굵게") **다시 한
+               * 단계 얇아졌다**(UI 개편 2026-08-11: "연결선은 더 얇고 연하게").
+               *
+               * 그때 굵힌 이유는 카드가 커져 실오라기처럼 보였기 때문인데,
+               * 개편이 카드에서 테두리·그림자를 걷어내 화면이 조용해진 만큼
+               * 같은 굵기가 이제 도드라진다. 3px보다 아래로는 안 내린다 —
+               * 그 아래는 배율이 낮을 때 사라진다.
+               */
+              strokeWidth={l.attach ? 1.2 : l.tree ? 1.9 : 1.5}
               strokeLinecap="round"
               // 첨부는 점선이다 (D163) — 트리 간선과 한눈에 갈린다.
               strokeDasharray={l.attach ? "5 6" : undefined}
-              opacity={l.attach ? 0.4 : l.tree ? 0.55 : 0.5}
+              opacity={l.attach ? 0.3 : l.tree ? 0.42 : 0.38}
             />
             {/* 양끝 도트 — 어디서 나와 어디로 갔는지가 한눈에 보인다.
                 받는 쪽만 가운데를 종이색으로 비워 방향을 표시한다. */}

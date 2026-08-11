@@ -271,9 +271,11 @@ export function MiniMapOverlay({
           top: at.y,
           width: MINI.w,
           height: MINI.h,
-          background: "var(--c-paper)",
-          border: "3px solid var(--accent-border)",
-          boxShadow: "var(--c-shadow-lg)",
+          background: "#ffffff",
+          /* 진한 라임 3px을 걷어냈다(요구사항 §3) — 흰 카드 + 연한 회색
+             테두리 + 떠 있는 것 한 종류의 그림자. */
+          border: "1px solid var(--line)",
+          boxShadow: "var(--shadow-float)",
           // 모서리로 붙는 움직임 — 즉시 튀면 어디로 갔는지 안 보인다.
           transition: "left .28s cubic-bezier(.16,1,.3,1), top .28s cubic-bezier(.16,1,.3,1)",
         }}
@@ -286,14 +288,16 @@ export function MiniMapOverlay({
         <div
           data-map-grab
           className="flex items-center justify-between px-2"
+          /* 헤더를 더 낮게, 글자·아이콘도 더 작게(요구사항 §3). 지도 자체가
+             내용이므로 머리띠가 자리를 많이 먹을 이유가 없다. */
           style={{
-            paddingTop: 2,
-            paddingBottom: 2,
+            paddingTop: 1,
+            paddingBottom: 1,
             cursor: "grab",
-            borderBottom: "1px solid var(--c-rule)",
+            borderBottom: "1px solid var(--line)",
           }}
         >
-          <span className="label text-[11px]" style={{ color: "var(--c-ink-soft)" }}>
+          <span className="label text-[10px]" style={{ color: "var(--fg-muted)" }}>
             지도
           </span>
           <span className="flex items-center gap-1">
@@ -302,19 +306,19 @@ export function MiniMapOverlay({
               aria-label="지도 크게 보기"
               title="크게 보기"
               onClick={() => setBig(true)}
-              className="rounded p-1"
-              style={{ color: "var(--c-ink-soft)" }}
+              className="rounded p-0.5"
+              style={{ color: "var(--fg-muted)" }}
             >
-              <Maximize2 size={13} />
+              <Maximize2 size={12} />
             </button>
             <button
               type="button"
               aria-label="지도 닫기"
               onClick={onClose}
-              className="rounded p-1"
-              style={{ color: "var(--c-ink-soft)" }}
+              className="rounded p-0.5"
+              style={{ color: "var(--fg-muted)" }}
             >
-              <X size={13} />
+              <X size={12} />
             </button>
           </span>
         </div>
@@ -338,9 +342,9 @@ export function MiniMapOverlay({
             style={{
               width: popup.w,
               height: popup.h,
-              background: "var(--c-paper)",
-              border: "5px solid var(--accent-border)",
-              boxShadow: "var(--c-shadow-lg)",
+              background: "#ffffff",
+              border: "1px solid var(--line)",
+              boxShadow: "var(--shadow-float)",
               animation: "c2-map-pop .18s cubic-bezier(.16,1,.3,1) both",
             }}
             onClick={(e) => e.stopPropagation()}

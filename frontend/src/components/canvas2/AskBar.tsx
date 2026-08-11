@@ -191,7 +191,11 @@ export function AskBar({
          * 키보드를 모른 채 그대로 있고 이 입력창은 **그 밑에 깔린다**. 학생이
          * 자기가 치는 글을 못 본다. `--kb-inset`이 그 높이다(안 가려졌으면 0).
          */
-        bottom: "calc(52px + var(--kb-inset, 0px))",
+        /**
+         * 바닥에서 34px 띄운 floating bar (요구사항 §6: 28~40px). 52px이었다 —
+         * 배율 0.95를 먹으므로 화면에서는 32px이 된다.
+         */
+        bottom: "calc(34px + var(--kb-inset, 0px))",
         /**
          * ⚠️ **미는 양도 배율로 나눈다** (2026-08-09).
          *
@@ -215,14 +219,21 @@ export function AskBar({
         transition: "transform .34s cubic-bezier(.22,.9,.24,1), max-width .34s ease",
       }}
       /**
-       * 폭 — 넓은 화면에서는 오른쪽 도구바를 피해 `100%-140px`이다.
+       * 폭 — **화면의 56%** (요구사항 §6: 50~60%).
        *
-       * ⚠️ 좁은 화면에서는 그 여백이 **입력창을 없앤다**: 무대가 300px이면
-       * 남는 것이 160px인데 왼쪽 토글만 106px이라, 알약이 눌려 [보내기]가
-       * 화면 밖으로 나갔다(실측 2026-08-10, 390px 폰). 좁을 때는 도구바와
-       * 겹치더라도 **묻는 일이 먼저**다.
+       * 예전에는 `min(680px, 100%-140px)`이라 넓은 화면에서 비율이 계속
+       * 떨어졌다(실측 2026-08-11: 1366에서 41% · 2560에서 **22%**). 목표는
+       * 비율이므로 비율로 적는다. 상한 1400px은 초광폭에서 한 줄이 끝없이
+       * 길어지지 않게 하는 자물쇠일 뿐이라 평소에는 안 걸린다 — 실측
+       * 2026-08-11에 760px으로 뒀더니 1920·2560에서 그 상한이 먼저 걸려
+       * 비율이 33%·25%로 다시 떨어졌다.
+       *
+       * ⚠️ 좁은 화면에서는 비율이 **입력창을 없앤다**: 무대가 300px이면 56%가
+       * 168px인데 왼쪽 토글만 그만하다. 그래서 1100px 아래부터는 도구바를
+       * 피하는 옛 규칙으로 돌아가고, 900px 아래에서는 **도구바와 겹치더라도**
+       * 폭을 다 쓴다 — 좁을 때는 묻는 일이 먼저다(실측 2026-08-10, 390px 폰).
        */
-      className="ui absolute left-1/2 z-50 w-[min(680px,calc(100%-140px))] -translate-x-1/2 max-[900px]:w-[calc(100%-24px)]"
+      className="ui absolute left-1/2 z-50 w-[min(56%,1400px)] min-w-[420px] -translate-x-1/2 max-[1100px]:w-[calc(100%-160px)] max-[900px]:w-[calc(100%-24px)] max-[900px]:min-w-0"
     >
       {showStatus && (
         <div
@@ -318,14 +329,23 @@ export function AskBar({
       <div className="flex items-end gap-2">
       <AskModeToggle askPen={askPen} onChange={onToggleAskPen} disabled={disabled} />
       <div
-        className="flex min-w-0 flex-1 items-end gap-2 rounded-2xl border px-3 py-2 transition-shadow"
+        /**
+         * 알약 — 흰 바탕 + **아주 연한 회색** 테두리 + 그림자 한 종류
+         * (요구사항 §6·§8). 초록 외곽선을 걷어낸 자리다.
+         *
+         * 높이는 최소 68px(요구사항 64~76px). 배율 0.95를 먹어 화면에서는
+         * 65px이 된다 — 예전에는 49px이었다.
+         */
+        className="flex min-h-[68px] min-w-0 flex-1 items-center gap-2 rounded-full px-4 py-2 transition-shadow"
         style={{
-          background: "var(--c-raised)",
+          background: "#ffffff",
           // **포커스에 테두리를 칠하지 않는다**(사용자 지시). 누를 때마다
           // 오커 링이 켜지는 게 거슬린다는 지적이었다. 포커스 여부는 그림자
           // 깊이로만 알린다 — 알림은 남기되 색은 쓰지 않는다.
-          borderColor: "var(--c-rule)",
-          boxShadow: focused ? "var(--c-shadow-lg)" : "var(--c-shadow-md)",
+          border: "1px solid var(--line)",
+          boxShadow: focused
+            ? "0 10px 30px rgba(23,23,18,.10), 0 1px 3px rgba(23,23,18,.05)"
+            : "var(--shadow-float)",
         }}
       >
         {onAttach && (
@@ -375,7 +395,7 @@ export function AskBar({
               submit();
             }
           }}
-          className="max-h-40 min-h-[24px] flex-1 resize-none bg-transparent text-[15px] outline-none"
+          className="max-h-40 min-h-[24px] flex-1 resize-none bg-transparent text-[16px] outline-none"
           style={{ color: "var(--c-ink)", caretColor: "var(--c-live)" }}
           aria-label="질문 입력"
         />
@@ -392,7 +412,8 @@ export function AskBar({
             onClick={onRecognize}
             disabled={!inkReady || inkBusy || disabled}
             data-testid="ink-recognize"
-            className="flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] transition-opacity disabled:opacity-30"
+            /* 손가락에는 32px가 최소다 — 배율(0.95)을 먹으므로 한 단계 키운다. */
+            className="flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] transition-opacity disabled:opacity-30"
             // 학생이 쓴 것이므로 틸이다(D120의 색 규칙) — 보내기(오커)와 갈린다.
             style={{ background: "var(--c-hand)", color: "var(--c-paper)" }}
           >
@@ -437,11 +458,13 @@ export function AskBar({
             disabled={!value.trim() || busy || disabled}
             aria-label="보내기"
             data-ask-send
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-30"
+            /* 알약이 68px로 커졌으므로 원도 같이 키운다 — 작은 원이 큰 알약
+               안에 있으면 눌러야 할 것이 아니라 표시처럼 보인다. */
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-30"
             // 시안의 전송 버튼은 **밝은 초록 원**이다(사용자 지시 2026-08-07).
             style={{ background: "var(--accent-mid)", color: "var(--c-paper)" }}
           >
-            <ArrowUp size={16} strokeWidth={2.4} />
+            <ArrowUp size={20} strokeWidth={2.4} />
           </button>
         )}
       </div>
@@ -469,20 +492,29 @@ function AskModeToggle({
   onChange: (on: boolean) => void;
   disabled?: boolean;
 }) {
+  /** 선택된 쪽만 연한 라임. 안 고른 쪽은 아무 면도 없다(요구사항 §6). */
   const side = (on: boolean) => ({
-    background: on ? "var(--c-hand-wash)" : "transparent",
-    color: on ? "var(--c-hand)" : "var(--c-ink-faint)",
+    background: on ? "var(--accent-soft)" : "transparent",
+    color: on ? "var(--accent-deep)" : "var(--c-ink-faint)",
   });
   return (
     <div
       data-ask-mode
       role="radiogroup"
       aria-label="질문 방법"
-      className="mb-0.5 flex shrink-0 items-center gap-0.5 rounded-full border p-1"
+      /**
+       * 굵은 초록 테두리를 걷어냈다 (요구사항 §6). 흰 알약에 연한 회색 선
+       * 하나, 그리고 **선택된 쪽만** 연한 라임 배경이다.
+       *
+       * ⚠️ 자리는 그대로 — 입력 알약과 **한 상자 안**이다. 밖으로 빼면 지도가
+       * 좌하단에 붙을 때(`chromeFit.askDx`) 입력창만 비켜서고 토글은 지도
+       * 밑에 깔린다(미는 값은 바깥 상자의 `transform`이 갖고 있다).
+       */
+      className="flex shrink-0 items-center gap-0.5 rounded-full p-1"
       style={{
-        background: "var(--c-raised)",
-        borderColor: "var(--c-rule)",
-        boxShadow: "var(--c-shadow-md)",
+        background: "#ffffff",
+        border: "1px solid var(--line)",
+        boxShadow: "var(--shadow-float)",
       }}
     >
       <button

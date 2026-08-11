@@ -327,7 +327,8 @@ export function ToolRail({
 
       <div
         data-no-pan
-        className="ui flex flex-col gap-1 rounded-xl border p-1.5"
+        /* 윤곽선을 걷어낸다(요구사항 §5) — 떠 있는 것은 그림자로만 뜬다. */
+        className="ui flex flex-col gap-1 rounded-2xl p-1.5"
         style={{
           /**
            * ⚠️ **`max-height: 100%`로는 안 잡힌다.** 바깥 막대의 높이는 auto
@@ -338,9 +339,9 @@ export function ToolRail({
            */
           alignSelf: "stretch",
           minHeight: 0,
-          background: "var(--c-raised)",
-          borderColor: "var(--c-rule)",
-          boxShadow: "var(--c-shadow-md)",
+          background: "#ffffff",
+          border: "1px solid var(--line)",
+          boxShadow: "var(--shadow-float)",
         }}
       >
         {/* ⚠️ 접기 버튼은 **안 굴러간다** — 막대가 화면보다 길 때 치우고 싶은
