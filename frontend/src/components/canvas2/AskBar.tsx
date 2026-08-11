@@ -326,7 +326,10 @@ export function AskBar({
        * 오른쪽으로 밀린다 — 바깥에 두면 입력창만 비켜서고 토글은 지도 밑에
        * 깔린다(미는 값은 이 상자의 `transform`이 갖고 있다).
        */}
-      <div className="flex items-end gap-2">
+      {/* 토글과 알약의 **세로 중심을 맞춘다**(사용자 지시 2026-08-11).
+         `items-end`였을 때는 알약이 두 줄로 자라면 토글만 바닥에 붙어
+         어긋나 보였다. */}
+      <div className="flex items-stretch gap-2">
       <AskModeToggle askPen={askPen} onChange={onToggleAskPen} disabled={disabled} />
       <div
         /**
@@ -510,7 +513,8 @@ function AskModeToggle({
        * 좌하단에 붙을 때(`chromeFit.askDx`) 입력창만 비켜서고 토글은 지도
        * 밑에 깔린다(미는 값은 바깥 상자의 `transform`이 갖고 있다).
        */
-      className="flex shrink-0 items-center gap-0.5 rounded-full p-1"
+      /* 알약과 **같은 높이**다(사용자 지시 2026-08-11) — 68px에 맞춘다. */
+      className="flex min-h-[68px] shrink-0 items-center gap-0.5 rounded-full px-1.5"
       style={{
         background: "#ffffff",
         border: "1px solid var(--line)",

@@ -147,13 +147,16 @@ export default function IconSidebar() {
        * 원형 배지는 이 화면에서 가장 진한 연두 면이라, "라임 면적을 줄인다"의
        * 첫 대상이었다. 여기가 어디인지 말해 주는 일은 글자로도 된다.
        */}
-      <div
+      {/* eslint-disable-next-line @next/next/no-img-element -- public의 정적 SVG라 next/image가 줄 이득이 없다 */}
+      <img
+        src="/brand/nodi-wordmark.svg"
+        alt=""
         aria-hidden="true"
-        className="mb-4 select-none self-start pl-1 text-[22px] font-extrabold lowercase leading-none tracking-tight"
-        style={{ color: "var(--accent-mid)" }}
-      >
-        nodi
-      </div>
+        width={62}
+        height={24}
+        className="mb-5 select-none self-start pl-1"
+        draggable={false}
+      />
 
       {isStudent && (
         <>

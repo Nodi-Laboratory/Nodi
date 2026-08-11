@@ -127,8 +127,8 @@ export function JoinClassDialog({
                 autoCorrect="off"
                 spellCheck={false}
                 aria-label={`학급 코드 ${i + 1}번째 자리`}
-                className="h-12 w-11 rounded-xl bg-white py-3 text-center text-xl font-semibold text-fg outline-none max-[420px]:h-11 max-[420px]:w-9 max-[420px]:text-base"
-                style={{ border: "1px solid var(--line-strong)" }}
+                className="h-12 w-11 rounded-xl py-3 text-center text-xl font-semibold text-fg outline-none max-[420px]:h-11 max-[420px]:w-9 max-[420px]:text-base"
+                style={{ background: "var(--surface)" }}
               />
               {i === 2 && <span className="px-0.5 text-fg-muted">–</span>}
             </div>

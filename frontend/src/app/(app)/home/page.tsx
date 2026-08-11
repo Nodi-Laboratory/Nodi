@@ -179,8 +179,12 @@ export default function HomePage() {
               aria-label={mapOnly ? "돌아가기" : "지도만 보기"}
               /* 상자가 없어져 화면 모서리에 붙는다 — 3px 테두리가 만들던
                  여백이 사라졌으므로 그만큼 안쪽으로 들여 놓는다. */
-              className="absolute right-5 top-5 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-accent-border/50 bg-bg-elevated/90 text-fg-muted shadow-sm backdrop-blur transition-colors hover:text-fg"
-              style={mapOnly ? { background: "var(--accent)", color: "var(--accent-fg)" } : undefined}
+              /* 윤곽선 없이 그림자로만(사용자 지시 2026-08-11). */
+              className="absolute right-5 top-5 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-bg-elevated/90 text-fg-muted backdrop-blur transition-colors hover:text-fg"
+              style={{
+                boxShadow: "var(--shadow-float)",
+                ...(mapOnly ? { background: "var(--accent)", color: "var(--accent-fg)" } : {}),
+              }}
             >
               {mapOnly ? <Minimize2 size={16} /> : <Expand size={16} />}
             </button>
@@ -272,7 +276,7 @@ export default function HomePage() {
               <div className="pointer-events-auto flex w-full max-w-3xl flex-col items-center gap-8">
                 {/* 페이지 제목이 h1이므로 여기는 h2다 — 문서 구조가 뒤집히면
                   낭독기가 이 화면의 주제를 인사말로 읽는다. */}
-                <h2 className="text-center text-[34px] font-semibold leading-snug text-fg">
+                <h2 className="font-brand text-center text-[34px] font-medium leading-snug text-fg">
                   {displayName
                     ? `${displayName}님, 안녕하세요.`
                     : "안녕하세요."}
@@ -281,7 +285,10 @@ export default function HomePage() {
                 </h2>
 
                 <form
-                  className="flex w-full items-center gap-3 rounded-full border border-accent-border bg-bg-elevated px-7 py-4 shadow-sm"
+                  /* 윤곽선을 걷어낸다(사용자 지시 2026-08-11) — 흰 알약에
+                     그림자만. 캔버스 입력창과 같은 규칙이다. */
+                  className="flex w-full items-center gap-3 rounded-full bg-bg-elevated px-7 py-4"
+                  style={{ boxShadow: "var(--shadow-float)" }}
                   onSubmit={(e) => {
                     e.preventDefault();
                     const q = question.trim();
@@ -326,7 +333,8 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={() => router.push("/sessions")}
-                    className="flex items-center gap-2 rounded-full border border-accent-border bg-bg-elevated px-6 py-3.5 text-[17px] font-medium text-fg transition-colors hover:bg-accent-soft/50"
+                    className="flex items-center gap-2 rounded-full bg-bg-elevated px-6 py-3.5 text-[17px] font-medium text-fg transition-colors hover:bg-accent-soft/50"
+                    style={{ boxShadow: "var(--shadow-float)" }}
                   >
                     <Grid2x2 size={19} />내 세션 보기
                   </button>

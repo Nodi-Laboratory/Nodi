@@ -102,7 +102,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
         </>
       }
     >
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-6 py-5">
+      <div className="flex min-h-0 flex-1 flex-col gap-5">
         {/* 이름 변경 */}
         <section>
           <h3 className="text-sm font-semibold text-fg">이름 변경</h3>
@@ -118,7 +118,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
                 if (e.key === "Enter") void handleSaveName();
               }}
               placeholder="표시 이름"
-              className="flex-1 rounded-lg border border-accent-border/50 bg-bg px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
+              className="flex-1 rounded-xl bg-[var(--surface)] px-3.5 py-2.5 text-sm text-fg placeholder:text-fg-muted"
             />
             <button
               type="button"
@@ -155,7 +155,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               autoCorrect="off"
               spellCheck={false}
               placeholder="학급 코드"
-              className="flex-1 rounded-lg border border-accent-border/50 bg-bg px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
+              className="flex-1 rounded-xl bg-[var(--surface)] px-3.5 py-2.5 text-sm text-fg placeholder:text-fg-muted"
             />
             <button
               type="button"
@@ -177,7 +177,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
                 {myClasses.map((m) => (
                   <li
                     key={m.class_id}
-                    className="flex items-center justify-between rounded-lg border border-accent-border/30 bg-bg px-3 py-2 text-sm text-fg"
+                    className="flex items-center justify-between rounded-xl bg-[var(--surface)] px-3.5 py-2.5 text-sm text-fg"
                   >
                     <span>{m.classes?.name ?? "학급"}</span>
                     {m.role_in_class && (
@@ -191,11 +191,12 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
         </section>
       </div>
 
-      <footer className="flex shrink-0 justify-end border-t border-accent-border/40 px-6 py-3">
+      {/* 구분선은 양 끝이 변에 안 닿는다(사용자 지시 2026-08-11). */}
+      <footer className="relative flex shrink-0 justify-end px-7 py-4 before:absolute before:inset-x-7 before:top-0 before:h-px before:bg-[var(--line)] before:content-['']">
         <button
           type="button"
           onClick={handleLogout}
-          className="flex items-center gap-1.5 rounded-lg border border-danger/50 px-3 py-1.5 text-sm font-medium text-danger transition-colors hover:bg-danger/10"
+          className="flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/10"
         >
           <LogOut size={14} />
           로그아웃

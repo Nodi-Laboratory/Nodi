@@ -32,7 +32,7 @@ import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { classAvatarUrl, getSpacesOverview, type SpaceOverview } from "@/lib/api/spaces";
 import { getRecentRooms, getSpaceRooms, type RoomRow } from "@/lib/api/rooms";
-import { deleteSession, patchSession } from "@/lib/api";
+import { createSession, deleteSession, patchSession } from "@/lib/api";
 import { PAGE_BG, PERSONAL_CARD_BG } from "@/lib/ui/surface";
 import { useAuthedImage } from "@/lib/ui/useAuthedImage";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
@@ -105,10 +105,15 @@ function SpaceCard({ space, onOpen }: { space: SpaceOverview; onOpen: () => void
        *
        * 크기는 사용자 지시로 한 단계 키웠다(176 → 208, 폭 220 → 280).
        */
-      className="group flex h-[208px] flex-col items-center gap-2 overflow-hidden rounded-2xl border border-accent-border/50 px-5 py-5 text-center transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep"
+      /* 윤곽선을 걷어내고 그림자로 띄운다(사용자 지시 2026-08-11) — 바닥이
+         회색이 되면서 흰 카드가 선 없이도 떠 보인다. */
+      className="group flex h-[208px] flex-col items-center gap-2 overflow-hidden rounded-2xl px-5 py-5 text-center transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-deep"
       // 개인 세션만 **아주 연한 연두**다(사용자 지시) — 언제나 첫 칸인 자리를
       // 색으로도 갈라 둔다.
-      style={{ background: isPersonal ? PERSONAL_CARD_BG : "var(--bg-elevated)" }}
+      style={{
+        background: isPersonal ? PERSONAL_CARD_BG : "var(--bg-elevated)",
+        boxShadow: "var(--shadow-float)",
+      }}
     >
       <div className="flex h-[76px] w-full shrink-0 items-center justify-center overflow-hidden">
         {avatar ? (
@@ -120,7 +125,7 @@ function SpaceCard({ space, onOpen }: { space: SpaceOverview; onOpen: () => void
         )}
       </div>
 
-      <div className="w-full truncate text-[17px] font-semibold text-fg">
+      <div className="font-brand w-full truncate text-[17px] font-medium text-fg">
         {isPersonal ? "개인 세션" : space.name}
       </div>
 
@@ -146,6 +151,8 @@ export function SpacePicker() {
   const [picked, setPicked] = useState<SpaceOverview | null>(null);
   /** 방을 고치다 생긴 말 — 팝업 안에 뜬다. */
   const [roomMsg, setRoomMsg] = useState<string | null>(null);
+  /** 새 방을 만드는 중인가. 두 번 눌러 방이 둘 생기지 않게 한다. */
+  const [creating, setCreating] = useState(false);
   const { data: profile } = useProfile();
   const setActiveSpace = useWorkspaceStore((s) => s.setActiveSpace);
   const setActiveSession = useWorkspaceStore((s) => s.setActiveSession);
@@ -193,6 +200,41 @@ export function SpacePicker() {
    * ⚠️ **공간도 함께 적는다.** `activeSessionId`만 두면 학급 공간에서 개인
    * 세션이 열린다(D148) — 스토어가 둘을 대조해 어긋나면 없는 것으로 친다.
    */
+  /**
+   * 지금 펼친 공간에 방을 새로 만들고 **그 방으로 들어간다**.
+   *
+   * ⚠️ D202가 걸려 있다 — 그 공간의 가장 최근 방이 비어 있으면 서버가 새로
+   * 만들지 않고 **그 행을 돌려준다.** 그래서 여기서 "새 방이 생겼다"를
+   * 단정하지 않고, 돌려받은 방으로 그냥 들어간다(빈 방이 둘 쌓이지 않는다).
+   */
+  const newRoom = async () => {
+    if (!picked || creating) return;
+    setCreating(true);
+    setRoomMsg(null);
+    try {
+      const made = await createSession({
+        space_kind: picked.space_kind,
+        space_ref: picked.space_kind === "personal" ? null : picked.space_ref,
+      });
+      await qc.invalidateQueries({ queryKey: ["spaces", "rooms"] });
+      await qc.invalidateQueries({ queryKey: ["spaces", "recent"] });
+      openRoom({
+        id: made.id,
+        title: made.title ?? "",
+        updated_at: made.updated_at ?? null,
+        space_kind: picked.space_kind,
+        space_ref: picked.space_ref,
+        space_name: picked.space_kind === "personal" ? null : picked.name,
+        concepts: [],
+        is_mine: true,
+      });
+    } catch {
+      setRoomMsg("지금은 새 대화를 못 만들었어요. 잠시 뒤 다시 해 주세요.");
+    } finally {
+      setCreating(false);
+    }
+  };
+
   const openRoom = (room: RoomRow) => {
     const spaceId = routeId(room);
     setActiveSpace(spaceId);
@@ -262,7 +304,7 @@ export function SpacePicker() {
          * 그 한 줄이 카드 목록을 아래로 밀었다. 안내 문구만 남긴다.
          */}
         <header className="flex items-start justify-between gap-4">
-          <p className="text-[22px] font-bold leading-snug text-fg">
+          <p className="font-brand text-[24px] font-medium leading-snug text-fg">
             속한 학급을 확인하고
             <br />
             관리할 수 있어요.
@@ -288,7 +330,7 @@ export function SpacePicker() {
         </header>
 
         <section className="flex flex-col gap-4">
-          <h2 className="text-[15px] font-semibold text-fg">
+          <h2 className="font-brand text-[15px] font-medium text-fg">
             {profileName ? `${profileName}님의 세션 목록` : "나의 세션 목록"}
           </h2>
 
@@ -355,6 +397,8 @@ export function SpacePicker() {
           onRename={renameRoom}
           onDelete={removeRoom}
           message={roomMsg}
+          onNewRoom={() => void newRoom()}
+          creating={creating}
           onClose={() => {
             setRoomMsg(null);
             setPicked(null);

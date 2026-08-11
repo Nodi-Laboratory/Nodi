@@ -80,42 +80,45 @@ export function CanvasTopBar({
          *
          * 글자를 함께 둔다. 삼선 하나만으로는 무엇이 열리는지 눌러 봐야 알았다.
          */}
+        {/**
+         * **소속과 방 이름을 알약 안에 넣는다** (사용자 지시 2026-08-11,
+         * 참조 이미지 3).
+         *
+         * 알약(삼선)과 글자가 따로 떠 있었다 — 캔버스 위에 뜬 것이 둘이라
+         * 시선이 두 번 간다. 하나로 합치면 "지금 어디인지"가 한 덩어리로
+         * 읽히고, 누르면 지난 대화가 열린다는 것도 그 덩어리에 붙는다.
+         *
+         * ⚠️ "학급"이라는 **단위 낱말을 뺐다.** "테스트 학급 학급"처럼 겹쳐
+         * 나오던 자리다 — 학급 이름에 이미 그 말이 들어 있는 경우가 흔하다.
+         */}
         <button
           type="button"
           onClick={onToggleHistory}
           aria-label="지난 대화"
           aria-pressed={historyOpen}
-          className="pointer-events-auto flex shrink-0 items-center gap-2 rounded-full py-2 pl-3 pr-4 text-[13px] font-semibold transition-colors"
+          className="pointer-events-auto flex max-w-[min(60vw,420px)] shrink-0 items-center gap-3 rounded-full py-2.5 pl-3 pr-6 text-left transition-colors"
           style={{
             background: historyOpen ? "var(--accent-soft)" : "#ffffff",
-            border: "1px solid var(--line)",
             boxShadow: "var(--shadow-float)",
-            color: "var(--fg)",
           }}
         >
-          <Menu size={15} style={{ color: "var(--accent-mid)" }} aria-hidden />
-          지난 대화
-        </button>
+          <span
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+            style={{ background: "var(--accent-soft)", color: "var(--accent-deep)" }}
+            aria-hidden
+          >
+            <Menu size={17} />
+          </span>
 
-        {/**
-         * **위계로 나눈다** (요구사항 2-2).
-         *
-         * 예전에는 "개인 세션 · 제목 없는 대화 대화방"이 전부 같은 크기라 어느
-         * 것이 지금 방 이름인지 읽어 내야 했다. 이제 소속은 작고 연하게, 방
-         * 이름은 크고 진하게 — 자리는 그대로 두고 굵기와 크기만 쓴다.
-         *
-         * ⚠️ 이 바 자체는 **유지한다**(사용자 결정). 사이드바에서 학급 표시가
-         * 사라져(D217) "지금 어디인지" 알 길이 이것뿐이다 — 없애면 그때 고친
-         * 문제가 그대로 돌아온다.
-         */}
-        <span className="flex min-w-0 flex-col leading-tight">
-          <span className="truncate text-[11px]" style={{ color: "var(--fg-muted)" }}>
-            {spaceName ? `${spaceName} 학급` : "개인 세션"}
+          <span className="flex min-w-0 flex-col leading-tight">
+            <span className="truncate text-[11px]" style={{ color: "var(--fg-muted)" }}>
+              {spaceName ?? "개인 세션"}
+            </span>
+            <span className="truncate text-[16px] font-bold" style={{ color: "var(--fg)" }}>
+              {sessionTitle}
+            </span>
           </span>
-          <span className="truncate text-[16px] font-bold" style={{ color: "var(--fg)" }}>
-            {sessionTitle}
-          </span>
-        </span>
+        </button>
       </div>
     </div>
   );

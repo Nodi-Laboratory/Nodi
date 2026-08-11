@@ -85,7 +85,7 @@ export function RecentChatsDialog({
         {/* 찾기 */}
         <label
           className="flex items-center gap-2 rounded-xl px-3 py-2.5"
-          style={{ background: "#ffffff", border: "1px solid var(--line-strong)" }}
+          style={{ background: "var(--surface)" }}
         >
           <Search size={16} style={{ color: "var(--fg-muted)" }} aria-hidden />
           <input
@@ -112,9 +112,8 @@ export function RecentChatsDialog({
                   on
                     ? { background: "var(--accent-soft)", color: "var(--accent-deep)" }
                     : {
-                        background: "#ffffff",
+                        background: "var(--surface)",
                         color: "var(--fg-muted)",
-                        border: "1px solid var(--line)",
                       }
                 }
               >
@@ -213,8 +212,7 @@ export function RecentChatsDialog({
         <button
           type="button"
           onClick={onSeeAll}
-          className="border-t pt-3 text-center text-[13px] font-medium text-fg-muted transition-colors hover:text-fg"
-          style={{ borderColor: "var(--line)" }}
+          className="relative pt-4 text-center text-[13px] font-medium text-fg-muted transition-colors before:absolute before:inset-x-1 before:top-0 before:h-px before:bg-[var(--line)] before:content-[''] hover:text-fg"
         >
           전체 대화 보기 ›
         </button>

@@ -90,10 +90,25 @@ export function Dialog({
         aria-label={label}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className={`flex max-h-[88vh] w-full ${width} flex-col overflow-hidden rounded-2xl border border-accent-border/60 bg-bg-elevated shadow-2xl outline-none`}
+        /**
+         * **윤곽선을 걷어냈다** (사용자 지시 2026-08-11). 연두 테두리가 팝업
+         * 마다 둘려 있었다 — 떠 있는 것은 그림자로만 뜬다(요구사항 §8).
+         *
+         * 이 한 줄이 설정·도움말·최근 대화·학급 추가·방 목록을 **전부** 바꾼다.
+         * 팝업마다 제 테두리를 갖고 있으면 다음 팝업에서 또 어긋난다.
+         */
+        className={`flex max-h-[88vh] w-full ${width} flex-col overflow-hidden rounded-2xl bg-bg-elevated outline-none`}
+        style={{ boxShadow: "0 18px 50px rgba(23,23,18,.14), 0 2px 8px rgba(23,23,18,.06)" }}
       >
+        {/**
+         * 구분선은 **양 끝이 변에 안 닿는다** (사용자 지시 2026-08-11).
+         *
+         * `border-b`는 상자 폭을 꽉 채워 팝업을 위아래 두 칸으로 자른다. 안쪽
+         * 으로 물린 선은 "여기서 나뉜다"만 말하고 상자를 안 쪼갠다. 그래서
+         * 테두리가 아니라 **가짜 요소**로 그린다.
+         */}
         {header !== undefined && (
-          <header className="flex shrink-0 items-start justify-between gap-4 border-b border-accent-border/40 px-6 py-4">
+          <header className="relative flex shrink-0 items-start justify-between gap-4 px-7 py-5 after:absolute after:inset-x-7 after:bottom-0 after:h-px after:bg-[var(--line)] after:content-['']">
             <div className="min-w-0">{header}</div>
             <button
               type="button"
@@ -105,7 +120,15 @@ export function Dialog({
             </button>
           </header>
         )}
-        {children}
+        {/**
+         * **좌우 여백은 여기서 한 번에 준다** (사용자 지시 2026-08-11:
+         * "너무 좁아 보임").
+         *
+         * 팝업마다 제 패딩을 갖고 있어서 최근 대화는 넉넉하고 학급 추가는
+         * 빠듯한 식으로 갈렸다. 헤더(px-7)와 같은 값을 몸통에도 물려 두면
+         * 글이 상자 변에 붙지 않는다.
+         */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-7 pb-6 pt-5">{children}</div>
       </div>
     </div>,
     document.body,

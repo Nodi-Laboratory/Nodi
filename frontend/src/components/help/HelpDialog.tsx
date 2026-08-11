@@ -98,7 +98,7 @@ function HelpBody() {
            */}
           <div
             key={card.key}
-            className="mx-auto w-full max-w-[440px] overflow-hidden rounded-xl border border-accent-border/40"
+            className="mx-auto w-full max-w-[440px] overflow-hidden rounded-2xl"
             style={{ height: 208 }}
           >
             <Scene />
@@ -119,7 +119,7 @@ function HelpBody() {
       </div>
 
       {/* 점 — 몇 장인지, 지금 어디인지. 눌러서 바로 갈 수도 있다. */}
-      <footer className="flex shrink-0 items-center justify-center gap-2 border-t border-accent-border/40 py-3">
+      <footer className="relative flex shrink-0 items-center justify-center gap-2 py-4 before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-[var(--line)] before:content-['']">
         {HELP_SCENES.map((s, n) => (
           <button
             key={s.key}

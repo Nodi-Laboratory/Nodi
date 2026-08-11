@@ -288,18 +288,19 @@ export function MiniMapOverlay({
         <div
           data-map-grab
           className="flex items-center justify-between px-2"
-          /* 헤더를 더 낮게, 글자·아이콘도 더 작게(요구사항 §3). 지도 자체가
-             내용이므로 머리띠가 자리를 많이 먹을 이유가 없다. */
-          style={{
-            paddingTop: 1,
-            paddingBottom: 1,
-            cursor: "grab",
-            borderBottom: "1px solid var(--line)",
-          }}
+          /**
+           * **머리띠를 없앴다** (사용자 지시 2026-08-11, 참조 이미지 2).
+           *
+           * "지도" 글자와 아래 구분선을 뺐다 — 지도 안에 이미 지도가 그려져
+           * 있어 이름표가 하는 일이 없었고, 선은 작은 카드를 두 칸으로 잘라
+           * 더 좁아 보이게 했다. 아이콘 둘은 남는다(그건 누르는 것이다).
+           *
+           * ⚠️ 손잡이는 여기다 — 이 줄에서만 끌린다(지도 안에서 끌면 지도가
+           * 움직여야 한다). 글자를 뺐다고 이 줄까지 없애면 못 옮긴다.
+           */
+          style={{ paddingTop: 2, paddingBottom: 0, cursor: "grab" }}
         >
-          <span className="label text-[10px]" style={{ color: "var(--fg-muted)" }}>
-            지도
-          </span>
+          <span aria-hidden />
           <span className="flex items-center gap-1">
             <button
               type="button"
