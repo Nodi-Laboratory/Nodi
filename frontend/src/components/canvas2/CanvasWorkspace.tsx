@@ -1760,7 +1760,12 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
       const parentTag = ink?.parentId
         ? (items.find((i) => i.id === ink.parentId)?.tag ?? tag)
         : tag;
-      void stream.send(question, { pickedId: parent, ink }).then((created) => {
+      /**
+       * **약속을 돌려준다** (사용자 지시 2026-08-11). 질문 펜은 답이 온 뒤에
+       * 입력창을 비워야 하는데, 그 시점을 아는 것은 이 약속뿐이다.
+       * 자판 경로(`AskBar.submit`)는 보내면서 스스로 비우므로 안 쓴다.
+       */
+      return stream.send(question, { pickedId: parent, ink }).then((created) => {
         /**
          * **학생이 기다리는 동안 고른 것을 덮어쓰지 않는다** (D187).
          *
@@ -1907,7 +1912,15 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
        * 이 턴의 질문이 그것을 갖고 나간다 — state였다면 아직 옛 값이라
        * 학생이 카드를 짚으며 쓴 질문에서 표시가 통째로 빠졌다.
        */
-      handleSend(보낼것);
+      /**
+       * 답이 오면 입력창을 비운다 (사용자 지시 2026-08-11).
+       *
+       * 인식된 글자는 **보이긴 해야 한다** — 무엇으로 읽혔는지 학생이 알아야
+       * 다음 질문을 고칠 수 있다. 그래서 지우는 시점이 보낼 때가 아니라
+       * **답이 온 뒤**다. 실패하면 안 지운다 — 그 글자가 남아 있어야 자판으로
+       * 이어서 보낼 수 있다.
+       */
+      void handleSend(보낼것)?.then(() => askBarRef.current?.clear());
     } catch (err) {
       setDrawError(ocrErrorMessage(err));
     } finally {

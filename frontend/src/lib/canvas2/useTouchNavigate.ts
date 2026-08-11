@@ -188,6 +188,34 @@ export function useTouchNavigate({
       });
     };
 
+    /**
+     * **확대도 프레임당 한 번이다** (사용자 보고 2026-08-11: "아직 확대 축소에
+     * 버벅거림이 있다").
+     *
+     * 화면 이동만 모아 두고 확대는 그대로 뒀는데, 두 손가락은 **포인터가
+     * 둘이라 이벤트가 두 배로** 들어온다 — 한 프레임에 배율을 네댓 번 고쳐
+     * 놓고 마지막 것만 그려지니, 계산한 만큼이 아니라 **버린 만큼이 지연**으로
+     * 쌓인다. 화면 이동에서와 같은 처방이다.
+     *
+     * ⚠️ 배율은 더하는 값이 아니라 **곱하는 값**이라 누적도 곱셈이다. 중심은
+     * 마지막 것을 쓴다 — 한 프레임 안에서 손가락 중점은 거의 안 움직이고,
+     * 평균을 내면 도리어 실제로 짚은 곳과 어긋난다.
+     */
+    let 배율누적 = 1;
+    let 배율중심 = { x: 0, y: 0 };
+    let 배율프레임 = 0;
+    const 확대예약 = (factor: number, cx: number, cy: number) => {
+      배율누적 *= factor;
+      배율중심 = { x: cx, y: cy };
+      if (배율프레임) return;
+      배율프레임 = requestAnimationFrame(() => {
+        배율프레임 = 0;
+        const f = 배율누적;
+        배율누적 = 1;
+        if (f !== 1) zoomAtScreen(f, 배율중심.x, 배율중심.y);
+      });
+    };
+
     /** 선택 상자. 필요할 때만 만든다 — 평소에 DOM을 하나 더 두지 않는다. */
     let boxEl: HTMLDivElement | null = null;
     const showBox = () => {
@@ -216,9 +244,17 @@ export function useTouchNavigate({
       boxEl = null;
     };
 
+    /**
+     * 마지막으로 손가락·펜이 닿은 시각. **길게 누르기 메뉴를 가릴지**를 이걸로
+     * 정한다(아래 `onContext`).
+     */
+    let 손가락시각 = -1e9;
+
+
     const onDown = (e: PointerEvent) => {
       const isMouse = e.pointerType === "mouse";
       if (!isMouse) {
+        손가락시각 = e.timeStamp;
         손가락.set(e.pointerId, { x: e.clientX, y: e.clientY });
         const 둘 = 두점();
         if (둘) {
@@ -294,9 +330,16 @@ export function useTouchNavigate({
         const 둘 = 두점();
         if (!둘) return;
         const 지금 = 사이(둘[0], 둘[1]);
-        // 아주 작은 흔들림은 무시한다 — 손가락은 가만히 있어도 떨린다.
-        if (지금 > 4 && Math.abs(지금 - 핀치Box.current.거리) > 1.5) {
-          zoomAtScreen(
+        /**
+         * 아주 작은 흔들림은 무시한다 — 손가락은 가만히 있어도 떨린다.
+         *
+         * 문턱이 1.5px이면 **떨림만으로 매 프레임 배율이 바뀐다**(두 손가락이
+         * 각각 흔들리므로 거리 잡음은 두 배다). 눈에는 화면이 잘게 진동하는
+         * 것으로 보이고, 그 진동이 곧 "버벅거림"이다. 3px이면 실제로 벌리는
+         * 동작은 그대로 잡히고 떨림은 안 잡힌다.
+         */
+        if (지금 > 4 && Math.abs(지금 - 핀치Box.current.거리) > 3) {
+          확대예약(
             지금 / 핀치Box.current.거리,
             (둘[0].x + 둘[1].x) / 2,
             (둘[0].y + 둘[1].y) / 2,
@@ -381,6 +424,31 @@ export function useTouchNavigate({
       if (document.visibilityState === "hidden") 비우기();
     };
 
+    /**
+     * **길게 누르면 우리 선택 상자가 뜬다 — 브라우저 메뉴가 아니라**
+     * (사용자 지시 2026-08-11).
+     *
+     * 손가락으로 0.42초 누르면 우리가 선택 상자를 띄우는데(D208), 브라우저는
+     * 0.5초쯤에 `contextmenu`를 쏘고 Excalidraw가 그것을 받아 **붙여넣기·전체
+     * 선택 메뉴**를 연다. 학생이 보는 것은 "선택하려고 눌렀더니 엉뚱한 메뉴가
+     * 뜬다"이고, 그 메뉴가 우리 상자를 덮는다.
+     *
+     * ⚠️ **마우스 오른쪽 클릭은 그대로 둔다.** PC에서 그 메뉴는 쓸모가 있고,
+     * 여기서 통째로 막으면 되살릴 방법이 없다. 가르는 기준은 "방금 손가락이
+     * 닿았나"다 — `contextmenu`에는 포인터 종류가 안 실리므로, 직전
+     * `pointerdown`의 종류를 기억해 두고 그 시각으로 판정한다.
+     *
+     * 창은 넉넉히 잡는다(1.2초). 길게 누르기 판정은 기기마다 0.5~1초로 갈리고,
+     * 짧게 잡으면 느린 기기에서 메뉴가 새어 나온다 — 반대로 넉넉해서 생기는
+     * 손해는 "손가락을 뗀 직후의 오른쪽 클릭"뿐인데 그건 일어나지 않는다.
+     */
+    const onContext = (e: MouseEvent) => {
+      if (손가락.size === 0 && e.timeStamp - 손가락시각 > 1200) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    root.addEventListener("contextmenu", onContext, { capture: true });
     root.addEventListener("pointerdown", onDown, { capture: true });
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("blur", 비우기);
@@ -395,6 +463,8 @@ export function useTouchNavigate({
       // 치우면 첫 손가락이 사라져 카드 위 확대가 다시 안 된다(그 결함을
       // 고치려고 장부를 ref로 뺀 것이다). 청소는 화면이 가려질 때만 한다.
       if (밀프레임) cancelAnimationFrame(밀프레임);
+      if (배율프레임) cancelAnimationFrame(배율프레임);
+      root.removeEventListener("contextmenu", onContext, { capture: true });
       root.removeEventListener("pointerdown", onDown, { capture: true });
       document.removeEventListener("visibilitychange", onHide);
       window.removeEventListener("blur", 비우기);

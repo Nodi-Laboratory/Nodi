@@ -84,6 +84,15 @@ export interface AskBarHandle {
    * 명령형 손잡이가 제자리다.
    */
   appendText: (text: string) => void;
+  /**
+   * 입력창을 비운다 (사용자 지시 2026-08-11).
+   *
+   * 자판으로 보낼 때는 `submit()`이 보내면서 스스로 비운다. 질문 펜은 그
+   * 경로를 안 거치고 `appendText` + 바깥의 `handleSend`로 가므로, 답이 온
+   * 뒤에도 인식된 글자가 입력창에 남아 있었다 — 다음 질문을 치면 앞 질문에
+   * 이어 붙는다.
+   */
+  clear: () => void;
 }
 
 export function AskBar({
@@ -139,6 +148,7 @@ export function AskBar({
    * "및"을 바꾸고, 그대로 나가면 학생은 자기가 안 한 질문의 답을 받는다.
    */
   useImperativeHandle(ref, () => ({
+    clear: () => setValue(""),
     appendText: (text: string) => {
       const t = text.trim();
       if (!t) return;
