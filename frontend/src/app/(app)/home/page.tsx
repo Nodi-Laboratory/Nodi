@@ -133,18 +133,19 @@ export default function HomePage() {
   };
 
   return (
-    /* 여백을 넉넉히 준다(사용자 지시 2026-08-09) — 상자가 화면 가장자리에
-       붙어 있으면 캔버스가 페이지 전체로 번져 보인다. */
-    <div className="flex h-full flex-col px-10 py-8" style={{ background: PAGE_BG }}>
-      {/**
-       * 지도 박스 (D191의 그 상자다, 사용자 지시 2026-08-09로 되돌렸다).
-       *
-       * **남은 높이를 다 쓴다** — 상한을 걸면 아래에 빈 자리가 크게 남아
-       * 상자가 화면 위쪽에 떠 있는 꼴이 된다. 테두리 3px은 "지도는 여기까지"를
-       * 말한다. 배경이 된 지금도 경계는 있어야 한다 — 없으면 지도가 페이지
-       * 전체로 번져 어디까지가 누를 수 있는 자리인지 흐려진다.
-       */}
-      <section className="relative mx-auto min-h-0 w-full max-w-[1800px] flex-1 overflow-hidden rounded-xl border-[3px] border-accent-border/70 bg-bg-elevated shadow-sm">
+    /**
+     * **상자를 걷어냈다** (사용자 지시 2026-08-11).
+     *
+     * 여백 40px + 테두리 3px + 폭 상한 1800px으로 지도를 상자에 가둬 뒀었다.
+     * 그때는 "지도는 여기까지"를 말해 줄 경계가 필요하다는 판단이었는데,
+     * 사용자 판단은 **그 경계가 화면만 좁힌다**는 것이다 — 안에 있던 것
+     * (지도·그라디언트 막·인사말·입력창)은 그대로 두고 자리만 넓힌다.
+     *
+     * ⚠️ `PAGE_BG`는 남긴다. 지도를 못 그리는 순간(불러오는 중·실패)에
+     * 이것마저 없으면 화면이 통째로 하얘진다.
+     */
+    <div className="flex h-full flex-col" style={{ background: PAGE_BG }}>
+      <section className="relative min-h-0 w-full flex-1 overflow-hidden">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center gap-2 text-sm text-fg-muted">
             <Loader2 size={16} className="animate-spin" aria-hidden />
@@ -176,7 +177,9 @@ export default function HomePage() {
               onClick={() => setMapOnly((v) => !v)}
               title={mapOnly ? "돌아가기" : "지도만 보기"}
               aria-label={mapOnly ? "돌아가기" : "지도만 보기"}
-              className="absolute right-3 top-3 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-accent-border/50 bg-bg-elevated/90 text-fg-muted shadow-sm backdrop-blur transition-colors hover:text-fg"
+              /* 상자가 없어져 화면 모서리에 붙는다 — 3px 테두리가 만들던
+                 여백이 사라졌으므로 그만큼 안쪽으로 들여 놓는다. */
+              className="absolute right-5 top-5 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-accent-border/50 bg-bg-elevated/90 text-fg-muted shadow-sm backdrop-blur transition-colors hover:text-fg"
               style={mapOnly ? { background: "var(--accent)", color: "var(--accent-fg)" } : undefined}
             >
               {mapOnly ? <Minimize2 size={16} /> : <Expand size={16} />}
