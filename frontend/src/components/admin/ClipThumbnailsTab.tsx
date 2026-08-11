@@ -149,6 +149,7 @@ export function ClipThumbnailsTab() {
                 type="button"
                 aria-label="썸네일 삭제"
                 onClick={() => void handleDelete(t.id)}
+                data-hover-only
                 className="absolute right-1 top-1 rounded bg-black/60 p-1 text-[#e7e3d8] opacity-0 transition-opacity hover:bg-red-600/70 group-hover:opacity-100"
               >
                 <Trash2 size={13} />

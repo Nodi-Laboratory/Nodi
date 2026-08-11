@@ -348,6 +348,7 @@ export function ToolRail({
         <button
           type="button"
           onClick={() => setOpen(false)}
+          data-rail-collapse
           aria-label="도구 접기"
           title="도구 접기"
           className="mx-auto mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-[var(--c-sunk)]"

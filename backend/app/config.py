@@ -300,7 +300,7 @@ class Settings(BaseSettings):
     # 프론트 상수였는데 "과하다/덜하다"를 배포 없이 맞출 수 있어야 한다.
     # 폭과 속도를 **따로** 둔다 — 섞여 있으면 "천천히"와 "덜 흔들리게"를
     # 한 값으로 다투게 된다.
-    home_drift_force: float = 0.3          # 미는 힘(폭)
+    home_drift_force: float = 0.08         # 미는 힘(폭). 2026-08-11에 0.3에서 내렸다
     home_drift_breath: float = 0.006       # 위상 진행(속도, 라디안/틱)
     home_drift_anchor: float = 0.8         # 제자리로 당기는 힘
     home_fit_boost: float = 1.62           # 처음 맞춤 뒤 더 당기는 배율

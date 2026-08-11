@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUp, Expand, Grid2x2, Loader2, MessageSquarePlus, Minimize2 } from "lucide-react";
 import { ConceptMap } from "@/components/home/ConceptMap";
@@ -10,26 +10,12 @@ import { useRoutePrefetch } from "@/lib/useRoutePrefetch";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { createSession } from "@/lib/api";
 import type { ConceptNode } from "@/lib/api/conceptMap";
+import { VeilShader } from "@/components/home/VeilShader";
 import { PAGE_BG } from "@/lib/ui/surface";
 
 /** 비어 있는 집합 하나를 재사용한다 — 렌더마다 새로 만들면 지도 memo가 깨진다. */
 const NO_HIDDEN: ReadonlySet<string> = new Set<string>();
 
-/**
- * 개념이 없어 대화방으로 보내는 중 (D210 2-1).
- *
- * 갓 가입한 학생에게 처음 보이는 화면이 "여기는 비어 있습니다"인 것은 좋은
- * 첫인상이 아니다 — 할 일을 알려 주는 것보다 **할 수 있는 자리로 데려다
- * 주는 것**이 낫다(사용자 지시 2026-08-08).
- */
-function GoingToCanvas() {
-  return (
-    <div className="flex h-full w-full items-center justify-center gap-2 text-sm text-fg-muted">
-      <Loader2 size={16} className="animate-spin" aria-hidden />
-      대화방을 여는 중…
-    </div>
-  );
-}
 
 /**
  * 홈 — **개념 지도를 배경으로 깐 시작 화면** (사용자 지시 2026-08-09).
@@ -76,19 +62,15 @@ export default function HomePage() {
   const [mapOnly, setMapOnly] = useState(false);
 
   /**
-   * **보여 줄 개념이 없으면 홈을 건너뛴다** (D210 2-1, 사용자 지시).
+   * ⚠️ **개념이 없어도 홈에 머문다** (사용자 지시 2026-08-11 — D210 2-1 폐기).
    *
-   * 판정 기준이 "세션 없음"이 아니라 **"개념 카드 0개"**인 것이 요점이다.
-   * 인사만 하고 나간 학생은 세션은 있지만 지도에 올릴 것이 없어 똑같이 빈
-   * 화면을 본다 — 세션 유무로 가르면 그 경우를 놓친다.
+   * 예전에는 개념 카드가 0개면 `/space/personal`로 튕겨 냈다. 그때는 홈에
+   * **지도밖에** 없어서 빈 홈이 곧 빈 화면이었기 때문이다.
    *
-   * `replace`여야 한다. `push`면 뒤로 가기가 다시 이 빈 홈으로 데려오고,
-   * 거기서 또 튕겨 나가 뒤로 가기가 먹지 않는 것처럼 보인다.
+   * 지금 홈에는 인사말과 **질문 입력창**이 있다. 노드가 하나도 없어도 학생이
+   * 여기서 바로 물어볼 수 있으므로 튕겨 낼 이유가 사라졌다 — 오히려 처음
+   * 들어온 학생이 홈을 한 번도 못 보고 캔버스로 끌려가던 쪽이 문제였다.
    */
-  const 개념없음 = !isLoading && !isError && (!map || map.nodes.length === 0);
-  useEffect(() => {
-    if (개념없음) router.replace("/space/personal");
-  }, [개념없음, router]);
 
   const displayName = profile?.display_name ?? profile?.email ?? null;
   const spaceIds = (summary?.spaces ?? []).map((s) =>
@@ -151,18 +133,19 @@ export default function HomePage() {
   };
 
   return (
-    /* 여백을 넉넉히 준다(사용자 지시 2026-08-09) — 상자가 화면 가장자리에
-       붙어 있으면 캔버스가 페이지 전체로 번져 보인다. */
-    <div className="flex h-full flex-col px-10 py-8" style={{ background: PAGE_BG }}>
-      {/**
-       * 지도 박스 (D191의 그 상자다, 사용자 지시 2026-08-09로 되돌렸다).
-       *
-       * **남은 높이를 다 쓴다** — 상한을 걸면 아래에 빈 자리가 크게 남아
-       * 상자가 화면 위쪽에 떠 있는 꼴이 된다. 테두리 3px은 "지도는 여기까지"를
-       * 말한다. 배경이 된 지금도 경계는 있어야 한다 — 없으면 지도가 페이지
-       * 전체로 번져 어디까지가 누를 수 있는 자리인지 흐려진다.
-       */}
-      <section className="relative mx-auto min-h-0 w-full max-w-[1800px] flex-1 overflow-hidden rounded-xl border-[3px] border-accent-border/70 bg-bg-elevated shadow-sm">
+    /**
+     * **상자를 걷어냈다** (사용자 지시 2026-08-11).
+     *
+     * 여백 40px + 테두리 3px + 폭 상한 1800px으로 지도를 상자에 가둬 뒀었다.
+     * 그때는 "지도는 여기까지"를 말해 줄 경계가 필요하다는 판단이었는데,
+     * 사용자 판단은 **그 경계가 화면만 좁힌다**는 것이다 — 안에 있던 것
+     * (지도·그라디언트 막·인사말·입력창)은 그대로 두고 자리만 넓힌다.
+     *
+     * ⚠️ `PAGE_BG`는 남긴다. 지도를 못 그리는 순간(불러오는 중·실패)에
+     * 이것마저 없으면 화면이 통째로 하얘진다.
+     */
+    <div className="flex h-full flex-col" style={{ background: PAGE_BG }}>
+      <section className="relative min-h-0 w-full flex-1 overflow-hidden">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center gap-2 text-sm text-fg-muted">
             <Loader2 size={16} className="animate-spin" aria-hidden />
@@ -175,10 +158,10 @@ export default function HomePage() {
               잠시 뒤 다시 열어 보세요. 대화 기록은 그대로 있습니다.
             </p>
           </div>
-        ) : 개념없음 || !map ? (
-          /* 판정이 끝나기 전에는 아무 안내도 그리지 않는다 — 빈 지도가 잠깐
-           스쳤다 사라지면 깜빡임으로 보인다. */
-          <GoingToCanvas />
+        ) : !map ? (
+          /* 지도 모양이 아직 없을 때만 비워 둔다. **노드가 0개인 것은 정상**
+             이므로 그대로 그린다 — 빈 지도 위에 인사말과 입력창이 뜬다. */
+          <div className="h-full w-full" aria-hidden />
         ) : (
           <>
             {/**
@@ -194,7 +177,9 @@ export default function HomePage() {
               onClick={() => setMapOnly((v) => !v)}
               title={mapOnly ? "돌아가기" : "지도만 보기"}
               aria-label={mapOnly ? "돌아가기" : "지도만 보기"}
-              className="absolute right-3 top-3 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-accent-border/50 bg-bg-elevated/90 text-fg-muted shadow-sm backdrop-blur transition-colors hover:text-fg"
+              /* 상자가 없어져 화면 모서리에 붙는다 — 3px 테두리가 만들던
+                 여백이 사라졌으므로 그만큼 안쪽으로 들여 놓는다. */
+              className="absolute right-5 top-5 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-accent-border/50 bg-bg-elevated/90 text-fg-muted shadow-sm backdrop-blur transition-colors hover:text-fg"
               style={mapOnly ? { background: "var(--accent)", color: "var(--accent-fg)" } : undefined}
             >
               {mapOnly ? <Minimize2 size={16} /> : <Expand size={16} />}
@@ -229,25 +214,38 @@ export default function HomePage() {
             <div
               aria-hidden
               data-map-veil
-              className="pointer-events-none absolute inset-0 transition-opacity duration-700"
-              style={{
-                /**
-                 * **스포트라이트** (사용자 지시 2026-08-10).
-                 *
-                 * 고르게 덮으면 가운데의 노드가 잘 안 보인다는 지적이었다.
-                 * 가운데는 거의 맑게(흰빛만 얹어 파스텔 점의 대비를 올리고),
-                 * 가장자리는 지금까지의 베이지 그대로 — 빛이 한가운데 떨어진
-                 * 것처럼 보이면서 화면 밖으로 갈수록 조용해진다.
-                 *
-                 * ⚠️ 초점은 **지도가 실제로 앉는 자리**여야 한다. 상자 한가운데
-                 * (45%)에 뒀더니 빛은 빈 곳을 비추고 무리는 어두운 데 깔렸다
-                 * (실측 2026-08-10) — 지도는 문구 아래 띠의 가운데에 맞춰지므로
-                 * (`fitToContent`) 초점도 그 자리로 내린다.
-                 */
-                background: `radial-gradient(64% 58% at 50% 70%, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.12) 40%, ${PAGE_BG} 82%)`,
-                opacity: mapOnly ? 0 : 0.66,
-              }}
-            />
+              className="pointer-events-none absolute inset-0 overflow-hidden transition-opacity duration-700"
+              /**
+               * **흐르는 라임 그라디언트** (디자이너 요청 2026-08-11).
+               *
+               * 평평한 베이지 스포트라이트였다. 참조 시안
+               * (soqhomore/nodi-web-test)의 색·움직임·요소를 그대로 옮겨 왔다.
+               *
+               * ⚠️ **바뀐 것은 막의 그림뿐이다.** 투명도(0.66)도, 지도만 볼 때
+               * 사라지는 것도, 포인터를 통과시키는 것도 그대로다 — 이 막이
+               * 하는 일은 지도를 지우는 것이 아니라 한 겹 뒤로 물려 위의 글을
+               * 또렷하게 하는 것이고, 그 역할은 안 바뀌었다.
+               *
+               * ## 투명도는 0.38이다 (디자이너 요청 2026-08-11)
+               *
+               * 처음에 0.66으로 얹었더니 **뒤의 노드가 너무 안 보였다.** 같은
+               * 화면을 투명도별로 찍어 지도 띠의 밝기 편차(노드가 보이는 정도)와
+               * 초록−파랑(라임이 남은 정도)을 쟀다:
+               *
+               *   투명도   노드 대비(막 없을 때=100%)   라임끼
+               *   0.30            71%                   30
+               *   0.38            64%                   47
+               *   0.46            56%                   66
+               *   0.66            38%                   88
+               *
+               * 라임끼는 0.46을 넘으면 거의 안 짙어지는데(66→88) 노드는 계속
+               * 묻힌다 — **색으로 얻는 것은 줄고 잃는 것은 그대로**인 구간이다.
+               * 0.38이 그 꺾이는 자리이고, 지금 값의 거의 두 배로 지도가 산다.
+               */
+              style={{ opacity: mapOnly ? 0 : 0.38 }}
+            >
+              <VeilShader />
+            </div>
 
             {/**
              * 위에 뜨는 것 — 인사 · 입력 · 갈 곳 둘.

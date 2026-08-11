@@ -166,6 +166,23 @@ export function ResizeHandles({ zoom, color, getEl, onCommit, onReset, maxW }: P
   }, [getEl, onCommit]);
 
   const s = HANDLE_PX / zoom;
+  /**
+   * **손가락에 잡히는 자리는 보이는 점보다 넓다** (2026-08-10).
+   *
+   * 점은 9px이다. 마우스 커서는 한 점이라 그것으로 충분하지만 손가락 끝은
+   * 약 44px이라 패드에서는 **크기 조절을 아예 못 한다** — 오버레이가 zoom으로
+   * 스케일되므로 `/zoom`이 그 크기를 화면 9px에 고정한다(배율을 올려도
+   * 손잡이는 안 커진다).
+   *
+   * 점을 키우면 카드를 덮는다. 그래서 **보이는 것은 그대로 두고 `::after`로
+   * 잡히는 자리만** 넓힌다(globals.css의 `pointer: coarse` 블록). 그 값도
+   * 화면 px으로 고정해야 하므로 여기서 나눠 내려보낸다 — CSS는 배율을 모른다.
+   *
+   * 이웃한 손잡이끼리는 겹친다(모서리와 변 가운데가 44px 안에 든다). 작은
+   * 도판에서 'ne' 대신 'n'이 잡히는 일은 있지만 **아무것도 못 잡는 것보다
+   * 낫다** — 어느 쪽이 잡혀도 크기는 조절된다.
+   */
+  const 잡는자리 = 44 / zoom;
 
   return (
     <div
@@ -179,7 +196,13 @@ export function ResizeHandles({ zoom, color, getEl, onCommit, onReset, maxW }: P
        * 이동했다**(x −70, 폭 그대로). 괘선이 먹은 pointerdown이 아이템
        * 드래그로 간 것이다.
        */
-      style={{ inset: `${-PAD_Y}px ${-PAD_X}px`, zIndex: 15 }}
+      style={
+        {
+          inset: `${-PAD_Y}px ${-PAD_X}px`,
+          zIndex: 15,
+          "--c2-handle-hit": `${잡는자리}px`,
+        } as React.CSSProperties
+      }
     >
       {DIRS.map((dir) => {
         const style: React.CSSProperties = {

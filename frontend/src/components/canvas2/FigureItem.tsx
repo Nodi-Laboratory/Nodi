@@ -158,6 +158,8 @@ export function FigureItem({
         style={{
           left: x,
           top: y,
+          // 손가락으로 끌려면 필요하다 — 없으면 브라우저가 터치를 스크롤로 채간다(TextItem 머리말).
+          touchAction: "none",
           // 학생이 늘려 둔 폭이 있으면 그것을 쓴다(없으면 기본 폭).
           width: item.data.size?.w ?? ITEM_W,
           pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],

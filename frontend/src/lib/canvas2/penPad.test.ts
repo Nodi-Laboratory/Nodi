@@ -124,7 +124,10 @@ describe("전송본 배율", () => {
     const small = { x: 0, y: 0, w: 120, h: 80 };
     expect(exportScale(small, 1)).toBe(1);
     expect(exportScale(small, 2)).toBe(2);
-    expect(exportScale(small, 3)).toBe(2);
+    // 상한은 3이다 — 확대해서 쓴 글씨를 보이는 해상도로 보내려면 필요하다
+    // (호출부가 `dpr × 카메라 배율`을 넘긴다, 2026-08-10).
+    expect(exportScale(small, 3)).toBe(3);
+    expect(exportScale(small, 9)).toBe(3);
   });
 
   it("가로로 길게 쓴 글씨는 한 변 상한에 맞춰 줄인다", () => {

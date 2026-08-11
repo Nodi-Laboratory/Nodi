@@ -82,6 +82,51 @@ export async function deleteSession(id: string): Promise<void> {
 }
 
 /** 온보딩 1회 완료 표시(D18). */
+/** 온보딩 설문 답 (D222). 전부 선택이라 빈 값도 정상이다. */
+export interface OnboardingAnswers {
+  display_name: string;
+  grade: string;
+  stage: string;
+  goal: string;
+}
+
+/**
+ * 설문을 저장한다. 멱등 — 다시 보내면 덮어쓴다.
+ *
+ * ⚠️ **던지게 두는 것이 맞다.** 호출부가 삼켜서 온보딩을 계속하게 하되,
+ * 여기서 조용히 성공한 척하면 저장이 안 되는 것을 아무도 모른다.
+ */
+export async function saveOnboardingAnswers(
+  answers: OnboardingAnswers,
+): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/auth/onboarding-answers`, {
+      method: "PUT",
+      headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+      body: JSON.stringify(answers),
+    }),
+  );
+}
+
+/** 저장된 설문. 처음 오는 사람은 빈 값이 정상이라 404가 아니다. */
+export async function getOnboardingAnswers(): Promise<OnboardingAnswers> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/auth/onboarding-answers`, {
+      headers: await authHeaders(),
+    }),
+  );
+  const raw = (await res.json()) as Partial<Record<keyof OnboardingAnswers, unknown>>;
+  // 서버는 안 적은 칸을 null로 준다. 화면의 입력값은 문자열이어야 하므로
+  // 여기서 한 번에 고른다 — 컴포넌트마다 `?? ""`를 흩어 두면 하나를 빠뜨린다.
+  const 글자 = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    display_name: 글자(raw.display_name),
+    grade: 글자(raw.grade),
+    stage: 글자(raw.stage),
+    goal: 글자(raw.goal),
+  };
+}
+
 export async function completeOnboarding(): Promise<void> {
   await ensureOk(
     await fetch(`${API_BASE}/auth/complete-onboarding`, {
@@ -98,12 +143,5 @@ export async function getSession(id: string): Promise<SessionDetail> {
     }),
   );
   return res.json();
-}
-
-// 공간 쿼리 파라미터 헬퍼(listFiles 등 공용).
-export function spaceParams(target: SpaceTarget): URLSearchParams {
-  const params = new URLSearchParams({ space_kind: target.space_kind });
-  if (target.space_ref) params.set("space_ref", target.space_ref);
-  return params;
 }
 

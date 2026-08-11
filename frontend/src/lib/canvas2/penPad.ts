@@ -162,15 +162,25 @@ export function exportBox(bounds: Rect, pad = EXPORT_PAD): Rect {
 /**
  * 전송본 배율.
  *
- * 화면 배율(dpr)만큼 키워 획을 또렷하게 보내되 2배를 넘기지 않고, 한 변이
+ * 화면 배율(dpr)만큼 키워 획을 또렷하게 보내되 상한을 넘기지 않고, 한 변이
  * `maxSide`를 넘으면 그만큼 줄인다. 가로로 길게 쓴 글씨가 이 갈래를 탄다.
+ *
+ * ⚠️ **여기 들어오는 `box`는 월드 좌표다** — 카메라 배율이 안 섞여 있다.
+ * 그래서 호출부는 `dpr × 카메라 배율`을 넘긴다(2026-08-10). 안 넘기면
+ * 확대해서 쓴 글씨가 **그만큼 흐리게** 나간다: 화면에서 같은 크기로 써도
+ * 확대 중이면 그 획이 덮는 월드 거리는 배율만큼 짧으므로 그림이 작아진다.
+ * 실측 — 같은 손동작이 배율 1에서 255×91, 2.3배 확대에서 111×56.
+ *
+ * 상한이 2에서 3으로 올랐다. 학생이 세 배로 당겨 놓고 쓰면 눈에는 세 배로
+ * 보이는 글씨이고, 그 해상도로 보내야 본 대로 읽힌다. `maxSide`가 여전히
+ * 위를 막으므로 그림이 무한정 커지지는 않는다.
  */
 export function exportScale(
   box: Rect,
   dpr: number,
   maxSide = MAX_EXPORT_SIDE,
 ): number {
-  const want = Math.min(Math.max(Number.isFinite(dpr) ? dpr : 1, 1), 2);
+  const want = Math.min(Math.max(Number.isFinite(dpr) ? dpr : 1, 1), 3);
   const longest = Math.max(box.w, box.h, 1);
   return Math.max(0.25, Math.min(want, maxSide / longest));
 }
@@ -240,11 +250,16 @@ export function drawStrokes(
 export async function renderInkPng(
   strokes: readonly PenStroke[],
   dpr = 1,
+  /**
+   * 지금 카메라 배율. 획은 월드 좌표라 **이것을 안 넣으면 확대해서 쓴
+   * 글씨가 흐리게 나간다**(`exportScale` 머리말).
+   */
+  zoom = 1,
 ): Promise<Blob | null> {
   const bounds = inkBounds(strokes);
   if (!bounds) return null;
   const box = exportBox(bounds);
-  const scale = exportScale(box, dpr);
+  const scale = exportScale(box, dpr * (zoom > 0 ? zoom : 1));
 
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(box.w * scale));

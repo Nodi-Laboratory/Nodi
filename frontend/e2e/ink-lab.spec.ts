@@ -51,6 +51,34 @@ async function openInkLab(page: Page): Promise<void> {
     await wipe.click();
     await expect(page.getByText(/^획 0$/)).toBeVisible({ timeout: 5000 });
   }
+
+  /**
+   * **펜이 실제로 쥐여질 때까지 기다린다** (2026-08-10).
+   *
+   * 이 파일의 세 번째 시험이 5번 중 3번 실패했다. 실패 모드는 늘 "획 0"이고,
+   * 빈 곳에 긋는 두 번째 시험은 늘 통과했다 — 차이는 **시작점이 카드 위냐**다.
+   *
+   * 실험실은 펜을 프레임을 넘겨 쥐여 준다(`InkLabTab`의 그 주석 참조). 그런데
+   * `activeTool`이 `askpen`이 되는 조건은 **Excalidraw가 되돌려주는 도구가
+   * freedraw인 것**이라(`useExcalidrawBridge`), 그 왕복이 끝나기 전 몇 프레임
+   * 동안은 아직 `selection`이다. 그동안 오버레이가 포인터를 가져가므로
+   * (`isPassThroughTool`) 카드 위에서 시작한 획은 카드에 먹혀 사라진다.
+   *
+   * 실측(2026-08-10): 같은 페이지에서 카드 위에 여섯 번 그으면 **첫 번째만**
+   * 아이템의 `pointer-events`가 `auto`이고 나머지는 `none`이다.
+   *
+   * 그래서 획 수나 시간이 아니라 **그 조건 자체**를 기다린다. 사람은 이 창을
+   * 못 맞출 만큼 느리지만(몇십 ms), 자동 시험은 늘 그 순간에 도착한다.
+   */
+  await expect
+    .poll(
+      () =>
+        page
+          .locator('[data-canvas-item="lab-card-1"]')
+          .evaluate((el) => getComputedStyle(el).pointerEvents),
+      { timeout: 10_000 },
+    )
+    .toBe("none");
 }
 
 /** 캔버스에 획 하나 — 실험실 스테이지 기준 화면 좌표로. */

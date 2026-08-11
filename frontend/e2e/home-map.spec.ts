@@ -32,7 +32,7 @@ test("홈에 개념 지도가 그려지고, 개념을 누르면 그 대화로 �
     page.getByRole("heading", { name: /무엇을 배우고 싶으신가요/ }),
   ).toBeVisible({ timeout: 30_000 });
 
-  const canvas = page.locator("canvas");
+  const canvas = page.locator("canvas[data-concept-map]");
   await expect(canvas).toBeVisible({ timeout: 30_000 });
 
   // 힘 배치가 자리를 잡을 시간을 준다.
@@ -75,20 +75,18 @@ test("홈에 개념 지도가 그려지고, 개념을 누르면 그 대화로 �
 });
 
 /**
- * 개념이 없으면 **홈에 머무르지 않는다** (D210 2-1, 사용자 지시).
+ * **개념이 없어도 홈에 머문다** (사용자 지시 2026-08-11 — D210 2-1 폐기).
  *
- * 예전에는 "아직 지도에 올릴 개념이 없습니다 / 첫 대화 시작하기"라는 빈 상태를
- * 보여 줬다. 지금은 그 화면 자체가 없다 — 지도에 올릴 것이 없으면 캔버스로
- * 곧장 보낸다. 안내를 한 번 더 읽고 버튼을 누르게 하는 것보다, 할 수 있는
- * 자리에 데려다 놓는 편이 낫다는 판단이다.
+ * 예전에는 지도에 올릴 것이 없으면 캔버스로 곧장 보냈다. 그때는 홈에
+ * **지도밖에** 없어서 빈 홈이 곧 빈 화면이었기 때문이다.
  *
- * 판정 기준이 "세션 없음"이 아니라 **"개념 카드 0개"**인 것이 요점이라
+ * 지금 홈에는 인사말과 질문 입력창이 있다. 노드가 없어도 학생이 여기서 바로
+ * 물어볼 수 있으므로 튕겨 낼 이유가 사라졌다 — 처음 들어온 학생이 홈을 한
+ * 번도 못 보고 캔버스로 끌려가던 쪽이 오히려 문제였다.
+ *
  * 응답을 비워서 태운다(계정을 비우면 다른 스펙이 쓰는 데이터가 사라진다).
- *
- * `replace`여야 한다 — `push`면 뒤로 가기가 다시 빈 홈으로 데려오고 거기서
- * 또 튕겨 나가 뒤로 가기가 먹지 않는 것처럼 보인다.
  */
-test("개념이 없으면 홈에 머무르지 않고 캔버스로 보낸다", async ({ page }) => {
+test("개념이 하나도 없어도 홈에 머물고 바로 물어볼 수 있다", async ({ page }) => {
   test.setTimeout(60_000);
   await login(page);
   await page.route("**/api/home/concept-map", (route) =>
@@ -99,8 +97,17 @@ test("개념이 없으면 홈에 머무르지 않고 캔버스로 보낸다", as
     }),
   );
   await page.goto("/home");
-  await page.waitForURL(/\/space\/personal/, { timeout: 30_000 });
+
+  // 인사말과 입력창이 그대로 있어야 한다 — 이것이 안 튕겨 내는 근거다.
+  await expect(page.getByRole("heading", { level: 2 })).toContainText(
+    /안녕하세요|배우고 싶으신가요/,
+    { timeout: 30_000 },
+  );
   await expect(page.getByLabel("질문 입력")).toBeEnabled({ timeout: 30_000 });
+
+  // 잠깐 뒤에 늦게 튕겨 나가지는 않나.
+  await page.waitForTimeout(3_000);
+  expect(new URL(page.url()).pathname).toBe("/home");
 });
 
 /* ─────────────────────────── D191 — 대화 목록 · 확대 ─────────────────────── */
@@ -152,7 +159,7 @@ test("홈이 인사·입력창·갈 곳 둘을 지도 위에 띄운다", async (
   await withFixture(page);
   await page.goto("/home");
 
-  await expect(page.locator("canvas")).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("canvas[data-concept-map]")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("heading", { level: 2 })).toContainText(
     "무엇을 배우고 싶으신가요?",
   );
@@ -186,7 +193,7 @@ test("덮개 아래 지도가 살아 있다", async ({ page }) => {
   await login(page);
   await withFixture(page);
   await page.goto("/home");
-  await expect(page.locator("canvas")).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("canvas[data-concept-map]")).toBeVisible({ timeout: 30_000 });
 
   /**
    * **덮개 자신에게 묻는다.** 화면 한 점의 최상위 요소로 재려 했더니 그 자리에
@@ -204,7 +211,7 @@ test("지도 위에서 휠을 굴려도 페이지는 안 움직인다", async ({
   await login(page);
   await withFixture(page);
   await page.goto("/home");
-  const canvas = page.locator("canvas");
+  const canvas = page.locator("canvas[data-concept-map]");
   await expect(canvas).toBeVisible({ timeout: 30_000 });
 
   /**
