@@ -32,7 +32,7 @@ test("홈에 개념 지도가 그려지고, 개념을 누르면 그 대화로 �
     page.getByRole("heading", { name: /무엇을 배우고 싶으신가요/ }),
   ).toBeVisible({ timeout: 30_000 });
 
-  const canvas = page.locator("canvas");
+  const canvas = page.locator("canvas[data-concept-map]");
   await expect(canvas).toBeVisible({ timeout: 30_000 });
 
   // 힘 배치가 자리를 잡을 시간을 준다.
@@ -159,7 +159,7 @@ test("홈이 인사·입력창·갈 곳 둘을 지도 위에 띄운다", async (
   await withFixture(page);
   await page.goto("/home");
 
-  await expect(page.locator("canvas")).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("canvas[data-concept-map]")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("heading", { level: 2 })).toContainText(
     "무엇을 배우고 싶으신가요?",
   );
@@ -193,7 +193,7 @@ test("덮개 아래 지도가 살아 있다", async ({ page }) => {
   await login(page);
   await withFixture(page);
   await page.goto("/home");
-  await expect(page.locator("canvas")).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("canvas[data-concept-map]")).toBeVisible({ timeout: 30_000 });
 
   /**
    * **덮개 자신에게 묻는다.** 화면 한 점의 최상위 요소로 재려 했더니 그 자리에
@@ -211,7 +211,7 @@ test("지도 위에서 휠을 굴려도 페이지는 안 움직인다", async ({
   await login(page);
   await withFixture(page);
   await page.goto("/home");
-  const canvas = page.locator("canvas");
+  const canvas = page.locator("canvas[data-concept-map]");
   await expect(canvas).toBeVisible({ timeout: 30_000 });
 
   /**

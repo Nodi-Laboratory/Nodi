@@ -368,6 +368,7 @@ export function SessionList({
                          *
                          * `title`은 남긴다: 마우스 사용자의 툴팁이다.
                          */
+                        data-hover-only
                         aria-label={`${s.title?.trim() || "새 대화"} 메뉴`}
                         aria-expanded={menuId === s.id}
                         title="더보기"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AnswerBox } from "./AnswerBox";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -324,13 +325,15 @@ function TurnBlock({
             {node.question || "(질문 없음)"}
           </div>
         </div>
-        {/* 노디 답변 — 개념 카드 원문 그대로. 파싱해서 보여 주면 실제로 무엇이
-            나왔는지(형식 위반 포함)를 볼 수 없다. */}
+        {/**
+          * 노디 답변 — **원문이 기본**이다. 파싱한 것만 보여 주면 실제로 무엇이
+          * 나왔는지(형식 위반 포함)를 볼 수 없고, 이 탭은 그걸 보러 오는 자리다.
+          * 다만 읽기 어려운 것도 사실이라 상자 안에서 바꿀 수 있게 했다
+          * (2026-08-10).
+          */}
         <div className="flex justify-start">
           <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-[#25211a] px-3 py-2">
-            <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-[#cfc9bd]">
-              {node.answer || "(답변 없음)"}
-            </pre>
+            <AnswerBox raw={node.answer} defaultRaw />
           </div>
         </div>
 

@@ -99,6 +99,13 @@ export interface CanvasStreamApi {
   /** 마지막 오류. */
   error: string | null;
   /**
+   * 그 오류를 지운다 — 화면이 배너를 닫을 때 부른다 (2026-08-10).
+   *
+   * 안 내주면 학생이 X를 눌러도 이 안내만 남아 **닫히지 않는 배너**가 된다
+   * (배너는 출처가 넷이고 닫기는 그 넷을 다 알아야 한다).
+   */
+  clearError: () => void;
+  /**
    * 카메라가 따라가야 할 아이템 id.
    *
    * 답이 어디에 생기는지 안 보이면 학생은 화면 밖에서 글이 생기는 것을 놓친다
@@ -334,6 +341,16 @@ export function useCanvasStream({
        * 다른 탭을 보면 글이 멈추는 정도가 아니라 **턴이 끝나지 않아 저장이
        * 통째로 안 된다**(실측으로 잡았다: 화면에 글이 있는데 DB는 0행).
        * 타이머는 배경에서 느려질 뿐 멈추지는 않는다.
+       *
+       * ⚠️ **그 말은 데스크톱 얘기다** (2026-08-10). iPadOS는 다른 앱으로
+       * 가면 탭을 통째로 얼리고, 돌아오지 못한 채 정리하기도 한다 — 그때는
+       * 타이머도 이 훅도 같이 죽어 카드 저장이 아예 안 일어난다. 여기서
+       * 더 버틸 방법은 없다.
+       *
+       * **대신 서버가 노드를 따로 저장하고, 다시 들어올 때 카드 없는 답을
+       * 고아로 주워 담는다** — 실측(2026-08-10): 스트리밍 도중 탭을 죽이고
+       * 다시 들어가니 답이 카드로 돌아왔다. 그 복구가 패드의 안전망이니
+       * 함부로 걷어내지 마라.
        */
       timer = window.setInterval(tick, 16);
 
@@ -707,5 +724,11 @@ export function useCanvasStream({
 
   const clearFocus = useCallback(() => setFocusId(null), []);
 
-  return { reply, busy, send, error, focusId, clearFocus };
+  /**
+   * 화면이 배너를 닫을 때 부른다 (2026-08-10). 안 내주면 학생이 X를 눌러도
+   * 이 안내만 남아 **닫히지 않는 배너**가 된다.
+   */
+  const clearError = useCallback(() => setError(null), []);
+
+  return { reply, busy, send, error, clearError, focusId, clearFocus };
 }

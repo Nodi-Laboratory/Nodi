@@ -10,6 +10,7 @@ import { useRoutePrefetch } from "@/lib/useRoutePrefetch";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { createSession } from "@/lib/api";
 import type { ConceptNode } from "@/lib/api/conceptMap";
+import { VeilShader } from "@/components/home/VeilShader";
 import { PAGE_BG } from "@/lib/ui/surface";
 
 /** 비어 있는 집합 하나를 재사용한다 — 렌더마다 새로 만들면 지도 memo가 깨진다. */
@@ -210,25 +211,38 @@ export default function HomePage() {
             <div
               aria-hidden
               data-map-veil
-              className="pointer-events-none absolute inset-0 transition-opacity duration-700"
-              style={{
-                /**
-                 * **스포트라이트** (사용자 지시 2026-08-10).
-                 *
-                 * 고르게 덮으면 가운데의 노드가 잘 안 보인다는 지적이었다.
-                 * 가운데는 거의 맑게(흰빛만 얹어 파스텔 점의 대비를 올리고),
-                 * 가장자리는 지금까지의 베이지 그대로 — 빛이 한가운데 떨어진
-                 * 것처럼 보이면서 화면 밖으로 갈수록 조용해진다.
-                 *
-                 * ⚠️ 초점은 **지도가 실제로 앉는 자리**여야 한다. 상자 한가운데
-                 * (45%)에 뒀더니 빛은 빈 곳을 비추고 무리는 어두운 데 깔렸다
-                 * (실측 2026-08-10) — 지도는 문구 아래 띠의 가운데에 맞춰지므로
-                 * (`fitToContent`) 초점도 그 자리로 내린다.
-                 */
-                background: `radial-gradient(64% 58% at 50% 70%, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.12) 40%, ${PAGE_BG} 82%)`,
-                opacity: mapOnly ? 0 : 0.66,
-              }}
-            />
+              className="pointer-events-none absolute inset-0 overflow-hidden transition-opacity duration-700"
+              /**
+               * **흐르는 라임 그라디언트** (디자이너 요청 2026-08-11).
+               *
+               * 평평한 베이지 스포트라이트였다. 참조 시안
+               * (soqhomore/nodi-web-test)의 색·움직임·요소를 그대로 옮겨 왔다.
+               *
+               * ⚠️ **바뀐 것은 막의 그림뿐이다.** 투명도(0.66)도, 지도만 볼 때
+               * 사라지는 것도, 포인터를 통과시키는 것도 그대로다 — 이 막이
+               * 하는 일은 지도를 지우는 것이 아니라 한 겹 뒤로 물려 위의 글을
+               * 또렷하게 하는 것이고, 그 역할은 안 바뀌었다.
+               *
+               * ## 투명도는 0.38이다 (디자이너 요청 2026-08-11)
+               *
+               * 처음에 0.66으로 얹었더니 **뒤의 노드가 너무 안 보였다.** 같은
+               * 화면을 투명도별로 찍어 지도 띠의 밝기 편차(노드가 보이는 정도)와
+               * 초록−파랑(라임이 남은 정도)을 쟀다:
+               *
+               *   투명도   노드 대비(막 없을 때=100%)   라임끼
+               *   0.30            71%                   30
+               *   0.38            64%                   47
+               *   0.46            56%                   66
+               *   0.66            38%                   88
+               *
+               * 라임끼는 0.46을 넘으면 거의 안 짙어지는데(66→88) 노드는 계속
+               * 묻힌다 — **색으로 얻는 것은 줄고 잃는 것은 그대로**인 구간이다.
+               * 0.38이 그 꺾이는 자리이고, 지금 값의 거의 두 배로 지도가 산다.
+               */
+              style={{ opacity: mapOnly ? 0 : 0.38 }}
+            >
+              <VeilShader />
+            </div>
 
             {/**
              * 위에 뜨는 것 — 인사 · 입력 · 갈 곳 둘.

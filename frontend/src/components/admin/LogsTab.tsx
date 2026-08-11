@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AnswerBox } from "./AnswerBox";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ChevronRight, Radio, Wrench, X } from "lucide-react";
 import { getAdminLogDetail, getAdminLogs, listAdminUsers } from "@/lib/api";
@@ -289,7 +290,19 @@ function TurnDrawer({
                   </Badge>
                 </div>
                 <Field label="질문">{log.question}</Field>
-                <Field label="답변">{log.answer}</Field>
+                {/**
+                  * 답변은 **읽는 모습이 기본**이다 (2026-08-10).
+                  *
+                  * 원문에는 `CHAT:`·`@concept:` 같은 전선 위 표시가 섞여 있어서
+                  * 그대로 두면 "응답에 다른 내용이 들어간" 것으로 보인다.
+                  * 날것이 필요하면 상자 안에서 바꾼다.
+                  */}
+                <div>
+                  <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[#9a948a]">
+                    답변
+                  </div>
+                  <AnswerBox raw={log.answer} />
+                </div>
               </section>
 
               <TurnTrace log={log} />

@@ -103,6 +103,8 @@ export function ClipItem({
         left: x,
         top: y,
         width: CLIP_SIDE,
+        // 손가락으로 끌려면 필요하다 — 없으면 브라우저가 터치를 스크롤로 채간다(TextItem 머리말).
+        touchAction: "none",
         height: CLIP_SIDE,
         pointerEvents: "var(--c2-item-events)" as React.CSSProperties["pointerEvents"],
         background: "var(--c-raised)",
@@ -303,6 +305,7 @@ export function ClipItem({
         target="_blank"
         rel="noopener noreferrer"
         data-no-pan
+        data-clip-link
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         className="shrink-0 truncate"

@@ -185,6 +185,14 @@ export function AskBar({
       style={{
         zoom: "var(--ui-scale, 1)",
         /**
+         * ⚠️ **키보드가 먹은 높이만큼 올라온다** (2026-08-10).
+         *
+         * iOS 사파리는 키보드가 올라와도 `innerHeight`를 안 줄인다 — 레이아웃은
+         * 키보드를 모른 채 그대로 있고 이 입력창은 **그 밑에 깔린다**. 학생이
+         * 자기가 치는 글을 못 본다. `--kb-inset`이 그 높이다(안 가려졌으면 0).
+         */
+        bottom: "calc(52px + var(--kb-inset, 0px))",
+        /**
          * ⚠️ **미는 양도 배율로 나눈다** (2026-08-09).
          *
          * 이 상자는 `zoom`으로 확대돼 있어서 안쪽의 `translateX`가 그대로
@@ -214,7 +222,7 @@ export function AskBar({
        * 화면 밖으로 나갔다(실측 2026-08-10, 390px 폰). 좁을 때는 도구바와
        * 겹치더라도 **묻는 일이 먼저**다.
        */
-      className="ui absolute bottom-[52px] left-1/2 z-50 w-[min(680px,calc(100%-140px))] -translate-x-1/2 max-[900px]:w-[calc(100%-24px)]"
+      className="ui absolute left-1/2 z-50 w-[min(680px,calc(100%-140px))] -translate-x-1/2 max-[900px]:w-[calc(100%-24px)]"
     >
       {showStatus && (
         <div
@@ -428,6 +436,7 @@ export function AskBar({
             onClick={submit}
             disabled={!value.trim() || busy || disabled}
             aria-label="보내기"
+            data-ask-send
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-30"
             // 시안의 전송 버튼은 **밝은 초록 원**이다(사용자 지시 2026-08-07).
             style={{ background: "var(--accent-mid)", color: "var(--c-paper)" }}

@@ -123,6 +123,13 @@ export interface Bridge {
   subscribeFrame: (cb: (c: Camera) => void) => () => void;
   /** 화면 픽셀만큼 화면을 민다(중클릭 팬). 감도 1:1. */
   panByScreen: (dx: number, dy: number) => void;
+  /**
+   * 화면의 한 점을 **붙든 채** 배율을 곱한다 — 두 손가락 확대 (2026-08-10).
+   *
+   * 두 손가락 사이의 가운데가 그 점이다. 그 점의 종이 좌표가 안 변해야
+   * 손가락 밑의 글자가 제자리에 있는 것으로 느껴진다.
+   */
+  zoomAtScreen: (factor: number, cx: number, cy: number) => void;
   activeTool: ToolName;
   setTool: (tool: ToolName) => void;
   /**
@@ -472,6 +479,29 @@ export function useExcalidrawBridge(): Bridge {
    * scroll을 `dx / zoom`만큼 더한다. 줌이 얼마든 **커서와 종이가 1:1로
    * 붙어 움직인다** — 사용자가 요구한 "마우스 감도와 동일한 속도"다.
    */
+  /**
+   * 배율 한계. 너무 작으면 무엇인지 알 수 없고, 너무 크면 한 글자만 남는다.
+   * 손가락은 마우스보다 거칠어서 한 번에 크게 벌어지므로 상한이 필요하다.
+   */
+  const zoomAtScreen = useCallback(
+    (factor: number, cx: number, cy: number) => {
+      const el = document.querySelector<HTMLElement>(".canvas2");
+      if (!el) return;
+      const box = el.getBoundingClientRect();
+      const c = cameraRef.current;
+      const next = Math.min(10, Math.max(0.1, c.zoom * factor));
+      if (next === c.zoom) return;
+      // `world = screen / zoom - scroll` 이므로, 그 점의 world를 고정하려면
+      // 새 scroll = screen / newZoom - world 다.
+      const sx = cx - box.left;
+      const sy = cy - box.top;
+      const wx = sx / c.zoom - c.scrollX;
+      const wy = sy / c.zoom - c.scrollY;
+      applyCamera({ zoom: next, scrollX: sx / next - wx, scrollY: sy / next - wy });
+    },
+    [applyCamera],
+  );
+
   const panByScreen = useCallback(
     (dx: number, dy: number) => {
       const c = cameraRef.current;
@@ -531,6 +561,7 @@ export function useExcalidrawBridge(): Bridge {
       cameraRef,
       subscribeFrame,
       panByScreen,
+      zoomAtScreen,
       activeTool,
       setTool,
       stampPoly,
@@ -549,6 +580,7 @@ export function useExcalidrawBridge(): Bridge {
       camera,
       subscribeFrame,
       panByScreen,
+      zoomAtScreen,
       activeTool,
       setTool,
       stampPoly,

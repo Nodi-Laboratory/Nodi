@@ -4,8 +4,13 @@
 > 무한 캔버스 위에 주제별로 묶어 배치한다. 선생님이 올린 수업 자료·교과서를
 > 근거로 답한다.
 
-Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
-**Qdrant**(벡터 1024d) · **Upstage**(대화 생성 `solar-pro3` + 임베딩 + 문서 파싱).
+Next.js 16(App Router) · React 19 · FastAPI · **Postgres**(RLS로 권한 강제) ·
+**Qdrant**(벡터 1024d · 컬렉션 6) · **Upstage**(대화 생성 `solar-pro3` + 임베딩 +
+문서 파싱) · 교과서 도판 비전과 손글씨 OCR은 **자체 GPU**.
+
+> 스택을 자세히: **[`docs/stack/`](docs/stack/)** — 전체 그림 · 프런트 · 백엔드 ·
+> 데이터와 모델 넷으로 나눠 적었다. 무엇을 쓰는지와 **왜 그것을 골랐는지**,
+> 그리고 안 쓰기로 한 것과 그 이유까지.
 
 > ## 📌 변경 보고서 — 먼저 읽으세요
 >
@@ -16,6 +21,7 @@ Next.js(App Router) · FastAPI · **Postgres**(RLS로 권한 강제) ·
 > 무엇을 바꿨는지 정리한 기록입니다. DB 스키마 변경(정책 32→38, 함수 19→26),
 > `db/migrations/` 규약 신설, 개발 DB에 실제로 한 작업까지 담겨 있습니다.
 
+- 기술 스택: **[`docs/stack/`](docs/stack/)** ← 무엇으로 만들어졌나
 - 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](CLAUDE.md)** ← 이 저장소의 규범 문서
 - 작업 체계: [`docs/TASKS.md`](docs/TASKS.md) · [`docs/AGENTS.md`](docs/AGENTS.md) · [`docs/PROCESS.md`](docs/PROCESS.md)
 - 배포: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)** — 배포 서버는 컨테이너를
@@ -169,14 +175,17 @@ deploy/deploy.sh       # 이후 배포 — 빌드 → 마이그레이션 → 재
 
 ## 주요 기능
 
-- **개념 캔버스** — pan/zoom 무한 캔버스에 개념 카드를 손글씨 스타일로 배치.
+- **개념 캔버스 (v2)** — 무한 캔버스가 **학생이 편집하는 작업 공간**이다(D120~).
+  카드를 옮기고 잇고 고치며, 펜으로 표시하고 손으로 써서 물을 수도 있다.
+  뷰포트는 Excalidraw가 소유하고 우리는 DOM 오버레이를 얹는다.
   `(app)/space/[spaceId]`.
 - **ReAct 스킬 루프** — 모델이 필요할 때만 도구를 부른다(D109). 인사 한 마디에
-  임베딩·벡터 검색이 나가지 않는다. 스킬 9종은 `backend/app/ai/skills/`에 파일
+  임베딩·벡터 검색이 나가지 않는다. 스킬 11종은 `backend/app/ai/skills/`에 파일
   하나씩이고, 노출 목록은 (공간·역할·세션 상태)로 먼저 좁힌다.
-- **운영 콘솔** — `/admin` (관리자 전용, 9탭). 개요·AI 흐름·대화 기록·턴 로그·
-  스킬·문서 인제스트·RAG 테스트·런타임 설정·데이터 백업/초기화. 턴마다 어떤
-  스킬을 어떤 인자로 불렀고 토큰을 얼마나 썼는지까지 본다(D113/D114).
+- **운영 콘솔** — `/admin` (관리자 전용, 15탭). 개요·AI 흐름·대화·턴 로그·스킬·
+  문서·RAG 테스트·설정·데이터·강의 패키지·클립 썸네일·손글씨 폰트·개념 연결·
+  펜 표시·권한. 턴마다 어떤 스킬을 어떤 인자로 불렀고 토큰을 얼마나 썼는지까지
+  본다(D113/D114). 런타임 값 **70개**를 배포 없이 바꾼다(D62).
 - **태그 기반 배치** — 모델이 개념마다 자유 태그(단원·주제 수준)를 붙이고,
   프론트가 태그 첫 등장 순서로 황금각 슬롯 앵커를 부여해 묶는다(D89/D90).
 - **선생님 워크스페이스** — 학급 개설, 수업 자료(`class_material`)·교과서
@@ -198,23 +207,28 @@ deploy/deploy.sh       # 이후 배포 — 빌드 → 마이그레이션 → 재
 ## 아키텍처
 
 ```
-프론트(Next.js, (app)/space/[spaceId])
-  ConceptCanvasWorkspace = NoteCanvas + ConceptCard + FigureNode
-  useConceptStream: POST /chat/stream(SSE) 한 번 → 개념 스트리밍 → d3-force 배치
-                    (D111: 선행 /retrieve 호출 없음 — 검색은 서버가 판단해서 한다)
-        │
+프론트(Next.js 16 · React 19 — (app)/space/[spaceId])
+  CanvasWorkspace           캔버스 v2 (D120~) — Excalidraw가 뷰포트를 소유하고
+                            DOM 오버레이를 얹는다. 배치는 태그 열(D123)
+  useCanvasStream           POST /api/chat/stream(SSE) 한 번 → 카드 스트리밍
+                            (D111: 선행 /retrieve 없음 — 검색은 서버가 판단해서 한다)
+  lib/canvas2/              배치·연결선·표시 해석·카메라 — **순수 함수**로 떼어 둔다
+        │  /api/* (같은 출처, Next가 서버 사이드로 넘긴다)
 백엔드(FastAPI)
-  ai/                       ReAct 스킬 루프 — 도구 판단 → 스킬 실행 → 생성 (D109)
+  ai/                       스킬 루프 — 도구 판단 → 스킬 실행 → 생성 (D109)
     catalog.py              (공간·역할·세션 상태)로 노출 도구를 먼저 좁힌다
-    skills/                 스킬 하나가 파일 하나 (9종)
+    skills/                 스킬 하나가 파일 하나 (11종)
   services/solar.py         대화 생성(Upstage solar-pro3, 스트리밍 + tool calling)
   services/upstage.py       임베딩(embedding-query/passage, 1024d) + 문서 파싱
-  services/qdrant_store.py  컬렉션 file_chunks / textbook_figures
-  services/figure_*.py      교과서 도판 추출·비전 판정
-  services/worker/          업로드 → 청킹 → 임베딩 잡 (앱 프로세스 안에서 돈다)
+  services/qdrant_store.py  컬렉션 6 — 청크·원자·도판·강의 클립·클립 원자·개념
+  services/figure_*.py      교과서 도판 추출 + 비전 캡션 생성(자체 GPU)
+  services/worker/          인제스트·임베딩·교차연결·보존 잡 (앱 프로세스 안)
+  db/pool.py                ⚠️ 커넥션을 얻는 **유일한 길** — RLS 컨텍스트를 함께 건다
         │
 Postgres(관계형 + RLS + 자체 인증 + 파일)  ·  Qdrant(벡터만; RLS 없음 → 앱이 스코프 강제)
 ```
+
+자세한 것은 [`docs/stack/01-overview.md`](docs/stack/01-overview.md).
 
 **불변식** (자세히는 [`CLAUDE.md`](CLAUDE.md)):
 
@@ -233,8 +247,9 @@ Nodi/
 ├─ frontend/                 Next.js (App Router, TypeScript)
 │  └─ src/
 │     ├─ app/(app)/space/[spaceId]/   대화 캔버스 라우트
-│     ├─ components/canvas/           NoteCanvas·ConceptCard·FigureNode …
-│     └─ lib/concept/                 useConceptStream·layout·useTagLayout …
+│     ├─ components/canvas2/          CanvasWorkspace·CanvasStage·ToolRail·ItemLayer …
+│     ├─ components/home/             개념 지도 · components/help·settings/  팝업
+│     └─ lib/canvas2/                 배치·연결선·표시 해석·카메라 (순수 함수)
 ├─ backend/                  FastAPI
 │  ├─ app/ai/                ReAct 스킬 루프 (catalog·registry·orchestrator·skills/)
 │  ├─ app/services/          solar·upstage·qdrant_store·worker/·figure_*·admin_* …

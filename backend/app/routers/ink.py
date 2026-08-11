@@ -209,6 +209,14 @@ async def interpret_ink(
     # 번호는 명부가 정한다 — 표시가 명부에 없는 카드를 가리키면 그건 버린다.
     shots = _parse_gestures(gestures, {c["n"] for c in roster})
 
+    #: 글자를 어느 길로 읽었나. `_ocr`이 채우고 응답에 실어 보낸다.
+    #:
+    #: ⚠️ **이게 없으면 예비 경로가 조용히 일한다.** VARCO가 내려간 채 비전이
+    #: 대신 읽으면 학생 화면은 멀쩡하지만 정확도는 내려가는데, 관리자가 그
+    #: 사실을 알 방법이 없었다 — 이 코드베이스가 거듭 잡아 온 "오류 없이
+    #: 조용히 나빠지는" 부류다(사용자 지시 2026-08-10).
+    text_source = "varco"
+
     async def _ocr() -> str:
         """손글씨를 읽는다. **전용 OCR을 먼저, 안 되면 비전 모델로** (D181).
 
@@ -226,10 +234,13 @@ async def interpret_ink(
                 content_type=ink_png.content_type or "image/png",
             )
         except (svc.OcrUnavailable, svc.OcrUpstreamError, svc.OcrBusy):
+            nonlocal text_source
+            text_source = "unavailable"
             if not handwriting_vision.is_configured():
                 raise
             text = await handwriting_vision.recognize(ink_bytes)
             if text:
+                text_source = "vision_fallback"
                 return text
             # 예비 경로도 못 읽었으면 **원래 실패를 그대로 올린다** — 학생이
             # 보는 문구가 "서버가 안 된다"와 "글씨를 못 읽었다"로 갈려야 한다.
@@ -293,5 +304,9 @@ async def interpret_ink(
         # **왜 비었는지**를 함께 준다 — 빈 설명만으로는 꺼짐·미설정·오류를
         # 구분할 수 없고, 그러면 관리자 실험실이 "왜 안 읽혔나"에 답을 못 한다.
         "marks_status": marks_status,
+        # 글자를 어느 길로 읽었나 — `varco`(전용) · `vision_fallback`(예비).
+        # 예비가 도는 것은 **고장 신호**다: 학생에게는 안 보이지만 정확도가
+        # 내려가 있으므로 관리자가 알아야 한다.
+        "text_source": text_source,
         "confidence": None,
     }
