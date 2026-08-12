@@ -63,6 +63,28 @@ export interface StreamParser {
  */
 const RECOVER_MIN_CHARS = 40;
 
+/**
+ * **말풍선으로만 온 답**을 카드로 살릴 최소 길이(자) — 사용자 보고 2026-08-12.
+ *
+ * 모델이 `@concept:`을 빠뜨리는 것은 이미 아는 일이고(위 그물), 그래서 개념 밖
+ * 줄을 모아 뒀다 살린다. 그런데 **그 줄들이 `CHAT:`을 달고 오면** 여기서 말풍선
+ * 으로 흘러가 `orphan`이 빈 채로 끝난다 — 되살릴 것이 없으니 카드가 안 생긴다.
+ * 서버 로그에는 `missing_concept_envelope`만 남고(계기판은 정상 작동했다),
+ * 학생 화면에는 말풍선 한 덩이만 뜬다. 사용자 눈에는 **"질문했는데 응답이
+ * 안 생긴다"**이고, 우리 눈에는 "답은 왔는데"라 서로 다른 것을 보고 있었다.
+ *
+ * 하한이 orphan(40)보다 높은 이유는 **진짜 말풍선을 지키기 위해서**다. 인사와
+ * "자료만 추천한 턴"의 안내는 카드가 되면 안 된다 — 형식이 깨진 게 아니라
+ * 의도된 답이다. 값은 그 문구들을 실제로 재서 잡았다: 가장 긴 안내가 55자
+ * ("이 대화방에는 찾아볼 교과서·강의 자료가 없어요…"), 인사가 30~55자다.
+ * 90자면 그 위로 넉넉히 떠 있으면서, **두세 문장짜리 짧은 설명**도 건진다.
+ *
+ * 어느 쪽으로 틀릴지도 정해 뒀다 — 애매하면 **살린다.** 말풍선이 카드가 되면
+ * 학생이 지우면 그만이지만, 답이 통째로 사라지면 학생은 그런 답이 있었다는
+ * 것조차 모른다.
+ */
+const CHAT_RECOVER_MIN_CHARS = 90;
+
 /** 되살린 카드의 제목으로 쓸 첫 **굵은** 낱말. 없으면 제목 없이 둔다. */
 const FIRST_BOLD_RE = /\*\*(.+?)\*\*/;
 
@@ -75,6 +97,13 @@ export function createStreamParser(emit: (ev: StreamEvent) => void): StreamParse
   let sawConcept = false;
   /** 개념 밖에서 흘러나온 줄들 — 버리지 않고 모아 둔다. */
   const orphan: string[] = [];
+  /**
+   * 말풍선으로 보낸 줄들 — **개념이 하나도 안 열렸을 때만** 쓰인다.
+   *
+   * 말풍선은 그대로 띄우고(여기서 가로채지 않는다), 끝에 가서 카드가 하나도
+   * 안 생겼으면 이 글이 마지막 근거가 된다.
+   */
+  const chat: string[] = [];
 
   function closeConcept(): void {
     if (!inConcept) return;
@@ -97,7 +126,11 @@ export function createStreamParser(emit: (ev: StreamEvent) => void): StreamParse
     const trimmed = raw.trim();
 
     if (trimmed.startsWith(CHAT_PREFIX)) {
-      emit({ t: "reply", text: trimmed.slice(CHAT_PREFIX.length).trim() });
+      const text = trimmed.slice(CHAT_PREFIX.length).trim();
+      emit({ t: "reply", text });
+      // 말풍선은 말풍선대로 뜬다. 여기 모으는 것은 **끝에 카드가 하나도 안
+      // 생겼을 때**의 마지막 근거다(아래 `end`).
+      if (text) chat.push(text);
       return;
     }
 
@@ -172,15 +205,35 @@ export function createStreamParser(emit: (ev: StreamEvent) => void): StreamParse
        * 한 턴에 카드가 둘 생기고, 그건 "한 턴 한 노드"(D162)를 깬다.
        */
       if (!sawConcept) {
-        const text = orphan.join("\n").trim();
-        if (text.length >= RECOVER_MIN_CHARS) {
+        /**
+         * 되살릴 글을 고른다.
+         *
+         *   1순위 `orphan` — 머리표 없이 그냥 흘러나온 줄들.
+         *   2순위 `chat`   — **전부 `CHAT:`을 달고 온 답**(사용자 보고
+         *                    2026-08-12). 긴 설명이 통째로 말풍선으로만 오면
+         *                    카드가 하나도 안 생긴다.
+         *
+         * 순서가 있는 이유는 하한이 다르기 때문이다. 말풍선은 **정상적으로도**
+         * 쓰이는 형식이라(인사·자료만 추천한 턴의 안내) 훨씬 긴 글일 때만
+         * 카드로 본다.
+         */
+        const orphanText = orphan.join("\n").trim();
+        const chatText = chat.join("\n").trim();
+        const 살릴것 =
+          orphanText.length >= RECOVER_MIN_CHARS
+            ? orphan
+            : chatText.length >= CHAT_RECOVER_MIN_CHARS
+              ? chat
+              : null;
+        if (살릴것) {
+          const text = 살릴것.join("\n").trim();
           // 제목은 첫 굵은 낱말에서 빌린다 — 모델이 개념 이름을 거기 쓴다.
           // 없으면 제목 없이 둔다(메모 카드와 같은 모양이라 화면은 멀쩡하다).
           const title = (text.match(FIRST_BOLD_RE)?.[1] ?? "").trim().slice(0, 40);
           emit({ t: "cstart", title, tag: "" });
           inConcept = true;
           bodyEmpty = true;
-          for (const l of orphan) appendBody(l);
+          for (const l of 살릴것) appendBody(l);
         }
       }
       closeConcept();
