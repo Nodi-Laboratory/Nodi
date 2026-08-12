@@ -395,11 +395,14 @@ def test_조사를_숫자_읽기에_맞춘다():
 
 
 def test_어디에도_안_닿은_표시도_말한다():
+    """**사실만 적는다.** "닿지 않았다"로 끝내면 모델이 대상이 없다고 읽고
+    되묻는다(사용자 보고 2026-08-12) — 판단은 결론 줄이 한다."""
     line = ink_marks.gesture_line(
         {"shape": "circle", "encloses": [], "within": [], "points": [],
          "from": [], "crosses": []}
     )
-    assert "어느 카드에도 닿지 않았다" in line
+    assert "그렸다" in line
+    assert "직접 닿지는 않았다" in line
 
 
 def test_모르는_모양은_그냥_표시라고_부른다():
@@ -432,14 +435,33 @@ def test_표시_목록이_프롬프트에_실린다():
     assert text.index("학생이 그린 표시") < text.index("한 줄만")
 
 
-def test_짚은_것이_없으면_없다고_말하게_한다():
-    """빈칸으로 두면 모델이 아무 카드나 고른다 — 실측 2026-08-05: 늘 1번."""
+def test_짚은_것이_없어도_되묻지_않게_한다():
+    """**되묻게 만들지 않는다** (사용자 보고 2026-08-12).
+
+    예전 문구는 "어느 카드도 확실히 짚지 않았다. 그렇게 말하라"였고, 그것이
+    그대로 SOLAR까지 흘러가 "화살표가 닿은 카드나 궁금한 내용을 말씀해
+    주시면…"이 돌아왔다. 표시를 그려서 물은 학생에게 그 답은 값이 0이다.
+
+    빈칸으로 두면 모델이 아무 카드나 고른다는 옛 근거(실측 2026-08-05: 늘
+    1번)는 그대로라, **지금도 결론 줄은 반드시 있어야 한다** — 다만 그 줄이
+    "고르지 마라"가 아니라 "가장 가까운 것을 골라라"로 바뀌었다.
+    """
     msgs = ink_marks.build_marks_messages(
         [{"n": 1, "title": "지질학", "mark": "crossed"}],
         "data:image/png;base64,AAA", None, None, [],
     )
     text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
-    assert "어느 카드도 확실히 짚지 않았다" in text
+    assert "되묻지 마라" in text
+    assert "가장 가까운 카드" in text
+
+
+def test_카드가_아예_없으면_표시만_보고_말하게_한다():
+    """카드가 없을 때까지 "가장 가까운 카드"를 시키면 없는 것을 지어낸다."""
+    msgs = ink_marks.build_marks_messages(
+        [], "data:image/png;base64,AAA", None, None, [],
+    )
+    text = [p for p in msgs[0]["content"] if p.get("type") == "text"][-1]["text"]
+    assert "화면에 카드가 없다" in text
 
 
 def test_출발점은_짚은_것으로_치지_않는다():

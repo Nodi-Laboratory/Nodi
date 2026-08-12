@@ -23,7 +23,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildInkScene,
   rectGap,
-  POINTING_KINDS,
   segmentHitsRect,
   type SceneCard,
 } from "./inkScene";
@@ -175,7 +174,12 @@ function makeScene(seed: number): Scene {
 function pointedIds(sc: Scene): string[] {
   const s = buildInkScene(sc.strokes, sc.cards, OPTS);
   if (!s) return [];
-  return s.cards.filter((c) => POINTING_KINDS.includes(c.mark)).map((c) => c.id);
+  /**
+   * **장면이 낸 확신 순을 그대로 쓴다**(`InkScene.pointedOrder`). 여기서 다시
+   * 걸러 정렬하면 시험이 보는 순서와 제품이 보내는 순서가 갈린다.
+   */
+  const byN = new Map(s.cards.map((c) => [c.n, c.id]));
+  return s.pointedOrder.map((n) => byN.get(n)!).filter(Boolean);
 }
 
 describe("표시 읽기 — 무작위 장면", () => {
@@ -190,7 +194,20 @@ describe("표시 읽기 — 무작위 장면", () => {
     for (let seed = 1; seed <= 900; seed++) {
       const sc = makeScene(seed);
       const got = pointedIds(sc);
-      const ok = got.length === 1 && got[0] === sc.want;
+      /**
+       * **계약이 바뀌었다** (사용자 지시 2026-08-12): 정답이 **들어 있고**
+       * 맨 앞이면 통과다. 예전에는 "정확히 하나"였는데, 그만큼 좁게 잡으면
+       * 화살표가 카드에 닿지 않는 한 아무것도 안 잡혀 학생이 되물음만 받는다.
+       *
+       * 실측(이 스윕, 2026-08-12): 실패 10건이 **전부 덤**이었고 놓침은
+       * 0건이었다 — 정답 카드는 열 번 모두 결과에 들어 있었다. 그래서 이
+       * 계약은 "느슨해진 것"이 아니라 **바뀐 목표를 그대로 적은 것**이다.
+       *
+       * 맨 앞을 요구하는 이유: 이 목록의 첫 번째가 이어 묻기의 부모가 된다
+       * (`inkCapture`의 `pointed` 주석). 덤이 앞서면 답이 다른 가지에 붙는다.
+       * 덤은 하나까지 봐준다 — 그 위는 짚은 것이 아니라 훑은 것이다.
+       */
+      const ok = got[0] === sc.want && got.length <= 2;
       const cur = byHow.get(sc.how) ?? { ok: 0, n: 0 };
       byHow.set(sc.how, { ok: cur.ok + (ok ? 1 : 0), n: cur.n + 1 });
       if (!ok) {
@@ -252,9 +269,19 @@ describe("표시 읽기 — 무작위 장면", () => {
       ];
       const got = new Set(pointedIds({ ...sc, strokes }));
       const want = new Set([cards[i].id, cards[j].id]);
-      const same =
-        got.size === want.size && [...want].every((x) => got.has(x));
-      if (!same) {
+      /**
+       * **계약은 "둘 다 들어간다"이지 "둘만 들어간다"가 아니다**
+       * (사용자 지시 2026-08-12).
+       *
+       * 관용도를 넉넉히 잡은 대가로 곁의 카드가 딸려 온다. 그 값은 사용자가
+       * 요구한 것이고("여러 개의 카드가 같이 인식되도록"), 놓치는 쪽은 되물음
+       * 이라 값이 0이다. 다만 **한없이 딸려 오면** 그건 짚은 것이 아니므로
+       * 상한을 둔다 — 정답 둘에 덤 하나까지.
+       */
+      const 놓침 = [...want].filter((x) => !got.has(x));
+      // 덤은 **화살표 하나에 하나까지**다. 관용도가 화살표마다 붙으므로
+      // 상한도 화살표 수를 따라간다(여기서는 둘).
+      if (놓침.length || got.size > want.size * 2) {
         bad.push(
           `seed ${seed} 간격 ${spread.toFixed(0)} 정답 ${[...want]} → ${[...got]}`,
         );

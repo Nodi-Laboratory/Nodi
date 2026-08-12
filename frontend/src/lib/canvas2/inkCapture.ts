@@ -19,7 +19,6 @@
 import { fetchFigureBitmap, type InkCardRef } from "@/lib/api/ink";
 import {
   buildInkScene,
-  POINTING_KINDS,
   rectOverlap,
   type InkTraceRow,
   type PickedCard,
@@ -295,9 +294,7 @@ export async function captureInk(
      * **우리가 센 답이다.** 어느 카드를 짚었는지는 기하로 정확히 계산된다 —
      * 모델에게 물으면 불확실할 때 늘 1번을 답한다(실측 2026-08-05).
      */
-    pointed: scene.cards
-      .filter((c) => POINTING_KINDS.includes(c.mark))
-      .map((c) => c.n),
+    pointed: scene.pointedOrder,
     dropped: scene.dropped,
     trace: {
       ...base,

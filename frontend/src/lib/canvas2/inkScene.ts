@@ -33,6 +33,7 @@
 import { EXPORT_PAD, type PenStroke } from "./penPad";
 import {
   enclosureRatio,
+  pointInPoly,
   inside,
   measureStrokes,
   pointGap,
@@ -122,7 +123,7 @@ export type MarkKind =
 export const POINTING_KINDS: readonly MarkKind[] = ["circled", "within", "pointed"];
 
 /** 센 정도. 카드 하나에 표시가 여럿 걸리면 가장 센 것을 남긴다. */
-const MARK_RANK: Record<MarkKind, number> = {
+export const MARK_RANK: Record<MarkKind, number> = {
   circled: 5,
   within: 4,
   pointed: 3,
@@ -179,15 +180,28 @@ export interface SceneGesture {
  */
 export const HIT_PAD_X = 16;
 export const HIT_PAD_Y = 12;
+/**
+ * 여백을 **카드 크기에 비례**해서도 준다 (사용자 지시 2026-08-12).
+ *
+ * 16×12는 폭 560 카드의 3%다 — 학생이 화살표를 카드 **테두리에 박아야** 잡힌다는
+ * 뜻이고, 손으로 그리는 사람은 그렇게 안 그린다. 사용자 보고: "화살표가 직접
+ * 닿지 않는 이상 의미가 없어진다."
+ *
+ * 비율은 짧은 변 기준 20%, 상한 72px. 상한이 필요한 이유는 열 간격이
+ * 700이고 카드 폭이 560이라 **열 사이가 140밖에 안 되기 때문**이다 —
+ * 양쪽이 72씩 물면 144로 딱 만나므로, 이보다 크면 열 사이에 그은 표시가
+ * 늘 양쪽 카드를 다 물게 된다. (다 무는 것 자체는 나쁘지 않지만, 그러면
+ * "가까운 쪽"이라는 정보가 사라진다.)
+ */
+const HIT_PAD_RATIO = 0.2;
+const HIT_PAD_MAX = 72;
 
 /** 판정용으로 부풀린 상자. */
 function hitBox(r: Rect): Rect {
-  return {
-    x: r.x - HIT_PAD_X,
-    y: r.y - HIT_PAD_Y,
-    w: r.w + HIT_PAD_X * 2,
-    h: r.h + HIT_PAD_Y * 2,
-  };
+  const pad = Math.min(HIT_PAD_MAX, Math.min(r.w, r.h) * HIT_PAD_RATIO);
+  const px = Math.max(HIT_PAD_X, pad);
+  const py = Math.max(HIT_PAD_Y, pad);
+  return { x: r.x - px, y: r.y - py, w: r.w + px * 2, h: r.h + py * 2 };
 }
 
 export interface InkSceneOpts {
@@ -218,6 +232,19 @@ export interface InkTraceRow {
 }
 
 export interface InkScene {
+  /**
+   * 짚은 카드의 번호 — **확신 순**이다 (사용자 지시 2026-08-12).
+   *
+   * `cards`의 번호는 **읽는 순서**로 매긴다(그림 속 위치와 어긋나면 VLM의
+   * 공간 추론과 번호가 갈린다). 그 순서를 그대로 쓰면 화면 위쪽에 있다는
+   * 이유만으로 엉뚱한 카드가 **이어 묻기의 부모**가 된다 — 부모는 이 목록의
+   * 첫 번째로 정해지기 때문이다(`CanvasWorkspace`의 `shot.pointed[0]`).
+   *
+   * ⚠️ **여기서 한 번만 정한다.** 한때 `inkCapture`에서 정렬했는데, 그러면
+   * 시험이 보는 순서와 제품이 보내는 순서가 갈린다(이 저장소가 여러 번
+   * 겪은 그 함정).
+   */
+  pointedOrder: number[];
   /** 획 bbox + 여백. 선정과 클램프의 **유일한** 기준이다. */
   inkBox: Rect;
   /**
@@ -287,17 +314,34 @@ const JOIN_MIN = 14;
  * 학생은 화살표를 카드에 박지 않는다 — 코앞에서 멈춘다(실측: 카드 아래
  * 26px에서 끝났다). 그림 크기에 비례해 잡는다.
  */
-const TIP_RATIO = 0.04;
-const TIP_MIN = 24;
+/**
+ * 끝이 이만큼 안에서 멈추면 **가리킨 것**으로 친다 (사용자 지시 2026-08-12로
+ * 크게 늘렸다: 0.04·24 → 0.12·96).
+ *
+ * 24px은 그림 대각선이 600일 때 4%다. 손으로 그은 화살표가 그 안에서 멈추는
+ * 일은 드물고, 못 멈추면 **표시 자체가 무의미해진다** — 되묻는 답이 돌아온다.
+ * 놓치는 쪽의 값이 0이라, 넉넉히 잡아 틀리는 쪽이 낫다는 것이 사용자 판단이다.
+ */
+const TIP_RATIO = 0.12;
+const TIP_MIN = 96;
 /**
  * 촉을 앞으로 늘여 볼 거리(표시 자신의 길이 대비).
  *
  * 표시 길이에 묶는 이유는 **짧은 표시가 멀리 우기지 못하게** 하기 위해서다.
  * 화면 크기에 묶으면 톡 그은 5px 선이 반대편 카드를 겨눴다고 주장한다.
  */
-const AIM_REACH = 2.5;
-/** 카드의 이 비율 이상이 고리 안에 들면 **감쌌다**고 본다. */
-const ENCLOSE_MIN = 0.5;
+const AIM_REACH = 4;
+/**
+ * 카드의 이 비율 이상이 고리 안에 들면 **감쌌다**고 본다.
+ *
+ * 0.5였다 — 카드의 절반을 덮어야 했다. 학생은 카드를 **헐겁게 두르거나 제목만**
+ * 동그라미 치는데, 그러면 절반을 못 넘겨 감쌈이 아니라 "스침"이 된다(사용자
+ * 보고 2026-08-12: "동그라미를 쳐서 질문했는데 작동하지 않는다").
+ *
+ * 0.32로 낮추고, 비율이 모자라도 **고리 안에 카드 중심이 들면** 감쌈으로 본다
+ * (아래 `relate`) — 큰 원으로 널찍하게 두른 경우가 그것이다.
+ */
+const ENCLOSE_MIN = 0.32;
 /** 카드 안에 그린 표시로 볼 최소 크기(카드 대각선 대비). */
 const WITHIN_RATIO = 0.18;
 
@@ -391,7 +435,13 @@ function relate(g: Gesture, card: Rect, hit: Rect, tipReach: number): MarkKind {
   // 1) 감쌈이 가장 센 신호다 — **먼저 본다.** 끝점 규칙을 먼저 태우면
   //    동그라미는 시작과 끝이 맞닿아 있어서 옆 카드까지 "짚음"이 된다
   //    (실측 2026-08-05: 카드 1을 감쌌는데 카드 2도 짚음으로 나왔다).
-  if (g.closed && enclosureRatio(g.poly, card) >= ENCLOSE_MIN) return "circled";
+  if (g.closed) {
+    // 비율이 모자라도 **중심이 고리 안**이면 두른 것이다(널찍한 원).
+    const cx = card.x + card.w / 2;
+    const cy = card.y + card.h / 2;
+    if (enclosureRatio(g.poly, card) >= ENCLOSE_MIN || pointInPoly(g.poly, cx, cy))
+      return "circled";
+  }
 
   // 2) 표시가 카드 안에 온전히 들어 있다 — 본문 한 구절에 밑줄·동그라미를
   //    쳤거나 카드 위를 덧칠한 것이다. 그 카드를 짚은 것이 맞다.
@@ -511,20 +561,29 @@ export function buildInkScene(
    * **폭주하지 않는다.** 겨눔은 획에서만 계산되고 늘어난 상자를 되먹이지
    * 않는다 — 종료는 여전히 알고리즘의 성질이다(파일 머리말 참조).
    */
+  /** 겨눔(ray)으로 잡힌 카드의 색인. 확신 순에서 앞세운다. */
+  const aimedSet = new Set<number>();
   const kindsOf: MarkKind[][] = shapes.map((g) => {
     const kinds = scored.map((s) => relate(g, s.card.rect, s.hit, tipReach));
     /**
      * 아무것도 못 짚었으면 **겨눈 쪽으로 늘여** 본다. 짚은 것이 하나라도
      * 있으면 늘이지 않는다 — 이미 답이 있는데 더 찾으면 없는 대상이 붙는다.
      */
-    if (
-      !kinds.includes("circled") &&
-      !kinds.includes("within") &&
-      !kinds.includes("pointed")
-    ) {
+    /**
+     * 겨눔으로 더 찾는다. 예전에는 **짚은 것이 하나라도 있으면** 안 늘였는데,
+     * 사용자 지시 2026-08-12로 완화했다 — 화살표 하나가 두 카드를 잇거나 여러
+     * 화살표를 그린 경우에 뒤쪽이 통째로 빠졌다. 감쌈·안쪽은 그 자체로 대상이
+     * 확정된 신호라 그때는 그대로 멈춘다.
+     */
+    if (!kinds.includes("circled") && !kinds.includes("within")) {
       const aimed = aimedCard(g, scored, Math.max(tipReach, g.len * AIM_REACH));
       // 스쳐 지나가는 중이던 카드는 겨눈 것이 아니다(몸통이 지날 뿐이다).
-      if (aimed !== null && kinds[aimed] !== "crossed") kinds[aimed] = "pointed";
+      if (aimed !== null && kinds[aimed] !== "crossed") {
+        kinds[aimed] = "pointed";
+        // **겨눠서 잡힌 것**임을 남긴다 — 곁에 있어 딸려 온 카드와 갈라야
+        // 이어 묻기의 부모가 안 흔들린다(아래 `pointedOrder`).
+        aimedSet.add(aimed);
+      }
     }
     return kinds;
   });
@@ -536,6 +595,40 @@ export function buildInkScene(
       "near",
     ),
   );
+
+  /**
+   * **그래도 빈손이면 가장 그럴듯한 카드를 고른다** (사용자 지시 2026-08-12).
+   *
+   * ⚠️ 이것은 D178의 "가장 가까운 카드로 때우지 않는다"를 **뒤집은 것**이다.
+   * 그때의 근거는 "옆으로 비껴 있는 카드를 집는다"였고 그 말은 지금도 맞다.
+   * 바뀐 것은 **놓쳤을 때의 값**이다 — 아무것도 안 짚으면 프롬프트가 "어느
+   * 카드도 확실히 짚지 않았다"를 싣고, 학생은 답 대신 **"화살표가 닿은 카드나
+   * 궁금한 내용을 말씀해 주시면"이라는 되물음**을 받는다(사용자 보고
+   * 2026-08-12). 표시를 그린 학생에게 그 답은 아무 값이 없다. 틀린 카드를
+   * 고르면 학생이 바로 알아채고 다시 물을 수 있지만, 되물음은 그 자리에서
+   * 대화가 멈춘다.
+   *
+   * 그래서 **표시가 있는데 짚은 것이 없을 때만** 마지막으로 한 장 고른다:
+   *   · 촉이 있으면 촉에서 가장 가까운 카드(겨눈 방향이 있으니 그게 뜻이다)
+   *   · 없으면 표시 상자에서 가장 가까운 카드
+   * 반경은 넉넉하되 무한이 아니다 — 화면 반대편 카드까지 끌어오면 그건 추측이
+   * 아니라 아무 말이다.
+   */
+  if (shapes.length && !bestOf.some((k) => POINTING_KINDS.includes(k))) {
+    const 반경 = Math.max(tipReach * 3, diag * 0.6);
+    let 고른 = -1;
+    let 최소 = Infinity;
+    scored.forEach((s2, ci) => {
+      for (const g of shapes) {
+        const d = g.tip ? pointGap(g.tip, s2.hit) : rectGap(g.box, s2.hit);
+        if (d < 최소) {
+          최소 = d;
+          고른 = ci;
+        }
+      }
+    });
+    if (고른 >= 0 && 최소 <= 반경) bestOf[고른] = "pointed";
+  }
 
   const eligible = scored
     .map((s, ci) => ({ ...s, ci, best: bestOf[ci] }))
@@ -666,7 +759,37 @@ export function buildInkScene(
     };
   });
 
+  /**
+   * 짚은 카드를 **확신 순**으로 세운다(위 `pointedOrder` 주석). 같은 종류면
+   * 읽는 순서를 지킨다 — 흔들리지 않는 것이 지켜야 할 성질이다.
+   */
+  /**
+   * 같은 등급이면 **실제로 겨눠서 잡힌 쪽**이 앞선다.
+   *
+   * 등급만으로 세우면 동점이 흔하고(짚음끼리), 그때 읽는 순서로 갈리면 화면
+   * 위쪽 카드가 이긴다 — 화살표가 아래 카드를 겨눴는데 부모는 위 카드가 되는
+   * 일이 실제로 생겼다(무작위 스윕).
+   *
+   * ⚠️ **거리로 가르면 안 된다**(한 번 그렇게 했다가 되돌렸다). 못 미친
+   * 화살표에서는 **곁 카드가 촉에 더 가깝다** — 겨눈 카드는 멀리 있는데
+   * 딸려 온 카드가 코앞이라, 거리로 세우면 정확히 거꾸로 선다(실측 133 → 131).
+   * 가르는 것은 거리가 아니라 **겨눔이 잡았나**다.
+   */
+  const 겨눴나 = new Map<string, boolean>();
+  for (const s2 of kept) 겨눴나.set(s2.card.id, aimedSet.has(s2.ci));
+  const pointedOrder = picked
+    .filter((c) => POINTING_KINDS.includes(c.mark))
+    .slice()
+    .sort(
+      (a, b) =>
+        MARK_RANK[b.mark] - MARK_RANK[a.mark] ||
+        Number(겨눴나.get(b.id) ?? false) - Number(겨눴나.get(a.id) ?? false) ||
+        a.n - b.n,
+    )
+    .map((c) => c.n);
+
   return {
+    pointedOrder,
     inkBox,
     marks: drawn.map((s) => s.pts),
     capture,

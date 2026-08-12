@@ -126,7 +126,22 @@ export function useTouchNavigate({
   useEffect(() => {
     const root = rootRef.current;
     if (!root || (!enabled && !mouse)) return;
-    if (!NAV_TOOLS.has(activeTool)) return;
+    /**
+     * **질문 펜에서도 두 손가락 확대는 우리 일이다** (사용자 보고 2026-08-12:
+     * "질문 펜 상황에서 패드로 두 손가락 축소·확대가 안 된다").
+     *
+     * 원래 규칙은 "그리기 도구에서는 손대지 않는다 — Excalidraw의 제 핀치가
+     * 돈다"였다(위 `NAV_TOOLS` 머리말). 연필·형광펜에서는 그 말이 맞다.
+     * **질문 펜만 다르다**: 그 도구가 켜지면 획을 받는 레이어가 제스처를
+     * 바깥으로 안 흘리므로(D176의 버블 차단), 저쪽도 우리도 둘째 손가락을
+     * 못 본다 — 확대할 방법이 하나도 없는 상태가 된다.
+     *
+     * 그래서 질문 펜은 **핀치만** 우리가 맡는다. 한 손가락 밀기·선택 상자는
+     * 여전히 안 가져간다(그건 글씨를 쓰는 동작이다) — 아래 `navTool`로 가른다.
+     */
+    const navTool = NAV_TOOLS.has(activeTool);
+    const pinchTool = navTool || activeTool === "askpen";
+    if (!pinchTool) return;
 
     /**
      * **두 손가락 확대** (사용자 지시 2026-08-10).
@@ -305,6 +320,8 @@ export function useTouchNavigate({
        * 올가미다 — 그건 `CanvasStage`가 이미 처리하고, Excalidraw가 자기
        * 도형을 같은 드래그로 잡아야 하므로 가로채면 안 된다.
        */
+      // 여기서부터는 **한 손가락 경로**다 — 질문 펜에서는 안 간다(위 주석).
+      if (!navTool) return;
       if (isMouse && !(mouse && activeTool === "hand")) return;
       /**
        * ⚠️ **`enabled`(=`pointer: coarse`)로 손가락을 거르지 않는다**
