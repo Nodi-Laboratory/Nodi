@@ -365,12 +365,25 @@ async def media_readiness(client: UserClient) -> dict[str, Any]:
         clips = 0
         clip_vectors = 0
         if pkg_ids:
-            ids = ",".join(pkg_ids)
-            got = await client.select(
-                "lecture_clips",
-                {"package_id": f"in.({ids})", "status": "eq.embedded", "select": "id"},
+            # ⚠️ **`lecture_clips`에는 `package_id`가 없다.** 클립은 영상에 달리고
+            # 패키지는 영상이 안다(스키마 그대로다). 여기서 곧장 물었더니 SQL이
+            # 터져 이 표 전체가 "상태를 읽지 못했습니다"로 떴다 — 무엇이 없어서
+            # 추천이 안 뜨는지 보라고 만든 자리가 정작 아무것도 안 보여 줬다.
+            vids = await client.select(
+                "lecture_videos",
+                {"package_id": f"in.({','.join(pkg_ids)})", "select": "id"},
             )
-            clips = len(got)
+            vid_ids = [str(v["id"]) for v in vids]
+            if vid_ids:
+                got = await client.select(
+                    "lecture_clips",
+                    {
+                        "video_id": f"in.({','.join(vid_ids)})",
+                        "status": "eq.embedded",
+                        "select": "id",
+                    },
+                )
+                clips = len(got)
             # 행과 벡터를 **나란히** 센다 (2026-08-12).
             #
             # 배포 스크립트가 매 배포마다 Qdrant의 `lecture_clips` 컬렉션을
