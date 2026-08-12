@@ -297,6 +297,76 @@ export function linkPath(
   };
 }
 
+/* ═══════════════ 곁들이(사진·영상)의 연결선 (사용자 지시 2026-08-12) ═══════════
+ *
+ * 트리 간선은 포트가 **고정**이다 — 아래로 나가고 위로 들어온다. 그 규칙이
+ * 사는 이유는 트리가 세로로 자라기 때문이다: 자리가 고정이라 학생이 "이
+ * 카드에서 나가는 선"을 눈으로 좇을 수 있다(위 D211 주석).
+ *
+ * **사진·영상 상자는 트리 노드가 아니다.** 카드의 왼쪽에도, 오른쪽에도,
+ * 위아래에도 붙는다(`layout.ts` — 오른쪽이 차면 왼쪽으로 간다). 그런데 아래
+ * 포트에 묶여 있던 탓에, 오른쪽에 나란히 붙은 상자로 가는 선이 카드 밑으로
+ * 한참 내려갔다가 되올라왔다. 짧은 거리를 긴 곡선이 잇는 셈이라 "왜 저기로
+ * 도나" 싶은 그림이 된다.
+ *
+ * 그래서 곁들이는 **네 변의 중앙 여덟 자리 중 가장 가까운 한 쌍**으로 잇는다
+ * (사용자 지시: "좌우상하 변의 중심 … 그 선의 길이가 최소가 되는 시작점과
+ * 끝점"). 트리처럼 자리를 고정할 이유가 없다 — 상자는 카드의 제약을 안 받고,
+ * 학생이 좇을 등뼈도 여기엔 없다.
+ */
+
+/** 네 변의 중앙(패딩 상자 기준)과 그 바깥 방향. */
+export function edgeMidpoints(raw: Rect): (Point & { side: Side })[] {
+  const r = padded(raw);
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  // 순서가 곧 동점일 때의 우선순위다 — 좌우가 먼저다. 곁들이는 카드 **옆**에
+  // 놓이는 것이 기본이라(layout.ts), 정확히 대각일 때 옆으로 붙는 편이 자연스럽다.
+  return [
+    { x: r.x + r.w, y: cy, side: "right" },
+    { x: r.x, y: cy, side: "left" },
+    { x: cx, y: r.y + r.h, side: "bottom" },
+    { x: cx, y: r.y, side: "top" },
+  ];
+}
+
+/**
+ * 곁들이 한 가닥 — **가장 짧은 변-중앙 쌍**.
+ *
+ * 돌려주는 모양은 `linkPath`와 같은 `PortLink`다. 그리는 쪽·끄는 쪽이 두 종류를
+ * 구분하지 않아도 되게 하려는 것이다 — 구분해야 하면 한쪽만 고치는 날이 온다.
+ * 줄기는 없다(`stem = a`): 공유할 형제가 없으니 나눠 쓸 구간도 없다.
+ */
+export function attachPath(rawParent: Rect, rawChild: Rect): PortLink {
+  const as = edgeMidpoints(rawParent);
+  const bs = edgeMidpoints(rawChild);
+
+  let best = { a: as[0], b: bs[0], d: Infinity };
+  for (const a of as) {
+    for (const b of bs) {
+      const d = Math.hypot(b.x - a.x, b.y - a.y);
+      // 엄격 비교라 동점이면 **먼저 온 것**이 이긴다(위 순서 주석).
+      if (d < best.d) best = { a, b, d };
+    }
+  }
+
+  const na = normal(best.a.side);
+  const nb = normal(best.b.side);
+  const a = { x: best.a.x + na.x * END_GAP, y: best.a.y + na.y * END_GAP };
+  const b = { x: best.b.x + nb.x * END_GAP, y: best.b.y + nb.y * END_GAP };
+
+  // 곁들이는 바로 옆에 붙는다 — 트리 간선만큼 부풀리면 짧은 거리에서 곡선이
+  // 크게 휘어 도로 카드 위를 지난다. 거리에 묶되 상한을 낮게 잡는다.
+  const bow = clamp(Math.hypot(b.x - a.x, b.y - a.y) * 0.34, 18, 88);
+  return {
+    a,
+    stem: a,
+    b,
+    c1: { x: a.x + na.x * bow, y: a.y + na.y * bow },
+    c2: { x: b.x + nb.x * bow, y: b.y + nb.y * bow },
+  };
+}
+
 /**
  * 손이 닿는 **넓은 투명 선**의 path — 줄기를 뺀 갈라짐 구간만 (D211 3).
  *

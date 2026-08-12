@@ -7,7 +7,16 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { END_GAP, PAD_X, anchor, linkGeometry, midpoint, padded } from "./connector";
+import {
+  END_GAP,
+  PAD_X,
+  anchor,
+  attachPath,
+  edgeMidpoints,
+  linkGeometry,
+  midpoint,
+  padded,
+} from "./connector";
 import type { Rect } from "./rect";
 
 const box = (x: number, y: number, w = 460, h = 200): Rect => ({ x, y, w, h });
@@ -157,5 +166,50 @@ describe("라벨 자리", () => {
     const m = midpoint(g);
     expect(m.x).toBeCloseTo((g.a.x + g.b.x) / 2, 9);
     expect(m.y).toBeCloseTo((g.a.y + g.b.y) / 2, 9);
+  });
+});
+
+/**
+ * 곁들이(사진·영상)의 연결선 — 최단 변-중앙 쌍 (사용자 지시 2026-08-12).
+ *
+ * 트리 간선처럼 아래 포트에 묶여 있으면, 카드 **오른쪽**에 나란히 붙은 상자로
+ * 가는 선이 카드 밑으로 한참 내려갔다 되올라온다. 상자는 트리 노드가 아니라
+ * 카드의 제약을 받지 않으므로 자리를 고정할 이유가 없다.
+ */
+describe("곁들이 연결선", () => {
+  const 카드 = { x: 0, y: 0, w: 400, h: 300 };
+
+  it("오른쪽에 붙으면 오른쪽 변 ↔ 왼쪽 변으로 잇는다", () => {
+    const g = attachPath(카드, { x: 600, y: 40, w: 200, h: 160 });
+    // 카드의 오른쪽 변 중앙에서 나간다(패딩 상자 기준, END_GAP만큼 바깥).
+    expect(g.a.x).toBeGreaterThan(카드.x + 카드.w);
+    expect(g.a.y).toBeCloseTo(카드.y + 카드.h / 2, 5);
+    // 상자의 왼쪽 변 중앙으로 들어간다.
+    expect(g.b.x).toBeLessThan(600);
+    expect(g.b.y).toBeCloseTo(40 + 160 / 2, 5);
+  });
+
+  it("위에 붙으면 위 변 ↔ 아래 변으로 잇는다", () => {
+    const g = attachPath(카드, { x: 60, y: -500, w: 200, h: 160 });
+    expect(g.a.y).toBeLessThan(카드.y);
+    expect(g.a.x).toBeCloseTo(카드.x + 카드.w / 2, 5);
+    expect(g.b.y).toBeGreaterThan(-500 + 160);
+  });
+
+  it("여덟 자리 조합 중 **가장 짧은** 쌍을 고른다", () => {
+    const 상자 = { x: -700, y: 700, w: 200, h: 160 };
+    const g = attachPath(카드, 상자);
+    const 길이 = Math.hypot(g.b.x - g.a.x, g.b.y - g.a.y);
+    for (const a of edgeMidpoints(카드)) {
+      for (const b of edgeMidpoints(상자)) {
+        // END_GAP(양쪽 4px)만큼 차이 나므로 여유를 두고 비교한다.
+        expect(길이).toBeLessThanOrEqual(Math.hypot(b.x - a.x, b.y - a.y) + 12);
+      }
+    }
+  });
+
+  it("줄기가 없다 — 나눠 쓸 형제가 없다", () => {
+    const g = attachPath(카드, { x: 600, y: 0, w: 200, h: 160 });
+    expect(g.stem).toEqual(g.a);
   });
 });

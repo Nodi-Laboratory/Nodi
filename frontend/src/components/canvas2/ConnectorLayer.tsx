@@ -34,6 +34,7 @@ import type { Size } from "@/lib/canvas2/useItemLayout";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Rect } from "@/lib/canvas2/rect";
 import {
+  attachPath,
   center,
   cutPoint,
   linkPath,
@@ -285,7 +286,10 @@ export function ConnectorLayer({ items, positions, sizes, onCut }: Props) {
   const fan = new Map<string, { index: number; count: number }>();
   {
     const byParent = new Map<string, typeof links>();
-    for (const l of links) {
+    // 곁들이는 세지 않는다 (2026-08-12). 부채는 **아래 포트를 나눠 쓰는**
+    // 자식들의 것인데, 곁들이는 이제 제 갈 길(최단 변-중앙)로 간다 — 섞어
+    // 세면 형제 트리 간선의 번호가 밀려 엉뚱한 각도로 갈라진다.
+    for (const l of links.filter((x) => !x.attach)) {
       const arr = byParent.get(l.parentId) ?? [];
       arr.push(l);
       byParent.set(l.parentId, arr);
@@ -297,11 +301,20 @@ export function ConnectorLayer({ items, positions, sizes, onCut }: Props) {
   }
   const fanOf = (id: string) => fan.get(id) ?? { index: 0, count: 1 };
 
+  /**
+   * 한 가닥의 기하 — **여기 한 곳에서만** 갈래를 정한다.
+   *
+   * 그리는 쪽(React)과 끄는 쪽(DOM 직접 갱신)이 각자 고르면, 끌기 시작하는
+   * 순간 선이 다른 규칙으로 튄다. 실제로 그 부류의 사고가 이 파일에 있었다
+   * (히트 선만 갱신되고 보이는 선은 제자리에 남았던 것).
+   */
+  const geoOf = (l: Link, parent: Rect, child: Rect) =>
+    l.attach
+      ? attachPath(parent, child)
+      : linkPath(parent, child, fanOf(l.id).index, fanOf(l.id).count);
+
   // 화폭 — 드래그 중에는 갱신하지 않는다(SVG는 overflow:visible이라 밖에도 그려진다).
-  const geos = links.map((l) => {
-    const f = fanOf(l.id);
-    return linkPath(l.parent, l.child, f.index, f.count);
-  });
+  const geos = links.map((l) => geoOf(l, l.parent, l.child));
   const xs = geos.flatMap((g) => [g.a.x, g.b.x, g.c1.x, g.c2.x, g.stem.x]);
   const ys = geos.flatMap((g) => [g.a.y, g.b.y, g.c1.y, g.c2.y, g.stem.y]);
   const minX = xs.length ? Math.min(...xs) - PAD : 0;
@@ -409,12 +422,11 @@ export function ConnectorLayer({ items, positions, sizes, onCut }: Props) {
           label: g0.querySelector("text"),
         };
         const f = fs.get(l.id) ?? { index: 0, count: 1 };
-        const g = linkPath(
-          shift(l.parent, offsets.get(l.parentId)),
-          shift(l.child, offsets.get(l.id)),
-          f.index,
-          f.count,
-        );
+        const pr = shift(l.parent, offsets.get(l.parentId));
+        const cr = shift(l.child, offsets.get(l.id));
+        const g = l.attach
+          ? attachPath(pr, cr)
+          : linkPath(pr, cr, f.index, f.count);
         const m = pointOnFan(g, 0.5);
         path.setAttribute("d", shiftPath(g, ox, oy));
         // 히트 선도 같이 옮긴다 — 안 옮기면 끌고 난 뒤 ✕가 **엉뚱한 자리**에서
