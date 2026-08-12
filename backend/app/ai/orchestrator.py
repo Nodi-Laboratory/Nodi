@@ -554,7 +554,14 @@ class Orchestrator:
         system = answer_system_prompt
         evidence = self._evidence_block(outcome)
         if evidence:
-            system = f"{system}\n\n{evidence}"
+            # ⚠️ 근거 블록은 **형식 되새김보다 뒤에** 붙는다(프롬프트를 만든
+            # 쪽이 꼬리에 넣어 두었는데 여기서 그 뒤로 또 쌓는 셈이다). 게다가
+            # 이 블록들은 "…없는 내용을 지어내지 마세요", "비어 있으면 없다고
+            # 솔직히 말하세요"처럼 **대화체를 부추기는 문장**으로 끝난다 —
+            # 형식이 깨진 답이 하필 자료를 많이 찾은 턴에서 난 이유다.
+            # 그래서 한 줄을 더 쓴다. 두 번 적히는 것은 값이 거의 안 들고,
+            # **모델이 마지막으로 읽는 것이 형식이어야** 한다.
+            system = f"{system}\n\n{evidence}\n\n{solar.FORMAT_REMINDER}"
         # 라우터가 TurnLog에 **실제 보낸 것**을 남길 수 있게 넘긴다(D112).
         outcome.final_system = system
 

@@ -478,6 +478,8 @@ async def chat_stream(
         ink_context=ink_context,
         rag_sources=rag_sources,
         base_instruction=solar.CONCEPT_CARD_SYSTEM_PROMPT,
+        # 앞의 블록들이 형식 지시를 밀어낸다 — 꼬리에서 한 번 더 못 박는다.
+        format_reminder=solar.FORMAT_REMINDER,
     )
     tlog = TurnLog(user.id, body.session_id, body.question)
     # D113: 어느 경로로 돌았는지·어떤 모델이었는지를 로그만 보고 알 수 있어야

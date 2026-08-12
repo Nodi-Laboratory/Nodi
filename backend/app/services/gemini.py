@@ -78,6 +78,7 @@ def compose_system_structured(
     ink_context: str | None = None,
     rag_sources: list[dict] | None = None,
     base_instruction: str | None = None,
+    format_reminder: str | None = None,
 ) -> tuple[str, list[dict]]:
     """Single source of truth (D35): build the system prompt AND the per-block
     metadata (kind/order/source/raw_text/node_ids/sources/prompt_span) in one
@@ -163,6 +164,25 @@ def compose_system_structured(
                 rag_sources or [],
             )
         )
+
+    # ── 형식은 **마지막 말**이어야 한다 (사용자 보고 2026-08-12) ──────────
+    #
+    # 출력 형식(`CHAT:` → `@concept:` → `@end`)은 `system_base` 안에 있고, 그
+    # 자리는 이 프롬프트의 **맨 앞**이다. 그 뒤로 세션 파일·태그·대화 트리·펜
+    # 표시·자료가 줄줄이 붙는데 하나같이 명령문으로 끝난다("…활용하세요",
+    # "…솔직히 말하세요"). 모델이 마지막으로 읽는 것이 내용 지시라 형식은
+    # 그만큼 멀어진다.
+    #
+    # 그래서 **됐다 안 됐다 한다.** 이 꼬리의 길이가 턴마다 다르기 때문이다 —
+    # 카드가 쌓인 방일수록 tree_guide가 길고, 자료를 찾은 턴일수록 rag가 길다.
+    # 형식이 깨진 답(`missing_concept_envelope`)이 난 것도 그런 턴이다.
+    # 짧은 되새김 한 줄을 꼬리 끝에 둔다 — 값이 거의 안 드는 보험이다.
+    #
+    # ⚠️ 문자열에만 이어 붙이지 않고 **블록으로** 넣는다. 관리자 화면의 강조
+    # 구간은 `prompt_span`으로 그려지는데(D35), 문자열만 늘리면 그 span과 실제
+    # 프롬프트가 어긋난다 — 콘솔이 조용히 거짓말을 하게 된다.
+    if format_reminder:
+        parts.append(("format_reminder", format_reminder, None, None, None, None))
 
     system_prompt = "\n\n".join(p[1] for p in parts)
 
