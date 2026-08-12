@@ -73,6 +73,8 @@ export interface InkCapture {
   gestures: SceneGesture[];
   /** 기하로 계산한 **짚은 카드** 번호들. 모델 답이 아니다. */
   pointed: number[];
+  /** 트리 부모가 될 카드 번호. 뚜렷하게 짚었을 때만 채워진다. */
+  anchor: number | null;
   /** 상한으로 버린 카드 수. 0이 아니면 알린다 — 조용히 자르지 않는다. */
   dropped: number;
   trace: InkCaptureTrace;
@@ -98,6 +100,7 @@ export const EMPTY_CAPTURE: InkCapture = {
   cards: [],
   gestures: [],
   pointed: [],
+  anchor: null,
   dropped: 0,
   trace: EMPTY_TRACE,
 };
@@ -295,6 +298,8 @@ export async function captureInk(
      * 모델에게 물으면 불확실할 때 늘 1번을 답한다(실측 2026-08-05).
      */
     pointed: scene.pointedOrder,
+    /** 이 턴의 답이 딸릴 카드(없으면 null) — `InkScene.anchorN` 주석 참조. */
+    anchor: scene.anchorN,
     dropped: scene.dropped,
     trace: {
       ...base,

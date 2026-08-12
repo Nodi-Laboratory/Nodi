@@ -211,15 +211,41 @@ async def test_의도를_안_부르면_지금까지와_같다(monkeypatch):
 
 
 async def test_모르는_mode는_안_부른_것으로_친다(monkeypatch):
-    """오타 하나로 설명이 통째로 사라지면 안 된다."""
+    """오타 하나로 설명이 통째로 사라지면 안 된다.
+
+    ⚠️ 질문에 그림·영상 낱말을 **일부러 안 넣었다.** 2026-08-12부터 학생이
+    직접 말하면 낱말이 선언을 대신하므로(아래 시험), 낱말이 든 질문으로 재면
+    이 시험은 "오타를 무시하나"가 아니라 "낱말이 대신 서나"를 재게 된다.
+    """
     _reset()
     _patch(monkeypatch, [[_call("set_media_intent", '{"mode":"only_images"}')], None])
     outcome, text = await _drain(
-        Orchestrator(_registry()), ctx=_ctx(), question="지진 이미지만 추천해줘",
+        Orchestrator(_registry()), ctx=_ctx(), question="지진에 대해 설명해줘",
         history=[], tool_names=ALL, answer_system_prompt="BASE", max_steps=3,
     )
     assert outcome.media_mode == ""
     assert STREAMED == [True], "판정이 실패하면 설명은 그대로 나와야 한다"
+
+
+async def test_선언이_없어도_직접_말하면_뜬다(monkeypatch):
+    """**모델이 의도를 안 불러도 학생이 말했으면 뜬다** (사용자 지시 2026-08-12).
+
+    사용자 보고: "이미지나 영상을 추천해달라고 직접 말하는데 그 기능이 작동을
+    안 해." 원인은 이 기능이 모델이 `set_media_intent`를 불러 주는 것에 걸려
+    있었다는 것이다 — 모델이 곁들이 도구를 자주 건너뛴다는 사실은 D163이 이미
+    못 박아 뒀는데도 그랬다.
+    """
+    _reset()
+    # 도구를 하나도 안 부른다 — 선언이 아예 없는 턴이다.
+    _patch(monkeypatch, [None])
+    outcome, _ = await _drain(
+        Orchestrator(_registry()), ctx=_ctx(), question="지진 영상만 추천해줘",
+        history=[], tool_names=ALL, answer_system_prompt="BASE", max_steps=3,
+    )
+    assert outcome.media_mode == "only"
+    assert outcome.media_kinds == ["clip"], "영상만 말했으면 도판은 안 딸려 온다"
+    assert [c["clip_id"] for c in outcome.clips] == ["c1"]
+    assert outcome.figures == []
 
 
 async def test_의도는_근거로_안_실린다(monkeypatch):

@@ -245,6 +245,22 @@ export interface InkScene {
    * 겪은 그 함정).
    */
   pointedOrder: number[];
+  /**
+   * **이 턴의 답이 딸릴 카드** — 없으면 null (사용자 보고 2026-08-12).
+   *
+   * `pointedOrder`와 갈라 두는 이유가 있다. 그 목록은 관용도를 넉넉히 잡아
+   * **곁의 카드까지 담는다**(그래야 설명이 안 빈다). 그런데 트리 부모는
+   * 그렇게 정하면 안 된다 — 학생이 아무것도 안 짚고 새 질문을 손으로 썼는데,
+   * 그 글씨가 우연히 어떤 카드 곁이었다는 이유로 **답이 남의 가지에 붙는다.**
+   * 실제로 그렇게 됐다(사용자 보고: "다른 개념을 물어도 다른 트리 밑에 응답
+   * 카드가 생긴다").
+   *
+   * 부모가 되려면 **학생이 그 카드를 짚었다는 뚜렷한 신호**가 있어야 한다:
+   * 감쌌거나(circled), 카드 안에 그렸거나(within), 화살표가 **겨눠서**
+   * 잡혔거나(aimed). 그냥 가까워서 잡힌 것과 마지막 안전망으로 고른 것은
+   * 설명에는 실리되 **부모는 안 된다.**
+   */
+  anchorN: number | null;
   /** 획 bbox + 여백. 선정과 클램프의 **유일한** 기준이다. */
   inkBox: Rect;
   /**
@@ -788,7 +804,22 @@ export function buildInkScene(
     )
     .map((c) => c.n);
 
+  /**
+   * 부모가 될 카드 — 뚜렷한 신호만 (위 `anchorN` 주석).
+   *
+   * ⚠️ 마지막 안전망(`bestOf`를 덮어쓴 추측)은 `aimedSet`에 안 들어가므로
+   * 여기서 저절로 빠진다. 그게 이 두 목록을 가르는 실제 장치다.
+   */
+  const anchorN =
+    picked.find(
+      (c) =>
+        c.mark === "circled" ||
+        c.mark === "within" ||
+        (c.mark === "pointed" && 겨눴나.get(c.id)),
+    )?.n ?? null;
+
   return {
+    anchorN,
     pointedOrder,
     inkBox,
     marks: drawn.map((s) => s.pts),

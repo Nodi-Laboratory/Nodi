@@ -1929,9 +1929,18 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
        * 될 수 있는 것은 **AI 개념 카드**뿐이다(D151) — 도판·클립을 짚었으면
        * 부모 없이 간다(연결선이 성립하지 않는다).
        */
-      const first = shot.pointed.length
-        ? shot.cards.find((c) => c.n === shot.pointed[0])
-        : undefined;
+      /**
+       * ⚠️ **부모는 `pointed[0]`이 아니라 `anchor`다** (사용자 보고 2026-08-12).
+       *
+       * `pointed`에는 곁에 있어 딸려 온 카드와 마지막 안전망으로 고른 카드까지
+       * 들어 있다(설명이 비지 않게 하려고 넉넉히 잡는다). 그 첫 번째를 부모로
+       * 삼았더니, **아무것도 안 짚고 손으로 새 질문을 쓴 턴에도** 곁의 카드가
+       * 부모가 되어 답이 남의 가지에 붙었다.
+       */
+      const first =
+        shot.anchor !== null
+          ? shot.cards.find((c) => c.n === shot.anchor)
+          : undefined;
       const target = first ? items.find((i) => i.id === first.itemId) : undefined;
       const parentId =
         target && target.kind === "concept" && target.source === "ai"

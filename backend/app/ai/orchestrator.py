@@ -168,6 +168,73 @@ _MEDIA_WORDS = (
     "유튜브",
 )
 
+#: 낱말이 가리키는 **종류**. "영상만 추천해줘"에 도판이 딸려 오면 안 된다.
+_WORD_KIND: dict[str, str] = {
+    "그림": "figure",
+    "이미지": "figure",
+    "사진": "figure",
+    "도판": "figure",
+    "도표": "figure",
+    "그래프": "figure",
+    "삽화": "figure",
+    "영상": "clip",
+    "동영상": "clip",
+    "비디오": "clip",
+    "강의": "clip",
+    "클립": "clip",
+    "유튜브": "clip",
+}
+
+#: 요청 표현 — 주제어를 뽑을 때 걷어낸다.
+#:
+#: 문장 그대로 검색하면 "추천해줘"가 임베딩을 끌고 가 거리 게이트를 넘긴다
+#: (D210 7-1 실측: "지진파 영상만 추천해줘" 3/3 빈손, "지진파" 적중). 모델이
+#: `topic`을 줬으면 그것을 쓰고, 안 줬을 때 쓰는 것이 이 목록이다.
+_REQUEST_WORDS = (
+    "추천해줘", "추천 해줘", "추천해 줘", "추천해줄래", "추천좀", "추천 좀", "추천",
+    "보여줘", "보여 줘", "보여줄래", "보여주세요", "알려줘", "알려 줘",
+    "찾아줘", "찾아 줘", "띄워줘", "띄워 줘", "올려줘",
+    "있어?", "있을까", "해줘", "해 줘", "주세요", "줘", "좀", "만", "도", "요",
+    # 이음말 — 이것들이 남으면 주제어가 "이랑 같이" 같은 쓰레기가 된다.
+    "이랑", "랑", "와", "과", "같이", "함께", "그리고", "및", "등", "관련", "에 대한",
+)
+
+
+def _explicit_media(question: str) -> tuple[set[str], bool]:
+    """질문에서 **직접 말한** 미디어 요청을 읽는다.
+
+    돌려주는 것은 (원하는 종류, 자료만 원하나)다. 종류가 비면 요청이 없다.
+
+    ⚠️ **낱말로 판정하지 않는다는 원래 규칙(D210 7-1)을 사용자 지시로
+    뒤집은 것이다.** 그 규칙의 근거는 "한국어 표현이 다양해 문자열로는 못
+    가른다"였고 지금도 맞다 — 다만 그 대가가 **기능이 아예 안 뜨는 것**이었다
+    (사용자 보고 2026-08-12: "직접 말하는데 작동을 안 해"). 모델이
+    `set_media_intent`를 안 부르면 갈래 자체가 안 생기는데, 모델이 곁들이
+    도구를 자주 건너뛴다는 것은 D163이 이미 못 박아 둔 사실이다.
+
+    그래서 **모델의 선언을 대신하지 않고 보강한다** — 선언이 있으면 그것을
+    쓰고, 없을 때만 이 판정이 대신 선다.
+    """
+    kinds = {k for w, k in _WORD_KIND.items() if w in question}
+    if not kinds:
+        return set(), False
+    # "영상만 · 이미지만" — 낱말 **바로 뒤**의 '만'만 센다. "만" 하나로 세면
+    # "고맙습니다만" 같은 말이 자료만 달라는 뜻이 된다.
+    only = any(f"{w}만" in question for w in _WORD_KIND)
+    return kinds, only
+
+
+def _media_topic(question: str) -> str:
+    """요청 표현을 걷어낸 주제어. 아무것도 안 남으면 원문을 쓴다."""
+    t = question
+    for w in _WORD_KIND:
+        t = t.replace(w, " ")
+    for w in _REQUEST_WORDS:
+        t = t.replace(w, " ")
+    t = " ".join(t.split())
+    return t if len(t) >= 2 else question
+
+
 #: 찾을 자료가 없는 곳(개인 대화방)용 밀어주기.
 _MEDIA_NUDGE_NO_SEARCH = (
     "이 질문에는 그림·영상 얘기가 들어 있다. "
@@ -422,6 +489,37 @@ class Orchestrator:
             name in {c.get("function", {}).get("name") for c in catalog}
             for name, _ in _RECOMMEND_SKILLS
         )
+
+        # ── 직접 말했으면 무조건 뜬다 (사용자 지시 2026-08-12) ───────
+        #
+        # 모델이 `set_media_intent`를 안 부르면 위 갈래가 통째로 안 생긴다 —
+        # 그러면 "이미지 추천해줘"가 평소 답으로 흐르고 상자가 하나도 안 뜬다.
+        # 모델이 곁들이 도구를 자주 건너뛴다는 것은 D163이 이미 못 박아 둔
+        # 사실이라, 이 기능을 그 순응에 걸어 두면 안 된다.
+        #
+        # **선언을 대신하지 않고 보강한다** — 모델이 말했으면 그것을 쓰고
+        # (문맥을 본 판단이라 더 낫다), 안 했을 때만 낱말이 대신 선다.
+        말한종류, 자료만 = _explicit_media(question)
+        if 말한종류 and searchable and not outcome.media_mode:
+            outcome.media_mode = "only" if 자료만 else "with_answer"
+            outcome.media_kinds = sorted(말한종류)
+            if not outcome.media_topic:
+                outcome.media_topic = _media_topic(question)
+            logger.info(
+                "의도 선언이 없어 낱말로 세운다 — mode=%s kinds=%s topic=%r",
+                outcome.media_mode,
+                outcome.media_kinds,
+                outcome.media_topic[:40],
+            )
+        elif 말한종류 and searchable and outcome.media_mode and 자료만:
+            # ⚠️ **"만"이라고 했을 때만 모델의 판단을 덮는다.**
+            #
+            # 종류를 안 정한 선언은 "둘 다"라는 뜻이고, 그건 문맥을 본 판단이라
+            # 낱말로 덮으면 안 된다 — "지진을 이미지랑 같이 설명해줘"에 클립이
+            # 함께 뜨는 것은 D210 7-1 A가 정한 동작이다. 학생이 **배타적으로**
+            # 말했을 때만 그 뜻이 이긴다("영상만 추천해줘").
+            outcome.media_kinds = sorted(말한종류)
+            outcome.media_mode = "only"
         # ── 찾을 곳이 아예 없는 대화방 (D211 11) ─────────────────────
         #
         # 개인 대화방에는 선생님이 올린 교과서·강의가 없다. 여기서는 **모델의
