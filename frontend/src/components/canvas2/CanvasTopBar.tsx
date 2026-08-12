@@ -109,22 +109,28 @@ export function CanvasTopBar({
           aria-label="지난 대화"
           aria-pressed={historyOpen}
           /**
-           * **좁은 화면에서는 한 줄짜리 작은 알약이다** (사용자 보고 2026-08-11:
-           * "좌상단 버튼이 PC와 많이 다르고, 삼선을 감싼 연두 상자가 흰 원
-           * 박스를 벗어난다").
+           * **폰에서만 한 줄짜리 작은 알약이다** (사용자 보고 2026-08-11·12).
            *
-           * PC용 알약을 그대로 쓰면 390px 폰에서 화면 위쪽을 큰 덩어리가
-           * 가로지르고, 60vw(234px)에 갇혀 글자는 잘린 채 높이만 남는다.
+           * ⚠️ 분기점이 900px이었다 — 그러면 **세로 패드(768~834)만 폰 모양으로
+           * 떨어지고 가로 패드(1024~)는 PC 모양**이라, 같은 기기를 돌리는
+           * 것만으로 좌상단이 달라진다. 사용자 보고 2026-08-12: "패드에서
+           * 좌측 상단 알약이 PC와 다르게 표시되고 UI가 깨진 느낌을 준다."
+           * 패드는 자리가 넉넉하므로 PC와 같은 알약이 맞다 — 600px 아래(폰)
+           * 에서만 줄인다.
+           *
+           * ⚠️ 상한을 `100vw` 기준으로 잡았던 것도 고쳤다. 이 알약은 캔버스
+           * 무대 안에 있고 그 무대는 사이드바만큼 좁다 — `100vw`로 재면 그
+           * 차이만큼 오른쪽으로 넘친다. `100%`는 부모(무대)를 가리키므로
+           * 그 문제가 성립하지 않는다.
            *
            * ⚠️ **연두 원이 흰 알약을 비집고 나오는 것은 여유가 얇아서다.**
-           * `rounded-full`의 반지름은 높이의 절반이므로, 왼쪽 캡은 원이다 —
-           * 그 원 안에 연두 원이 들어가려면 `중심거리 + 연두반지름 ≤ 캡반지름`
-           * 이어야 한다. PC(높이 56·pl-3)는 2+18 ≤ 28로 8px 남지만, 반올림과
-           * `zoom`이 겹치면 그 여유가 화면에서 사라진다. 좁은 화면에서는
-           * 원을 32px로 줄이고 왼쪽 여백을 8px로 잡아 **여유를 8px 확보**한다
+           * `rounded-full`의 반지름은 높이의 절반이므로 왼쪽 캡은 원이다 —
+           * 그 안에 연두 원이 들어가려면 `중심거리 + 연두반지름 ≤ 캡반지름`
+           * 이어야 한다. PC(높이 56·pl-3)는 2+18 ≤ 28로 8px 남고, 폰에서는
+           * 원을 32px로 줄이고 왼쪽 여백을 8px로 잡아 같은 8px을 확보한다
            * (0+16 ≤ 24).
            */
-          className="pointer-events-auto flex max-w-[min(60vw,420px)] shrink-0 items-center gap-3 rounded-full py-2.5 pl-3 pr-6 text-left transition-colors max-[900px]:max-w-[calc(100vw-140px)] max-[900px]:gap-2 max-[900px]:py-2 max-[900px]:pl-2 max-[900px]:pr-4"
+          className="pointer-events-auto flex max-w-[min(60vw,420px)] shrink-0 items-center gap-3 rounded-full py-2.5 pl-3 pr-6 text-left transition-colors max-[600px]:max-w-[calc(100%-16px)] max-[600px]:gap-2 max-[600px]:py-2 max-[600px]:pl-2 max-[600px]:pr-4"
           style={{
             background: historyOpen ? "var(--accent-soft)" : "#ffffff",
             boxShadow: "var(--shadow-float)",
@@ -139,7 +145,7 @@ export function CanvasTopBar({
           }}
         >
           <span
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full max-[900px]:h-8 max-[900px]:w-8"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full max-[600px]:h-8 max-[600px]:w-8"
             style={{ background: "var(--accent-soft)", color: "var(--accent-deep)" }}
             aria-hidden
           >
@@ -147,17 +153,17 @@ export function CanvasTopBar({
           </span>
 
           <span className="flex min-w-0 flex-col leading-tight">
-            {/* 소속 줄은 **좁은 화면에서 숨긴다** — 두 줄이면 알약이 화면
-                위쪽을 가로지르는 덩어리가 되고, 어차피 60vw에서 잘린다.
-                지금 어느 방인지(아래 줄)가 먼저다. */}
+            {/* 소속 줄은 **폰에서만 숨긴다** — 두 줄이면 알약이 화면 위쪽을
+                가로지르는 덩어리가 된다. 패드는 자리가 넉넉하므로 PC와 똑같이
+                두 줄이다(사용자 보고 2026-08-12). */}
             <span
-              className="truncate text-[11px] max-[900px]:hidden"
+              className="truncate text-[11px] max-[600px]:hidden"
               style={{ color: "var(--fg-muted)" }}
             >
               {spaceName ?? "개인 세션"}
             </span>
             <span
-              className="truncate text-[16px] font-bold max-[900px]:text-[14px]"
+              className="truncate text-[16px] font-bold max-[600px]:text-[14px]"
               style={{ color: "var(--fg)" }}
             >
               {sessionTitle}

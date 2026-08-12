@@ -1537,7 +1537,30 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
    * `inkPhase`는 **파생값이다** — state로 들고 이펙트에서 맞추면 도구와 단계가
    * 어긋나는 순간이 생기고(렌더 한 번 사이), React Compiler도 막는다.
    */
-  const askPen = bridge.activeTool === "askpen";
+  /**
+   * **질문 모드는 도구와 다른 것이다** (사용자 지시 2026-08-12).
+   *
+   * 예전에는 `activeTool === "askpen"` 하나로 판정했다. 그러면 **지우개를
+   * 고르는 순간 질문 모드가 통째로 꺼진다** — 토글이 자판으로 넘어가고
+   * [AI에게 묻기]가 사라지고, 방금까지 쓰던 질문이 없던 일이 된다. 학생이
+   * 한 일은 "잘못 쓴 획 하나 지우기"인데 그 대가가 너무 크다.
+   *
+   * 지우개는 **잠깐 쥐었다 놓는 것**이지 묻는 방법을 바꾸는 것이 아니다.
+   * 그래서 모드를 따로 들고, 지우개는 그 모드를 안 건드린다.
+   *
+   * ⚠️ **획에 표시를 찍는 일은 여전히 `activeTool`이 정한다**(`recountInk`의
+   * 그 규칙은 그대로다) — 지우개로 지운 자리에 질문 획 표시가 남으면 안 된다.
+   */
+  const [askSticky, setAskSticky] = useState(false);
+  /**
+   * ⚠️ **파생값으로 못 박는다.** `askSticky`만 보면 도구가 다른 길로 바뀔 때
+   * (단축키 등) 표시와 실제가 갈린다. 지금 도구가 질문 펜이면 그것으로 켜지고,
+   * 지우개일 때만 직전 의사(`askSticky`)가 모드를 이어 준다.
+   */
+  const askPen =
+    bridge.activeTool === "askpen" ||
+    (askSticky && bridge.activeTool === "eraser");
+  const askMode = askPen;
   /**
    * 단계는 **하나뿐이다** (사용자 지시 2026-08-11).
    *
@@ -1688,12 +1711,26 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
       // 고르면 자동 전환도 되살아난다 — 그게 "평소 상태"다.
       if (tool === "selection") setAutoSelect(false);
       else if (tool === "hand") setAutoSelect(true);
-      setInkCount(0);
-      // 도구를 바꾸면 방금 읽은 표시도 버린다 — 그 표시는 지워진 획의 것이고,
-      // 남겨 두면 **다음에 자판으로 친 질문에 엉뚱한 카드가 딸려 간다.**
-      setInkContext(null);
+
+      /**
+       * **지우개는 질문 모드를 안 끈다** (사용자 지시 2026-08-12).
+       *
+       * 지운 뒤에도 쓰던 질문이 그대로 남아야 한다 — 획 수도 표시 해석도
+       * 버리지 않는다. 획이 실제로 지워졌으면 `recountInk`가 씬을 다시 세어
+       * 숫자를 맞춘다(그게 저 값의 정본이다).
+       */
+      const 지우개 = tool === "eraser";
+      if (!지우개) {
+        setInkCount(0);
+        // 도구를 바꾸면 방금 읽은 표시도 버린다 — 그 표시는 지워진 획의 것이고,
+        // 남겨 두면 **다음에 자판으로 친 질문에 엉뚱한 카드가 딸려 간다.**
+        setInkContext(null);
+        setAskSticky(tool === "askpen");
+      }
       // 질문하는 펜을 떠나기 전에 방금 쓴 것을 표시해 둔다 — 그래야 다시
       // 돌아왔을 때 앞서 쓴 질문 획이 계속 질문 획이다.
+      // 질문하는 펜을 떠나기 전에 방금 쓴 것을 표시해 둔다 — 지우개로 갈
+      // 때도 마찬가지다(안 찍으면 지운 뒤 돌아왔을 때 앞 획이 미아가 된다).
       if (bridge.activeTool === "askpen" && tool !== "askpen") markPending();
       if (tool === "askpen") {
         markBaseRef.current = new Set(
@@ -1715,8 +1752,12 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
    */
   const recountInk = useCallback(
     (elements: readonly ExcalidrawElementLike[]) => {
-      if (bridge.activeTool !== "askpen") {
-        // 다른 도구로 그린 획에는 표시를 찍지 않는다 — 그것이 구분의 전부다.
+      /**
+       * 질문 모드가 아니면 셀 것도 없다. **지우개는 예외다** — 지우는 동안에도
+       * 세어야 [AI에게 묻기]가 남은 획에 맞게 켜지고 꺼진다(사용자 지시
+       * 2026-08-12). 표시를 **찍는** 일은 여기서 안 한다(아래 주석).
+       */
+      if (bridge.activeTool !== "askpen" && !(askMode && bridge.activeTool === "eraser")) {
         return;
       }
       /**
@@ -1726,7 +1767,7 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
        */
       setInkCount(allAskStrokes(elements, markBaseRef.current).length);
     },
-    [bridge.activeTool],
+    [bridge.activeTool, askMode],
   );
 
   /**
@@ -2530,6 +2571,11 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
              * 토글이 도구를 바꾼다 (사용자 지시 2026-08-09) — 켜면 질문하는
              * 펜, 끄면 **합친 도구**로 돌아간다. 그리기 도구로 돌려보내면
              * 자판으로 물으려고 껐는데 캔버스에 선이 그어진다.
+             */
+            /**
+             * 펜 쪽을 누르면 **언제나** 질문 펜을 다시 쥔다 — 지우개를 쓰다
+             * 돌아오는 길이 이것뿐이다(질문 모드는 켜져 있으므로 토글은 이미
+             * 펜에 있고, 그냥 두면 눌러도 아무 일이 없다).
              */
             onToggleAskPen={(on) => handleTool(on ? "askpen" : "hand")}
             inkPhase={inkPhase}
