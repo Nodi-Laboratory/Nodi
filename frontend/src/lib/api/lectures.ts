@@ -107,6 +107,23 @@ export async function uploadLectureDocs(
   );
 }
 
+/**
+ * 이 영상의 클립을 **다시 임베딩**한다 (2026-08-12).
+ *
+ * 행은 `embedded`인데 Qdrant에 벡터가 없는 상태를 되돌린다 — 그 상태에서는
+ * 검색이 오류 없이 0건이라 화면에는 "추천이 안 뜬다"로만 보인다.
+ */
+export async function reembedLectureVideo(
+  videoId: string,
+): Promise<{ ok: boolean; clips: number }> {
+  return j(
+    await fetch(`${API_BASE}/admin/lecture-videos/${videoId}/reembed`, {
+      method: "POST",
+      headers: await authHeaders(),
+    }),
+  );
+}
+
 export async function deleteLectureVideo(videoId: string): Promise<void> {
   await ensureOk(
     await fetch(`${API_BASE}/admin/lecture-videos/${videoId}`, {

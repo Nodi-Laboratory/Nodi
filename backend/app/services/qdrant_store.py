@@ -199,6 +199,43 @@ async def search(
     ]
 
 
+async def count(
+    collection: str,
+    *,
+    file_ids: list[str] | None = None,
+    scope_field: str = "file_id",
+) -> int:
+    """그 스코프에 **벡터가 몇 개 있나**. 진단용 (2026-08-12).
+
+    행과 벡터는 따로 산다. 행이 `embedded`인데 벡터가 없으면 검색은 오류 없이
+    0건을 돌려주고, 화면에는 "추천이 안 뜬다"로만 보인다 — 배포 스크립트가 매번
+    컬렉션을 지우고 있던 사고가 딱 그렇게 **아무 신호도 안 냈다**. 그래서 콘솔이
+    양쪽을 나란히 센다.
+
+    실패는 `-1`이다. 0으로 뭉개면 "비었다"와 "못 셌다"가 같아 보인다.
+    """
+    if file_ids is not None and not file_ids:
+        return 0
+    try:
+        query_filter = None
+        if file_ids is not None:
+            query_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key=scope_field,
+                        match=models.MatchAny(any=[str(f) for f in file_ids]),
+                    )
+                ]
+            )
+        res = await get_client().count(
+            collection_name=collection, count_filter=query_filter, exact=True
+        )
+        return int(res.count)
+    except Exception:  # noqa: BLE001 - 진단이 콘솔을 죽이면 안 된다
+        logger.warning("Qdrant count 실패: %s", collection, exc_info=True)
+        return -1
+
+
 async def search_concepts(
     vector: list[float],
     k: int,

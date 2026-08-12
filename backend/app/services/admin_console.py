@@ -363,6 +363,7 @@ async def media_readiness(client: UserClient) -> dict[str, Any]:
         )
         pkg_ids = [str(p["package_id"]) for p in pkgs]
         clips = 0
+        clip_vectors = 0
         if pkg_ids:
             ids = ",".join(pkg_ids)
             got = await client.select(
@@ -370,6 +371,15 @@ async def media_readiness(client: UserClient) -> dict[str, Any]:
                 {"package_id": f"in.({ids})", "status": "eq.embedded", "select": "id"},
             )
             clips = len(got)
+            # 행과 벡터를 **나란히** 센다 (2026-08-12).
+            #
+            # 배포 스크립트가 매 배포마다 Qdrant의 `lecture_clips` 컬렉션을
+            # 지우고 있었다. 행은 `embedded`로 남아 이 표가 "준비됨"이라고
+            # 말하는데 검색은 0건이었다 — 어긋난 두 수를 한 줄에 놓지 않으면
+            # **어디를 봐도 안 보인다.**
+            clip_vectors = await qdrant_store.count(
+                qdrant_store.COL_LECTURE_CLIPS, file_ids=pkg_ids, scope_field="package_id"
+            )
         rows.append(
             {
                 "class_id": cid,
@@ -379,6 +389,8 @@ async def media_readiness(client: UserClient) -> dict[str, Any]:
                 "figures_ready": figs.get("embedded", 0),
                 "packages": len(pkg_ids),
                 "clips_ready": clips,
+                # -1은 "못 셌다"(Qdrant가 안 받았다) — 0과 다른 뜻이다.
+                "clip_vectors": clip_vectors,
             }
         )
     return {

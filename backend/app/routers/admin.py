@@ -1067,6 +1067,53 @@ async def upload_lecture_docs(
     return {"added": added, "skipped": skipped}
 
 
+@router.post("/lecture-videos/{video_id}/reembed")
+async def reembed_lecture_video(
+    video_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """이 영상의 클립을 **다시 임베딩**한다 (2026-08-12).
+
+    행과 벡터는 따로 산다. 행이 `embedded`인데 Qdrant에 벡터가 없으면 검색은
+    오류 없이 0건을 돌려주고, 화면에는 "영상 추천이 안 뜬다"로만 보인다 —
+    배포 스크립트가 매 배포마다 컬렉션을 지우고 있던 사고가 그 모양이었다.
+    그 원인은 고쳤지만, **어긋난 상태를 되돌릴 길**이 없으면 관리자는 올린
+    것을 지우고 다시 올리는 수밖에 없다.
+
+    하는 일은 상태를 `pending`으로 되돌리고 임베딩 잡을 다시 넣는 것뿐이다.
+    워커는 `status='pending'`인 클립만 집으므로(행 단위 멱등) 되돌리지 않으면
+    잡을 넣어도 **아무것도 안 한다.** 여러 번 눌러도 안전하다.
+    """
+    client = UserClient.from_user(user)
+    svc = get_service_client()
+    if svc is None:
+        raise _bad("워커 DSN이 없어 임베딩을 걸 수 없습니다.")
+
+    clips = await client.select(
+        "lecture_clips", {"video_id": f"eq.{video_id}", "select": "id", "order": "seq.asc"}
+    )
+    n = len(clips)
+    if not n:
+        raise _bad("이 영상에는 클립이 없습니다 — 파일을 다시 올려 주세요.")
+
+    await svc.update("lecture_clips", {"video_id": f"eq.{video_id}"}, {"status": "pending"})
+    bsize = settings.lecture_batch_size
+    for start in range(0, n, bsize):
+        await svc.insert(
+            "jobs",
+            {
+                "owner_id": user.id,
+                "kind": "lecture_embed",
+                "target_id": video_id,
+                "batch_range": {"from_seq": start, "to_seq": min(start + bsize, n)},
+                "status": "queued",
+            },
+            returning=False,
+        )
+    return {"ok": True, "clips": n}
+
+
 @router.delete("/lecture-videos/{video_id}")
 async def delete_lecture_video(
     video_id: str,

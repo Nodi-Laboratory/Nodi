@@ -406,6 +406,13 @@ export interface MediaReadiness {
     /** 이 학급에 **켜 둔** 강의 패키지 수. 0이면 클립은 0건이다. */
     packages: number;
     clips_ready: number;
+    /**
+     * Qdrant에 실제로 있는 벡터 수 (2026-08-12). `-1`은 **못 셌다**는 뜻이다.
+     *
+     * `clips_ready`(행)와 어긋나면 검색이 조용히 0건이 된다 — 배포가 매번
+     * 컬렉션을 지우고 있던 사고가 딱 그 모양이었다.
+     */
+    clip_vectors: number;
   }[];
 }
 
