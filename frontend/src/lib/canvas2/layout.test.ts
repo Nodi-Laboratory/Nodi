@@ -16,6 +16,7 @@ import {
   ITEM_W,
   layoutItems,
   placeBesideParent,
+  pushOut,
   rectOf,
   UNTAGGED,
   type LayoutInput,
@@ -57,6 +58,88 @@ function overlaps(items: readonly LayoutInput[], obstacles: readonly Rect[] = []
   }
   return { bad, positions, rects };
 }
+
+/**
+ * 새 카드가 학생이 둔 카드 위에 얹히는 경우 (사용자 보고 2026-08-12).
+ *
+ * ⚠️ **위 무작위 200케이스는 이 결함을 못 잡는다.** 그쪽이 만드는 아이템에는
+ * `parentItemId`가 없어 전부 "트리 밖 글"로 흐르고, 그 경로는 `pushDown`으로
+ * 이미 pinned를 피해 갔다. 겹침이 나던 곳은 **트리 배치**다 — `placeTidy`는
+ * 열 좌표만 보고 놓으므로 그 자리에 학생 카드가 있어도 그대로 포갠다.
+ *
+ * 여기서 미는 것은 **학생 카드**다(사용자 지시). 트리 노드의 자리는 부모·형제와의
+ * 관계로 정해진 뜻이 있는 자리라, 그쪽을 비키게 하면 트리 모양이 깨진다.
+ */
+describe("새 카드가 기존 카드를 밀어낸다 (2026-08-12)", () => {
+  it("트리 노드가 앉을 자리에 학생 카드가 있으면 학생 카드가 비킨다", () => {
+    // ⚠️ 트리 간선은 **AI 개념 카드끼리**만 성립한다(tree.ts). 이 둘을 안 채우면
+    // "트리 밖 자식" 경로로 흘러 pushDown이 자식을 비키게 하고, 그러면 이
+    // 테스트는 고치려는 결함을 안 건드린 채 통과한다.
+    const 개념 = { kind: "concept", source: "ai" } as const;
+    const 부모 = item({ id: "부모", tag: "지구", seq: 0, height: 200, ...개념 });
+    const 자식 = item({
+      id: "자식", tag: "지구", seq: 1, height: 200, parentItemId: "부모", ...개념,
+    });
+    // 자식이 놓일 자리(부모 아래)를 미리 알아내 그 위에 학생 카드를 둔다.
+    const 미리 = layoutItems([부모, 자식]);
+    const 자리 = 미리.positions.get("자식")!;
+    const 학생 = item({
+      id: "학생", tag: "지구", seq: 2, height: 200,
+      pinned: true, x: 자리.x + 40, y: 자리.y + 40,
+    });
+
+    const { bad, positions } = overlaps([부모, 자식, 학생]);
+    expect(bad).toEqual([]);
+    // 트리는 제자리다 — 비킨 것은 학생 카드다.
+    expect(positions.get("자식")).toEqual(자리);
+    expect(positions.get("학생")).not.toEqual({ x: 자리.x + 40, y: 자리.y + 40 });
+  });
+
+  it("겹치지 않으면 학생이 둔 자리를 건드리지 않는다", () => {
+    const a = item({ id: "a", tag: "지구", seq: 0, height: 200 });
+    const 학생 = item({
+      id: "학생", seq: 1, height: 200, pinned: true, x: 9000, y: 9000,
+    });
+    const { positions } = layoutItems([a, 학생]);
+    expect(positions.get("학생")).toEqual({ x: 9000, y: 9000 });
+  });
+
+  it("두 학생 카드가 같은 빈자리로 밀려 서로 포개지 않는다", () => {
+    const 개념 = { kind: "concept", source: "ai" } as const;
+    const 부모 = item({ id: "부모", tag: "지구", seq: 0, height: 300, ...개념 });
+    const 자식 = item({
+      id: "자식", tag: "지구", seq: 1, height: 300, parentItemId: "부모", ...개념,
+    });
+    const 자리 = layoutItems([부모, 자식]).positions.get("자식")!;
+    const 학생1 = item({
+      id: "학생1", seq: 2, height: 200, pinned: true, x: 자리.x + 20, y: 자리.y + 20,
+    });
+    const 학생2 = item({
+      id: "학생2", seq: 3, height: 200, pinned: true, x: 자리.x + 30, y: 자리.y + 30,
+    });
+    expect(overlaps([부모, 자식, 학생1, 학생2]).bad).toEqual([]);
+  });
+
+  it("가장 짧은 쪽으로 빠진다 — 옆이 비었으면 아래로 안 내려간다", () => {
+    // 세로로 긴 벽. 옆으로는 조금만 가면 되고, 아래로 빠지려면 4000을 내려가야
+    // 한다. 어느 옆이든 좋다 — 요는 **아래로 안 내려간다**는 것이다.
+    const 벽: Rect = { x: 0, y: 0, w: 200, h: 4000 };
+    const 놓임 = pushOut({ x: 150, y: 1000, w: 300, h: 200 }, [벽]);
+    expect(놓임.y).toBe(1000);
+    expect(놓임.x).toBeGreaterThan(200);
+  });
+
+  it("장애물 둘 사이에 껴도 끝난다 — 겹친 채로 남지 않는다", () => {
+    // 좌우가 다 막힌 자리. 위아래로는 빠질 수 있어야 한다.
+    const 왼: Rect = { x: -400, y: 0, w: 400, h: 400 };
+    const 오른: Rect = { x: 300, y: 0, w: 400, h: 400 };
+    const r = { x: 0, y: 100, w: 300, h: 200 };
+    const 놓임 = pushOut(r, [왼, 오른]);
+    const 결과 = { ...r, x: 놓임.x, y: 놓임.y };
+    expect(intersects(결과, 왼)).toBe(false);
+    expect(intersects(결과, 오른)).toBe(false);
+  });
+});
 
 // --- 불변식 1: 무겹침 -------------------------------------------------------
 

@@ -102,6 +102,15 @@ const ATTACH_KINDS = new Set(["clip", "figure"]);
 export let SIB_GAP = 200;
 /** 겹침 회피 루프 안전 상한. 정상적으로는 장애물 수만큼도 안 돈다. */
 const MAX_PUSH = 400;
+/**
+ * 겹침을 풀 때 벌리는 최소 간격 (사용자 지시 2026-08-12).
+ *
+ * `ROW_GAP`(240)은 **읽는 간격**이라 여기 쓰면 살짝 스친 카드가 화면 반대편으로
+ * 날아간다. 겹침을 푸는 자리에서 필요한 것은 "붙어 있지 않다"뿐이다. 값은 끄는
+ * 동안의 밀어내기(D207 `card_min_gap`, 기본 48)와 맞춘다 — 같은 일을 두 경로가
+ * 다른 간격으로 하면 손을 뗄 때 카드가 한 번 더 움직인다.
+ */
+export const CLEAR_GAP = 48;
 
 export interface LayoutInput {
   id: string;
@@ -260,6 +269,72 @@ function pushDown(
     cur = bottom(hit) + gap;
   }
   return cur;
+}
+
+/**
+ * 겹친 상자를 **가장 짧은 쪽으로** 빼낸다 (사용자 지시 2026-08-12).
+ *
+ * ## 왜 필요한가 — 트리 배치는 pinned를 안 본다
+ *
+ * 트리는 자기들끼리 무겹침을 **보장**한다(각 서브트리가 자기 폭을 갖고 형제를
+ * 좌우로 민다). 그 보장 밖에 있는 것이 **학생이 끌어다 둔 카드**다: `placeTidy`는
+ * 열 좌표만 보고 놓으므로, 그 자리에 pinned 카드가 있으면 새 카드가 그 위에
+ * 그대로 얹힌다. 자동 배치되는 것들(트리 밖 글·첨부)은 `pushDown`으로 비켜
+ * 가지만, 트리 노드에는 그 단계가 없었다.
+ *
+ * ## 무엇을 미는가 — **기존 카드**다
+ *
+ * 사용자 지시: "카드가 생성된다면 기존에 있던 카드와 겹치지 않도록 그 카드를
+ * 밀어내도록 해라." 새로 생긴 카드를 비키게 하면 트리의 모양(부모 아래, 형제
+ * 옆)이 깨진다 — 그 자리는 뜻이 있는 자리다. 반면 학생이 옮겨 둔 카드는 뜻이
+ * 자리 자체보다 **그 근처**에 있으므로, 조금 비켜도 잃는 것이 적다.
+ *
+ * 빼내는 방향은 **네 방향 중 이동이 가장 짧은 쪽**이다. 항상 아래로 밀면
+ * 옆이 텅 비었는데도 카드가 저 아래로 내려간다.
+ *
+ * ## 한 방향으로만 간다 — 그것이 종료의 근거다
+ *
+ * 처음에는 매 걸음 네 방향 중 가장 가까운 쪽을 다시 골랐다. 그러면 두 상자
+ * 사이에 낀 카드가 **왼쪽으로 밀렸다 오른쪽으로 밀렸다**를 반복하다 상한에
+ * 걸려 겹친 채로 끝난다(무작위 200케이스가 케이스 60에서 잡아냈다 — 눈으로는
+ * 절대 못 봤을 조합이다).
+ *
+ * 이제 네 방향을 **각각 끝까지** 밀어 보고 그중 가장 짧게 움직인 것을 쓴다.
+ * 한 방향으로만 가면 걸음마다 그 방향으로 단조 증가하고, 장애물이 유한하므로
+ * 반드시 자유로운 자리에 닿는다(`pushDown`과 같은 논증). 값이 싸다 —
+ * 상대는 한 화면의 카드 수십 개뿐이다.
+ */
+export function pushOut(
+  rect: Rect,
+  obstacles: readonly Rect[],
+  gap: number = CLEAR_GAP,
+): Placed {
+  /** 한 방향으로만 단조롭게 민다. */
+  const 밀기 = (dir: "left" | "right" | "up" | "down"): Placed => {
+    let cur = { ...rect };
+    for (let i = 0; i < MAX_PUSH; i++) {
+      const hit = obstacles.find((o) => intersects(cur, o));
+      if (!hit) break;
+      if (dir === "left") cur = { ...cur, x: hit.x - cur.w - gap };
+      else if (dir === "right") cur = { ...cur, x: hit.x + hit.w + gap };
+      else if (dir === "up") cur = { ...cur, y: hit.y - cur.h - gap };
+      else cur = { ...cur, y: hit.y + hit.h + gap };
+    }
+    return { x: cur.x, y: cur.y };
+  };
+
+  let best: Placed | null = null;
+  let bestD = Infinity;
+  for (const dir of ["left", "right", "up", "down"] as const) {
+    const p = 밀기(dir);
+    const d = Math.abs(p.x - rect.x) + Math.abs(p.y - rect.y);
+    // 엄격 비교라 동점이면 먼저 온 방향이 이긴다 — 결정론을 위한 것이다.
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
+  }
+  return best ?? { x: rect.x, y: rect.y };
 }
 
 /**
@@ -533,6 +608,49 @@ export function layoutItems(
     );
     positions.set(it.id, spot);
     blocks.push({ x: spot.x, y: spot.y, w: it.width, h: it.height });
+  }
+
+  /**
+   * 4) **겹침 풀기** — 새 카드가 생기면 기존 카드가 비켜 준다
+   *    (사용자 지시 2026-08-12).
+   *
+   * 여기까지 오면 자동 배치는 다 끝났다. 남은 겹침은 한 종류다 —
+   * **pinned 카드 위에 얹힌 트리 노드.** 트리는 열 좌표만 보고 놓이므로
+   * 학생이 그 자리에 카드를 끌어다 뒀으면 그대로 포갠다.
+   *
+   * 미는 것은 pinned 쪽이다(위 `pushOut` 주석의 근거). 자동 배치된 것들은
+   * 서로에 대해 이미 무겹침이라, 여기서 자리가 바뀌는 카드는 pinned뿐이다.
+   *
+   * ⚠️ **이 결과를 저장하지 않는다.** 배치는 같은 입력에 같은 답을 내므로
+   * 새로고침해도 같은 자리다. 저장하면 학생이 원래 둔 자리가 영영 사라지고,
+   * 겹치게 한 카드를 지웠을 때 되돌아갈 곳이 없어진다.
+   */
+  const autoRects: Rect[] = [];
+  for (const it of bySeq) {
+    if (it.pinned) continue;
+    const p = positions.get(it.id);
+    if (p) autoRects.push({ x: p.x, y: p.y, w: it.width, h: it.height });
+  }
+  if (autoRects.length) {
+    /**
+     * ⚠️ 장애물은 **지금 자리의 다른 pinned 전부**다. 이미 비켜 준 것만 세면
+     * 아직 차례가 안 온 pinned 위로 밀어 놓게 되고, 그 카드는 자기 차례에
+     * "안 겹친다"고 판단해 그대로 남는다 — 결과가 겹침이다(무작위 검사가
+     * 케이스 19에서 바로 잡아냈다).
+     */
+    const 핀: { id: string; r: Rect }[] = [];
+    for (const it of bySeq) {
+      if (!it.pinned) continue;
+      const p = positions.get(it.id);
+      if (p) 핀.push({ id: it.id, r: { x: p.x, y: p.y, w: it.width, h: it.height } });
+    }
+    for (const 하나 of 핀) {
+      const 막는것 = [...autoRects, ...핀.filter((o) => o !== 하나).map((o) => o.r)];
+      if (!막는것.some((o) => intersects(하나.r, o))) continue;
+      const spot = pushOut(하나.r, 막는것);
+      positions.set(하나.id, spot);
+      하나.r = { ...하나.r, x: spot.x, y: spot.y };
+    }
   }
 
   return { positions, columnX, tagOrder: order };
