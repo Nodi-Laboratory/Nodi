@@ -405,7 +405,24 @@ export function AskBar({
             }
           }}
           className="max-h-40 min-h-[24px] flex-1 resize-none bg-transparent text-[16px] outline-none"
-          style={{ color: "var(--c-ink)", caretColor: "var(--c-live)" }}
+          style={{
+            color: "var(--c-ink)",
+            caretColor: "var(--c-live)",
+            /**
+             * **가로 스크롤바를 안 만든다** (사용자 지시 2026-08-12).
+             *
+             * 세로로 자라는 입력칸에 가로 막대까지 생기면 알약 안이 둘로
+             * 갈라져 보인다. 막대가 생기는 이유는 **줄바꿈할 자리가 없는 긴
+             * 덩어리**다 — 붙여넣은 URL, 띄어쓰기 없는 수식·영문. 그래서
+             * 막대만 숨기지 않고 **끊어서 넘긴다**: `anywhere`는 넘칠 때만
+             * 낱말 안에서 끊으므로 평소 한국어 줄바꿈은 그대로다.
+             *
+             * ⚠️ `overflow-x: hidden`만 걸면 그 긴 줄이 **잘려 안 보인다**.
+             * 둘을 함께 둬야 한다.
+             */
+            overflowX: "hidden",
+            overflowWrap: "anywhere",
+          }}
           aria-label="질문 입력"
         />
         {/**
