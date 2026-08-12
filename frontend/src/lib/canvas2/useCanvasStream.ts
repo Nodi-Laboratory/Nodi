@@ -494,13 +494,28 @@ export function useCanvasStream({
               // 교과서 도판(D86~D95) — 서버가 done에 실어 보낸다. url은 signed라
               // 만료되므로 **저장하지 않는다**(D87). figureId만 남기고 화면에서
               // 필요할 때 재발급한다.
+              /**
+               * **카드 하나에 도판 하나** (사용자 지시 2026-08-12).
+               *
+               * 서버는 `figure_retrieve_top_k`만큼(기본 3) 돌려주는데, 그걸 다
+               * 붙이면 카드 옆에 그림이 줄줄이 선다. 곁들이는 답을 **거드는
+               * 것**이지 답과 나란히 설 것이 아니다.
+               *
+               * 서버 쪽 상한을 낮추지 않고 여기서 자르는 이유: 그 값은 admin
+               * 튜너블이라 기본값을 바꾸려면 씨앗 SQL과 마이그레이션까지 함께
+               * 옮겨야 하고(D62), 이미 돌고 있는 DB에는 코드만 바뀐 상태가
+               * 된다. 화면이 자르면 그 어긋남이 아예 없다.
+               */
+              let 도판수 = 0;
               for (const f of d.figures ?? []) {
+                if (도판수 >= 1) break;
                 // D95: **세션 내** 중복 제거. 이 턴(made)만 보면 앞 턴에서 이미
                 // 나온 같은 도판이 다시 쌓인다 — 같은 그림이 캔버스에 여러 번
                 // 뜬다. 화면에 있는 전체를 본다.
                 if (hasFigure(f.figure_id) || made.some((m) => m.data.figure?.figureId === f.figure_id)) {
                   continue;
                 }
+                도판수 += 1;
                 made.push({
                   id: tempId(),
                   sessionId,

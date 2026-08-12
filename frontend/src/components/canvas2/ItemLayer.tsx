@@ -8,6 +8,7 @@
  * 한 파일에 뒀기 때문이다.
  */
 
+import { useMemo } from "react";
 import type { CanvasItem } from "@/lib/canvas2/types";
 import type { Placed } from "@/lib/canvas2/layout";
 import type { Size } from "@/lib/canvas2/useItemLayout";
@@ -19,6 +20,17 @@ import type { PortDragStart } from "./PortHandles";
 import { FigureItem } from "./FigureItem";
 import type { ResizeCommit } from "./ResizeHandles";
 import { TextItem } from "./TextItem";
+
+/** 접힌 것이 없을 때 쓰는 빈 배열 — 매번 새로 만들면 자식이 헛되이 다시 그려진다. */
+const EMPTY_FOLDED: FoldedChild[] = [];
+
+/** 부모 카드 안에 뜰 동그란 단추 하나. */
+export interface FoldedChild {
+  id: string;
+  kind: string;
+  /** 단추에 붙일 이름(툴팁). 도판은 캡션, 클립은 제목. */
+  label: string;
+}
 
 interface Props {
   items: CanvasItem[];
@@ -60,6 +72,10 @@ interface Props {
     onPick: (id: string) => void;
     onResize: (id: string, next: ResizeCommit) => void;
     onResetSize: (id: string) => void;
+    /** 딸린 상자를 접어 부모 카드 안 단추로 만든다 (사용자 지시 2026-08-12). */
+    onCollapse: (id: string) => void;
+    /** 그 단추를 눌러 다시 펼친다. */
+    onExpand: (id: string) => void;
   };
 }
 
@@ -109,6 +125,28 @@ export function ItemLayer({
    */
   const treeParentOf = new Map(treeEdges(items).map((e) => [e.to, e.from]));
 
+
+  /**
+   * 접어 둔 딸린 상자를 **부모별로** 모은다 (사용자 지시 2026-08-12).
+   *
+   * 접힌 것은 배치에서 빠져 화면에 없다 — 그 존재를 알려 주는 것이 부모 카드
+   * 안의 동그란 단추다. 부모가 없으면(드물다) 되돌릴 길이 없으므로 접지 않는다.
+   */
+  const foldedOf = useMemo(() => {
+    const m = new Map<string, FoldedChild[]>();
+    for (const it of items) {
+      if (!it.data.collapsed || !it.parentItemId) continue;
+      const label =
+        it.kind === "figure"
+          ? (it.data.figure?.caption ?? "교과서 그림")
+          : (it.title ?? "강의 영상");
+      const arr = m.get(it.parentItemId) ?? [];
+      arr.push({ id: it.id, kind: it.kind, label });
+      m.set(it.parentItemId, arr);
+    }
+    return m;
+  }, [items]);
+
   return (
     <>
       {/**
@@ -139,6 +177,7 @@ export function ItemLayer({
               onSelect={handlers.onSelect}
               onDragEnd={handlers.onDragEnd}
               onDelete={handlers.onDelete}
+              onCollapse={handlers.onCollapse}
               dyLimitsFor={handlers.dyLimitsFor}
             />
           );
@@ -156,6 +195,8 @@ export function ItemLayer({
               onSelect={handlers.onSelect}
               onResize={handlers.onResize}
               onResetSize={handlers.onResetSize}
+              onCollapse={handlers.onCollapse}
+              onDelete={handlers.onDelete}
             />
           );
         }
@@ -167,6 +208,11 @@ export function ItemLayer({
             y={p.y}
             // 부모 유무는 아이템마다 다르다 — 위 포트를 띄울지 정한다 (D210 4-3).
             hasParent={!!item.parentItemId}
+            /**
+             * 접어 둔 딸린 상자들 — 이 카드 안에 **동그란 단추**로 뜬다
+             * (사용자 지시 2026-08-12).
+             */
+            folded={foldedOf.get(item.id) ?? EMPTY_FOLDED}
             zoom={zoom}
             selected={selectedIds.has(item.id)}
             editing={editingId === item.id}

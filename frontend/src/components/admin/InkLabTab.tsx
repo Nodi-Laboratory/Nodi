@@ -467,6 +467,9 @@ export function InkLabTab() {
                 onPick: NOOP,
                 onResize: NOOP,
                 onResetSize: NOOP,
+                // 실험실 장면은 붙박이라 접기·펼치기가 할 일이 없다.
+                onCollapse: NOOP,
+                onExpand: NOOP,
               }}
             />
           </CanvasStage>

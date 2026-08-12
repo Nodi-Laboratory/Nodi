@@ -34,6 +34,7 @@
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Film, Image as ImageIcon } from "lucide-react";
 import { ITEM_MIN_W, ITEM_W } from "@/lib/canvas2/layout";
 import { widestLineWidth } from "@/lib/canvas2/measureWidth";
 import { followerEls } from "@/lib/canvas2/followers";
@@ -158,6 +159,15 @@ export interface TextItemProps {
   /** 상자를 자동 크기로 되돌린다. */
   onResetSize: (id: string) => void;
   /**
+   * 이 카드에 **접어 둔** 딸린 상자들 (사용자 지시 2026-08-12).
+   *
+   * 접힌 것은 캔버스에서 사라지므로, 있었다는 사실과 되돌릴 길을 이 카드가
+   * 들고 있어야 한다 — 그것이 아래 동그란 단추다.
+   */
+  folded?: { id: string; kind: string; label: string }[];
+  /** 그 단추를 눌러 다시 펼친다. */
+  onExpand?: (id: string) => void;
+  /**
    * 카드 수정 도구가 켜졌나 (D180) — 별 포인터.
    *
    * 이름이 `editing`(본문 편집)과 헷갈리기 쉬워 `cardEdit`으로 둔다. 둘은
@@ -199,6 +209,8 @@ function TextItemImpl(props: TextItemProps) {
     hasParent = false,
     onResize,
     onResetSize,
+    folded,
+    onExpand,
     cardEdit = false,
     beginEdit,
     onEditEnd,
@@ -797,6 +809,44 @@ function TextItemImpl(props: TextItemProps) {
             onCancel={onCancelEdit}
           />
         </div>
+
+        {/**
+         * **접어 둔 곁들이** — 동그란 단추 (사용자 지시 2026-08-12).
+         *
+         * 접힌 상자는 캔버스에서 사라진다. 그러면 "있었다"는 사실까지 사라져
+         * 되돌릴 길이 없으므로, 그 자리를 이 단추가 대신한다. 누르면 다시
+         * 펼쳐진다.
+         *
+         * 글 아래에 두는 이유: 곁들이는 답을 **거드는 것**이라 답을 읽고 난
+         * 뒤에 눈에 들어오는 자리가 맞다. 아이콘으로 종류를 가른다 — 그림이냐
+         * 영상이냐는 눌러 보기 전에 알아야 한다.
+         */}
+        {folded && folded.length > 0 && (
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+            {folded.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                data-no-pan
+                title={`${f.label} — 눌러서 펼치기`}
+                aria-label={`${f.label} 펼치기`}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onExpand?.(f.id);
+                }}
+                className="flex h-7 w-7 items-center justify-center rounded-full transition-transform hover:scale-110"
+                style={{
+                  background: "var(--c-live-wash)",
+                  color: "var(--c-live-deep)",
+                  boxShadow: "inset 0 0 0 1px var(--c-rule)",
+                }}
+              >
+                {f.kind === "figure" ? <ImageIcon size={14} /> : <Film size={14} />}
+              </button>
+            ))}
+          </div>
+        )}
 
         {showAsk && (
           <div className="mt-2.5 flex flex-wrap items-center gap-2">

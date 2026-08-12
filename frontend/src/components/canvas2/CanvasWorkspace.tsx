@@ -1242,6 +1242,34 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
     }),
   );
 
+  /**
+   * 딸린 상자를 **접는다** — 부모 카드 안의 동그란 단추가 된다
+   * (사용자 지시 2026-08-12).
+   *
+   * ⚠️ **부모가 없으면 접지 않는다.** 접힌 것을 되돌리는 길은 그 단추뿐인데,
+   * 단추가 앉을 카드가 없으면 학생이 다시 꺼낼 방법이 사라진다 — 지우는 것과
+   * 같아지는데 학생은 "접었다"고 생각한다.
+   */
+  const onCollapse = useEventCallback((id: string) => {
+    const it = items.find((i) => i.id === id);
+    if (!it?.parentItemId) return;
+    if (pickedId === id) setPickedId(null);
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    patch(id, { data: { ...it.data, collapsed: true } });
+  });
+
+  /** 단추를 눌러 다시 펼친다. 자리는 배치 엔진이 새로 정한다. */
+  const onExpand = useEventCallback((id: string) => {
+    const it = items.find((i) => i.id === id);
+    if (!it) return;
+    patch(id, { data: { ...it.data, collapsed: false } });
+  });
+
   const handlers = useMemo(
     () => ({
       onSelect,
@@ -1257,11 +1285,13 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
       onPortDrag: portLink.begin,
       onResize,
       onResetSize,
+      onCollapse,
+      onExpand,
       onAsk,
       onPick,
       dyLimitsFor,
     }),
-    [onCut, portLink.begin, onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onAsk, onPick, dyLimitsFor],
+    [onCut, portLink.begin, onSelect, onStartEdit, onCancelEdit, onCommitEdit, onDelete, onTagChange, onRenameTag, onRemoveTag, onDragEnd, onResize, onResetSize, onCollapse, onExpand, onAsk, onPick, dyLimitsFor],
   );
 
   /**

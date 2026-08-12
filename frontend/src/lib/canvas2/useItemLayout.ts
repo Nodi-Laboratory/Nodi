@@ -58,6 +58,11 @@ export interface LayoutSource {
   /** 트리 판정용 (D151) — AI 개념 카드만 트리에 들어간다. */
   kind: string;
   source: string;
+  /**
+   * 접어 둔 딸린 상자는 **자리를 안 받는다** (사용자 지시 2026-08-12).
+   * 자리가 없으면 화면에서도 연결선에서도 저절로 빠진다.
+   */
+  data?: { collapsed?: boolean };
 }
 
 export interface UseItemLayout {
@@ -133,10 +138,20 @@ export function useItemLayout(
     // 이펙트 본문에서 동기적으로 setState하지 않는다 — rAF 안에서 부른다.
     // 같은 프레임의 여러 변화가 여기서 한 번으로 합쳐진다.
     const raf = requestAnimationFrame(() => {
-      const inputs: LayoutInput[] = items.map((it) => {
-        const s = sizes.get(it.id) ?? FALLBACK;
-        return { ...it, width: s.w, height: s.h };
-      });
+      /**
+       * **접어 둔 것은 배치에 안 넣는다** (사용자 지시 2026-08-12).
+       *
+       * 자리를 안 주는 것이 접기의 전부다 — 자리가 없으면 `positions`에 안
+       * 들어가고, 그러면 아이템도 연결선도 그리는 쪽에서 저절로 빠진다
+       * (둘 다 `positions.get(id)`가 없으면 아무것도 안 그린다). 화면에서
+       * 지우는 코드를 따로 두면 그 둘이 언젠가 어긋난다.
+       */
+      const inputs: LayoutInput[] = items
+        .filter((it) => !it.data?.collapsed)
+        .map((it) => {
+          const s = sizes.get(it.id) ?? FALLBACK;
+          return { ...it, width: s.w, height: s.h };
+        });
       const obstacles = getObstacles();
       setState((prev) => {
         // 세션이 바뀌었으면 태그 순서를 이어받지 않는다.

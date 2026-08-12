@@ -28,6 +28,7 @@ import { ResizeHandles, type ResizeCommit } from "./ResizeHandles";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { getFigure } from "@/lib/api/retrieve";
+import { CollapseBtn } from "./CollapseBtn";
 import { ITEM_W } from "@/lib/canvas2/layout";
 import { HARD_MAX_W } from "@/lib/canvas2/measureWidth";
 import type { CanvasItem } from "@/lib/canvas2/types";
@@ -49,6 +50,10 @@ interface Props {
   onSelect: (id: string | null, additive?: boolean) => void;
   onResize: (id: string, next: ResizeCommit) => void;
   onResetSize: (id: string) => void;
+  /** 접어서 부모 카드 안의 단추로 만든다 (사용자 지시 2026-08-12). */
+  onCollapse: (id: string) => void;
+  /** 캔버스에서 아주 지운다 — 연결선도 함께 사라진다. */
+  onDelete: (id: string) => void;
 }
 
 export function FigureItem({
@@ -58,6 +63,8 @@ export function FigureItem({
   measure,
   zoom,
   selected,
+  onCollapse,
+  onDelete,
   onSelect,
   onResize,
   onResetSize,
@@ -154,7 +161,25 @@ export function FigureItem({
           e.stopPropagation();
           onSelect(item.id, e.shiftKey);
         }}
-        className="absolute"
+        /**
+         * **고른 뒤 Delete·Backspace로 지운다** (사용자 지시 2026-08-12).
+         *
+         * 지우면 연결선도 함께 사라진다 — 선은 아이템의 `parentItemId`에서
+         * 파생되므로 아이템이 없어지면 그릴 것도 없다(따로 지우는 코드가
+         * 없다는 것이 이 구조의 값이다).
+         *
+         * 클립(ClipItem)이 이미 같은 규칙을 갖고 있었다 — 도판만 빠져 있어서
+         * 학생 눈에는 "그림은 못 지운다"였다.
+         */
+        tabIndex={-1}
+        onKeyDown={(e) => {
+          if (e.key === "Delete" || e.key === "Backspace") {
+            e.preventDefault();
+            e.stopPropagation();
+            onDelete(item.id);
+          }
+        }}
+        className="group absolute"
         style={{
           left: x,
           top: y,
@@ -170,6 +195,7 @@ export function FigureItem({
             "left .28s cubic-bezier(.22,.9,.24,1), top .28s cubic-bezier(.22,.9,.24,1)",
         }}
       >
+        <CollapseBtn onCollapse={() => onCollapse(item.id)} />
         <div
           aria-hidden
           className="absolute"

@@ -10,6 +10,7 @@
  * resize 관련 배선만 뺐다.
  */
 
+import { foldAway } from "@/lib/canvas2/foldAway";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { Play, PlayCircle, X } from "lucide-react";
 import { useItemDrag } from "@/lib/canvas2/useItemDrag";
@@ -41,6 +42,8 @@ interface Props {
   /** 세로 이동 허용 범위 (`lib/canvas2/parentGuard.ts`). */
   dyLimitsFor?: (movingIds: readonly string[]) => { min: number; max: number };
   onDelete: (id: string) => void;
+  /** 접어서 부모 카드 안의 단추로 만든다 (사용자 지시 2026-08-12). */
+  onCollapse: (id: string) => void;
 }
 
 export function ClipItem({
@@ -54,6 +57,7 @@ export function ClipItem({
   onDragEnd,
   dyLimitsFor,
   onDelete,
+  onCollapse,
 }: Props) {
   const clip = item.data.clip;
   const thumbUrl = useClipThumb(clip?.clipId);
@@ -156,16 +160,32 @@ export function ClipItem({
         }}
       />
 
-      {/* × 삭제 — hover/선택 시 우상단. 드래그로 안 새게 pointerdown을 막는다. */}
+      {/**
+       * × 는 **접기**다 (사용자 지시 2026-08-12로 바뀌었다).
+       *
+       * 예전에는 이 자리가 삭제였다. 그런데 곁들이는 잠깐 치워 두고 싶은 것이
+       * 대부분인데, 가장 누르기 쉬운 자리에 **되돌릴 수 없는 일**이 있던 셈이다.
+       * 지우기는 골라서 Delete·Backspace로 한다 — 한 번 더 의도해야 하는 자리로
+       * 옮겼다.
+       *
+       * hover/선택 시에만 뜬다 — 늘 떠 있으면 그림 위에 단추가 얹힌다.
+       * 드래그로 안 새게 pointerdown을 막는다.
+       */}
       {(hover || selected) && (
         <button
           type="button"
           data-no-pan
-          aria-label="클립 삭제"
+          aria-label="접어서 카드 안에 넣기"
+          title="접어서 카드 안에 넣기"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
+            // 접히는 연출은 도판의 ×와 **같은 함수**를 쓴다 — 갈리면 같은
+            // 동작이 종류마다 다르게 보인다.
             e.stopPropagation();
-            onDelete(item.id);
+            foldAway(
+              (e.currentTarget as HTMLElement).closest<HTMLElement>("[data-canvas-item]"),
+              () => onCollapse(item.id),
+            );
           }}
           className="absolute -right-2 -top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border transition-colors"
           style={{
