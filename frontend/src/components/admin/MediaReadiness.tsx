@@ -51,7 +51,7 @@ export function MediaReadiness() {
               <th className={칸}>교과서</th>
               <th className={칸}>도판(검색 가능 / 전체)</th>
               <th className={칸}>켜 둔 강의 패키지</th>
-              <th className={칸}>클립(검색 가능)</th>
+              <th className={칸}>클립(행 / 벡터)</th>
             </tr>
           </thead>
           <tbody className="text-[#e7e3d8]">
@@ -80,8 +80,23 @@ export function MediaReadiness() {
                   <td className={칸} style={{ color: c.packages ? undefined : "#e0a32e" }}>
                     {c.packages}
                   </td>
-                  <td className={칸} style={{ color: c.clips_ready ? undefined : "#e0a32e" }}>
-                    {c.clips_ready}
+                  {/*
+                    행과 벡터를 한 칸에 나란히 둔다. 어긋나면 검색이 오류 없이
+                    0건이 되는데, 두 수를 따로 두면 그 어긋남이 안 보인다.
+                  */}
+                  <td
+                    className={칸}
+                    style={{
+                      color:
+                        c.clips_ready && c.clip_vectors === c.clips_ready
+                          ? undefined
+                          : "#e0a32e",
+                    }}
+                  >
+                    {c.clips_ready} / {c.clip_vectors < 0 ? "?" : c.clip_vectors}
+                    {c.clips_ready > 0 && c.clip_vectors === 0 && (
+                      <span className="ml-1 text-[#9a948a]">(벡터 없음 — 재임베딩 필요)</span>
+                    )}
                   </td>
                 </tr>
               );
@@ -101,6 +116,8 @@ export function MediaReadiness() {
         · <b>교과서 0</b> → 선생님이 그 학급에 교과서(PDF)를 올려야 도판이 생긴다.
         <br />· <b>도판 0 / n</b> → 인제스트가 실패했다. 비전 설정을 확인하고 재시도한다.
         <br />· <b>패키지 0</b> → 관리자가 넣은 강의를 <b>학급에 켜야</b> 클립이 뜬다.
+        <br />· <b>행 / 벡터가 어긋남</b> → 임베딩이 아직 안 끝났거나 벡터가
+        사라졌다. 검색은 <b>벡터</b>를 본다 — 행만 있으면 0건이다.
         <br />· 개인 대화방에는 둘 다 없다 — 학급 대화방에서 확인할 것.
       </p>
     </section>

@@ -2,11 +2,12 @@
 
 import { useState, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, UploadCloud } from "lucide-react";
+import { Plus, RefreshCw, Trash2, UploadCloud } from "lucide-react";
 import {
   createLecturePackage,
   deleteLecturePackage,
   deleteLectureVideo,
+  reembedLectureVideo,
   uploadLectureDocs,
   listLectureClips,
   type LecturePackage,
@@ -281,6 +282,24 @@ function VideosPanel({
     }
   };
 
+  /**
+   * 다시 임베딩 (2026-08-12).
+   *
+   * 행은 있는데 Qdrant에 벡터가 없으면 검색이 **오류 없이 0건**이라 화면에는
+   * "추천이 안 뜬다"로만 보인다. 진단 표("그림·영상이 뜰 수 있는 상태인가")의
+   * **행 / 벡터**가 어긋났을 때 누르는 자리다.
+   */
+  const handleReembed = async (videoId: string) => {
+    onError(null);
+    try {
+      const r = await reembedLectureVideo(videoId);
+      onError(`클립 ${r.clips}개를 다시 임베딩합니다 — 잠시 뒤 새로고침하세요.`);
+      await invalidateVideos();
+    } catch (e) {
+      onError(`재임베딩 실패: ${(e as Error).message}`);
+    }
+  };
+
   const handleDelete = async (videoId: string) => {
     if (!window.confirm("영상을 삭제할까요?")) return;
     onError(null);
@@ -370,7 +389,12 @@ function VideosPanel({
         ) : (
           <ul className="flex flex-col gap-2">
             {(videos ?? []).map((v) => (
-              <VideoRow key={v.id} video={v} onDelete={() => handleDelete(v.id)} />
+              <VideoRow
+                key={v.id}
+                video={v}
+                onReembed={() => handleReembed(v.id)}
+                onDelete={() => handleDelete(v.id)}
+              />
             ))}
           </ul>
         )}
@@ -381,9 +405,11 @@ function VideosPanel({
 
 function VideoRow({
   video,
+  onReembed,
   onDelete,
 }: {
   video: LectureVideo;
+  onReembed: () => void;
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -411,6 +437,14 @@ function VideoRow({
           </span>
         </button>
         {statusBadge(video.status)}
+        <button
+          type="button"
+          onClick={onReembed}
+          title="다시 임베딩 — 행은 있는데 검색에 안 뜰 때"
+          className="rounded p-1 text-[#9a948a] transition-colors hover:text-[#e7e3d8]"
+        >
+          <RefreshCw size={14} />
+        </button>
         <button
           type="button"
           onClick={onDelete}

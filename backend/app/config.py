@@ -160,7 +160,7 @@ class Settings(BaseSettings):
     figure_retrieve_max_distance: float = 0.60    # distance=1-score 규약(D73 게이트와 동일 스케일)
     figure_judge_concurrency: int = 4             # TTA 프록시 미실측 — 보수 기본
     # D95: 다중 표시 — config 전용(admin 오버레이 없음)
-    figure_retrieve_top_k: int = 3
+    figure_retrieve_top_k: int = 1     # 한 번에 추천할 사진 수 (사용자 지시 2026-08-12)
     figure_batch_size: int = 8                    # figure_batch 잡 팬아웃 단위
     figure_signed_url_ttl_seconds: int = 21600    # 6h — 수업 시간 내 만료 실질 배제(D87)
     # --- figure 캡션 판정(EXAONE 비전, 플러그형 D88) ---

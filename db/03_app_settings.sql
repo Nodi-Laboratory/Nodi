@@ -87,7 +87,9 @@ insert into public.app_settings (key, value) values
     ('ink_figure_zoom_enabled',         'true'),
     ('ink_vlm_timeout_seconds',         '30'),
     ('ink_card_body_max_chars',         '1200'),
-    ('ink_scene_max_side',              '1280')
+    ('ink_scene_max_side',              '1280'),
+    -- 한 번에 추천할 사진 수 (사용자 지시 2026-08-12) — 기본 1.
+    ('figure_retrieve_top_k',           '1')
 on conflict (key) do nothing;
 
 -- 질문 방향성 코치 (D194) — 예시 질문을 주지 않고 **방향만** 권한다.
