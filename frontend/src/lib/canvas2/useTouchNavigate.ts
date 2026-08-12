@@ -216,18 +216,46 @@ export function useTouchNavigate({
       });
     };
 
-    /** 선택 상자. 필요할 때만 만든다 — 평소에 DOM을 하나 더 두지 않는다. */
     let boxEl: HTMLDivElement | null = null;
+    /**
+     * 선택 상자. 필요할 때만 만든다 — 평소에 DOM을 하나 더 두지 않는다.
+     *
+     * ## ⚠️ 색을 토큰으로 쓰면 **상자가 통째로 안 보인다**
+     *
+     * (사용자 보고 2026-08-11: "모바일에서 드래그박스가 안 보여".)
+     *
+     * `--c-live`·`--c-live-wash`는 `globals.css`의 **`.canvas2 {}` 안에서만**
+     * 정의된다(CLAUDE.md의 그 경고 그대로). 이 상자는 잘리지 않으려고
+     * `document.body`에 붙으므로 **그 밖**이고, 거기서 `var()`는 아무 값도 못
+     * 찾는다. 그러면 CSS는 그 선언을 "계산 시점에 무효"로 처리한다 —
+     * `background`는 투명으로 돌아가고, **`border` 축약형은 통째로 무효라
+     * `border-style`이 `none`으로 남는다.** 선도 면도 없는 상자가 되는 것이다.
+     *
+     * 화면에 오류가 안 나고 상자만 조용히 사라지므로 눈으로만 보면 "안 뜬다"와
+     * 구분되지 않는다. PC에서는 0.7초를 눌러야 나오는 것이라 거의 안 쓰여
+     * 오래 안 드러났고, 손가락에서는 이것이 주된 동작이라 바로 드러났다.
+     *
+     * 그래서 **값을 그대로 적는다.** 토큰과 같은 색이지만 이 요소는 토큰이
+     * 닿지 않는 곳에 산다 — 색을 바꿀 일이 생기면 `--c-live`와 여기를 함께
+     * 옮긴다(위 주석이 그 짝을 가리킨다).
+     */
     const showBox = () => {
       if (boxEl) return;
       boxEl = document.createElement("div");
       boxEl.setAttribute("data-touch-marquee", "1");
       Object.assign(boxEl.style, {
         position: "fixed",
-        zIndex: "40",
+        /**
+         * 입력창(z-50)보다 위다 — 상자는 화면을 가로지르는데 그 아래로 깔리면
+         * 아래쪽 절반이 잘려 보인다. 서랍(z-60)보다는 아래여야 한다.
+         */
+        zIndex: "55",
         pointerEvents: "none",
-        border: "1.5px dashed var(--c-live)",
-        background: "var(--c-live-wash)",
+        /* `--c-live` = #789e18, `--c-live-wash` = rgba(120,158,24,.09). 얇은
+           점선은 손가락 화면에서 잘 안 보여 2px 실선으로 올리고, 면도 조금
+           더 짙게 깐다 — 끄는 동안 "여기가 잡히는 범위"가 읽혀야 한다. */
+        border: "2px solid #789e18",
+        background: "rgba(120, 158, 24, 0.16)",
         borderRadius: "4px",
       } satisfies Partial<CSSStyleDeclaration>);
       document.body.appendChild(boxEl);
