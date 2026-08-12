@@ -6,6 +6,7 @@ import { FlaskConical, Play } from "lucide-react";
 import { listAdminClasses, listAdminSettings, runRagTest } from "@/lib/api";
 import type { AdminClass, AdminSettingsView, RagTestResult } from "@/lib/types";
 import { Badge, Code, Empty, Failed, Panel, Stat, ms, n } from "./ui";
+import { MediaReadiness } from "./MediaReadiness";
 
 /**
  * RAG 테스트 탭 (D113).
@@ -50,6 +51,7 @@ export function RagLabTab() {
 
   return (
     <div className="flex flex-col gap-4">
+      <MediaReadiness />
       <div className="flex items-center gap-2">
         <FlaskConical size={16} className="text-[#e0a32e]" />
         <h2 className="text-sm font-semibold text-[#e7e3d8]">RAG 테스트</h2>

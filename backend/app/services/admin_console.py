@@ -316,6 +316,79 @@ def flow_spec(
 _TEST_SNIPPET_CHARS = 600
 
 
+async def media_readiness(client: UserClient) -> dict[str, Any]:
+    """학급마다 **그림·영상이 뜰 수 있는 상태인지** 센다 (사용자 질문 2026-08-12).
+
+    거리 게이트를 아무리 열어도 안 뜨는 경우가 있다 — 게이트는 **찾은 것을
+    거르는 자리**이고, 그 앞에 "찾을 것이 있나"라는 하드 전제가 둘 있기
+    때문이다:
+
+      · 도판: 그 학급에 `kind='textbook'` 파일이 있어야 하고, 그 도판이
+        `status='embedded'`까지 가야 한다. 캡션 생성이 실패하면
+        `failed`로 남고 **검색에 안 뜬다**(D134 — 폴백 없음). 캡션은 비전
+        모델이 만들므로 `judge_*`가 비어 있으면 **전부** 실패한다.
+      · 클립: `class_lecture_packages`에 그 학급 행이 있어야 한다. 관리자가
+        패키지를 넣은 것만으로는 안 되고 **학급에 켜야** 한다.
+
+    이 함수가 하는 일은 그 전제들을 숫자로 보여 주는 것뿐이다. 슬라이더를
+    옮기기 전에 여기부터 봐야 한다.
+    """
+    # 설정 게이트는 `figure_judge`에 남아 있다(D131·D134 — 캡션 생성은
+    # `figure_caption`으로 옮겼지만 '설정됐나'는 그쪽이 계속 답한다).
+    from ..services import figure_judge
+
+    classes = await client.select("classes", {"select": "id,name", "order": "name.asc"})
+    rows: list[dict[str, Any]] = []
+    for c in classes:
+        cid = str(c["id"])
+        books = await client.select(
+            "files",
+            {"space_kind": "eq.class", "space_ref": f"eq.{cid}",
+             "kind": "eq.textbook", "select": "id"},
+        )
+        book_ids = [str(b["id"]) for b in books]
+        figs: dict[str, int] = {}
+        if book_ids:
+            ids = ",".join(book_ids)
+            got = await client.select(
+                "textbook_figures",
+                {"file_id": f"in.({ids})", "select": "status"},
+            )
+            for g in got:
+                key = str(g.get("status") or "?")
+                figs[key] = figs.get(key, 0) + 1
+        pkgs = await client.select(
+            "class_lecture_packages",
+            {"class_id": f"eq.{cid}", "select": "package_id"},
+        )
+        pkg_ids = [str(p["package_id"]) for p in pkgs]
+        clips = 0
+        if pkg_ids:
+            ids = ",".join(pkg_ids)
+            got = await client.select(
+                "lecture_clips",
+                {"package_id": f"in.({ids})", "status": "eq.embedded", "select": "id"},
+            )
+            clips = len(got)
+        rows.append(
+            {
+                "class_id": cid,
+                "name": c.get("name") or "",
+                "textbooks": len(book_ids),
+                "figures": figs,
+                "figures_ready": figs.get("embedded", 0),
+                "packages": len(pkg_ids),
+                "clips_ready": clips,
+            }
+        )
+    return {
+        # 비전 미설정이면 도판 캡션이 **전부** 실패한다 — 그 사실을 함께 준다.
+        "vision_configured": figure_judge.is_configured(),
+        "classes": rows,
+    }
+
+
+
 async def rag_test(
     client: UserClient,
     *,

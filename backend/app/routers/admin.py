@@ -659,6 +659,21 @@ class RagTestBody(BaseModel):
     include_figures: bool = True
 
 
+@router.get("/media-readiness")
+async def media_readiness(
+    user: CurrentUser = Depends(get_current_user),
+    _: Profile = Depends(require_admin),
+) -> dict[str, Any]:
+    """그림·영상이 뜰 수 있는 상태인지 학급마다 센다.
+
+    거리 게이트를 옮기기 **전에** 볼 것 — 게이트는 찾은 것을 거르는 자리이고,
+    그 앞의 하드 전제(교과서 업로드 · 도판 색인 · 패키지 켜기)가 안 갖춰지면
+    아무리 열어도 0건이다.
+    """
+    client = UserClient.from_user(user)
+    return await admin_console.media_readiness(client)
+
+
 @router.post("/rag/test")
 async def rag_test(
     body: RagTestBody,

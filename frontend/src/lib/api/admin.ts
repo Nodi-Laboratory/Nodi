@@ -391,3 +391,29 @@ export async function importAdminBackup(file: File): Promise<{
   );
   return res.json();
 }
+
+/** 학급마다 그림·영상이 뜰 수 있는 상태인지 (2026-08-12). */
+export interface MediaReadiness {
+  vision_configured: boolean;
+  classes: {
+    class_id: string;
+    name: string;
+    /** 업로드된 교과서 수. 0이면 도판은 **거리 게이트와 무관하게** 0건이다. */
+    textbooks: number;
+    /** 상태별 도판 수 — `embedded`만 검색에 뜬다. */
+    figures: Record<string, number>;
+    figures_ready: number;
+    /** 이 학급에 **켜 둔** 강의 패키지 수. 0이면 클립은 0건이다. */
+    packages: number;
+    clips_ready: number;
+  }[];
+}
+
+export async function getMediaReadiness(): Promise<MediaReadiness> {
+  const res = await ensureOk(
+    await fetch(`${API_BASE}/admin/media-readiness`, {
+      headers: await authHeaders(),
+    }),
+  );
+  return res.json();
+}
