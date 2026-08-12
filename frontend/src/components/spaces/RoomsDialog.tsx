@@ -12,8 +12,8 @@
  * 에서만 됐는데, 방을 고르는 자리에서 정리도 되는 편이 자연스럽다.
  */
 
-import { useEffect } from "react";
-import { Plus, X } from "lucide-react";
+import { useEffect, useState} from "react";
+import { Plus, X, LogOut} from "lucide-react";
 import type { RoomRow } from "@/lib/api/rooms";
 import { RoomList } from "./RoomList";
 
@@ -27,6 +27,8 @@ export function RoomsDialog({
   message,
   onNewRoom,
   creating = false,
+  onLeave,
+  leaving = false,
   onClose,
 }: {
   title: string;
@@ -39,9 +41,17 @@ export function RoomsDialog({
   message?: string | null;
   /** 이 공간에 방을 새로 만든다. 만들고 나면 호출부가 그 방으로 보낸다. */
   onNewRoom: () => void;
+  /**
+   * 이 학급에서 나간다 (사용자 지시 2026-08-12). 개인 세션에는 없다 —
+   * 나갈 학급이 아니라 자기 공간이다.
+   */
+  onLeave?: () => void;
+  leaving?: boolean;
   creating?: boolean;
   onClose: () => void;
 }) {
+  /** 나가기를 물어보는 중인가. 팝업을 닫으면 사라진다. */
+  const [asking, setAsking] = useState(false);
   // Esc로 닫는다 — 팝업에 갇히면 바깥을 누를 곳을 찾아다니게 된다.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -68,8 +78,30 @@ export function RoomsDialog({
         style={{ boxShadow: "0 18px 50px rgba(23,23,18,.14), 0 2px 8px rgba(23,23,18,.06)" }}
       >
         <header className="flex shrink-0 items-center justify-between px-7 pb-4 pt-6">
-          <div>
-            <h2 className="text-[19px] font-bold text-fg">{title}</h2>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <h2 className="truncate text-[19px] font-bold text-fg">{title}</h2>
+              {/**
+               * **학급 나가기** (사용자 지시 2026-08-12).
+               *
+               * 이름 **옆의 작은 버튼**이다 — 자주 쓰는 일이 아니라 자리를
+               * 크게 줄 이유가 없고, 그렇다고 메뉴 안에 숨기면 찾지 못한다.
+               *
+               * ⚠️ 누르면 곧장 나가지 않는다. 되돌릴 수 없는 일이므로 한 번
+               * 묻는다(아래 확인 줄) — 이름 옆의 작은 버튼일수록 잘못 눌린다.
+               */}
+              {onLeave && (
+                <button
+                  type="button"
+                  onClick={() => setAsking(true)}
+                  aria-label="이 학급에서 나가기"
+                  title="이 학급에서 나가기"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                >
+                  <LogOut size={15} />
+                </button>
+              )}
+            </div>
             <p className="mt-0.5 text-[13px] text-fg-muted">
               이어서 이야기할 대화방을 고르세요.
             </p>
@@ -83,6 +115,37 @@ export function RoomsDialog({
             <X size={18} />
           </button>
         </header>
+
+        {/**
+         * 확인 줄 — **팝업을 하나 더 띄우지 않는다.** 팝업 위의 팝업은 뒤엣것을
+         * 가리고, 여기서 물을 것은 한 문장뿐이다.
+         */}
+        {asking && (
+          <div className="mx-7 mb-2 flex shrink-0 flex-wrap items-center gap-2 rounded-xl px-3 py-2.5"
+               style={{ background: "var(--surface)" }}>
+            <span className="text-[13px] text-fg">
+              이 학급에서 나가겠습니까? 지금까지 한 대화는 지워지지 않습니다.
+            </span>
+            <span className="ml-auto flex gap-1.5">
+              <button
+                type="button"
+                onClick={() => setAsking(false)}
+                className="rounded-full px-3 py-1.5 text-[13px] text-fg-muted transition-colors hover:bg-accent-soft/60"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={leaving}
+                onClick={() => onLeave?.()}
+                className="rounded-full px-3 py-1.5 text-[13px] font-medium text-white transition-opacity disabled:opacity-50"
+                style={{ background: "var(--danger)" }}
+              >
+                {leaving ? "나가는 중…" : "나가기"}
+              </button>
+            </span>
+          </div>
+        )}
 
         {message && (
           <p className="shrink-0 px-7 py-2 text-[13px] text-danger">{message}</p>

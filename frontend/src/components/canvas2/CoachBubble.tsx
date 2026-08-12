@@ -34,11 +34,26 @@ export interface CoachBubbleProps {
   /** 붙을 카드의 월드 좌표와 폭. */
   x: number;
   y: number;
+  /**
+   * 배지를 피해 올라갈 높이(px) (사용자 지시 2026-08-12).
+   *
+   * 같은 카드에 교차 연결 배지가 함께 떠 있으면 **정확히 포개진다** — 그때만
+   * 이 값이 들어온다. 배지는 카드 윗변에 남고 말풍선이 그 위로 비킨다.
+   */
+  lift?: number;
   width: number;
   onDismiss: () => void;
 }
 
-export function CoachBubble({ advice, cardId, x, y, width, onDismiss }: CoachBubbleProps) {
+export function CoachBubble({
+  advice,
+  cardId,
+  x,
+  y,
+  width,
+  lift = 0,
+  onDismiss,
+}: CoachBubbleProps) {
   return (
     <div
       data-coach-bubble
@@ -52,7 +67,7 @@ export function CoachBubble({ advice, cardId, x, y, width, onDismiss }: CoachBub
       className="absolute rounded-xl border px-3 py-2.5 shadow-lg"
       style={{
         left: x + width + GAP,
-        top: y,
+        top: y - lift,
         width: 250,
         zIndex: BUBBLE_Z,
         // 캔버스 오버레이는 기본적으로 포인터를 흘린다 — 여기만 받는다.

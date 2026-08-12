@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
 from ..auth.deps import (
@@ -180,6 +180,44 @@ async def join_class(
             ) from exc
         raise
     return {"joined": True}
+
+
+@router.delete("/me/classes/{class_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def leave_class(
+    class_id: str, user: CurrentUser = Depends(get_current_user)
+) -> Response:
+    """학급에서 나간다 (사용자 지시 2026-08-12).
+
+    **지우는 것은 멤버십 한 행뿐이다.** 그 학급에서 한 대화·카드·올린 파일은
+    그대로 남는다 — 나가는 것은 "이 학급 목록에서 빼 달라"이지 "내가 한 일을
+    없애 달라"가 아니다. 다시 가입하면 그대로 보인다.
+
+    ⚠️ **선생님은 자기 학급에서 못 나간다.** 만든 사람이 빠지면 그 학급을
+    관리할 사람이 사라지고, `is_class_teacher`가 만든 사람도 교사로 보므로
+    (D219) 나간 뒤에도 권한만 남는 이상한 상태가 된다.
+
+    ⚠️ **지운 행을 센다** (D219). RLS에 걸린 DELETE는 오류가 아니라 **0행**으로
+    조용히 끝난다 — 안 세면 남의 학급을 나갔다고 204를 돌려주고 화면이
+    거짓말을 한다.
+    """
+    client = UserClient.from_user(user)
+    owned = await client.select(
+        "classes", {"id": f"eq.{class_id}", "select": "id,teacher_id"}
+    )
+    if owned and str(owned[0].get("teacher_id") or "") == str(user.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="이 학급을 만든 선생님은 나갈 수 없습니다.",
+        )
+    gone = await client.delete(
+        "class_members", {"class_id": f"eq.{class_id}", "user_id": f"eq.{user.id}"}
+    )
+    if not gone:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="가입하지 않은 학급입니다.",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 class UpdateProfileBody(BaseModel):

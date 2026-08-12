@@ -46,6 +46,21 @@ export async function joinClass(code: string): Promise<void> {
   );
 }
 
+/**
+ * 학급에서 나간다 (사용자 지시 2026-08-12).
+ *
+ * **지워지는 것은 멤버십 한 행뿐이다** — 그 학급에서 한 대화·카드·올린 파일은
+ * 그대로 남는다. 다시 가입하면 그대로 보인다.
+ */
+export async function leaveClass(classId: string): Promise<void> {
+  await ensureOk(
+    await fetch(`${API_BASE}/auth/me/classes/${encodeURIComponent(classId)}`, {
+      method: "DELETE",
+      headers: await authHeaders(),
+    }),
+  );
+}
+
 /** 표시 이름 변경. */
 export async function updateDisplayName(displayName: string): Promise<void> {
   await ensureOk(

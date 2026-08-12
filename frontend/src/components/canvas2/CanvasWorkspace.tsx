@@ -85,7 +85,7 @@ import { AskBar, type AskBarHandle } from "./AskBar";
 import { CanvasTopBar } from "./CanvasTopBar";
 import { CanvasStage } from "./CanvasStage";
 import { ItemLayer } from "./ItemLayer";
-import { CrossLinkLayer } from "./CrossLinkLayer";
+import { BADGE_LIFT, CrossLinkLayer } from "./CrossLinkLayer";
 import { useCrossLinks } from "@/lib/canvas2/useCrossLinks";
 import { useClientSettings } from "@/lib/canvas2/useClientSettings";
 import type { CrossLink } from "@/lib/api";
@@ -2617,6 +2617,18 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
           x={coach.box.x}
           y={coach.box.y}
           width={coach.box.w}
+          /**
+           * **배지와 겹치면 말풍선이 위로 비킨다** (사용자 지시 2026-08-12).
+           *
+           * 둘은 같은 자리에 놓인다(카드 오른쪽 위). 같은 카드에 교차 연결
+           * 배지가 있을 때만 올린다 — 늘 올려 두면 배지가 없는 흔한 경우에
+           * 말풍선이 카드에서 떠 보인다.
+           */
+          lift={
+            crossLinks.links.some((l) => l.fromItemId === coach.card!.id)
+              ? BADGE_LIFT
+              : 0
+          }
           onDismiss={() => coach.dismiss(coach.card!.id)}
         />
       )}

@@ -32,7 +32,7 @@ import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { classAvatarUrl, getSpacesOverview, type SpaceOverview } from "@/lib/api/spaces";
 import { getRecentRooms, getSpaceRooms, type RoomRow } from "@/lib/api/rooms";
-import { createSession, deleteSession, patchSession } from "@/lib/api";
+import { createSession, deleteSession, patchSession, leaveClass} from "@/lib/api";
 import { PAGE_BG, PERSONAL_CARD_BG } from "@/lib/ui/surface";
 import { useAuthedImage } from "@/lib/ui/useAuthedImage";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
@@ -207,6 +207,39 @@ export function SpacePicker() {
    * 만들지 않고 **그 행을 돌려준다.** 그래서 여기서 "새 방이 생겼다"를
    * 단정하지 않고, 돌려받은 방으로 그냥 들어간다(빈 방이 둘 쌓이지 않는다).
    */
+
+  /**
+   * 이 학급에서 나간다 (사용자 지시 2026-08-12).
+   *
+   * **지워지는 것은 멤버십 한 행뿐**이다 — 대화·카드는 그대로 남는다(창구
+   * 주석 참조). 그래서 성공하면 목록만 다시 받으면 된다.
+   *
+   * ⚠️ 목록을 무르기 **전에** 팝업을 닫는다. 안 닫으면 방금 나간 학급의 방
+   * 목록을 계속 띄운 채 그 학급이 카드에서 사라지는, 앞뒤가 안 맞는 화면이
+   * 한 박자 보인다.
+   */
+  const [leaving, setLeaving] = useState(false);
+  const leaveThisClass = async () => {
+    if (!picked || picked.space_kind !== "class" || leaving) return;
+    setLeaving(true);
+    try {
+      await leaveClass(picked.space_ref);
+      setPicked(null);
+      setRoomMsg(null);
+      await qc.invalidateQueries({ queryKey: ["spaces", "overview"] });
+      await qc.invalidateQueries({ queryKey: ["my-classes"] });
+    } catch (e) {
+      const st = (e as { status?: number })?.status;
+      setRoomMsg(
+        st === 409
+          ? "이 학급을 만든 선생님은 나갈 수 없습니다."
+          : "지금은 나갈 수 없어요. 잠시 뒤 다시 해 주세요.",
+      );
+    } finally {
+      setLeaving(false);
+    }
+  };
+
   const newRoom = async () => {
     if (!picked || creating) return;
     setCreating(true);
@@ -399,6 +432,9 @@ export function SpacePicker() {
           message={roomMsg}
           onNewRoom={() => void newRoom()}
           creating={creating}
+          {...(picked.space_kind === "class"
+            ? { onLeave: () => void leaveThisClass(), leaving }
+            : {})}
           onClose={() => {
             setRoomMsg(null);
             setPicked(null);
