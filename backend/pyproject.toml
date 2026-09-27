@@ -93,6 +93,9 @@ ignore = [
 # 깨졌다 — 파일명을 바꿀 때 per-file-ignores도 같이 봐야 한다.
 "app/services/solar.py" = ["E501"]
 "app/services/figure_judge.py" = ["E501"]
+# 데모 시드 원고(공개판). 답 원문은 **모델이 낸 그대로의 모양**(문단 = 한 줄)이어야
+# 화면 파서가 카드로 만든다 — 줄을 끊으면 저장되는 본문과 벡터 해시가 바뀐다.
+"app/seed_demo/content.py" = ["E501"]
 # 테스트에서 `pytest.raises(Exception)`은 "어떤 예외든 난다"를 검증하는
 # 의도적 표현이다(호출부가 best-effort로 삼키는 경로).
 "tests/*" = ["B017"]

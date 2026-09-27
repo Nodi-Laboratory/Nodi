@@ -9,6 +9,7 @@
     uv run python -m app.cli set-password <이메일> <비밀번호>
     uv run python -m app.cli list-users
     uv run python -m app.cli backup [--scopes conversations,people] [--keep 14]
+    uv run python -m app.cli seed-demo [--if-empty]
 """
 
 from __future__ import annotations
@@ -113,6 +114,17 @@ async def _backup(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _seed_demo(args: argparse.Namespace) -> int:
+    """데모 데이터 시드 (공개판). 내용·규약은 `app/seed_demo/__init__.py` 머리말.
+
+    지연 임포트: 시드 모듈은 원고·자산 경로를 읽어 들이는데, 다른 명령(계정 관리·
+    백업)을 쓸 때마다 그 비용을 치를 이유가 없다.
+    """
+    from . import seed_demo
+
+    return await seed_demo.run(if_empty=args.if_empty)
+
+
 async def _list_users(_: argparse.Namespace) -> int:
     async with worker_conn() as conn:
         rows = await conn.fetch(
@@ -166,6 +178,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="남길 스냅샷 개수 (기본 14 — 하루 1회면 2주)")
     p.add_argument("--note", default="자동 백업")
     p.set_defaults(fn=_backup)
+
+    p = sub.add_parser("seed-demo", help="빈 DB에 데모 계정·학급·대화를 채운다")
+    # 컨테이너 진입점이 기동마다 부른다 — 이미 시드됐거나 같은 계정이 있으면
+    # 아무것도 하지 않고 0으로 끝난다(없으면 1: 사람이 손으로 돌렸을 때 알린다).
+    p.add_argument("--if-empty", action="store_true",
+                   help="데모 계정이 이미 있으면 조용히 건너뛴다(멱등)")
+    p.set_defaults(fn=_seed_demo)
 
     return parser
 
