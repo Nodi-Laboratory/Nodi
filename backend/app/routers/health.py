@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ..config import get_settings
-from ..services import figure_judge, ocr
+from ..services import api_keys, figure_judge, ocr
 
 router = APIRouter(tags=["health"])
 settings = get_settings()
@@ -91,9 +91,29 @@ async def config_report() -> dict:
     }
     upstage["configured"] = upstage["api_key_set"]
 
-    judge_missing = figure_judge.missing_config()
+    # 공개판(2026-09-27): 비전 1순위는 Gemini(.env 키). 헤더 키(앱에서 입력)는
+    # 요청마다 달라 서버 진단에 담지 않는다 — 여기는 **배포가 정한 것**만 본다.
+    # 키 값은 싣지 않는다(존재 여부만). 모델명은 비밀이 아니다.
+    gemini_env = api_keys.gemini_env_configured()
+    gemini = {
+        "env_key_set": gemini_env,
+        "model": (settings.gemini_vision_model.strip() or api_keys.DEFAULT_GEMINI_MODEL)
+        if gemini_env else None,
+        "allowed_models": list(api_keys.GEMINI_VISION_MODELS),
+        "configured": gemini_env,
+        "role": "optional",
+        "note": (
+            "비어 있으면 앱에서 사용자가 직접 입력한 키로 손글씨·펜 표시 해석이 돈다. "
+            "교과서 도판 캡션은 워커에서 돌아 .env 키(또는 JUDGE_* 자체 호스팅)가 필요하다."
+        ),
+    }
+
+    judge_provider = figure_judge.provider()
+    # missing은 legacy(JUDGE_*) 갈래 기준이다 — Gemini가 대신하면 빈 목록.
+    judge_missing = [] if judge_provider == "gemini" else figure_judge.missing_config()
     judge = {
-        "configured": not judge_missing,
+        "configured": judge_provider is not None,
+        "provider": judge_provider,
         "missing": judge_missing,
         "base_url": settings.judge_base_url or None,
         "model": settings.judge_model or None,
@@ -110,8 +130,9 @@ async def config_report() -> dict:
         # 안 뜬다.** 진단이 사실보다 낙관적이면 없느니만 못하다.
         "role": "required-for-figures",
         "note": (
-            "미설정이면 교과서 도판이 **하나도** 검색에 안 뜬다(캡션 생성이 "
-            "불가하므로 전 도판이 실패). 텍스트 인덱싱과 업로드 자체는 정상이다."
+            "GEMINI_API_KEY와 JUDGE_*가 모두 비면 교과서 도판이 **하나도** 검색에 "
+            "안 뜬다(캡션 생성이 불가하므로 전 도판이 실패). 텍스트 인덱싱과 "
+            "업로드 자체는 정상이다."
         ),
     }
 
@@ -119,20 +140,22 @@ async def config_report() -> dict:
     # **실제로 부를 주소**를 싣는다(유도값인지 명시값인지가 여기서 갈린다).
     # 킬 스위치는 **오버레이**가 정한다 — config만 보면 관리자가 끈 것을
     # 진단이 모른다(점검 2026-08-06).
+    # 공개판: Gemini .env 키가 있으면 손글씨는 Gemini가 읽고 VARCO는 안 부른다.
     ocr_missing = ocr.missing_config()
     ocr_enabled = (await ocr.read_knobs())["enabled"]
     if not ocr_enabled:
         ocr_missing = [*ocr_missing, "OCR_ENABLED(관리자가 껐음)"]
     ocr_block = {
-        "configured": not ocr_missing,
-        "missing": ocr_missing,
+        "configured": gemini_env or not ocr_missing,
+        "provider": "gemini" if gemini_env else ("varco" if not ocr_missing else None),
+        "missing": [] if gemini_env else ocr_missing,
         "base_url": ocr.resolve_base_url() or None,
         "derived_from_judge": not settings.ocr_base_url.strip(),
         "enabled": ocr_enabled,
         "role": "optional",
         "note": (
-            "미설정이어도 채팅은 정상이다. 프롬프트창의 펜 입력만 '준비 중'으로 "
-            "안내된다(501)."
+            "미설정이어도 채팅은 정상이다. .env에 Gemini 키가 없어도 사용자가 앱에서 "
+            "키를 입력하면 Gemini로 읽는다. 둘 다 없으면 펜 입력만 '준비 중'(501)."
         ),
     }
 
@@ -158,6 +181,7 @@ async def config_report() -> dict:
         "upstage": upstage,
         "qdrant": qdrant,
         "storage": storage,
+        "gemini": gemini,
         "judge": judge,
         "ocr": ocr_block,
     }

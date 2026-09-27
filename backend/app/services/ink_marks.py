@@ -5,8 +5,10 @@ D176은 손글씨를 글자로 바꿨다. 그런데 학생이 하는 일은 그�
 더 자세하게 설명해줘"만 SOLAR에 보내면 **"이거"가 사라진다.** 이 모듈이 그
 지시대상을 말로 바꾼다.
 
-## judge_* 계열을 그대로 재사용한다
+## judge_* 계열을 그대로 재사용한다 — 단 Gemini가 있으면 Gemini
 
+공개판(2026-09-27)부터 Gemini 키(.env 또는 앱에서 입력한 헤더 키)가 있으면
+Gemini로 보낸다(우선순위는 `gemini_vision` 머리말). 없으면 아래 그대로
 `figure_caption`과 같은 창구(OpenAI 호환 비전, 기본 EXAONE-4.5-33B)를 쓴다.
 새 인프라가 없고, 도판 캡션과 같은 GPU에 이미 떠 있다. 손글씨 OCR은 다른
 GPU(VARCO)라 **둘이 실제로 병렬로 돈다.**
@@ -34,7 +36,7 @@ from typing import Any, NamedTuple
 import httpx
 
 from ..config import get_settings
-from . import app_settings
+from . import app_settings, gemini_vision
 from .figure_judge import image_data_uri
 
 logger = logging.getLogger("nodi.ink_marks")
@@ -358,15 +360,28 @@ async def read_card_body_max() -> int:
     )
 
 
+def legacy_configured() -> bool:
+    """자체 호스팅 비전(judge_*)의 주소·키가 있나 — Gemini가 없을 때만 쓰는 갈래."""
+    return bool(settings.judge_base_url.strip() and settings.judge_api_key.strip())
+
+
+def provider() -> str | None:
+    """"gemini" · "legacy" · None — 우선순위는 gemini_vision 머리말.
+
+    요청 경로라 헤더 키도 친다(워커 전용인 도판 캡션과 다르다).
+    """
+    return gemini_vision.pick_provider(legacy_ok=legacy_configured())
+
+
 def is_configured() -> bool:
-    """비전 창구의 **주소·키**가 있나. 안 돼 있으면 부르지 않는다(오류가 아니다).
+    """비전 창구(Gemini 키 또는 legacy 주소·키)가 있나. 없으면 부르지 않는다(오류가 아니다).
 
     ⚠️ 킬 스위치(`ink_vlm_enabled`)는 여기서 안 본다 — 그건 admin 노브라
     오버레이를 타야 하고(`read_knobs`), 이 함수는 동기라 못 읽는다. 주소·키는
     env라 config가 유일한 출처다. **둘은 성질이 다르다:** 하나는 배포가 정하고
     하나는 관리자가 지금 바꾼다.
     """
-    return bool(settings.judge_base_url.strip() and settings.judge_api_key.strip())
+    return provider() is not None
 
 
 async def read_marks(
@@ -402,6 +417,7 @@ async def read_marks(
         figure_n,
         gestures,
     )
+    use_gemini = provider() == "gemini"
     payload = {
         "model": settings.judge_model,
         "messages": messages,
@@ -415,6 +431,14 @@ async def read_marks(
     }
 
     async def _call(c: httpx.AsyncClient) -> str:
+        if use_gemini:
+            # 같은 user 메시지를 변환해 보낸다 — system을 쓰지 않는 실측 모양
+            # (그림 먼저·형식 지시 맨 끝)이 Gemini에서도 그대로 유지된다.
+            return await gemini_vision.generate(
+                gemini_vision.parts_from_openai_content(messages[0]["content"]),
+                max_output_tokens=400,
+                client=c,
+            )
         resp = await c.post(
             f"{settings.judge_base_url.rstrip('/')}/chat/completions",
             json=payload,

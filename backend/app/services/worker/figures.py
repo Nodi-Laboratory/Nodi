@@ -5,7 +5,8 @@
 생성한다(match_kind='generated'). parsed 캡션(파서 라벨)은 생성 프롬프트의
 힌트로만 쓰이고, **임베딩되는 텍스트는 생성 캡션뿐이다.** 생성 실패는 폴백
 없이 failed(caption-error) — retry(_requeue_figures)가 재생성한다. judge 계열
-(judge_*) 미설정이면 생성 자체가 불가하므로 전 행 no-caption failed.
+(judge_*)·Gemini .env 키가 모두 미설정이면 생성 자체가 불가하므로 전 행
+no-caption failed.
 
 (D103의 2단 확정 경로 — 파서 라벨 직행·비전 판정의 후보 선택 — 와
 `figure_caption_generate_enabled` 노브 분기는 D121에서 제거됐다. 롤백 수단은
@@ -88,10 +89,11 @@ async def _handle_figure_batch(svc: ServiceClient, job: dict[str, Any]) -> None:
     # ── D134: 캡션은 비전 생성 단독 — 전 pending 행이 생성 대상이다. parsed
     #    캡션(파서 라벨)은 프롬프트 힌트로만 items에 실리고, 생성 실패 시 폴백
     #    없이 caption-error failed로 확정한다(임베딩되는 것은 생성 캡션뿐).
-    #    judge 계열(judge_*) 미설정이면 생성 자체가 불가 — 전 행 no-caption failed.
+    #    비전 미설정(Gemini .env 키도 judge_*도 없음)이면 생성 자체가 불가 — 전 행
+    #    no-caption failed. 워커는 요청 헤더를 못 보므로 앱에서 입력한 키로는 안 돈다.
     if not figure_judge.is_configured():
         logger.info(
-            "judge/caption 계열 미설정 — figure %d건 생성 스킵 file=%s",
+            "캡션 비전 미설정(GEMINI_API_KEY·judge_* 모두 없음) — figure %d건 생성 스킵 file=%s",
             len(figures), file_id,
         )
         for row in figures:

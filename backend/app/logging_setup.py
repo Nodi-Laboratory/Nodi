@@ -17,7 +17,7 @@ import logging
 import sys
 
 from .config import get_settings
-from .services import figure_judge
+from .services import api_keys, figure_judge
 
 logger = logging.getLogger("nodi.startup")
 
@@ -60,7 +60,19 @@ def log_config_summary() -> None:
     logger.info("  Upstage 임베딩: %s", mark(bool(s.upstage_api_key)))
     logger.info("  Qdrant        : %s", s.qdrant_url or "MISSING")
     logger.info("  파일 저장     : %s", s.storage_root)
-    logger.info("  figure 판정   : %s", mark(figure_judge.is_configured()))
+    # 공개판(2026-09-27): 비전 1순위는 Gemini. 비어 있어도 MISSING 경고는 안 낸다 —
+    # 사용자가 앱에서 키를 입력하는 것이 정상 경로다. 키 값은 찍지 않는다.
+    gemini_env = api_keys.gemini_env_configured()
+    logger.info(
+        "  Gemini 비전   : %s",
+        f"OK   (.env, {s.gemini_vision_model.strip() or api_keys.DEFAULT_GEMINI_MODEL})"
+        if gemini_env else "앱에서 입력(.env 비어 있음)",
+    )
+    logger.info(
+        "  figure 캡션   : %s (%s)",
+        mark(figure_judge.is_configured()),
+        figure_judge.provider() or "없음",
+    )
 
     if not db_ok:
         logger.warning(
@@ -85,10 +97,10 @@ def log_config_summary() -> None:
             "RAG 전체가 동작하지 않는다."
         )
 
-    missing_judge = figure_judge.missing_config()
-    if missing_judge and s.figure_pipeline_enabled:
+    if not figure_judge.is_configured() and s.figure_pipeline_enabled:
+        # D134: 업로드는 막지 않는다 — 캡션이 없어 도판만 전부 실패한다.
         logger.warning(
-            "figure 판정 미설정(%s) — 교과서(textbook) 업로드가 503으로 거부된다. "
-            "교과서 기능을 쓰지 않는 환경이면 정상이다.",
-            ", ".join(missing_judge),
+            "figure 캡션 비전 미설정(GEMINI_API_KEY 또는 %s) — 교과서 도판이 전부 "
+            "캡션 없이 실패한다(텍스트 RAG는 정상). 교과서 기능을 쓰지 않는 환경이면 정상이다.",
+            ", ".join(figure_judge.missing_config()),
         )

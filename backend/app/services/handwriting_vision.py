@@ -18,6 +18,14 @@ VARCO는 **OCR 전용**이라 손글씨를 더 정확히 읽는다. 비전 모�
 그만큼 크다. 그래서 순서를 바꾸지 않는다: **언제나 VARCO를 먼저** 부르고,
 그쪽이 못 받을 때만 여기로 온다.
 
+## 공개판: Gemini가 있으면 Gemini가 1차다 (2026-09-27)
+
+사용자 결정으로 손글씨도 Gemini가 읽는다. Gemini 키(.env 또는 앱에서 입력한
+헤더 키)가 있으면 창구(routers/ocr·ink)가 **VARCO를 거치지 않고**
+`recognize_gemini`를 부른다. Gemini가 없을 때만 위의 VARCO → 비전 예비 순서가
+산다 — 대회 운영 배포는 해외 모델을 못 써서 그 갈래로 돈다(gemini_vision 머리말).
+프롬프트(옮겨 적기만)는 두 갈래가 **같은 것**을 쓴다.
+
 ## 지어내지 않게 하는 장치
 
 프롬프트가 하는 일은 하나다 — **옮겨 적기**. 고쳐 쓰기·풀이·번역을 금지하고,
@@ -33,7 +41,7 @@ from typing import Any
 import httpx
 
 from ..config import get_settings
-from . import ink_marks
+from . import gemini_vision, ink_marks
 from .figure_judge import image_data_uri
 
 logger = logging.getLogger("nodi.handwriting_vision")
@@ -96,7 +104,10 @@ def parse(content: str) -> str:
 
 
 def is_configured() -> bool:
-    """비전 창구가 설정돼 있나. 안 돼 있으면 예비 경로 자체가 없다."""
+    """자체 호스팅 비전 **예비** 창구(judge_*)가 설정돼 있나. 없으면 예비 경로가 없다.
+
+    Gemini 1차 경로와는 별개다 — 이건 VARCO가 못 받을 때만 쓰는 legacy 예비다.
+    """
     return bool(
         settings.ocr_vision_fallback_enabled
         and settings.judge_base_url.strip()
@@ -153,4 +164,25 @@ async def recognize(
     text = parse(content)
     if text:
         logger.info("손글씨를 비전 모델로 읽었다(예비 경로) — %d자", len(text))
+    return text
+
+
+async def recognize_gemini(png: bytes) -> str:
+    """Gemini 1차 경로 — 손글씨를 옮겨 적는다. 빈 문자열은 "못 읽었다"다.
+
+    `recognize`(예비)와 달리 **실패를 삼키지 않는다**(`GeminiError`). 여기는 1차라
+    대체할 것이 없고, 창구가 "서버가 안 된다"(502/503)와 "글씨를 못 읽었다"(200
+    빈 글자)를 갈라 보여야 한다 — VARCO 1차가 예외를 올리는 것과 같은 이유다.
+    """
+    if not png:
+        return ""
+    content = await gemini_vision.generate(
+        gemini_vision.parts_from_openai_content(build_messages(png)[0]["content"]),
+        max_output_tokens=300,
+        # 예비 경로와 같은 admin 노브(D62) — 콘솔에서 바꾸면 두 갈래가 함께 따른다.
+        timeout=(await ink_marks.read_knobs())["timeout"],
+    )
+    text = parse(content)
+    if text:
+        logger.info("손글씨를 Gemini로 읽었다 — %d자", len(text))
     return text

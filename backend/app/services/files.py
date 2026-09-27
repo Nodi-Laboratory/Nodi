@@ -172,10 +172,12 @@ async def upload_file(
     # 어느 경우에도 정상 동작하므로 교과서 업로드를 막을 이유가 없다(D103에서
     # 확립된 방침 유지). 다만 캡션이 비전 생성 단독이 되면서, 미설정이면 figure
     # 전부가 캡션 없이 실패한다(no-caption failed — env 설정 후 retry로 복구).
-    if kind == "textbook" and figure_judge.missing_config():
+    # 공개판(2026-09-27): Gemini .env 키가 있으면 JUDGE_*가 비어도 캡션이 선다
+    # (figure_judge.provider). 헤더 키는 워커에 닿지 않아 여기서 안 친다.
+    if kind == "textbook" and not figure_judge.is_configured():
         logger.info(
-            "교과서 업로드 — 비전(judge_*) 미설정(%s). figure는 전부 캡션 없이 "
-            "실패한다(텍스트 RAG는 정상, 설정 후 retry로 복구 가능).",
+            "교과서 업로드 — 비전(GEMINI_API_KEY 또는 %s) 미설정. figure는 전부 "
+            "캡션 없이 실패한다(텍스트 RAG는 정상, 설정 후 retry로 복구 가능).",
             ", ".join(figure_judge.missing_config()),
         )
     # D83: 세션 연결은 user_upload 전용 — 학급 자료는 세션에 귀속되지 않는다.

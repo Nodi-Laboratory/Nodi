@@ -5,9 +5,10 @@ D134(사용자 결정 2026-07-30)로 캡션이 **비전 생성 단독**(figure_c
 선택 로직(build_judge_messages·parse_judgment·final_embed_text·judge_all)은
 제거됐다 — 남은 것은 비전 엔드포인트 계열의 공용 인프라다:
 
-  - 설정 게이트: judge_base_url / judge_model / judge_api_key (OpenAI 호환 비전
-    엔드포인트면 무엇이든 플러그형, 기본 EXAONE-4.5). **셋 중 하나라도 비면
-    is_configured()가 False** — figure 캡션 생성이 불가하므로 워커가 전 행을
+  - 설정 게이트(공개판 2026-09-27부터 Gemini .env 키가 1순위, 아래는 legacy):
+    judge_base_url / judge_model / judge_api_key (OpenAI 호환 비전
+    엔드포인트면 무엇이든 플러그형, 기본 EXAONE-4.5). **Gemini .env 키가 없고
+    셋 중 하나라도 비면 is_configured()가 False** — figure 캡션 생성이 불가하므로 워커가 전 행을
     no-caption failed로 처리한다(텍스트 RAG는 무관, D88).
   - image_data_uri: 크롭 이미지 → OpenAI 호환 image_url 페이로드.
   - JUDGE_TIMEOUT · CIRCUIT_BREAK_THRESHOLD: 호출 타임아웃·회로차단 임계
@@ -25,6 +26,7 @@ import logging
 import httpx
 
 from ..config import get_settings
+from . import gemini_vision
 
 logger = logging.getLogger("nodi.figure_judge")
 settings = get_settings()
@@ -48,9 +50,11 @@ def image_data_uri(image_bytes: bytes, ext: str) -> str:
 
 
 def missing_config() -> list[str]:
-    """비전 호출에 필요한데 비어 있는 설정 키 이름 목록 (없으면 빈 리스트).
+    """**자체 호스팅(legacy) 비전**에 필요한데 비어 있는 설정 키 이름 (없으면 []).
 
     D97: 진단용 — /health와 부팅 경고가 "무엇이" 빠졌는지 그대로 보여준다.
+    공개판(2026-09-27)부터 1순위는 Gemini다 — 이 목록은 legacy 갈래만 말한다.
+    "캡션을 만들 수 있나"는 `is_configured()`/`provider()`가 답한다.
     """
     missing = []
     if not settings.judge_api_key.strip():
@@ -62,18 +66,28 @@ def missing_config() -> list[str]:
     return missing
 
 
+def provider() -> str | None:
+    """도판 캡션을 누가 만드나 — "gemini" · "legacy" · None.
+
+    우선순위는 `gemini_vision` 머리말(Gemini > 자체 호스팅 > 없음). 도판 캡션은
+    **워커에서** 돌아 요청 헤더를 못 보므로 Gemini는 .env 키일 때만 친다
+    (`env_only`) — 헤더 키로 "된다"고 하면 업로드 뒤 워커에서 전량 실패한다.
+    """
+    return gemini_vision.pick_provider(legacy_ok=not missing_config(), env_only=True)
+
+
 def is_configured() -> bool:
-    """비전 엔드포인트가 호출 가능한 형태로 설정됐는지.
+    """도판 캡션 비전이 호출 가능한 형태로 설정됐는지 (Gemini .env 키 또는 legacy 3종).
 
     D97: 과거에는 ``bool(judge_api_key)`` 하나만 봤다. 그 결과 **아무 문자열이나
     키 자리에 넣으면** 게이트가 열렸고, base_url이 비었거나 죽은 주소여도 업로드가
     통과한 뒤 비전 호출만 전량 실패했다 — figure 실패는 D88로 files.status와
     격리돼 있어 교사 화면에는 'indexed'로 보이고, 회로차단까지 겹쳐 잡이 빨리
-    끝나므로 정상처럼 보이는 **조용한 전멸**이 된다. 세 값을 모두 요구해
+    끝나므로 정상처럼 보이는 **조용한 전멸**이 된다. legacy는 세 값을 모두 요구해
     게이트를 실질화한다.
 
     도달성(네트워크)까지는 보지 않는다 — 부팅·업로드 경로에 외부 호출을 넣지
     않는다는 기존 방침 유지. 도달성 확인은 운영자가 /health의 judge 블록과
     부팅 경고 로그로 판단한다.
     """
-    return not missing_config()
+    return provider() is not None

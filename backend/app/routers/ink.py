@@ -43,8 +43,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 
 from ..auth.deps import CurrentUser, get_current_user
 from ..config import get_settings
-from ..services import handwriting_vision, ink_marks
+from ..services import gemini_vision, handwriting_vision, ink_marks
 from ..services import ocr as svc
+from .ocr import UNCONFIGURED_DETAIL, gemini_error_to_http
 
 logger = logging.getLogger("nodi.ink")
 router = APIRouter(prefix="/ink", tags=["ink"])
@@ -189,12 +190,16 @@ async def interpret_ink(
 
     **로그인을 요구한다.** 모델 서버들은 인증이 없어 이 창구가 GPU 앞의 문이다.
     """
-    # 주소만이 아니라 **킬 스위치까지** 본다 (D62 점검 2026-08-06).
-    # `is_configured()`는 env만 보므로, 관리자가 꺼도 통과했다.
-    if not await svc.is_available():
+    # 제공자 우선순위(gemini_vision 머리말): Gemini 키가 있으면 손글씨는 Gemini
+    # 단독이고 VARCO를 거치지 않는다. 없을 때만 VARCO(+비전 예비)가 1차다.
+    use_gemini = gemini_vision.is_configured()
+    # VARCO 쪽은 주소만이 아니라 **킬 스위치까지** 본다 (D62 점검 2026-08-06).
+    # `is_configured()`는 env만 보므로, 관리자가 꺼도 통과했다. 킬 스위치는
+    # VARCO 서버 점검용이라 Gemini 갈래에는 걸지 않는다.
+    if not use_gemini and not await svc.is_available():
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="필기 인식이 아직 준비되지 않았습니다.",
+            detail=UNCONFIGURED_DETAIL,
         )
 
     ink_bytes = await _read(ink_png, label="손글씨")
@@ -226,7 +231,14 @@ async def interpret_ink(
         그런데 같은 화면의 표시 해석은 멀쩡히 돌고 있었다(다른 GPU).
 
         **순서를 바꾸지 않는다.** 예비 경로가 먼저 돌면 품질이 조용히 내려간다.
+
+        공개판: Gemini 키가 있으면 Gemini가 읽고 끝이다(`gemini`). 실패는
+        GeminiError로 올라가 아래에서 VARCO와 같은 502/503 갈래로 바뀐다.
         """
+        nonlocal text_source
+        if use_gemini:
+            text_source = "gemini"
+            return await handwriting_vision.recognize_gemini(ink_bytes)
         try:
             return await svc.recognize(
                 ink_bytes,
@@ -234,7 +246,6 @@ async def interpret_ink(
                 content_type=ink_png.content_type or "image/png",
             )
         except (svc.OcrUnavailable, svc.OcrUpstreamError, svc.OcrBusy):
-            nonlocal text_source
             text_source = "unavailable"
             if not handwriting_vision.is_configured():
                 raise
@@ -279,10 +290,12 @@ async def interpret_ink(
     # OCR 실패는 다르다 — 질문 자체를 못 얻은 것이라 대체할 것이 없다.
     # 갈래는 /ocr/handwriting과 **같아야 한다**(프론트가 한 문구 표로 읽는다).
     if isinstance(text_res, BaseException):
+        if isinstance(text_res, gemini_vision.GeminiError):
+            raise gemini_error_to_http(text_res) from None
         if isinstance(text_res, svc.OcrUnavailable):
             raise HTTPException(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                detail="필기 인식이 아직 준비되지 않았습니다.",
+                detail=UNCONFIGURED_DETAIL,
             ) from None
         if isinstance(text_res, svc.OcrBusy):
             raise HTTPException(
@@ -304,7 +317,8 @@ async def interpret_ink(
         # **왜 비었는지**를 함께 준다 — 빈 설명만으로는 꺼짐·미설정·오류를
         # 구분할 수 없고, 그러면 관리자 실험실이 "왜 안 읽혔나"에 답을 못 한다.
         "marks_status": marks_status,
-        # 글자를 어느 길로 읽었나 — `varco`(전용) · `vision_fallback`(예비).
+        # 글자를 어느 길로 읽었나 — `gemini`(공개판 1차) · `varco`(전용) ·
+        # `vision_fallback`(예비).
         # 예비가 도는 것은 **고장 신호**다: 학생에게는 안 보이지만 정확도가
         # 내려가 있으므로 관리자가 알아야 한다.
         "text_source": text_source,

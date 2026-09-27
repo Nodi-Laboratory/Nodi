@@ -1,8 +1,12 @@
 """교과서 figure 캡션 비전 생성(D131·D134) — 캡션의 유일한 확정 경로.
 
-페이지 본문을 컨텍스트로 캡션을 직접 '생성'한다. 잘라낸 figure 이미지(base64)와
-페이지 텍스트·parsed 캡션(파서 라벨 힌트)·alt를 judge_* 비전 엔드포인트
-(OpenAI 호환, 기본 EXAONE-4.5)에 보내 검색용 캡션 한두 문장을 받는다.
+페이지 본문을 컨텍스트로 캡션을 직접 '생성'한다. 공개판(2026-09-27)부터
+**Gemini(.env 키)가 1순위**이고, 없을 때만 아래 judge_* 자체 호스팅으로 간다
+(대회 운영 배포는 Gemini 없이 EXAONE으로 돈다 — gemini_vision 머리말).
+
+잘라낸 figure 이미지(base64)와 페이지 텍스트·parsed 캡션(파서 라벨 힌트)·alt를
+비전 모델(Gemini, 또는 judge_* OpenAI 호환 엔드포인트 — 기본 EXAONE-4.5)에 보내
+검색용 캡션 한두 문장을 받는다.
 D134(사용자 결정 2026-07-30): 구 선택 경로(D93/D103 — 후보 top-K 중 판정이
 선택)는 제거됐고, 임베딩되는 캡션은 이 모듈의 생성 결과뿐이다.
 
@@ -25,6 +29,7 @@ from collections.abc import Awaitable, Callable
 import httpx
 
 from ..config import get_settings
+from . import figure_judge, gemini_vision
 
 # figure_judge와 같은 판정 계열 — 유틸은 임포트해 재사용한다(복제 금지, D131).
 from .figure_judge import (
@@ -118,11 +123,25 @@ async def _call_caption(
     image_bytes: bytes,
     ext: str,
 ) -> str:
+    messages = build_caption_messages(
+        page_text, parsed_caption, alt, image_data_uri(image_bytes, ext)
+    )
+    # 공개판(2026-09-27): Gemini .env 키가 있으면 Gemini, 없으면 judge_* legacy
+    # (우선순위는 gemini_vision 머리말). **프롬프트는 같은 메시지를 변환해 쓴다** —
+    # 두 벌로 두면 한쪽만 고쳐지는 날이 온다.
+    if figure_judge.provider() == "gemini":
+        content = await gemini_vision.generate(
+            gemini_vision.parts_from_openai_content(messages[0]["content"]),
+            max_output_tokens=512,
+            client=client,
+        )
+        if not content:
+            # 빈 응답·안전 차단 — legacy의 content 없음과 같은 갈래(1회 재시도 후 None).
+            raise ValueError("Gemini 캡션 응답이 비었다")
+        return content
     payload = {
         "model": settings.judge_model,
-        "messages": build_caption_messages(
-            page_text, parsed_caption, alt, image_data_uri(image_bytes, ext)
-        ),
+        "messages": messages,
         # EXAONE 4.5 권장 파라미터(judge와 동일 계열) — thinking off로 빠른 생성.
         "max_tokens": 512,
         "temperature": 1.0,
