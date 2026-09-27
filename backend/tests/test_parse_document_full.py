@@ -61,6 +61,10 @@ async def test_parse_single_payload_sends_figures_form_and_returns_payload(monke
             upstage_document_parse_model="document-parse",
         ),
     )
+    # 키는 api_keys가 해석한다(.env 우선, 없으면 요청 헤더) — 모듈 settings를
+    # 바꿔 끼워도 거기에는 안 닿으므로 따로 준다. 안 주면 개발자 .env에 키가
+    # 있을 때만 통과하고 CI(키 없음)에서 깨진다.
+    monkeypatch.setattr(U.api_keys, "upstage_key", lambda: "test-key")
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
