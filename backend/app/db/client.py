@@ -552,7 +552,7 @@ class UserClient(_BaseClient):
 
 
 class ServiceClient(_BaseClient):
-    """워커·인증 경로 — RLS를 우회한다(구 service_role).
+    """워커·인증 경로 — RLS를 우회한다.
 
     파일 저장 메서드는 시그니처를 그대로 유지한다 — 호출부가
     `svc.storage_upload(bucket, path, data, mime)` 형태로 쓴다.
@@ -578,7 +578,7 @@ class ServiceClient(_BaseClient):
 
 
 def get_service_client() -> ServiceClient | None:
-    """워커 클라이언트. 워커 DSN이 없으면 None(구 service_role 부재와 동형).
+    """워커 클라이언트. 워커 DSN이 없으면 None.
 
     호출부는 None을 "이 기능 비활성"으로 해석해 503을 낸다 — 그 계약을 유지한다.
     """

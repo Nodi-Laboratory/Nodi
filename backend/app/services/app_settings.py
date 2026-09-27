@@ -6,7 +6,7 @@ runtime historically read ONLY `config.py`, so admin edits had no live effect
 call site resolves its value as **per-request override > app_settings overlay >
 config default**.
 
-`get_overlay()` returns `{key: value}` for all rows via the service-role client
+`get_overlay()` returns `{key: value}` for all rows via the worker client
 (app_settings is admin-RLS, so a user JWT can't read it — same reason me.py uses
 the service client). A short TTL cache avoids a DB read every chat turn; admin
 PUTs call `bust_cache()` for same-process instant reflection (multi-process /

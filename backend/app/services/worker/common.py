@@ -111,7 +111,7 @@ async def _qdrant_delete_file_points(
 ) -> None:
     """재분할·삭제 전 해당 파일의 기존 Qdrant 포인트 정리 — best-effort.
 
-    스테일 포인트가 남아도 본문 없는 페이로드뿐이고 검색 후 Supabase 재조회
+    스테일 포인트가 남아도 본문 없는 페이로드뿐이고 검색 후 Postgres 재조회
     (RLS)에서 걸러지지만, 무한히 쌓이지 않도록 여기서 지운다. collection 기본값은
     file_chunks(기존 호출부·테스트 하위호환) — textbook figure 경로는
     COL_TEXTBOOK_FIGURES를 넘겨 figure 임베딩 포인트를 정리한다(D86).

@@ -169,7 +169,7 @@ async def delete_file(
     if service is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="File operations are disabled (service-role key not configured).",
+            detail="File operations are disabled (worker DSN not configured).",
         )
     client = UserClient.from_user(user)
     await svc.delete_file(service, client, user.id, file_id)
@@ -185,7 +185,7 @@ async def retry_file(
     if service is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="File operations are disabled (service-role key not configured).",
+            detail="File operations are disabled (worker DSN not configured).",
         )
     client = UserClient.from_user(user)
     action = await svc.retry_file(service, client, user.id, file_id)
@@ -219,7 +219,7 @@ async def get_figure(
     노드 재수화 시 이 창구로 새 signed URL을 받는다.
 
     UserClient로 textbook_figures 1행 조회 — RLS(0038)가 소유자/학급 구성원 접근을
-    재검증(없거나 접근 불가면 404). 서명은 service-role 필요 — 미설정·발급 실패 시
+    재검증(없거나 접근 불가면 404). 서명은 워커 설정 필요 — 미설정·발급 실패 시
     404로 뭉개지 않고 503(서비스 미구성, 기존 라우터의 서비스롤 부재 관례).
     `/figures/{id}`는 2세그먼트라 1세그먼트 `/{file_id}`에 삼켜지지 않는다.
     반환: {figure_id, url, caption, page}.
@@ -246,7 +246,7 @@ async def get_figure(
     if not url:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Figure URL signing is unavailable (service-role key not configured).",
+            detail="Figure URL signing is unavailable (worker DSN not configured).",
         )
     return {
         "figure_id": row.get("id"),

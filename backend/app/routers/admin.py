@@ -1,7 +1,7 @@
 """운영 콘솔 엔드포인트 — 전부 admin 전용.
 
 관리자 **본인의 JWT**로 admin RLS 정책과 SECURITY DEFINER RPC를 탄다
-(service_role을 쓰지 않는다). 즉 콘솔이 넓게 보는 것도 DB가 허락한 만큼이다 —
+(워커 권한을 쓰지 않는다). 즉 콘솔이 넓게 보는 것도 DB가 허락한 만큼이다 —
 "권한은 DB가 강제한다"(D104)를 콘솔이라고 우회하지 않는다.
 
 D113에서 이 콘솔이 서비스 전체를 관측하는 창구가 됐다:
@@ -205,8 +205,7 @@ async def list_logs(
 ) -> dict[str, Any]:
     """Chat turn logs (`ai_logs`): system prompt, Q/A, used contexts, skill
     calls, errors, token estimate. user/date filters + pagination, newest first.
-    The frontend live-appends new turns via Supabase Realtime and pages history
-    through this endpoint."""
+    The frontend pages history through this endpoint."""
     client = UserClient.from_user(user)
     params: dict[str, str] = {
         "select": _LOG_SELECT,

@@ -1,4 +1,4 @@
-// Supabase 도메인 타입 (Stage 0 — 인증/공간/프로필 범위)
+// 도메인 타입 (Stage 0 — 인증/공간/프로필 범위)
 
 export interface Profile {
   id: string;

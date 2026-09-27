@@ -3,7 +3,7 @@
 D97: `/health/config`는 **환경 자가진단 창구**다. 신규 팀원이 자기 `.env`에
 무엇이 빠졌는지 브라우저 한 번으로 확인한다.
 
-D104: Supabase 3종(url/anon/service_role) 대신 Postgres DSN 2종을 본다.
+D104: Postgres DSN 2종(app·worker)을 본다.
 
 **비밀값은 절대 노출하지 않는다** — 존재 여부(bool)와 비밀이 아닌 URL·모델명만.
 네트워크 도달성도 확인하지 않는다(헬스 경로에 외부 호출 금지).
@@ -60,7 +60,7 @@ async def config_report() -> dict:
     """
     database = {
         "app_dsn_set": bool(settings.database_url),
-        # 미설정이면 업로드·임베딩 워커가 전부 503 (구 service_role 부재와 동형).
+        # 미설정이면 업로드·임베딩 워커가 전부 503.
         "worker_dsn_set": bool(settings.database_worker_url),
         "host": _dsn_host(settings.database_url),
     }

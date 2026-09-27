@@ -1,9 +1,8 @@
 /**
  * 내 프로필 · 가입 학급 (D104-7).
  *
- * 구성에서는 프론트가 Supabase 클라이언트로 **DB를 직접 조회**했다(profiles·
- * class_members). Supabase를 걷어내면서 그 경로가 사라졌으므로 백엔드 API를
- * 거친다 — 권한 판정이 서버 한 곳으로 모이는 부수 효과도 있다.
+ * 프론트는 DB에 직접 접근하지 않고 백엔드 API를 거친다 — 권한 판정이 서버
+ * 한 곳(RLS)에 모인다.
  */
 import type { MyClass, Profile } from "@/lib/types";
 import { API_BASE, authHeaders, ensureOk } from "./_core";

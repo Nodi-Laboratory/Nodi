@@ -3,7 +3,7 @@
 구 PostgREST 구성의 UserClient/ServiceClient 구분을 **DB 역할**로 재현한다.
 
   nodi_app     RLS 적용. 사용자 요청 경로. 트랜잭션마다 `SET LOCAL app.user_id`.
-  nodi_worker  BYPASSRLS. 백그라운드 워커·인증(구 service_role).
+  nodi_worker  BYPASSRLS. 백그라운드 워커·인증.
 
 **사용자 스코프 커넥션은 반드시 `user_conn()`으로만 얻는다.** 이 함수가
 트랜잭션 시작과 `SET LOCAL`을 한 묶음으로 보장한다. 풀에서 직접 acquire하면
@@ -50,7 +50,7 @@ async def get_app_pool() -> asyncpg.Pool:
 
 
 async def get_worker_pool() -> asyncpg.Pool | None:
-    """BYPASSRLS 워커용 풀. DSN 미설정이면 None(구 service_role 부재와 동형)."""
+    """BYPASSRLS 워커용 풀. DSN 미설정이면 None."""
     global _worker_pool
     if not settings.database_worker_url:
         return None

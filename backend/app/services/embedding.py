@@ -4,7 +4,7 @@
 문서=embedding-passage), 배치 분할·재시도·L2 정규화 포함. 기존 호출부 호환을
 위해 Gemini식 task_type 파라미터를 유지하고 kind로 매핑한다.
 
-벡터는 더 이상 Supabase에 저장하지 않는다(Qdrant 이전, migration 0028) —
+벡터는 Postgres가 아니라 Qdrant에 저장한다(migration 0028) —
 과거 vector(768) 컬럼 계약 상수(DB_VECTOR_DIM)와 차원 가드는 폐기. 차원
 검증은 upstage.embed_texts(EMBED_DIM)와 Qdrant 컬렉션이 수행한다.
 """

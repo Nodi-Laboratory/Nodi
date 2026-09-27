@@ -96,7 +96,7 @@ def test_figure_item_shape():
     assert "score" not in FIG.figure_item(FIG_ROW, "https://signed")
 
 
-# --- sign_figure_url (service-role 발급/강등) --------------------------------
+# --- sign_figure_url (워커 발급/강등) --------------------------------
 
 
 @pytest.mark.asyncio

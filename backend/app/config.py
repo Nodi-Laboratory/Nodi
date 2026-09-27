@@ -13,16 +13,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/config.py -> parents[0]=app, [1]=backend, [2]=repo root
 REPO_ROOT = Path(__file__).resolve().parents[2]
-# 설정은 backend 폴더 내부의 .env를 읽는다(루트 .env 아님). 전체 설정(Supabase·
+# 설정은 backend 폴더 내부의 .env를 읽는다(루트 .env 아님). 전체 설정(Postgres·
 # Upstage·Qdrant·JUDGE 등)이 backend/.env에 있다.
 BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 
 class Settings(BaseSettings):
-    # --- Postgres (D104: Supabase 제거) ---
+    # --- Postgres (D104) ---
     # 두 DSN이 **역할이 다르다** — 구 UserClient/ServiceClient 구분을 DB 역할로
     # 재현한 것이다. app은 RLS가 적용되고, worker는 BYPASSRLS다.
-    # worker DSN이 비면 업로드·임베딩 워커가 비활성(구 service_role 부재와 동형).
+    # worker DSN이 비면 업로드·임베딩 워커가 비활성.
     database_url: str = "postgresql://nodi_app:nodi_app_dev@localhost:5433/nodi"
     database_worker_url: str = (
         "postgresql://nodi_worker:nodi_worker_dev@localhost:5433/nodi"
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
 
     # --- 파일 저장 (D104-5) ---
-    # Supabase Storage 대체. 컨테이너·경로 규약은 그대로 유지한다.
+    # 로컬 파일시스템. 컨테이너(버킷)·경로 규약은 db/storage.py가 정한다.
     storage_root: str = str(REPO_ROOT / "backend" / ".storage")
     # signed URL 서명 키(HMAC). 비면 jwt_secret을 쓴다.
     storage_sign_secret: str = ""
@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     # Text chunking.
     chunk_size_chars: int = 1200
     chunk_overlap_chars: int = 150
-    # Supabase Storage bucket for uploaded files.
+    # Storage container (top-level folder) for uploaded files.
     storage_bucket: str = "files"
     # Upper bound on a single uploaded file (bytes) — guard before processing.
     # D77: 학생·개인 업로드 25→50MB 상향(2026-07-15 사용자 결정).

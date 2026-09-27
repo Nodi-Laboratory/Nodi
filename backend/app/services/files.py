@@ -1,7 +1,7 @@
 """File upload + registration (Stage 3b-1).
 
 Upload writes to Storage and inserts the `files` row + an `embedding_split` job
-via the service-role client (the worker pipeline needs service_role anyway).
+via the worker client (the worker pipeline needs it anyway).
 owner_id is set explicitly to the caller, preserving isolation. List/get are
 request-time reads and use the caller's RLS-scoped UserClient.
 """
@@ -30,8 +30,8 @@ FILE_SELECT = (
     "session_id,context_chars,created_at,updated_at"
 )
 
-# D79: 스토리지 키에 허용되는 ASCII 문자 — Supabase Storage는 비ASCII 키를
-# InvalidKey(400)로 거부한다(2026-07-15 라이브 실측: 한글 키는 NFC/NFD 불문 전부
+# D79: 스토리지 키에 허용되는 ASCII 문자 — 옛 저장소(D104 이전)가 비ASCII 키를
+# InvalidKey(400)로 거부했다(2026-07-15 라이브 실측: 한글 키는 NFC/NFD 불문 전부
 # 거부, ASCII는 공백·괄호 포함 허용). 이 집합 밖 문자는 키에서 `_`로 치환한다.
 _STORAGE_KEY_DISALLOWED = re.compile(r"[^A-Za-z0-9._()\- ]")
 
@@ -40,7 +40,7 @@ def _storage_key_name(filename: str | None, ext: str) -> str:
     """스토리지 키용 ASCII-only 파일명(D79). 원본 stem에서 허용 문자만 남기고
     나머지는 `_`로 치환→연속 `_` 축약→앞뒤 공백·`.` strip→100자 cap, 빈 stem은
     "file"로 대체한 뒤 D75에서 검증된 소문자 `ext`를 붙여 재조립한다. 결과 키는
-    항상 ASCII-only가 되어 Supabase Storage의 InvalidKey(400)를 피한다.
+    항상 ASCII-only다(파일시스템·URL 어디서든 안전).
     (표시용 원본 파일명은 files.name에 별도 보존 — 사용자에겐 원본이 노출된다.)"""
     raw = filename or ""
     stem = raw.rsplit(".", 1)[0]  # 확장자 제거(점 없으면 원문 그대로)

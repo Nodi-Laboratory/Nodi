@@ -9,7 +9,7 @@ class_material 파일을 링크 없이 검색 후보로 삼아 질의를 임베�
 ("[학급 자료에서 참고]")으로 주입한다. 개인 공간·비학급 세션엔 주입 없음.
 
 Qdrant는 신뢰 경계가 아니다 — 히트한 chunk_id의 본문/메타는 반드시 USER
-스코프 클라이언트로 Supabase에서 재조회해 RLS가 접근(소유/클래스 자료)을
+스코프 클라이언트로 Postgres에서 재조회해 RLS가 접근(소유/클래스 자료)을
 재검증한다(교차 유저 유출 불변식 유지).
 
 Best-effort: any failure -> no RAG context, never blocks the turn.
@@ -37,7 +37,7 @@ def _file_basename(storage_path: str | None) -> str:
 async def search(
     client: UserClient, file_ids: list[str], query: str, k: int | None = None
 ) -> list[dict[str, Any]]:
-    """Qdrant 코사인 top-K -> Supabase 본문 재조회(RLS) -> 구 RPC 호환 rows.
+    """Qdrant 코사인 top-K -> Postgres 본문 재조회(RLS) -> 구 RPC 호환 rows.
 
     반환 shape: {file_id, chunk_id, seq, chunk_text, distance}.
     Qdrant는 유사도(score, 높을수록 유사)를 주므로 distance = 1 - score로

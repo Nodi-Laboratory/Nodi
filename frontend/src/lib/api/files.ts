@@ -8,7 +8,7 @@ import type {
 
 // ── 파일 / RAG (Stage 3b) ────────────────────────────────────────────
 
-/** 멀티파트 업로드. service_role 미설정 시 백엔드 503. (Content-Type 미지정 — FormData가 boundary 설정) */
+/** 멀티파트 업로드. 워커 DSN·.env Upstage 키가 없으면 백엔드 503. (Content-Type 미지정 — FormData가 boundary 설정) */
 export async function uploadFile(
   target: SpaceTarget,
   file: File,
@@ -62,7 +62,7 @@ export async function getFile(id: string): Promise<FileRow> {
   return res.json();
 }
 
-/** 파일 삭제(3b-3). 204. service_role 미설정 시 503. */
+/** 파일 삭제(3b-3). 204. 워커 DSN 미설정 시 503. */
 export async function deleteFile(id: string): Promise<void> {
   await ensureOk(
     await fetch(`${API_BASE}/files/${id}`, {

@@ -1,4 +1,4 @@
-"""파일 저장 — 로컬 파일시스템 (D104-5, 구 Supabase Storage 대체).
+"""파일 저장 — 로컬 파일시스템 (D104-5).
 
 버킷·경로 규약은 그대로 유지한다(`<bucket>/<owner>/<file>/…`) — 호출부와 DB에
 저장된 `storage_path`·`image_path` 값이 그대로 유효하다.

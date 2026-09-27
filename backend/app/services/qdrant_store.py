@@ -2,7 +2,7 @@
 
 Qdrant에는 RLS가 없다 — 신뢰 경계가 아니다. file_chunks 페이로드는
 {chunk_id, file_id, owner_id}만 저장(본문 없음)하고, 청크 텍스트는 검색 후
-USER 스코프 Supabase 클라이언트로 다시 조회해 RLS가 접근을 재검증한다.
+USER 스코프 DB 클라이언트로 다시 조회해 RLS가 접근을 재검증한다.
 스코핑은 호출부가 file_ids 페이로드 필터로 강제한다.
 컬렉션은 file_chunks(자료 청크)와 textbook_figures(교과서 도판) 둘뿐이다.
 ebs/art_assets는 D94, canvas_cards는 D105로 제거됐다 — 카드 좌표·제목을

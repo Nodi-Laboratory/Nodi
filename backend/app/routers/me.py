@@ -137,9 +137,7 @@ async def get_me(profile: Profile = Depends(get_current_profile)) -> Profile:
 async def get_me_classes(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
     """가입한 학급 목록.
 
-    D104: 구성에서는 프론트가 Supabase 클라이언트로 class_members를 직접
-    조회했다. 그 경로가 사라져 API로 옮긴다 — RLS가 계속 스코프하므로 남의
-    학급은 애초에 조회되지 않는다.
+    RLS가 스코프하므로 남의 학급은 애초에 조회되지 않는다(D104).
     """
     client = UserClient.from_user(user)
     rows = await client.select(

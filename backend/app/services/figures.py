@@ -1,7 +1,7 @@
 """교과서 figure 표시·서명 공용 헬퍼 (TASK 4, D87).
 
 /retrieve figures 레그와 GET /files/figures/{id} 재수화 엔드포인트가 공유한다.
-signed URL은 영속하지 않고(D87) 요청 시 발급 — service-role 미설정·발급 실패 시
+signed URL은 영속하지 않고(D87) 요청 시 발급 — 워커 미설정·발급 실패 시
 None으로 강등해 호출부가 best-effort로 처리한다(url 없는 figure 노드 방지).
 """
 
@@ -69,10 +69,10 @@ async def figure_bytes(row: dict[str, Any]) -> tuple[bytes, str] | None:
 
 
 async def sign_figure_url(row: dict[str, Any]) -> str | None:
-    """image_path에 signed URL 발급(D87). service-role 미설정·발급 실패 시 None —
+    """image_path에 signed URL 발급(D87). 워커 미설정·발급 실패 시 None —
     호출부가 best-effort로 처리한다. TTL=settings.figure_signed_url_ttl_seconds.
 
-    서명은 service-role 필요(Storage sign RPC) — RLS 재조회로 접근을 이미
+    서명은 워커 설정 필요(storage.sign) — RLS 재조회로 접근을 이미
     검증한 행에 한해 호출된다(신뢰 경계는 textbook_figures 재조회가 담당).
     """
     path = row.get("image_path")

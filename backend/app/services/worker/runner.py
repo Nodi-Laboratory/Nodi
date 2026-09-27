@@ -27,7 +27,7 @@ _poll_lock = asyncio.Lock()
 
 
 async def requeue_file(svc: ServiceClient, file_id: str) -> str:
-    """Re-process a failed/partial/stuck file (idempotent). service_role.
+    """Re-process a failed/partial/stuck file (idempotent). Worker client.
 
     - no chunks  -> reset and enqueue a fresh embedding_split job;
     - has chunks -> reset failed chunks to pending and fan out fresh
@@ -184,10 +184,10 @@ async def _sweep_retention() -> None:
 
 
 def start(_app: object | None = None) -> None:
-    """Start the polling scheduler if a service-role client is available."""
+    """Start the polling scheduler if a worker client is available."""
     global _scheduler
     if get_service_client() is None:
-        logger.warning("Embedding worker NOT started (no service-role key).")
+        logger.warning("Embedding worker NOT started (DATABASE_WORKER_URL not configured).")
         return
     if _scheduler is not None:
         return

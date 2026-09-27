@@ -50,5 +50,5 @@ Thumbs.db
 .playwright-cli/
 
 
-# 로컬 파일 저장소 (D104: 구 Supabase Storage 대체 — 업로드 파일)
+# 로컬 파일 저장소 (D104 — 업로드 파일)
 backend/.storage/

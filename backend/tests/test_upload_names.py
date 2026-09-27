@@ -1,7 +1,6 @@
 """D79 — 스토리지 키 ASCII 강제 + 원본 파일명 name 컬럼 보존 테스트.
 
-한글/공백/괄호가 섞인 파일명이라도 스토리지 키는 ASCII-only가 되어 Supabase
-Storage의 InvalidKey(400)를 피하고, 표시명(NFC 원본)은 files.name에 보존된다.
+한글/공백/괄호가 섞인 파일명이라도 스토리지 키는 ASCII-only가 되고, 표시명(NFC 원본)은 files.name에 보존된다.
 storage_upload 실패는 500 트레이스 대신 502로 변환된다.
 """
 

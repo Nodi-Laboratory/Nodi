@@ -3,7 +3,7 @@
 delete_file은 Storage 객체 + delete_file_cascade RPC(Postgres)만 지우고 Qdrant
 벡터를 남겨 오펀이 무한 누적되던 누수를 막는다. 정리는 best-effort — 실패해도
 삭제 자체는 성공해야 한다(예외 무전파). 외부 의존(Qdrant 클라이언트)만
-monkeypatch하고 Supabase 클라이언트는 최소 대역으로 대체한다.
+monkeypatch하고 DB 클라이언트는 최소 대역으로 대체한다.
 """
 
 import pytest
