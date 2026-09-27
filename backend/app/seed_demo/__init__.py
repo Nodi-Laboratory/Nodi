@@ -673,8 +673,13 @@ async def _load_vectors_best_effort(attempts: int = 5, wait_s: float = 3.0) -> N
                 print(f"  Qdrant 적재 재시도 {i}/{attempts - 1} ({type(exc).__name__})")
                 await asyncio.sleep(wait_s)
                 continue
-            logger.warning("Qdrant 적재 실패 — DB 시드는 유지, 다음 기동 때 다시 시도", exc_info=True)
-            print(f"  경고: Qdrant 적재 실패({type(exc).__name__}) — 검색은 빈손, 다음 기동 때 재시도")
+            logger.warning(
+                "Qdrant 적재 실패 — DB 시드는 유지, 다음 기동 때 다시 시도", exc_info=True
+            )
+            print(
+                f"  경고: Qdrant 적재 실패({type(exc).__name__})"
+                " — 검색은 빈손, 다음 기동 때 재시도"
+            )
 
 
 async def _ensure_vectors() -> None:
