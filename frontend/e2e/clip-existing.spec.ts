@@ -14,7 +14,7 @@ import { E2E_EMAIL, E2E_PASSWORD } from "./helpers";
 test("지난 대화의 클립 카드도 정사각형 + 썸네일로 뜬다", async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto("/login");
-  await page.locator('input[name="email"]').fill(E2E_EMAIL);
+  await page.locator('input[name="username"]').fill(E2E_EMAIL);
   await page.locator('input[name="password"]').fill(E2E_PASSWORD);
   await page.getByRole("button", { name: "로그인" }).click();
   await page.waitForURL(/\/(onboarding|home|space)/);

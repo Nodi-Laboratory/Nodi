@@ -4,27 +4,21 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { authErrorMessage, getProfile, login } from "@/lib/api";
-import { saveToken } from "@/lib/session";
 import { AuthShell, AuthSwitch, Field } from "@/components/auth/AuthForm";
 import { roleHome } from "@/lib/roleHome";
 
 /**
- * 로그인 — 이메일/비밀번호 (D99).
+ * 로그인 — 아이디(또는 이메일) + 비밀번호 (D99, 공개판 2026-09-27).
  *
- * Google OAuth를 제거했다. 과거에는 signInWithOAuth → /auth/callback에서
- * role·onboarded를 읽어 분기했는데, 콜백 라우트가 사라졌으므로 그 분기를
- * 여기서 한다: admin→/admin, teacher→/teacher, student→onboarded?/home:/onboarding.
- *
- * 온보딩 미완료 학생을 로그아웃시키던 과거 동작(e49d84d)은 없앴다. 그건 OAuth
- * 왕복 중에는 온보딩 화면으로 보낼 방법이 마땅치 않아 생긴 우회였는데, 이제는
- * 세션을 그대로 두고 /onboarding으로 보내면 된다.
+ * 로그인 뒤 역할로 분기한다: admin→/admin, teacher→/teacher,
+ * student→onboarded?/home:/onboarding.
  */
 function LoginContent() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
 
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,9 +31,8 @@ function LoginContent() {
     setPending(true);
 
     try {
-      const auth = await login(email.trim(), password);
-      // 토큰을 먼저 저장해야 이어지는 프로필 조회가 인증된다.
-      saveToken(auth.access_token, auth.expires_in);
+      // 성공하면 서버가 httpOnly 세션 쿠키를 심는다 — 이어지는 조회가 인증된다.
+      await login(identifier.trim(), password);
       // 캐시에 이전 계정 흔적이 남지 않도록 비우고 이동한다.
       queryClient.clear();
 
@@ -54,7 +47,7 @@ function LoginContent() {
       // 서버가 계정 없음과 비밀번호 불일치를 같은 401로 준다(계정 존재 여부
       // 노출 방지) — 프론트에서 다시 갈라 쓰지 않는다.
       setError(
-        authErrorMessage(err, "이메일 또는 비밀번호가 올바르지 않습니다."),
+        authErrorMessage(err, "아이디(이메일) 또는 비밀번호가 올바르지 않습니다."),
       );
       setPending(false);
     }
@@ -68,7 +61,7 @@ function LoginContent() {
       submitLabel="로그인"
       pendingLabel="로그인 중…"
       pending={pending}
-      disabled={!email.trim() || !password}
+      disabled={!identifier.trim() || !password}
       error={error}
       notice={error ? null : notice}
       footer={
@@ -80,13 +73,13 @@ function LoginContent() {
       }
     >
       <Field
-        label="이메일"
-        type="email"
-        name="email"
-        autoComplete="email"
-        placeholder="you@example.com"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
+        label="아이디 또는 이메일"
+        type="text"
+        name="username"
+        autoComplete="username"
+        placeholder="demo 또는 you@example.com"
+        value={identifier}
+        onChange={(e) => setIdentifier(e.target.value)}
         required
       />
       <Field

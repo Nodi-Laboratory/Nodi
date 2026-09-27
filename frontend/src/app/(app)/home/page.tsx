@@ -12,6 +12,8 @@ import { createSession } from "@/lib/api";
 import type { ConceptNode } from "@/lib/api/conceptMap";
 import { VeilShader } from "@/components/home/VeilShader";
 import { PAGE_BG } from "@/lib/ui/surface";
+import { useAiReadiness } from "@/lib/aiConfig";
+import { AiKeyNotice } from "@/components/settings/AiKeyNotice";
 
 /** 비어 있는 집합 하나를 재사용한다 — 렌더마다 새로 만들면 지도 memo가 깨진다. */
 const NO_HIDDEN: ReadonlySet<string> = new Set<string>();
@@ -48,6 +50,9 @@ export default function HomePage() {
   const setPendingSession = useWorkspaceStore((s) => s.setPendingSession);
 
   const [question, setQuestion] = useState("");
+  // 키가 없으면 질문 입력만 잠근다 — 지도·세션 이동은 그대로(공개판 C 분류).
+  const ai = useAiReadiness();
+  const chatLocked = ai.loaded && !ai.chatReady;
   const [starting, setStarting] = useState(false);
   /** 새 대화를 못 연 이유. 조용히 넘어가지 않는다(아래 `startChat` 참조). */
   const [startError, setStartError] = useState<string | null>(null);
@@ -313,13 +318,13 @@ export default function HomePage() {
                     onChange={(e) => setQuestion(e.target.value)}
                     placeholder="궁금한 내용을 입력하세요..."
                     aria-label="질문 입력"
-                    disabled={starting}
+                    disabled={starting || chatLocked}
                     className="min-w-0 flex-1 bg-transparent text-[18px] text-fg outline-none placeholder:text-fg-muted"
                   />
                   <button
                     type="submit"
                     aria-label="보내기"
-                    disabled={!question.trim() || starting}
+                    disabled={!question.trim() || starting || chatLocked}
                     className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent-deep text-accent-fg transition-opacity disabled:opacity-40"
                   >
                     {starting ? (
@@ -332,6 +337,13 @@ export default function HomePage() {
 
                 {/* 실패는 입력창 **바로 아래**에 붙는다 — 방금 누른 곳에서
                     시선이 안 떠난다. `role="status"`라 낭독기도 읽는다. */}
+                {chatLocked && (
+                  <AiKeyNotice
+                    className="-mt-4"
+                    message="AI 답변을 받으려면 Upstage API 키가 필요해요."
+                  />
+                )}
+
                 {startError && (
                   <p
                     role="status"

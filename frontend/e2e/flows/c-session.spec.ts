@@ -101,13 +101,8 @@ test("C30 드로어는 Esc로 닫히고 캔버스가 살아 있다", async ({ pa
  */
 async function sessionCount(page: Page): Promise<number> {
   return page.evaluate(async () => {
-    const token = document.cookie
-      .split("; ")
-      .find((c) => c.startsWith("nodi_token="))
-      ?.slice("nodi_token=".length);
-    const res = await fetch("/api/sessions?space_kind=personal", {
-      headers: { Authorization: `Bearer ${decodeURIComponent(token ?? "")}` },
-    });
+    // 세션 쿠키(httpOnly)가 같은 출처 요청에 알아서 실린다.
+    const res = await fetch("/api/sessions?space_kind=personal");
     const rows = (await res.json()) as unknown[];
     return Array.isArray(rows) ? rows.length : -1;
   });

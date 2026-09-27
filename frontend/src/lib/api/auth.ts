@@ -1,22 +1,17 @@
 /** 가입·로그인 — 자체 인증 백엔드 호출 (D104-7). */
 import { API_BASE, ApiError, ensureOk } from "./_core";
 
+/**
+ * 로그인·가입 결과. 토큰은 **들어 있지 않다** — 서버가 httpOnly 쿠키로 심는다.
+ * 쿠키 수명도 서버가 토큰 만료와 같게 정한다(D219: 같은 사실을 두 곳에 두지 않는다).
+ */
 export interface AuthResult {
-  access_token: string;
-  token_type: string;
   user_id: string;
   email: string | null;
-  /**
-   * 토큰이 몇 초 뒤에 죽나 — **쿠키 수명은 이 값을 따른다** (2026-08-10).
-   *
-   * 예전에는 화면이 12시간을 따로 적어 뒀다. 같은 사실이 두 곳에 있으면
-   * 반드시 갈린다(D219) — 서버 `JWT_EXPIRE_MINUTES`를 줄이면 쿠키만 살아남는다.
-   * 옛 서버와도 맞물리게 optional로 둔다.
-   */
   expires_in?: number;
 }
 
-/** 인증 요청은 토큰이 없는 상태에서 나가므로 authHeaders를 쓰지 않는다. */
+/** 인증 요청은 쿠키가 없는 상태에서 나가므로 authHeaders를 쓰지 않는다. */
 async function postJson(path: string, body: unknown): Promise<AuthResult> {
   const res = await ensureOk(
     await fetch(`${API_BASE}${path}`, {
@@ -30,6 +25,8 @@ async function postJson(path: string, body: unknown): Promise<AuthResult> {
 
 export async function signup(input: {
   email: string;
+  /** 아이디(선택) — 영문 소문자·숫자·_·- 3~32자. 있으면 아이디로도 로그인한다. */
+  username?: string | null;
   password: string;
   display_name?: string | null;
   /** 서버가 화이트리스트(student|teacher)를 강제한다 — admin은 여기서 못 얻는다. */
@@ -38,11 +35,12 @@ export async function signup(input: {
   return postJson("/auth/signup", input);
 }
 
+/** `identifier`는 아이디 또는 이메일(`@`가 있으면 이메일로 본다 — 서버 판정). */
 export async function login(
-  email: string,
+  identifier: string,
   password: string,
 ): Promise<AuthResult> {
-  return postJson("/auth/login", { email, password });
+  return postJson("/auth/login", { identifier, password });
 }
 
 /**

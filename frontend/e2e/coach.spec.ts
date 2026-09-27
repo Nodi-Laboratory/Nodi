@@ -35,13 +35,9 @@ test("한 방향으로만 물어 온 브랜치에 방향 말풍선이 뜨고, ×
   expect(sessionId).toBeTruthy();
 
   // --- 사슬 심기 -------------------------------------------------------------
-  // 토큰은 쿠키에 있다(lib/session.ts). 화면과 같은 창구·같은 권한으로 넣는다 —
+  // 세션은 httpOnly 쿠키라 같은 출처 fetch에 알아서 실린다. 화면과 같은 창구·같은 권한으로 넣는다 —
   // DB에 직접 꽂으면 RLS를 우회해 "테스트만 되는" 상태가 만들어진다.
   const created = await page.evaluate(async (sid) => {
-    const token = document.cookie
-      .split("; ")
-      .find((c) => c.startsWith("nodi_token="))
-      ?.slice("nodi_token=".length);
     const chain = [
       ["화강암", "마그마가 지하 깊은 곳에서 천천히 식어 굳은 심성암입니다.", "화강암이 뭐야?"],
       ["화강암의 생성", "지하에서 마그마가 서서히 식으면 큰 결정이 자랍니다.", "화강암은 왜 생겨?"],
@@ -53,10 +49,7 @@ test("한 방향으로만 물어 온 브랜치에 방향 말풍선이 뜨고, ×
       const [title, body, asked] = chain[i];
       const res: Response = await fetch(`/api/sessions/${sid}/canvas/items`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${decodeURIComponent(token ?? "")}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: [
             {

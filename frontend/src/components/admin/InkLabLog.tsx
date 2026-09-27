@@ -75,6 +75,7 @@ const SHAPE_LABEL: Record<string, string> = {
 /** 글자를 읽은 길 — 화면에 쓰는 말. */
 const TEXT_SOURCE: Record<string, string> = {
   varco: "전용 OCR",
+  gemini: "Gemini",
   vision_fallback: "비전 예비",
   unknown: "알 수 없음",
 };

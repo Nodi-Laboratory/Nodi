@@ -4,25 +4,24 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { authErrorMessage, signup } from "@/lib/api";
-import { saveToken } from "@/lib/session";
 import { AuthShell, AuthSwitch, Field } from "@/components/auth/AuthForm";
 import { roleHome } from "@/lib/roleHome";
 
-/** Supabase 기본 최소 길이는 6이지만, 교실 계정이라 조금 더 올린다. */
+/** 교실 계정 최소 길이 — 백엔드 accounts.MIN_PASSWORD_LENGTH와 같다. */
 const MIN_PASSWORD = 8;
 
 /**
- * 회원가입 — 이메일/비밀번호 (D99).
+ * 회원가입 — 이메일 + 아이디(선택) + 비밀번호 (D99, 공개판 2026-09-27).
  *
- * 역할은 `raw_user_meta_data.role`로 넘기고, 마이그레이션 0041의
- * handle_new_user 트리거가 화이트리스트('student'|'teacher')를 강제해 프로필에
- * 반영한다. **클라이언트 값을 그대로 믿지 않는다** — admin은 여기서 선택할 수
- * 없고 admin_set_user_role로만 부여된다.
+ * 역할은 `raw_user_meta_data.role`로 넘기고, handle_new_user 트리거가
+ * 화이트리스트('student'|'teacher')를 강제해 프로필에 반영한다. **클라이언트
+ * 값을 그대로 믿지 않는다** — admin은 여기서 선택할 수 없다.
  *
- * 이메일 확인이 꺼진 환경(로컬 config.toml)에서는 signUp이 곧바로 세션을 주므로
- * 그대로 진입시키고, 확인이 켜진 환경에서는 세션이 없으므로 로그인 화면으로
- * 안내한다. 두 경우를 session 유무로 구분한다.
+ * 가입 응답이 곧바로 세션 쿠키를 심는다(이메일 확인 단계 없음).
  */
+
+/** 백엔드 accounts.USERNAME_PATTERN과 같다. */
+const USERNAME_RE = /^[a-z0-9_-]{3,32}$/;
 type Role = "student" | "teacher";
 
 export default function SignupPage() {
@@ -31,6 +30,7 @@ export default function SignupPage() {
 
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [role, setRole] = useState<Role>("student");
@@ -39,7 +39,9 @@ export default function SignupPage() {
 
   const tooShort = password.length > 0 && password.length < MIN_PASSWORD;
   const mismatch = passwordConfirm.length > 0 && password !== passwordConfirm;
+  const badUsername = username.length > 0 && !USERNAME_RE.test(username);
   const canSubmit =
+    !badUsername &&
     !!displayName.trim() &&
     !!email.trim() &&
     password.length >= MIN_PASSWORD &&
@@ -50,14 +52,14 @@ export default function SignupPage() {
     setPending(true);
 
     try {
-      const auth = await signup({
+      await signup({
         email: email.trim(),
+        username: username || null,
         password,
         display_name: displayName.trim() || null,
         role,
       });
-      // 가입과 동시에 로그인 상태가 된다(이메일 확인 단계 없음).
-      saveToken(auth.access_token, auth.expires_in);
+      // 가입과 동시에 로그인 상태가 된다 — 서버가 세션 쿠키를 심었다.
       queryClient.clear();
       // 학생은 온보딩(학급 코드), 교사는 콘솔로.
       router.replace(role === "student" ? "/onboarding" : roleHome(role));
@@ -134,6 +136,20 @@ export default function SignupPage() {
         onChange={(e) => setEmail(e.target.value)}
         required
       />
+      <Field
+        label="아이디 (선택)"
+        type="text"
+        name="username"
+        autoComplete="username"
+        placeholder="영문 소문자·숫자·_·- 3~32자"
+        value={username}
+        onChange={(e) => setUsername(e.target.value.toLowerCase())}
+      />
+      {badUsername && (
+        <p className="-mt-1 text-left text-[12px] text-red-600">
+          아이디는 영문 소문자·숫자·_·- 3~32자로 입력해 주세요.
+        </p>
+      )}
       <Field
         label="비밀번호"
         type="password"

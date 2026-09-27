@@ -33,6 +33,11 @@ export async function POST(request: NextRequest) {
   if (auth) headers.authorization = auth;
   const cookie = request.headers.get("cookie");
   if (cookie) headers.cookie = cookie;
+  // 공개판: 방문자가 화면에서 넣은 API 키. 백엔드가 이 요청 동안만 쓴다.
+  for (const name of ["x-upstage-key", "x-gemini-key", "x-gemini-model"]) {
+    const v = request.headers.get(name);
+    if (v) headers[name] = v;
+  }
 
   const upstream = await fetch(`${BACKEND}/api/chat/stream`, {
     method: "POST",

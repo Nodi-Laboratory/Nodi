@@ -30,7 +30,8 @@ export function AccountMenu({ dark = false }: { dark?: boolean }) {
   }, []);
 
   const handleLogout = async () => {
-    clearToken();
+    // 쿠키가 지워진 뒤 이동해야 미들웨어가 /home으로 돌려보내지 않는다.
+    await clearToken();
     queryClient.clear();
     router.push("/login");
     router.refresh();

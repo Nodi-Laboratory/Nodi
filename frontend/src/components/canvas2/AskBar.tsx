@@ -9,6 +9,8 @@
  */
 
 import { useChromeFitValue } from "@/lib/canvas2/useChromeFit";
+import { useAiReadiness } from "@/lib/aiConfig";
+import { AiKeyNotice } from "@/components/settings/AiKeyNotice";
 import {
   ArrowUp,
   Keyboard,
@@ -102,7 +104,7 @@ export function AskBar({
   coachHint,
   onClearQuote,
   onSend,
-  disabled,
+  disabled: sessionDisabled,
   onAttach,
   focusSignal,
   inkPhase,
@@ -115,6 +117,16 @@ export function AskBar({
 }: Props) {
   // 우하단 미니맵과 겹칠 때만 왼쪽으로 물러난다 (사용자 지시 2026-08-08).
   const chrome = useChromeFitValue();
+  /**
+   * 키가 없는 기능만 잠근다 (공개판 C 분류, 2026-09-27).
+   *
+   * 대화(Upstage)가 없으면 입력 자체를, 비전(Gemini)이 없으면 펜 쪽만,
+   * 업로드(.env 전용)가 없으면 첨부만 막는다. 캔버스 보기·편집은 그대로다.
+   */
+  const ai = useAiReadiness();
+  const chatLocked = ai.loaded && !ai.chatReady;
+  const penLocked = ai.loaded && !ai.visionReady;
+  const disabled = sessionDisabled || chatLocked;
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -241,6 +253,20 @@ export function AskBar({
        */
       className="ui absolute left-1/2 z-50 w-[min(56%,1400px)] min-w-[420px] -translate-x-1/2 max-[1100px]:w-[calc(100%-160px)] max-[900px]:w-[calc(100%-24px)] max-[900px]:min-w-0"
     >
+      {chatLocked ? (
+        <AiKeyNotice
+          className="mb-2 w-fit"
+          message="AI 답변을 받으려면 Upstage API 키가 필요해요."
+        />
+      ) : (
+        penLocked && askPen && (
+          <AiKeyNotice
+            className="mb-2 w-fit"
+            message="손글씨 질문을 읽으려면 Gemini API 키가 필요해요."
+          />
+        )
+      )}
+
       {showStatus && (
         <div
           className="mb-2 flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-[13px]"
@@ -357,7 +383,7 @@ export function AskBar({
             : "var(--shadow-float)",
         }}
       >
-        {onAttach && (
+        {onAttach && ai.uploadEnabled && (
           <label
             className="mb-0.5 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-[var(--c-sunk)]"
             style={{ color: "var(--c-ink-soft)" }}
@@ -385,7 +411,9 @@ export function AskBar({
           value={value}
           disabled={disabled}
           placeholder={
-            disabled
+            chatLocked
+              ? "API 키를 입력하면 질문할 수 있어요"
+              : sessionDisabled
               ? "세션을 준비하는 중이에요"
               : quote
                 ? `${quote.tag ? `[${quote.tag}] ` : ""}이 답에 이어서 물어보세요`
@@ -437,7 +465,7 @@ export function AskBar({
           <button
             type="button"
             onClick={onRecognize}
-            disabled={!inkReady || inkBusy || disabled}
+            disabled={!inkReady || inkBusy || disabled || penLocked}
             data-testid="ink-recognize"
             aria-label="AI에게 묻기"
             /* 손가락에는 32px가 최소다 — 배율(0.95)을 먹으므로 한 단계 키운다. */

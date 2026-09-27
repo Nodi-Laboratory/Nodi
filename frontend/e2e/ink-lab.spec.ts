@@ -22,7 +22,7 @@ const ADMIN_PASSWORD = "nodi1234";
 
 async function openInkLab(page: Page): Promise<void> {
   await page.goto("/login");
-  await page.locator('input[name="email"]').fill(ADMIN_EMAIL);
+  await page.locator('input[name="username"]').fill(ADMIN_EMAIL);
   await page.locator('input[name="password"]').fill(ADMIN_PASSWORD);
   await page.getByRole("button", { name: "로그인" }).click();
   await page.waitForURL(/\/(onboarding|home|admin|space)/);

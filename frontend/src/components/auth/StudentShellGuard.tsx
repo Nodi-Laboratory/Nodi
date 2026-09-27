@@ -29,8 +29,8 @@ export function StudentShellGuard() {
    */
   useEffect(() => {
     if (!isSuccess || profile) return;
-    clearTokenCache();
-    router.replace("/login");
+    // 쿠키를 먼저 지운다 — 남아 있으면 미들웨어가 /login을 /home으로 되돌린다.
+    void clearTokenCache().then(() => router.replace("/login"));
   }, [isSuccess, profile, router]);
 
   useEffect(() => {

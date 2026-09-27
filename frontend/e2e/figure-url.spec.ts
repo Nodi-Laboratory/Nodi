@@ -25,7 +25,7 @@ const QUESTION = "미터원기가 뭐야?";
 
 async function login(page: Page) {
   await page.goto("/login");
-  await page.locator('input[name="email"]').fill(E2E_EMAIL);
+  await page.locator('input[name="username"]').fill(E2E_EMAIL);
   await page.locator('input[name="password"]').fill(E2E_PASSWORD);
   await page.getByRole("button", { name: "로그인" }).click();
   await page.waitForURL(/\/(onboarding|home|space|teacher|admin)/);

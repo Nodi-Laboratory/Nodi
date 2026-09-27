@@ -7,21 +7,22 @@
  * 밑줄 접두사는 "이 폴더 내부용"이라는 표시다 — 앱 코드는 `@/lib/api`(index)만
  * 임포트하고 이 모듈을 직접 참조하지 않는다.
  */
-import { clearToken, readToken } from "@/lib/session";
-
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+import { apiKeyHeaders } from "@/lib/apiKeys";
+import { clearToken } from "@/lib/session";
 
 /**
- * D104-7: 토큰 캐시가 사라졌다.
- *
- * 구성에서는 매 fetch가 `supabase.auth.getSession()`을 await 했고(네트워크 왕복
- * 가능성), 그 비용을 줄이려 메모리 캐시 + 만료 60초 전 갱신 로직을 뒀다. 이제
- * 토큰은 쿠키에 있는 문자열 하나라 읽기가 동기·무비용이다 — 캐시할 대상이 없다.
- *
- * 이 함수는 로그아웃 경로가 계속 호출하므로 유지하되, 쿠키를 지우는 일을 한다.
+ * 백엔드 주소. 기본은 **같은 출처 `/api`**다 — 세션이 httpOnly 쿠키라 다른
+ * 출처(예: :8000 직접)로 보내면 쿠키가 실리지 않는다. next.config.ts의
+ * rewrites가 `/api/*`를 백엔드로 넘긴다(BACKEND_ORIGIN).
  */
-export function clearTokenCache(): void {
-  clearToken();
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "/api";
+
+/**
+ * 로그아웃 경로가 부른다 — 서버에 쿠키 삭제를 부탁하고, 기억해 둔 것을 비운다.
+ * 쿠키가 지워진 **뒤에** 이동해야 하므로 호출부는 await 한다(lib/session.ts).
+ */
+export async function clearTokenCache(): Promise<void> {
+  await clearToken();
   // 사람이 바뀌면 **그 사람 것으로 기억해 둔 것도** 버린다. 코치 노브는
   // 사용자별 값은 아니지만, 로그아웃은 "이 브라우저의 상태를 비운다"는 뜻이라
   // 여기서 함께 지우는 편이 다음 사람에게 예측 가능하다.
@@ -35,15 +36,17 @@ export function registerCacheClear(fn: () => void): void {
   onClearCaches.push(fn);
 }
 
-/** 저장된 액세스 토큰을 Authorization 헤더로. */
+/**
+ * 요청 공용 헤더.
+ *
+ * 인증은 httpOnly 쿠키가 알아서 실리므로 여기서 하지 않는다. 대신 방문자가
+ * 화면에서 넣은 **외부 API 키**를 싣는다(서버 .env에 키가 없을 때만 저장돼
+ * 있다 — lib/apiKeys.ts). 서버는 요청 동안만 쓰고 저장하지 않는다.
+ */
 export async function authHeaders(
   json = false,
 ): Promise<Record<string, string>> {
-  const token = readToken();
-  const headers: Record<string, string> = {};
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
+  const headers: Record<string, string> = { ...apiKeyHeaders() };
   if (json) headers["Content-Type"] = "application/json";
   return headers;
 }

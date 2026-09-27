@@ -86,7 +86,7 @@ async function stopFrames(page: Page): Promise<FrameStats> {
 /** 로그인해서 토큰을 얻는다 — 카드는 API로 심는 편이 빠르고 흔들리지 않는다. */
 async function login(page: Page): Promise<void> {
   await page.goto("/login");
-  await page.locator('input[name="email"]').fill(E2E_EMAIL);
+  await page.locator('input[name="username"]').fill(E2E_EMAIL);
   await page.locator('input[name="password"]').fill(E2E_PASSWORD);
   await page.getByRole("button", { name: "로그인" }).click();
   await page.waitForURL(/\/(onboarding|home|space|teacher|admin)/);
@@ -105,11 +105,7 @@ async function login(page: Page): Promise<void> {
 async function seedCards(page: Page, sessionId: string, n: number): Promise<void> {
   await page.evaluate(
     async ([sid, count]) => {
-      // 토큰은 쿠키에 있다(`lib/session.ts` — 미들웨어가 같은 값을 봐야 한다).
-      const hit = document.cookie
-        .split("; ")
-        .find((c) => c.startsWith("nodi_token="));
-      const token = hit ? decodeURIComponent(hit.slice("nodi_token=".length)) : "";
+      // 세션 쿠키(httpOnly)가 같은 출처 요청에 알아서 실린다.
       const base = "/api";
       // 서버가 한 번에 받는 상한(50)에 맞춰 나눠 보낸다.
       for (let start = 0; start < (count as number); start += 50) {
@@ -126,10 +122,7 @@ async function seedCards(page: Page, sessionId: string, n: number): Promise<void
         }
         const res = await fetch(`${base}/sessions/${sid}/canvas/items`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ items }),
         });
         if (!res.ok) throw new Error(`시드 실패 ${res.status}`);

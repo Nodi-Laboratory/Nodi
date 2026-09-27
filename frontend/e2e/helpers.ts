@@ -16,7 +16,7 @@ const UUID_RE =
 /** 로그인 → (필요 시 온보딩) → 개인 세션 캔버스로 들어가 준비될 때까지 기다린다. */
 export async function loginAndOpenCanvas(page: Page): Promise<void> {
   await page.goto("/login");
-  await page.locator('input[name="email"]').fill(E2E_EMAIL);
+  await page.locator('input[name="username"]').fill(E2E_EMAIL);
   await page.locator('input[name="password"]').fill(E2E_PASSWORD);
   await page.getByRole("button", { name: "로그인" }).click();
 

@@ -43,12 +43,8 @@ test("네 단계를 넘기면 답이 저장되고 학급 코드 마당으로 간
 
   // **DB까지 확인한다.** 화면이 넘어간 것과 값이 남은 것은 다른 사실이다.
   const saved = await page.evaluate(async () => {
-    const tok = decodeURIComponent(
-      (document.cookie.split("; ").find((c) => c.startsWith("nodi_token=")) ?? "=").split("=")[1],
-    );
-    const r = await fetch("/api/auth/onboarding-answers", {
-      headers: { Authorization: `Bearer ${tok}` },
-    });
+    // 세션 쿠키(httpOnly)가 같은 출처 요청에 알아서 실린다.
+    const r = await fetch("/api/auth/onboarding-answers");
     return r.ok ? await r.json() : null;
   });
   expect(saved).toMatchObject({

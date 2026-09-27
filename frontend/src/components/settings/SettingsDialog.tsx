@@ -19,6 +19,8 @@ import { ApiError, joinClass, updateDisplayName } from "@/lib/api";
 import { clearToken } from "@/lib/session";
 import { useMyClasses, useProfile } from "@/lib/hooks";
 import { Dialog } from "@/components/ui/Dialog";
+import { useAiReadiness } from "@/lib/aiConfig";
+import { ApiKeyDialog } from "./ApiKeyDialog";
 
 export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
@@ -36,6 +38,9 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
   const [code, setCode] = useState("");
   const [joining, setJoining] = useState(false);
   const [classMsg, setClassMsg] = useState<string | null>(null);
+  // 공개판: 서버 .env에 키가 없는 AI 기능이 있을 때만 키 입력 칸을 보인다.
+  const ai = useAiReadiness();
+  const [keysOpen, setKeysOpen] = useState(false);
 
   const handleSaveName = async () => {
     const trimmed = name.trim();
@@ -76,8 +81,9 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
     setJoining(false);
   };
 
-  const handleLogout = () => {
-    clearToken();
+  const handleLogout = async () => {
+    // 쿠키가 지워진 뒤 이동해야 미들웨어가 /home으로 돌려보내지 않는다.
+    await clearToken();
     queryClient.clear();
     router.push("/login");
     router.refresh();
@@ -131,6 +137,27 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           </div>
           {nameMsg && <p className="mt-2 text-xs text-fg-muted">{nameMsg}</p>}
         </section>
+
+        {(ai.needsUpstageInput || ai.needsGeminiInput) && (
+          <>
+            <div className="h-px bg-accent-border/40" />
+            <section>
+              <h3 className="text-sm font-semibold text-fg">AI API 키</h3>
+              <p className="mt-0.5 text-xs text-fg-muted">
+                서버에 키가 없어 이 브라우저에서 직접 입력한 키를 씁니다.
+                {" "}대화: {ai.chatReady ? "사용 가능" : "키 필요"}
+                {" · "}손글씨 인식: {ai.visionReady ? "사용 가능" : "키 필요"}
+              </p>
+              <button
+                type="button"
+                onClick={() => setKeysOpen(true)}
+                className="mt-2.5 rounded-lg bg-accent-deep px-4 py-2 text-sm font-medium text-accent-fg transition-opacity hover:brightness-95"
+              >
+                키 입력·변경
+              </button>
+            </section>
+          </>
+        )}
 
         <div className="h-px bg-accent-border/40" />
 
@@ -202,6 +229,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           로그아웃
         </button>
       </footer>
+      <ApiKeyDialog open={keysOpen} onClose={() => setKeysOpen(false)} />
     </Dialog>
   );
 }

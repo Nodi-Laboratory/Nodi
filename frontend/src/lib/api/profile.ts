@@ -8,10 +8,9 @@
 import type { MyClass, Profile } from "@/lib/types";
 import { API_BASE, authHeaders, ensureOk } from "./_core";
 
-/** 로그인 사용자의 프로필. 토큰이 없으면 null(로그인 전 화면에서 호출됨). */
+/** 로그인 사용자의 프로필. 로그인 전이면 null(401 — 쿠키가 httpOnly라 물어봐야 안다). */
 export async function getProfile(): Promise<Profile | null> {
   const headers = await authHeaders();
-  if (!headers.Authorization) return null;
   const res = await fetch(`${API_BASE}/auth/me`, { headers });
   /**
    * 401은 "아직/더는 로그인 안 됨" — 오류가 아니라 빈 상태다.
@@ -29,7 +28,6 @@ export async function getProfile(): Promise<Profile | null> {
 /** 가입한 학급 목록. */
 export async function listMyClasses(): Promise<MyClass[]> {
   const headers = await authHeaders();
-  if (!headers.Authorization) return [];
   const res = await fetch(`${API_BASE}/auth/me/classes`, { headers });
   if (res.status === 401) return [];
   return (await ensureOk(res)).json();

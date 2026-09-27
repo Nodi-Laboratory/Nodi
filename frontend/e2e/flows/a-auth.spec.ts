@@ -20,7 +20,7 @@ test.describe.configure({ mode: "serial" });
 async function login(page: Page, email: string, password: string): Promise<void> {
   const submit = page.getByRole("button", { name: "로그인" });
   await expect(async () => {
-    await page.locator('input[name="email"]').fill(email);
+    await page.locator('input[name="username"]').fill(email);
     await page.locator('input[name="password"]').fill(password);
     await expect(submit).toBeEnabled({ timeout: 1000 });
   }).toPass({ timeout: 15_000 });
@@ -29,7 +29,7 @@ async function login(page: Page, email: string, password: string): Promise<void>
 
 test("A1 로그인 화면에 필요한 것이 다 있다", async ({ page }) => {
   await page.goto("/login");
-  await expect(page.locator('input[name="email"]')).toBeVisible();
+  await expect(page.locator('input[name="username"]')).toBeVisible();
   await expect(page.locator('input[name="password"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "로그인" })).toBeVisible();
   await expect(page.getByRole("link", { name: /회원가입/ })).toBeVisible();
@@ -97,10 +97,9 @@ test("A7 로그아웃 뒤 보호된 화면은 안 열린다", async ({ page }) =
   await login(page, E2E_EMAIL, E2E_PASSWORD);
   await page.waitForURL(/\/(onboarding|home|space)/, { timeout: 30_000 });
 
-  await page.evaluate(() => {
-    document.cookie = "nodi_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-    localStorage.clear();
-  });
+  // 세션 쿠키는 httpOnly라 JS로 못 지운다 — 브라우저 컨텍스트에서 지운다.
+  await page.context().clearCookies();
+  await page.evaluate(() => localStorage.clear());
   await page.goto("/space/personal");
   await page.waitForTimeout(2500);
   expect(page.url()).toContain("/login");
