@@ -1,46 +1,194 @@
-# Nodi 로컬 인프라 (D104: Supabase 스택 → 순수 Postgres + Qdrant)
+# Nodi — 앱 전체를 컨테이너로 (공개판, 2026-09-27)
 #
-# **개발용이다.** 배포 서버는 컨테이너를 못 쓴다(D116) — 유일한 서버가
-# CAP_SYS_ADMIN·CAP_NET_ADMIN이 바운딩 셋에서 빠진 샌드박스라 docker도
-# rootless도 불가능하다. 서버 절차는 docs/DEPLOYMENT.md를 본다.
+#   cp .env.example .env      # 값을 안 고쳐도 뜬다 (API 키는 화면에서 입력)
+#   docker compose up -d      # 첫 실행은 이미지 빌드로 몇 분 걸린다
+#   → http://localhost:3000   데모 계정 demo / demo1234 (SEED_DEMO=true일 때)
 #
-# 실행: docker compose up -d
-#   postgres  5433  데이터·권한(RLS)·비즈니스 함수
-#   qdrant    6333  벡터 검색 (대시보드 http://localhost:6333/dashboard)
+# 서비스 (기동 순서 = depends_on 순서)
+#   db        PostgreSQL 16. 데이터·권한(RLS)·비즈니스 함수. 호스트 127.0.0.1:5433
+#   qdrant    벡터 검색. 호스트 127.0.0.1:6333 (대시보드 /dashboard)
+#   migrate   1회성. 역할 비밀번호를 .env 값으로 맞추고 db/migrations/*.sql을
+#             이름순으로 적용한 뒤 끝난다(deploy/deploy.sh 3단계와 같은 규약 —
+#             마이그레이션은 전부 멱등이라 매 기동마다 다시 돌아도 안전하다)
+#   backend   FastAPI. 데모 계정 시드(docker-entrypoint.sh) 후 uvicorn :8000.
+#             호스트에 포트를 열지 않는다 — 브라우저는 frontend의 /api만 쓴다
+#   frontend  Next.js standalone. 호스트 ${APP_PORT:-3000}. /api/*·/health를
+#             backend:8000으로 프록시한다(같은 출처라 httpOnly 인증 쿠키가 붙는다)
 #
-# 백엔드·프론트는 컨테이너로 띄우지 않는다. 호스트에서 직접 돌린다:
-#   backend   uv run uvicorn app.main:app --reload --port 8000
-#   frontend  npm run dev
+# 스키마: db/0*.sql은 공식 postgres 이미지의 docker-entrypoint-initdb.d 규약으로
+# **최초 1회, 빈 볼륨일 때만** 적용된다. 그 뒤의 변경은 migrate가 맡는다.
+# 처음부터 다시: docker compose down -v && docker compose up -d
 #
-# 스키마는 db/ 의 파일이 이름순으로 자동 적용된다(공식 postgres 이미지의
-# docker-entrypoint-initdb.d 규약) — **최초 1회, 빈 볼륨일 때만** 실행된다.
-# 다시 적용하려면 볼륨을 지운다: docker compose down -v && docker compose up -d
+# ---------------------------------------------------------------------------
+# 호스트 개발(핫 리로드)은 인프라만 띄우고 앱은 호스트에서 돌린다:
+#   docker compose up -d db qdrant migrate
+#   backend   cd backend && uv run uvicorn app.main:app --reload --port 8000
+#   frontend  cd frontend && npm run dev
+# backend/.env의 기본 DSN(localhost:5433, nodi_app_dev/nodi_worker_dev)이 이
+# 구성의 기본값과 맞는다. .env에서 역할 비밀번호를 바꿨다면 backend/.env도 맞춘다.
+#
+# ⚠️ 배포 서버는 이 파일을 쓰지 않는다(D116 — CAP_SYS_ADMIN·CAP_NET_ADMIN이
+# 빠진 샌드박스라 docker도 rootless도 불가능하다). 서버 절차는 docs/DEPLOYMENT.md.
+# ---------------------------------------------------------------------------
+
+# .env의 역할 비밀번호를 서비스 여러 곳이 같이 쓴다. 기본값을 한 곳에 둔다
+# (00_bootstrap.sql·backend/app/config.py의 개발용 기본값과 같다).
+x-db-passwords: &db-passwords
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  NODI_APP_DB_PASSWORD: ${NODI_APP_DB_PASSWORD:-nodi_app_dev}
+  NODI_WORKER_DB_PASSWORD: ${NODI_WORKER_DB_PASSWORD:-nodi_worker_dev}
+
 services:
-  postgres:
-    image: postgres:17-alpine
+  db:
+    image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: nodi
     ports:
-      # 5433 — 로컬에 이미 도는 Postgres(5432)와 충돌하지 않게.
-      - "5433:5432"
+      # 5433 — 호스트에 이미 도는 Postgres(5432)와 충돌하지 않게.
+      # 127.0.0.1에만 연다: 기본 비밀번호 그대로 LAN에 노출되지 않게.
+      - "127.0.0.1:5433:5432"
     volumes:
       - ./db:/docker-entrypoint-initdb.d:ro
-      - nodi_pgdata:/var/lib/postgresql/data
+      # 볼륨 이름을 예전(nodi_pgdata, pg17)과 **다르게** 둔다. 같은 이름이면
+      # 호스트에 남은 pg17 데이터 디렉터리를 pg16이 열려다 "database files are
+      # incompatible with server"로 기동 자체가 실패한다.
+      - pgdata16:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d nodi"]
+      # -h 127.0.0.1(TCP)이 핵심이다. 첫 기동의 initdb 단계는 임시 서버를
+      # 유닉스 소켓에만 띄워 db/0*.sql을 돌리는데, 소켓으로 물으면 그때 이미
+      # "healthy"가 되어 migrate가 스키마 적용 도중에 붙다가 연결 거부로 죽는다
+      # (실측 2026-09-27). TCP는 initdb가 끝나고 진짜 서버가 떠야 열린다.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d nodi"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
 
   qdrant:
-    image: qdrant/qdrant
+    # 클라이언트(uv.lock의 qdrant-client 1.18)와 같은 마이너로 고정한다 —
+    # 차이가 크면 클라이언트가 호환성 경고를 내고, latest는 재현이 안 된다.
+    image: qdrant/qdrant:v1.18.0
     ports:
-      - "6333:6333" # REST + 대시보드
-      - "6334:6334" # gRPC
+      - "127.0.0.1:6333:6333" # REST + 대시보드
+      - "127.0.0.1:6334:6334" # gRPC
     volumes:
-      - ./qdrant_storage:/qdrant/storage
+      - qdrant_data:/qdrant/storage
+    # 이미지에 curl·wget이 없다. bash의 /dev/tcp로 /readyz를 직접 친다
+    # (컬렉션 로드가 끝나야 200 — 백엔드 부팅의 ensure_collections가 헛돌지 않게).
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 &&
+          printf "GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 &&
+          head -n1 <&3 | grep -q " 200 "'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      <<: *db-passwords
+      PGHOST: db
+      PGUSER: postgres
+      PGDATABASE: nodi
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # 멱등 마이그레이션은 "already exists, skipping" NOTICE를 수십 줄 낸다.
+      # 그 소음에 진짜 오류가 묻히지 않게 경고 이상만 남긴다.
+      PGOPTIONS: -c client_min_messages=warning
+    volumes:
+      - ./db:/db:ro
+    # 1) 역할 비밀번호: 00_bootstrap.sql은 개발용 비밀번호로 역할을 만든다.
+    #    .env 값으로 매번 덮어써서, 볼륨을 만든 뒤 비밀번호를 바꿔도 따라가게 한다.
+    #    psql 변수(:'x')로 넘겨 따옴표가 든 비밀번호도 안전하게 인용된다.
+    # 2) 마이그레이션: deploy.sh와 같이 이름순·ON_ERROR_STOP. 하나라도 실패하면
+    #    0이 아닌 코드로 끝나고, backend는 completed_successfully를 기다리므로
+    #    뜨지 않는다 — 스키마가 어긋난 채 앱이 도는 것보다 낫다.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        psql -v ON_ERROR_STOP=1 -q \
+          -v app_pw="$$NODI_APP_DB_PASSWORD" -v worker_pw="$$NODI_WORKER_DB_PASSWORD" <<'SQL'
+        alter role nodi_app password :'app_pw';
+        alter role nodi_worker password :'worker_pw';
+        SQL
+        echo "[migrate] 역할 비밀번호 설정 완료"
+        n=0
+        for f in $$(ls /db/migrations/*.sql 2>/dev/null | sort); do
+          echo "[migrate] 적용: $$(basename "$$f")"
+          psql -v ON_ERROR_STOP=1 -q -f "$$f" >/dev/null
+          n=$$((n + 1))
+        done
+        echo "[migrate] $$n건 적용 완료"
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+    # .env 전체를 넘긴다 — 사용자가 추가한 튜닝 노브(UPSTAGE_CHAT_MODEL 등)도
+    # pydantic-settings가 그대로 읽는다. 아래 environment가 우선한다.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://nodi_app:${NODI_APP_DB_PASSWORD:-nodi_app_dev}@db:5432/nodi
+      DATABASE_WORKER_URL: postgresql://nodi_worker:${NODI_WORKER_DB_PASSWORD:-nodi_worker_dev}@db:5432/nodi
+      QDRANT_URL: http://qdrant:6333
+      STORAGE_ROOT: /data/storage
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      UPSTAGE_API_KEY: ${UPSTAGE_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_VISION_MODEL: ${GEMINI_VISION_MODEL:-gemini-3.5-flash-lite}
+      SEED_DEMO: ${SEED_DEMO:-false}
+      # 브라우저는 frontend와 같은 출처로만 들어온다. 직접 붙는 경우를 위해 둔다.
+      CORS_ORIGINS: '["http://localhost:${APP_PORT:-3000}"]'
+    volumes:
+      - storage:/data/storage
+    healthcheck:
+      # 슬림 이미지라 curl이 없다. 파이썬 표준 라이브러리로 /health를 친다.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # 둘 다 빌드 시점에 박힌다(frontend/Dockerfile 주석). 바꾸면 재빌드:
+        # docker compose build frontend
+        NEXT_PUBLIC_API_BASE_URL: /api
+        BACKEND_ORIGIN: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    restart: unless-stopped
 
 volumes:
-  nodi_pgdata:
+  pgdata16:
+  qdrant_data:
+  storage:

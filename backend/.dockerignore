@@ -1,0 +1,17 @@
+# 이미지에 들어갈 것은 pyproject.toml·uv.lock·app/·docker-entrypoint.sh뿐이다.
+# 특히 .env*는 절대 넣지 않는다 — 실제 키가 이미지 층에 영구히 박힌다.
+.env
+.env.*
+.venv/
+.storage/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.egg-info/
+*.log
+tests/
+scripts/
+.coverage
+htmlcov/

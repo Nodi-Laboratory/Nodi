@@ -35,6 +35,20 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: devOrigins(),
 
   /**
+   * 컨테이너 이미지용 standalone 출력 (공개판 docker compose, 2026-09-27).
+   *
+   * `frontend/Dockerfile`만 `NEXT_OUTPUT=standalone`을 넣고 빌드한다. 그러면
+   * `.next/standalone/server.js`에 필요한 node_modules만 추려 담겨 이미지가
+   * node_modules 전체(수백 MB)를 들고 다니지 않아도 된다.
+   *
+   * **항상 켜지 않는 이유:** 배포 서버는 `next start`로 돈다(deploy/deploy.sh,
+   * supervisord). standalone 빌드에서 `next start`는 "does not work with
+   * output: standalone" 경고를 내며, 공식적으로 지원되지 않는 조합이다.
+   * `npm run dev`·서버 배포는 이 변수가 없으니 예전과 똑같이 빌드된다.
+   */
+  ...(process.env.NEXT_OUTPUT === "standalone" ? { output: "standalone" as const } : {}),
+
+  /**
    * dev 표시기를 **끈다** (2026-08-10).
    *
    * Next의 개발 표시기는 화면 **왼쪽 아래**에 뜬다 — 우리 사이드바의 [도움말]
