@@ -1,7 +1,8 @@
-"""인증 엔드포인트 — 가입·로그인 + 현재 사용자 (D104-4).
+"""인증 엔드포인트 — 가입·로그인·로그아웃 + 현재 사용자 (D104-4).
 
-구성에서는 가입·로그인을 Supabase GoTrue가 처리하고 백엔드는 토큰 검증만 했다.
-이제 발급까지 여기서 한다.
+세션은 **httpOnly 쿠키**(`nodi_token`)다(공개판 2026-09-27). 로그인·가입 응답이
+쿠키를 심고, 브라우저 JS는 토큰을 볼 수 없다. 로그아웃은 서버가 쿠키를 지운다.
+`Authorization: Bearer`도 계속 받는다(스크립트·테스트용, auth/deps.py).
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
 from ..auth.deps import (
+    SESSION_COOKIE,
     CurrentUser,
     Profile,
     get_current_profile,
@@ -27,6 +29,11 @@ settings = get_settings()
 
 class SignupBody(BaseModel):
     email: EmailAddress
+    # 아이디(선택). 있으면 아이디로도 로그인할 수 있다. `@`가 없는 형식이라
+    # 로그인 창구가 이메일과 가를 수 있다(accounts.USERNAME_PATTERN).
+    username: str | None = Field(
+        default=None, pattern=accounts.USERNAME_PATTERN, max_length=32
+    )
     password: str = Field(min_length=accounts.MIN_PASSWORD_LENGTH, max_length=200)
     display_name: str | None = Field(default=None, max_length=80)
     # 화이트리스트 밖 값은 트리거가 student로 떨어뜨린다(D99). 여기서 422를
@@ -35,13 +42,16 @@ class SignupBody(BaseModel):
 
 
 class LoginBody(BaseModel):
-    email: EmailAddress
+    """아이디 또는 이메일. 옛 클라이언트가 보내는 `email` 필드도 받는다."""
+
+    identifier: str | None = Field(default=None, max_length=254)
+    email: str | None = Field(default=None, max_length=254)
     password: str = Field(max_length=200)
 
 
 class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+    """로그인 결과. **토큰 자체는 싣지 않는다** — httpOnly 쿠키로만 간다."""
+
     user_id: str
     email: str | None = None
     #: 토큰이 몇 초 뒤에 죽나.
@@ -54,43 +64,67 @@ class TokenResponse(BaseModel):
     expires_in: int = settings.jwt_expire_minutes * 60
 
 
+def _set_session_cookie(response: Response, user_id: str, email: str | None) -> None:
+    """세션 쿠키 발급. 수명은 토큰 만료와 같다 — 둘이 갈리면 화면만 열리고 401."""
+    response.set_cookie(
+        SESSION_COOKIE,
+        create_access_token(user_id, email),
+        max_age=settings.jwt_expire_minutes * 60,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+
+
 @router.post("/signup", response_model=TokenResponse, status_code=201)
-async def signup(body: SignupBody) -> TokenResponse:
+async def signup(body: SignupBody, response: Response) -> TokenResponse:
     """가입 후 곧바로 로그인 상태로 만든다(이메일 확인 단계 없음)."""
     user = await accounts.create_account(
         email=body.email,
         password=body.password,
         display_name=(body.display_name or "").strip() or None,
         role=body.role,
+        username=body.username,
     )
     uid = str(user["id"])
-    return TokenResponse(
-        access_token=create_access_token(uid, user["email"]),
-        user_id=uid,
-        email=user["email"],
-    )
+    _set_session_cookie(response, uid, user["email"])
+    return TokenResponse(user_id=uid, email=user["email"])
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginBody) -> TokenResponse:
-    """이메일·비밀번호 로그인.
+async def login(body: LoginBody, response: Response) -> TokenResponse:
+    """아이디 또는 이메일 + 비밀번호 로그인.
 
     계정 없음과 비밀번호 불일치를 **같은 401**로 응답한다 — 응답 차이로 계정
     존재 여부가 새지 않게.
     """
-    user = await accounts.authenticate(
-        body.email, body.password
+    identifier = (body.identifier or body.email or "").strip()
+    user = (
+        await accounts.authenticate(identifier, body.password) if identifier else None
     )
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="이메일 또는 비밀번호가 올바르지 않습니다.",
+            detail="아이디(이메일) 또는 비밀번호가 올바르지 않습니다.",
         )
-    return TokenResponse(
-        access_token=create_access_token(user["id"], user["email"]),
-        user_id=user["id"],
-        email=user["email"],
+    _set_session_cookie(response, user["id"], user["email"])
+    return TokenResponse(user_id=user["id"], email=user["email"])
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(response: Response) -> Response:
+    """세션 쿠키를 지운다. httpOnly라 브라우저 JS가 스스로 지울 수 없다.
+
+    JWT는 상태가 없어 서버 쪽 무효화는 없다 — 쿠키가 사라지면 이 브라우저는
+    더 이상 토큰을 보내지 않는다(비밀번호 재설정 주석 accounts.set_password 참고).
+    """
+    response.status_code = status.HTTP_204_NO_CONTENT
+    response.delete_cookie(
+        SESSION_COOKIE, path="/", httponly=True,
+        secure=settings.cookie_secure, samesite="lax",
     )
+    return response
 
 
 @router.get("/me", response_model=Profile)

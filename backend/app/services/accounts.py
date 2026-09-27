@@ -26,13 +26,20 @@ SIGNUP_ROLES = ("student", "teacher")
 
 MIN_PASSWORD_LENGTH = 8
 
+# 아이디 형식(공개판 2026-09-27). `@`가 없어야 로그인 창구가 이메일과 가를 수 있다.
+USERNAME_PATTERN = r"^[a-z0-9_-]{3,32}$"
+
 
 async def create_account(
-    email: str, password: str, display_name: str | None, role: str
+    email: str,
+    password: str,
+    display_name: str | None,
+    role: str,
+    username: str | None = None,
 ) -> dict[str, Any]:
     """계정 생성 → users 행 반환. 프로필은 트리거가 만든다.
 
-    이메일 중복은 409. 형식·길이 검증은 호출부(라우터)에서 이미 거른 뒤다.
+    이메일·아이디 중복은 409. 형식·길이 검증은 호출부(라우터)에서 이미 거른 뒤다.
     """
     if len(password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(
@@ -56,35 +63,47 @@ async def create_account(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="이미 가입된 이메일입니다.",
             )
+        if username and await conn.fetchval(
+            "select 1 from public.users where username = $1", username
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="이미 사용 중인 아이디입니다.",
+            )
         row = await conn.fetchrow(
             """
-            insert into public.users (email, password_hash, raw_user_meta_data)
+            insert into public.users
+                (email, password_hash, raw_user_meta_data, username)
             -- ::text::jsonb 로 **두 단계** 캐스팅한다. `$3::jsonb`만 쓰면 asyncpg가
             -- 파라미터 타입을 jsonb로 추론해 이미 직렬화된 문자열을 다시 JSON
             -- 문자열로 감싼다 — 결과가 객체가 아니라 문자열이 되어
             -- `raw_user_meta_data->>'full_name'`이 NULL을 돌려주고, 트리거가
             -- 이름·역할을 폴백해 버린다(실측: 이름이 이메일 앞부분, 역할이 student).
-            values ($1, $2, $3::text::jsonb)
+            values ($1, $2, $3::text::jsonb, $4)
             returning id, email
             """,
             email,
             hash_password(password),
             json.dumps(meta),
+            username or None,
         )
     logger.info("계정 생성: %s (요청 역할=%s)", email, role)
     return dict(row)
 
 
-async def authenticate(email: str, password: str) -> dict[str, Any] | None:
-    """이메일·비밀번호 검증 → users 행 (실패 시 None).
+async def authenticate(identifier: str, password: str) -> dict[str, Any] | None:
+    """아이디 또는 이메일 + 비밀번호 검증 → users 행 (실패 시 None).
+
+    `@`가 있으면 이메일, 없으면 아이디로 찾는다(아이디 형식에 `@`가 없다).
 
     **계정 없음과 비밀번호 불일치를 구분해 돌려주지 않는다** — 호출부가 같은
     문구로 응답해 계정 존재 여부가 새지 않게 한다.
     """
+    column = "email" if "@" in identifier else "username"
     async with worker_conn() as conn:
         row = await conn.fetchrow(
-            "select id, email, password_hash from public.users where email = $1",
-            email,
+            f"select id, email, password_hash from public.users where {column} = $1",
+            identifier.strip(),
         )
     if row is None:
         return None

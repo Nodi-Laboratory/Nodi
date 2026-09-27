@@ -1,7 +1,9 @@
 """Auth dependencies (D104-4: 자체 인증).
 
-`Authorization: Bearer <JWT>`를 **서버 시크릿으로 로컬 검증**한다. 구성에서는
-Supabase JWKS를 받아 ES256으로 검증했는데, 그 왕복·캐시·kid 매칭이 전부 사라졌다.
+토큰을 **서버 시크릿으로 로컬 검증**한다. 토큰은 두 곳에서 온다:
+
+- httpOnly 쿠키 `nodi_token` — 브라우저(공개판 2026-09-27부터 기본 경로)
+- `Authorization: Bearer <JWT>` — 스크립트·테스트. 둘 다 있으면 헤더가 이긴다.
 
 제공:
 - `get_current_user`    -> 검증된 클레임 (id / email)
@@ -17,7 +19,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -26,7 +28,11 @@ from .tokens import TokenError, decode_access_token
 
 logger = logging.getLogger("nodi.auth")
 settings = get_settings()
-bearer_scheme = HTTPBearer(auto_error=True)
+# auto_error=False — 헤더가 없으면 쿠키를 본다(아래 get_current_user).
+bearer_scheme = HTTPBearer(auto_error=False)
+
+# 세션 쿠키 이름. 프론트 미들웨어(lib/session.ts SESSION_COOKIE)와 같아야 한다.
+SESSION_COOKIE = "nodi_token"
 
 
 class CurrentUser(BaseModel):
@@ -44,10 +50,17 @@ class Profile(BaseModel):
 
 
 async def get_current_user(
-    creds: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> CurrentUser:
+    token = creds.credentials if creds else request.cookies.get(SESSION_COOKIE)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="로그인이 필요합니다.",
+        )
     try:
-        claims = decode_access_token(creds.credentials)
+        claims = decode_access_token(token)
     except TokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)

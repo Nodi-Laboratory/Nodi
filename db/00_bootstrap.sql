@@ -51,6 +51,8 @@ comment on function auth.uid() is
 create table if not exists public.users (
     id            uuid primary key default gen_random_uuid(),
     email         citext not null unique,
+    -- 아이디 로그인(공개판, migrations/2026-09-27-users-username.sql). 없어도 된다.
+    username      citext unique,
     password_hash text not null,
     -- 가입 시 클라이언트가 보낸 메타(이름·역할 희망값). 신뢰하지 않는다 —
     -- 역할 화이트리스트는 handle_new_user가 강제한다(D99).

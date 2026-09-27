@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-only-change-me"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 12  # 수업 한 타임을 넉넉히 덮는다
+    # 세션 쿠키(httpOnly)의 Secure 플래그. HTTPS로만 접속하는 배포에서 켠다.
+    # 기본 끔 — docker compose 로컬(http://localhost)과 LAN http 접속이 있어서다.
+    cookie_secure: bool = False
 
     # --- 파일 저장 (D104-5) ---
     # Supabase Storage 대체. 컨테이너·경로 규약은 그대로 유지한다.
