@@ -653,13 +653,28 @@ async def _upsert_vectors() -> int:
     return n
 
 
-async def _load_vectors_best_effort() -> None:
-    try:
-        n = await _upsert_vectors()
-        print(f"  Qdrant 벡터 {n}건 적재")
-    except Exception as exc:  # noqa: BLE001 - 벡터가 없어도 화면은 뜬다
-        logger.warning("Qdrant 적재 실패 — DB 시드는 유지, 다음 기동 때 다시 시도", exc_info=True)
-        print(f"  경고: Qdrant 적재 실패({type(exc).__name__}) — 검색은 빈손, 다음 기동 때 재시도")
+async def _load_vectors_best_effort(attempts: int = 5, wait_s: float = 3.0) -> None:
+    """벡터 적재 — 몇 번 다시 해 본다.
+
+    갓 뜬 Qdrant는 healthy여도 첫 컬렉션 생성이 클라이언트 타임아웃을 넘기곤
+    한다(실측 2026-09-27, 빈 볼륨 첫 기동: create_collection이
+    ResponseHandlingException → 컬렉션 일부만 생긴 채 upsert가 404). 기다렸다
+    다시 하면 된다. 끝내 안 되면 DB 시드는 유지하고 다음 기동 때 다시 한다.
+    """
+    import asyncio
+
+    for i in range(1, attempts + 1):
+        try:
+            n = await _upsert_vectors()
+            print(f"  Qdrant 벡터 {n}건 적재")
+            return
+        except Exception as exc:  # noqa: BLE001 - 벡터가 없어도 화면은 뜬다
+            if i < attempts:
+                print(f"  Qdrant 적재 재시도 {i}/{attempts - 1} ({type(exc).__name__})")
+                await asyncio.sleep(wait_s)
+                continue
+            logger.warning("Qdrant 적재 실패 — DB 시드는 유지, 다음 기동 때 다시 시도", exc_info=True)
+            print(f"  경고: Qdrant 적재 실패({type(exc).__name__}) — 검색은 빈손, 다음 기동 때 재시도")
 
 
 async def _ensure_vectors() -> None:
