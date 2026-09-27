@@ -21,6 +21,7 @@ import math
 import httpx
 
 from ..config import get_settings
+from . import api_keys
 
 logger = logging.getLogger("nodi.upstage")
 settings = get_settings()
@@ -91,9 +92,11 @@ def _base() -> str:
 
 
 def _headers() -> dict[str, str]:
-    if not settings.upstage_api_key:
+    # .env 키 우선, 없으면 이 요청 헤더의 키(api_keys). 워커에서는 .env만 보인다.
+    key = api_keys.upstage_key()
+    if not key:
         raise RuntimeError("UPSTAGE_API_KEY is not configured.")
-    return {"Authorization": f"Bearer {settings.upstage_api_key}"}
+    return {"Authorization": f"Bearer {key}"}
 
 
 def _l2_normalize(vec: list[float]) -> list[float]:

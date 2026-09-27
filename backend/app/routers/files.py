@@ -1,8 +1,8 @@
 """File endpoints (Stage 3b-1) — upload + list + status.
 
-Upload requires the service-role client (storage write + the embedding pipeline
-need it). If SUPABASE_SERVICE_ROLE_KEY is unset, upload returns 503; list/get
-still work (RLS reads via the caller's JWT).
+Upload requires the worker DSN (storage write + the embedding pipeline need it)
+and an Upstage key in .env (the background worker cannot see per-request header
+keys — api_keys.upload_enabled). Otherwise upload returns 503; list/get still work.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from fastapi.responses import Response
 from ..auth.deps import CurrentUser, get_current_user
 from ..db import storage
 from ..db.client import UserClient, get_service_client
-from ..services import app_settings, figures
+from ..services import api_keys, app_settings, figures
 from ..services import files as svc
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -89,6 +89,13 @@ async def upload(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="파일 업로드가 아직 활성화되지 않았습니다(관리자 설정 필요).",
+        )
+    if not api_keys.upload_enabled():
+        # 공개판: 업로드는 워커가 처리해 요청 헤더의 키가 닿지 않는다 — .env 전용
+        # (사용자 결정 2026-09-27). 화면은 /api/config의 upload_enabled로 미리 안내한다.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="파일 업로드는 서버 .env에 UPSTAGE_API_KEY가 있어야 동작합니다.",
         )
     # Early reject on declared size (avoid buffering an oversized body). D62:
     # the limit is admin-tunable via the overlay (upload_file re-checks it too).

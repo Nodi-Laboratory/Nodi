@@ -34,7 +34,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from ..config import get_settings
-from . import app_settings
+from . import api_keys, app_settings
 
 logger = logging.getLogger("nodi.solar")
 settings = get_settings()
@@ -140,13 +140,14 @@ def _require_config() -> tuple[str, str, str]:
     Upstage는 단일 베이스 URL에 OpenAI 호환 `/chat/completions`를 제공한다.
     EXAONE 시절의 serverless/dedicated 분기는 사라졌다(D108).
     """
-    if not settings.upstage_api_key:
+    key = api_keys.upstage_key()  # .env 우선, 없으면 요청 헤더
+    if not key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="UPSTAGE_API_KEY is not configured.",
         )
     base = settings.upstage_base_url.rstrip("/")
-    return f"{base}/chat/completions", settings.upstage_chat_model, settings.upstage_api_key
+    return f"{base}/chat/completions", settings.upstage_chat_model, key
 
 
 # ---------------------------------------------------------------------------

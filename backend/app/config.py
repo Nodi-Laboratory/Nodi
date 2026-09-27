@@ -62,8 +62,17 @@ class Settings(BaseSettings):
     # 바꾸면 형식 준수를 다시 확인해야 한다. 인제스트 시점 LLM 작업(원자 질문
     # D129·의미 청킹 D132)도 solar.complete를 재사용하므로 함께 바뀐다.
     # 강의 클립 원자화만 자기 노브(lecture_atom_model)로 따로 간다.
+    # 비워 두면 앱 화면에서 방문자가 입력한 키를 요청 헤더로 받는다
+    # (services/api_keys.py — 서버는 저장하지 않는다). 업로드 워커는 .env 전용.
     upstage_api_key: str = ""
     upstage_base_url: str = "https://api.upstage.ai/v1"
+
+    # --- 비전 (Gemini) — 도판 캡션·손글씨 인식·펜 표시 해석 ---
+    # 공개판에서 자체 GPU(EXAONE·VARCO)를 대체한다(사용자 결정 2026-09-27).
+    # 키가 비면 화면에서 키와 모델을 입력받는다(허용 목록: api_keys.GEMINI_VISION_MODELS).
+    gemini_api_key: str = ""
+    gemini_vision_model: str = "gemini-3.5-flash-lite"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     upstage_chat_model: str = "solar-pro3"
     upstage_embedding_query_model: str = "embedding-query"
     upstage_embedding_passage_model: str = "embedding-passage"

@@ -37,7 +37,7 @@ import httpx
 
 from ..config import get_settings
 from ..db.client import UserClient
-from . import app_settings
+from . import api_keys, app_settings
 
 logger = logging.getLogger("nodi.question_coach")
 settings = get_settings()
@@ -256,12 +256,13 @@ async def analyse(
 
 async def _ask(user_text: str, model: str | None) -> str:
     picked = (model or settings.upstage_chat_model).strip()
-    if not settings.upstage_api_key:
+    key = api_keys.upstage_key()  # .env 우선, 없으면 요청 헤더
+    if not key:
         raise RuntimeError("UPSTAGE_API_KEY 없음")
     async with httpx.AsyncClient(timeout=20.0) as client:
         res = await client.post(
             f"{settings.upstage_base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.upstage_api_key}"},
+            headers={"Authorization": f"Bearer {key}"},
             json={
                 "model": picked,
                 "messages": [

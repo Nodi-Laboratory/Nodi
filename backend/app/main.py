@@ -1,7 +1,6 @@
-"""nodi FastAPI application (Stage 0 foundation).
+"""nodi FastAPI application.
 
-Boots with only config + auth (JWKS) + health/me routers. Real chat/RAG/skills
-land in later stages. Must boot even when SUPABASE_SERVICE_ROLE_KEY is empty.
+외부 API 키가 하나도 없어도 부팅한다 — 키가 필요한 기능만 비활성화된다.
 """
 
 from __future__ import annotations
@@ -27,11 +26,13 @@ from .routers import (
     ink,
     me,
     ocr,
+    public_config,
     sessions,
     spaces,
     teacher,
 )
 from .services import admin_console, qdrant_store, worker
+from .services.api_keys import RequestKeysMiddleware
 
 settings = get_settings()
 
@@ -70,6 +71,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 공개판 C 분류: 방문자가 화면에서 넣은 키(헤더)를 요청 수명 동안만 묶는다.
+app.add_middleware(RequestKeysMiddleware)
 
 # D105: 도메인 라우터는 전부 `/api` 아래로 모은다.
 #
@@ -107,6 +110,8 @@ for _router in (
     # D210 8-1: 손글씨 폰트 서빙 — **인증 없이** 준다(@font-face는 헤더를
     # 못 싣는다). 담긴 것은 글자 모양뿐이다.
     hand_fonts.router,
+    # 공개판: 키 입력 UI 표시 여부(설정 여부 true/false만).
+    public_config.router,
 ):
     app.include_router(_router, prefix="/api")
 
