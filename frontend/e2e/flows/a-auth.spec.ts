@@ -50,7 +50,7 @@ test("A3·A4 틀린 자격은 같은 문구로 거절한다 — 계정 존재가
   const alert = page.locator('form [role="alert"]');
 
   await login(page, "nobody-nowhere@nodi.test", "whatever1!");
-  await expect(alert).toContainText(/이메일 또는 비밀번호/);
+  await expect(alert).toContainText(/또는 비밀번호가 올바르지 않습니다/);
   const missing = (await alert.textContent())!;
 
   await page.locator('input[name="password"]').fill("");

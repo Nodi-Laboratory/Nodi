@@ -16,11 +16,18 @@ const UUID_RE =
 /** 로그인 → (필요 시 온보딩) → 개인 세션 캔버스로 들어가 준비될 때까지 기다린다. */
 export async function loginAndOpenCanvas(page: Page): Promise<void> {
   await page.goto("/login");
-  await page.locator('input[name="username"]').fill(E2E_EMAIL);
-  await page.locator('input[name="password"]').fill(E2E_PASSWORD);
-  await page.getByRole("button", { name: "로그인" }).click();
-
-  await page.waitForURL(/\/(onboarding|home|space|teacher|admin)/);
+  /**
+   * **하이드레이션 전에 채우면 값이 React state에 안 닿는다.** 칸에는 글자가
+   * 보이는데 state는 빈 채로 제출돼 서버가 401을 준다(실측 2026-09-27, 프로덕션
+   * 빌드는 빨라서 더 자주 걸렸다). flows/a-auth의 login()과 같은 방식으로,
+   * 로그인 화면을 벗어날 때까지 채우고 누르기를 다시 한다.
+   */
+  await expect(async () => {
+    await page.locator('input[name="username"]').fill(E2E_EMAIL);
+    await page.locator('input[name="password"]').fill(E2E_PASSWORD);
+    await page.getByRole("button", { name: "로그인" }).click({ timeout: 2000 });
+    await page.waitForURL(/\/(onboarding|home|space|teacher|admin)/, { timeout: 5000 });
+  }).toPass({ timeout: 30_000 });
   // 첫 로그인이면 온보딩을 거친다 — 학급 없이 시작한다.
   if (page.url().includes("/onboarding")) {
     await page.getByRole("button", { name: /학급 없이 시작|완료하고 시작/ }).click();
