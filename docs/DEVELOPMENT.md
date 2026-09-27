@@ -1,4 +1,8 @@
-# Nodi
+# Nodi — 개발 가이드
+
+> 공개용 소개는 저장소 루트의 [README](../README.ko.md)에 있다. 이 문서는 호스트에서
+> 핫 리로드로 개발하는 팀원용이다. 앱 전체를 컨테이너로 띄우려면 루트에서
+> `cp .env.example .env && docker compose up`.
 
 > 교실 학습용 AI 도우미. 학생이 질문하면 모델이 **개념 카드**를 스트리밍하고,
 > 무한 캔버스 위에 주제별로 묶어 배치한다. 선생님이 올린 수업 자료·교과서를
@@ -6,25 +10,25 @@
 
 Next.js 16(App Router) · React 19 · FastAPI · **Postgres**(RLS로 권한 강제) ·
 **Qdrant**(벡터 1024d · 컬렉션 6) · **Upstage**(대화 생성 `solar-pro3` + 임베딩 +
-문서 파싱) · 교과서 도판 비전과 손글씨 OCR은 **자체 GPU**.
+문서 파싱) · 교과서 도판 비전과 손글씨 인식은 **Gemini**(키가 없으면 자체 GPU의 EXAONE·VARCO로 예비).
 
-> 스택을 자세히: **[`docs/stack/`](docs/stack/)** — 전체 그림 · 프런트 · 백엔드 ·
+> 스택을 자세히: **[`docs/stack/`](stack/)** — 전체 그림 · 프런트 · 백엔드 ·
 > 데이터와 모델 넷으로 나눠 적었다. 무엇을 쓰는지와 **왜 그것을 골랐는지**,
 > 그리고 안 쓰기로 한 것과 그 이유까지.
 
 > ## 📌 변경 보고서 — 먼저 읽으세요
 >
-> **[`docs/CHANGELOG-D104-D114.md`](docs/CHANGELOG-D104-D114.md)**
+> **[`docs/CHANGELOG-D104-D114.md`](CHANGELOG-D104-D114.md)**
 > (2026-07-27 ~ 07-28 · 커밋 51개 · +18,330 / −11,103줄)
 >
 > **Supabase 완전 제거(D104)**부터 운영 콘솔·데이터 관리(D113·D114)까지 이 기간에
 > 무엇을 바꿨는지 정리한 기록입니다. DB 스키마 변경(정책 32→38, 함수 19→26),
 > `db/migrations/` 규약 신설, 개발 DB에 실제로 한 작업까지 담겨 있습니다.
 
-- 기술 스택: **[`docs/stack/`](docs/stack/)** ← 무엇으로 만들어졌나
-- 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](CLAUDE.md)** ← 이 저장소의 규범 문서
-- 작업 체계: [`docs/TASKS.md`](docs/TASKS.md) · [`docs/AGENTS.md`](docs/AGENTS.md) · [`docs/PROCESS.md`](docs/PROCESS.md)
-- 배포: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)** — 배포 서버는 컨테이너를
+- 기술 스택: **[`docs/stack/`](stack/)** ← 무엇으로 만들어졌나
+- 제품 모델·불변식·컨벤션: **[`CLAUDE.md`](../CLAUDE.md)** ← 이 저장소의 규범 문서
+- 작업 체계: [`docs/TASKS.md`](TASKS.md) · [`docs/AGENTS.md`](AGENTS.md) · [`docs/PROCESS.md`](PROCESS.md)
+- 배포: **[`docs/DEPLOYMENT.md`](DEPLOYMENT.md)** — 배포 서버는 컨테이너를
   못 쓴다(D116). supervisor로 프로세스를 띄운다.
 
 ---
@@ -48,7 +52,7 @@ Next.js 16(App Router) · React 19 · FastAPI · **Postgres**(RLS로 권한 강�
 ### 1) 인프라
 
 ```bash
-docker compose up -d      # postgres(5433) + qdrant(6333)
+docker compose up -d db qdrant migrate   # postgres(5433) + qdrant(6333) + 마이그레이션
 ```
 
 `db/`의 SQL이 이름순으로 자동 적용된다(**최초 1회, 빈 볼륨일 때만**):
@@ -61,7 +65,7 @@ docker compose up -d      # postgres(5433) + qdrant(6333)
 | `03_app_settings.sql` | admin 튜너블 기본값 13종 |
 | `04_seed.sql` | (계정을 넣지 않는다 — 아래 참조) |
 
-전부 다시 적용하려면 `docker compose down -v && docker compose up -d`.
+전부 다시 적용하려면 `docker compose down -v && docker compose up -d db qdrant migrate`.
 
 `db/migrations/`는 **자동 적용되지 않는다**(엔트리포인트가 하위 디렉터리를 건너뛴다).
 데이터가 이미 든 DB를 최신 스키마와 맞출 때만 손으로 적용한다 — 새로 시작하는
@@ -157,8 +161,8 @@ uv run python -m scripts.seed_e2e --check    # 상태만 확인
 바운딩 셋에서 빠진 샌드박스라 docker도 rootless(podman)도 불가능하다 —
 설치로 해결되는 문제가 아니다. 그래서 **supervisor로 프로세스를 띄운다.**
 
-절차·운영 명령·고장 대처는 전부 **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**와
-[`deploy/`](deploy/)에 있다. 요약하면:
+절차·운영 명령·고장 대처는 전부 **[`docs/DEPLOYMENT.md`](DEPLOYMENT.md)**와
+[`deploy/`](../deploy/)에 있다. 요약하면:
 
 ```bash
 deploy/bootstrap.sh    # 새 인스턴스 최초 1회 — 런타임·DB·모델·바이너리 전부
@@ -240,9 +244,9 @@ deploy/deploy.sh       # 이후 배포 — 빌드 → 마이그레이션 → 재
 Postgres(관계형 + RLS + 자체 인증 + 파일)  ·  Qdrant(벡터만; RLS 없음 → 앱이 스코프 강제)
 ```
 
-자세한 것은 [`docs/stack/01-overview.md`](docs/stack/01-overview.md).
+자세한 것은 [`docs/stack/01-overview.md`](stack/01-overview.md).
 
-**불변식** (자세히는 [`CLAUDE.md`](CLAUDE.md)):
+**불변식** (자세히는 [`CLAUDE.md`](../CLAUDE.md)):
 
 - RAG는 채팅을 절대 막지 않는다 — 모든 컨텍스트 빌더는 best-effort.
 - Qdrant는 신뢰 경계가 아니다 — 청크 본문은 USER 스코프 Postgres로 재조회해
@@ -335,7 +339,7 @@ RLS 정책 38개 + 함수 26개가 "누가 무엇에 접근 가능한가"를 정
 **데이터를 지우고 싶지 않다면** `db/migrations/`의 스크립트를 손으로 적용한다.
 자동 적용되지 않으며(엔트리포인트가 하위 디렉터리를 건너뛴다) 전부 멱등이다.
 어떤 것을 언제 적용해야 하는지는
-[`docs/CHANGELOG-D104-D114.md` §10](docs/CHANGELOG-D104-D114.md#10-db-변경-총괄)
+[`docs/CHANGELOG-D104-D114.md` §10](CHANGELOG-D104-D114.md#10-db-변경-총괄)
 에 정리해 두었다.
 
 ---
