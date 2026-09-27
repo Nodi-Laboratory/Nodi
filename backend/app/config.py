@@ -33,9 +33,11 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-only-change-me"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 12  # 수업 한 타임을 넉넉히 덮는다
-    # 세션 쿠키(httpOnly)의 Secure 플래그. HTTPS로만 접속하는 배포에서 켠다.
-    # 기본 끔 — docker compose 로컬(http://localhost)과 LAN http 접속이 있어서다.
-    cookie_secure: bool = False
+    # 세션 쿠키(httpOnly)의 Secure 플래그. 비워 두면(None) ENVIRONMENT=production일
+    # 때만 켠다 — 운영은 Cloudflare Tunnel로 HTTPS만 받는다(docs/DEPLOYMENT.md).
+    # docker compose 로컬·호스트 개발은 development라 http에서도 쿠키가 붙는다.
+    # 명시하면(true/false) 그 값이 이긴다.
+    cookie_secure: bool | None = None
 
     # --- 파일 저장 (D104-5) ---
     # 로컬 파일시스템. 컨테이너(버킷)·경로 규약은 db/storage.py가 정한다.

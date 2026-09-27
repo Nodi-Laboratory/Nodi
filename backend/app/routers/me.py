@@ -64,6 +64,13 @@ class TokenResponse(BaseModel):
     expires_in: int = settings.jwt_expire_minutes * 60
 
 
+def _cookie_secure() -> bool:
+    """Secure 플래그 — 명시값이 없으면 운영(HTTPS 전용)에서만 켠다(config 참조)."""
+    if settings.cookie_secure is not None:
+        return settings.cookie_secure
+    return settings.environment == "production"
+
+
 def _set_session_cookie(response: Response, user_id: str, email: str | None) -> None:
     """세션 쿠키 발급. 수명은 토큰 만료와 같다 — 둘이 갈리면 화면만 열리고 401."""
     response.set_cookie(
@@ -71,7 +78,7 @@ def _set_session_cookie(response: Response, user_id: str, email: str | None) -> 
         create_access_token(user_id, email),
         max_age=settings.jwt_expire_minutes * 60,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=_cookie_secure(),
         samesite="lax",
         path="/",
     )
@@ -122,7 +129,7 @@ async def logout(response: Response) -> Response:
     response.status_code = status.HTTP_204_NO_CONTENT
     response.delete_cookie(
         SESSION_COOKIE, path="/", httponly=True,
-        secure=settings.cookie_secure, samesite="lax",
+        secure=_cookie_secure(), samesite="lax",
     )
     return response
 
