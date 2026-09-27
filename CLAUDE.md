@@ -1004,25 +1004,34 @@ base_url/model/api_key 셋이 다 채워져야 동작하고, 로컬은 비워 �
     이 맥에서 IP로 들어오면 Origin이 `cors_origins`(localhost:3000)에 없어
     preflight가 400이다. **`/api`로 두면 둘 다 없다** — 페이지와 같은 출처라
     CORS 자체가 없고, Next가 서버 사이드로 백엔드에 넘긴다(배포와 같은 구성).
-- 로컬 실행 (README '빠른 시작' 참조):
-  1. `docker compose up -d` (postgres 5433 + qdrant 6333)
-  2. `cd backend && uv run uvicorn app.main:app --reload --port 8000`
-  3. `cd frontend && npm run dev` (http://localhost:3000)
+- 로컬 실행 — 두 갈래다(공개판 2026-09-27):
+  · **앱 전체를 컨테이너로**: `cp .env.example .env && docker compose up`
+    (db·qdrant·migrate·backend·frontend, http://localhost:3000, 데모 계정 demo/demo1234).
+  · **호스트 개발(핫 리로드)** — `docs/DEVELOPMENT.md`:
+    1. `docker compose up -d db qdrant migrate` (postgres 5433 + qdrant 6333)
+    2. `cd backend && uv run uvicorn app.main:app --reload --port 8000`
+    3. `cd frontend && npm run dev` (http://localhost:3000)
 - 프론트 타입/빌드 스모크: `cd frontend && npx tsc --noEmit && npm run build`
 - **API 경로(D105)**: 백엔드 도메인 라우터는 전부 `/api` 아래다. `/health`만
-  접두사 밖(인프라 liveness 계약). 프론트 `NEXT_PUBLIC_API_BASE_URL`은 로컬
-  `http://localhost:8000/api`, 배포 `/api` — 뒤 경로가 양쪽에서 같다.
+  접두사 밖(인프라 liveness 계약). 프론트 `NEXT_PUBLIC_API_BASE_URL`은 **어디서든
+  `/api`**(같은 출처)다 — 세션이 httpOnly 쿠키라 다른 출처(:8000 직접)로 보내면
+  쿠키가 안 실린다. next.config.ts rewrites가 `BACKEND_ORIGIN`으로 넘긴다.
 - **환경 변수: `backend/.env`** (루트 `.env` 아님 — `config.py`의 `BACKEND_ENV`).
   프론트는 `frontend/.env.local`. 각각 `.env.example`·`.env.local.example` 참고.
   백엔드 필수: `DATABASE_URL`·`DATABASE_WORKER_URL`·`JWT_SECRET` +
-  `UPSTAGE_API_KEY`·`EXAONE_API_KEY`. 프론트는 `NEXT_PUBLIC_API_BASE_URL` 하나.
+  `UPSTAGE_API_KEY`(비면 화면에서 방문자가 넣은 키를 헤더로 받는다 — 업로드는
+  .env 전용, `services/api_keys.py`). 비전은 `GEMINI_API_KEY`가 우선이고 없으면
+  `JUDGE_*`/`OCR_*` 자체 호스팅이 예비다. 프론트는 `NEXT_PUBLIC_API_BASE_URL` 하나.
 - **설정 자가진단**: `GET /health/config` — 무엇이 빠졌는지 `blocking`·`judge.missing`이
   알려준다(D97, 비밀값 미노출). 같은 요약이 부팅 시 터미널에도 찍힌다.
-- **DB 스키마(D104)**: `db/`의 SQL 5개가 이름순 자동 적용된다(빈 볼륨일 때 1회).
-  바꾸려면 `01_schema.sql`을 고치고 `docker compose down -v && up -d`.
-  **`down -v`는 데이터를 지운다** — 계정도 사라지므로 다시 만들어야 한다.
-- **계정은 시드하지 않는다**. 학생·교사는 `/signup`에서 가입하고, 관리자는
-  가입으로 얻을 수 없어(D99) CLI로 만든다:
+- **DB 스키마(D104)**: `db/0*.sql`이 이름순 자동 적용된다(빈 볼륨일 때 1회).
+  그 뒤 `migrate` 서비스가 `db/migrations/*.sql`을 기동마다 다시 적용한다(멱등).
+  바꾸려면 `01_schema.sql`과 마이그레이션을 함께 고친다.
+  **`down -v`는 데이터를 지운다.**
+- **데모 시드**: `SEED_DEMO=true`(루트 `.env.example` 기본)면 백엔드 컨테이너가
+  `python -m app.cli seed-demo --if-empty`로 데모 계정·학급·대화·벡터를 넣는다
+  (`backend/app/seed_demo/`, 옵트인 — 공개 서버에서는 false). 운영 DB에는 계정을
+  시드하지 않는다. 관리자는 가입으로 얻을 수 없어(D99) CLI로 만든다:
   `uv run python -m app.cli create-user <이메일> <비번> --role admin`
   (`grant-admin` / `list-users`도 있다).
 
