@@ -4,8 +4,8 @@
 #   ~/app/Nodi/deploy/deploy.sh              # 평소 배포 (git pull 포함)
 #   ~/app/Nodi/deploy/deploy.sh --skip-pull  # 지금 체크아웃된 코드로만
 #
-# GitHub Actions(self-hosted runner)가 main push마다 이걸 부른다. 사람이 손으로
-# 쳐도 결과가 같아야 하므로 **멱등**하게 짰다 — 몇 번을 돌려도 안전하다.
+# 서버에서 손으로 부른다(GitHub Actions 자동 배포는 2026-09-27에 걷어냈다).
+# **멱등**하게 짰다 — 몇 번을 돌려도 안전하다.
 #
 # 순서:
 #   1. git      origin/main으로 맞춘다 (--skip-pull이면 생략)
@@ -28,9 +28,8 @@ started_at=$(date +%s)
 #
 # 이 서버에는 **git 자격증명이 없다.** 조직 정책으로 deploy key가 막혀 있어서
 # (`Deploy keys are disabled for this repository`) VM이 직접 fetch하지 못한다.
-# 대신 GitHub Actions의 self-hosted 러너가 체크아웃한 코드를 $REPO_DIR로
-# 밀어 넣고 이 스크립트를 --skip-pull로 부른다. 서버에 토큰을 심지 않아도
-# 되므로 오히려 이쪽이 낫다.
+# 코드는 밖에서 $REPO_DIR로 배달(rsync 등)하고 이 스크립트를 --skip-pull로
+# 부른다(예전에는 GitHub Actions의 self-hosted 러너가 그 일을 했다).
 #
 # 나중에 조직에서 deploy key를 허용하면 --skip-pull 없이 아래 경로가 살아난다.
 # ---------------------------------------------------------------------------

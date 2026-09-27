@@ -64,10 +64,11 @@ nodictl tail -f nodi:backend   # 로그 따라가기
 `uv sync → 마이그레이션 → npm ci && npm build → backend·frontend 재시작 →
 /health·/login 확인`. 몇 번을 돌려도 안전하다(멱등).
 
-평소에는 **사람이 이걸 칠 일이 없다.** main에 push하면 GitHub Actions가
-self-hosted 러너에서 코드를 `rsync`로 `~/app/Nodi`에 배달하고 같은 스크립트를
-`--skip-pull`로 부른다. **이 VM에는 git 자격증명이 없다**(조직 정책으로 deploy
-key를 못 만든다) — 그래서 서버가 스스로 `git fetch`하지 못한다.
+⚠️ **자동 배포는 없다** — GitHub Actions는 2026-09-27에 걷어냈다(사용자 지시, 저장소 공개 전환). 예전에는 main
+push마다 self-hosted 러너가 코드를 `rsync`로 `~/app/Nodi`에 배달하고 이 스크립트를
+`--skip-pull`로 불렀다. 이제는 코드를 서버에 옮긴 뒤 손으로 돌린다. **이 VM에는 git
+자격증명이 없다**(조직 정책으로 deploy key를 못 만든다) — 서버가 스스로 `git fetch`하지
+못하므로, 코드는 `rsync` 등으로 배달하고 `--skip-pull`로 부른다.
 
 > **서버에서 코드를 직접 고치지 마라.** 배포의 `rsync --delete`가 지운다.
 > 고칠 것은 저장소에서 고치고 main에 올린다.

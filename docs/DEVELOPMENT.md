@@ -169,8 +169,8 @@ deploy/bootstrap.sh    # 새 인스턴스 최초 1회 — 런타임·DB·모델�
 deploy/deploy.sh       # 이후 배포 — 빌드 → 마이그레이션 → 재시작
 ```
 
-평소에는 사람이 칠 일이 없다. **main에 push하면 GitHub Actions가 자동 배포한다**
-(self-hosted 러너 → rsync → `deploy.sh`). dev는 배포하지 않는다.
+**자동 배포는 없다** — GitHub Actions는 2026-09-27에 걷어냈다(사용자 지시, 저장소 공개 전환). 서버에 코드를
+배달한 뒤 `deploy.sh`를 손으로 돌린다(`deploy/README.md`).
 
 로컬 개발과의 차이는 세 가지다 — 인프라를 컨테이너가 아니라 프로세스로 띄우고,
 프론트가 `next start`(프로덕션 빌드)라 핫 리로드가 없고, 교과서 도판 비전
@@ -292,8 +292,8 @@ cd frontend && npm test -- --run && npx tsc --noEmit && npm run lint && npm run 
 > 쓰기 때문에 dev 쪽 청크가 깨져, 소스에 없는 식별자로 `ReferenceError`가 나는
 > 유령 증상이 생긴다. 빌드했으면 dev 서버를 재시작한다.
 
-두 가지는 CI(`.github/workflows/ci.yml`)에서도 돌지만, **PR 올리기 전에 로컬에서
-먼저 통과시킨다.**
+CI가 없으므로(2026-09-27 GitHub Actions 제거) **PR 올리기 전에 로컬에서 반드시
+통과시킨다.**
 
 ---
 

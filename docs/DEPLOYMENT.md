@@ -96,7 +96,13 @@ NFS 위의 Postgres가 느리거나 불안정할까 걱정해 재 봤는데 문�
 `cloudflared`는 supervisor의 `autostart=false`다 — 토큰(`~/data/nodi/env/cloudflared.env`)을
 넣기 전에는 뜨지 않는다.
 
-## 결정 4 — 배포는 self-hosted 러너가 스스로
+## 결정 4 — 배포는 self-hosted 러너가 스스로 (⚠️ 2026-09-27 폐기)
+
+> **지금은 자동 배포가 없다.** GitHub Actions는 2026-09-27에 걷어냈다(사용자 지시, 저장소 공개 전환) — CI(`ci.yml`)와
+> 배포(`deploy.yml`) 둘 다다. 저장소가 공개되면 self-hosted 러너를 잡는 워크플로는
+> 위험하다(아래 "private이라 안전"의 전제가 사라졌다). 배포는 서버에서
+> `deploy/deploy.sh`를 손으로 돌린다. 서버의 `gh-runner` 프로그램(supervisor)과
+> GitHub의 러너 등록은 저장소 밖이라 따로 정리해야 한다. 아래는 당시 기록이다.
 
 GitHub-hosted 러너에서 SSH로 밀어넣는 방식을 버렸다. 이유가 셋이다:
 
