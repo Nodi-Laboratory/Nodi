@@ -11,6 +11,17 @@
 그래서 개발자가 키로 **한 번** 임베딩해 파일로 커밋하고(`scripts/
 build_demo_assets.py --embed`), 시드는 그 파일을 Qdrant에 올리기만 한다.
 
+## 제공자마다 벡터 파일이 따로다 (2026-11-17)
+
+임베딩 제공자가 둘이다(`EMBEDDING_PROVIDER` = upstage | gemini — 기본 upstage).
+두 제공자의 벡터는 **서로 다른 공간**이라 섞어 올리면 오류 없이 검색만 틀어진다.
+그래서 파일이 둘이고(`vectors.json.gz` = Upstage, `vectors.gemini.json.gz` =
+Gemini), 각 파일이 **자기 제공자·모델·차원을 머리에 적는다.** 시드는 런타임
+제공자와 파일의 머리가 일치할 때만 올린다 — 어긋나면 경고하고 건너뛴다(시드
+자체는 성공이다: 벡터가 없어도 화면은 뜬다). manifest의 검색 결과·연결 거리도
+제공자마다 다르므로 `retrieval.<제공자>`에 따로 담는다(거리 분포가 다르다 —
+config.py의 거리 게이트 주석 참조).
+
 ## 비대칭 규약을 지킨다
 
 여기 담기는 것은 전부 **문서(passage) 벡터**다 — 워커가 적재하는 것과 같은
@@ -24,8 +35,11 @@ gzip JSON. 벡터는 float16 리틀엔디언을 base64로 담는다 — 1024차�
 바꾸지 않는다. 원문의 해시(`h`)를 함께 적어, 글을 고치고 벡터를 다시 안 만든
 상태를 테스트가 잡는다.
 
-    {"model": {...}, "dim": 1024,
+    {"provider": "gemini", "model": "gemini-embedding-001", "dim": 1024,
      "points": {"<point uuid>": {"c": "<collection>", "h": "<sha1 12>", "v": "<b64>"}}}
+
+머리(provider·model·dim)가 없던 옛 파일은 `{"model": {"passage": ...}}` 꼴이었고
+**Upstage**였다 — `vector_set`이 그대로 읽는다.
 """
 
 from __future__ import annotations
@@ -43,10 +57,16 @@ from typing import Any
 from . import content as c
 
 ASSETS = Path(__file__).resolve().parent / "assets"
-VECTORS_FILE = ASSETS / "vectors.json.gz"
+# 제공자별 벡터 파일. Upstage 파일 이름은 옛 그대로다(이미 커밋된 파일 보존).
+VECTORS_FILES = {
+    "upstage": ASSETS / "vectors.json.gz",
+    "gemini": ASSETS / "vectors.gemini.json.gz",
+}
+VECTORS_FILE = VECTORS_FILES["upstage"]  # 옛 이름(호출부 보존)
 MANIFEST_FILE = ASSETS / "manifest.json"
 
 DIM = 1024
+DEFAULT_PROVIDER = "upstage"
 
 
 @dataclass(frozen=True)
@@ -140,17 +160,54 @@ def specs() -> Iterator[VectorSpec]:
             )
 
 
-def load_vectors() -> dict[str, dict[str, Any]]:
-    """벡터 파일 → {point_id: {"c","h","v"}}. 파일이 없으면 빈 dict."""
-    if not VECTORS_FILE.is_file():
+def vector_set(provider: str = DEFAULT_PROVIDER) -> dict[str, Any]:
+    """제공자의 벡터 파일 → `{"provider","model","dim","points"}`. 파일이 없으면 빈 dict.
+
+    머리가 없는 옛 Upstage 파일은 `provider="upstage"`, `model`은 옛 `model.passage`로
+    채워 돌려준다(읽는 쪽이 한 가지 모양만 알면 되게).
+    """
+    path = VECTORS_FILES.get(provider)
+    if path is None or not path.is_file():
         return {}
-    with gzip.open(VECTORS_FILE, "rt", encoding="utf-8") as fh:
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
         data = json.load(fh)
-    return data.get("points") or {}
+    model = data.get("model")
+    if isinstance(model, dict):  # 옛 형식
+        model = model.get("passage")
+    return {
+        "provider": data.get("provider") or DEFAULT_PROVIDER,
+        "model": model,
+        "dim": data.get("dim"),
+        "points": data.get("points") or {},
+    }
 
 
-def load_manifest() -> dict[str, Any]:
-    """빌드 산출물(도판 위치 · 검색 결과 · 링크 거리). 없으면 빈 dict."""
+def load_vectors(provider: str = DEFAULT_PROVIDER) -> dict[str, dict[str, Any]]:
+    """벡터 파일 → {point_id: {"c","h","v"}}. 파일이 없으면 빈 dict."""
+    return vector_set(provider).get("points") or {}
+
+
+def load_manifest(provider: str | None = None) -> dict[str, Any]:
+    """빌드 산출물(도판 위치 · 검색 결과 · 링크 거리). 없으면 빈 dict.
+
+    `figure_bbox`·`files`는 제공자와 무관하다. `turns`·`links`(검색 결과·연결
+    거리)는 **제공자마다 다르므로** `retrieval.<제공자>`에서 골라 최상위로 올려
+    돌려준다 — 읽는 쪽은 `m["turns"]`·`m["links"]`만 알면 된다. 알 수 없는
+    제공자는 Upstage 값으로 읽는다(DB에 남는 표시용 거리일 뿐이다).
+    """
+    if not MANIFEST_FILE.is_file():
+        return {}
+    raw = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
+    chosen = provider if provider in (raw.get("retrieval") or {}) else DEFAULT_PROVIDER
+    picked = (raw.get("retrieval") or {}).get(chosen) or {}
+    out = {k: val for k, val in raw.items() if k != "retrieval"}
+    out["turns"] = picked.get("turns") or {}
+    out["links"] = picked.get("links") or {}
+    return out
+
+
+def load_manifest_raw() -> dict[str, Any]:
+    """manifest 원본(빌드 스크립트가 제공자별 칸을 갱신할 때 쓴다)."""
     if not MANIFEST_FILE.is_file():
         return {}
     return json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))

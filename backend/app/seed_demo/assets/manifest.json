@@ -61,305 +61,679 @@
    "bytes": 31664
   }
  },
- "turns": {
-  "demo-photosynthesis:t1": {
-   "rag": [
-    [
-     "textbook",
-     0,
-     0.4073
-    ],
-    [
-     "textbook",
-     7,
-     0.5244
-    ],
-    [
-     "textbook",
-     1,
-     0.5315
-    ],
-    [
-     "textbook",
-     8,
-     0.5684
-    ],
-    [
-     "textbook",
-     6,
-     0.5744
-    ]
-   ],
-   "figures": {
-    "photosynthesis": 0.5483
+ "retrieval": {
+  "upstage": {
+   "turns": {
+    "demo-photosynthesis:t1": {
+     "rag": [
+      [
+       "textbook",
+       0,
+       0.4073
+      ],
+      [
+       "textbook",
+       7,
+       0.5244
+      ],
+      [
+       "textbook",
+       1,
+       0.5315
+      ],
+      [
+       "textbook",
+       8,
+       0.5684
+      ],
+      [
+       "textbook",
+       6,
+       0.5744
+      ]
+     ],
+     "figures": {
+      "photosynthesis": 0.5483
+     },
+     "clips": {
+      "plants:intro": 0.4047
+     }
+    },
+    "demo-photosynthesis:t2": {
+     "rag": [
+      [
+       "textbook",
+       2,
+       0.4703
+      ],
+      [
+       "textbook",
+       1,
+       0.5125
+      ],
+      [
+       "textbook",
+       3,
+       0.5364
+      ],
+      [
+       "textbook",
+       0,
+       0.5473
+      ],
+      [
+       "textbook",
+       6,
+       0.5567
+      ]
+     ],
+     "figures": {
+      "leaf": 0.5992
+     },
+     "clips": {}
+    },
+    "demo-photosynthesis:t3": {
+     "rag": [
+      [
+       "textbook",
+       3,
+       0.5698
+      ]
+     ],
+     "figures": {
+      "stoma": 0.5383
+     },
+     "clips": {
+      "plants:stoma": 0.5972
+     }
+    },
+    "demo-photosynthesis:t4": {
+     "rag": [
+      [
+       "textbook",
+       4,
+       0.5016
+      ],
+      [
+       "textbook",
+       5,
+       0.5615
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "demo-photosynthesis:t5": {
+     "rag": [
+      [
+       "textbook",
+       7,
+       0.4566
+      ],
+      [
+       "textbook",
+       9,
+       0.5696
+      ]
+     ],
+     "figures": {
+      "daynight": 0.4585
+     },
+     "clips": {
+      "plants:respiration": 0.4373
+     }
+    },
+    "demo-electric:e1": {
+     "rag": [
+      [
+       "textbook",
+       13,
+       0.5028
+      ],
+      [
+       "electric-sheet",
+       5,
+       0.5458
+      ],
+      [
+       "electric-sheet",
+       6,
+       0.5476
+      ]
+     ],
+     "figures": {},
+     "clips": {
+      "electric:current": 0.4342
+     }
+    },
+    "demo-electric:e2": {
+     "rag": [
+      [
+       "textbook",
+       13,
+       0.324
+      ],
+      [
+       "electric-sheet",
+       5,
+       0.4451
+      ],
+      [
+       "electric-sheet",
+       6,
+       0.4943
+      ]
+     ],
+     "figures": {
+      "wire_field": 0.3909
+     },
+     "clips": {
+      "electric:field": 0.3672
+     }
+    },
+    "demo-electric:e3": {
+     "rag": [
+      [
+       "textbook",
+       13,
+       0.5569
+      ],
+      [
+       "electric-sheet",
+       6,
+       0.5789
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "demo-electric:e4": {
+     "rag": [
+      [
+       "electric-sheet",
+       6,
+       0.5288
+      ]
+     ],
+     "figures": {},
+     "clips": {
+      "electric:motor": 0.4761
+     }
+    },
+    "seojun-starch:s1": {
+     "rag": [
+      [
+       "textbook",
+       6,
+       0.5207
+      ],
+      [
+       "textbook",
+       9,
+       0.5825
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "seojun-starch:s2": {
+     "rag": [
+      [
+       "textbook",
+       6,
+       0.4832
+      ],
+      [
+       "textbook",
+       0,
+       0.5603
+      ],
+      [
+       "textbook",
+       1,
+       0.5625
+      ],
+      [
+       "textbook",
+       7,
+       0.5693
+      ],
+      [
+       "textbook",
+       8,
+       0.571
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "jiwoo-ohm:j1": {
+     "rag": [
+      [
+       "electric-sheet",
+       3,
+       0.5041
+      ]
+     ],
+     "figures": {},
+     "clips": {
+      "electric:ohm": 0.4265
+     }
+    },
+    "minseo-symbols:n1": {
+     "rag": [
+      [
+       "matter-notes",
+       2,
+       0.509
+      ],
+      [
+       "textbook",
+       10,
+       0.5207
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "yerin-circuits:y1": {
+     "rag": [
+      [
+       "textbook",
+       14,
+       0.4059
+      ]
+     ],
+     "figures": {
+      "circuit": 0.545
+     },
+     "clips": {}
+    },
+    "doyun-transpiration:d1": {
+     "rag": [],
+     "figures": {},
+     "clips": {}
+    },
+    "haeun-static:h1": {
+     "rag": [],
+     "figures": {},
+     "clips": {}
+    }
    },
-   "clips": {
-    "plants:intro": 0.4047
+   "links": {
+    "molecule-photosynthesis": 0.5289,
+    "atom-current": 0.5149
    }
   },
-  "demo-photosynthesis:t2": {
-   "rag": [
-    [
-     "textbook",
-     2,
-     0.4703
-    ],
-    [
-     "textbook",
-     1,
-     0.5125
-    ],
-    [
-     "textbook",
-     3,
-     0.5364
-    ],
-    [
-     "textbook",
-     0,
-     0.5473
-    ],
-    [
-     "textbook",
-     6,
-     0.5567
-    ]
-   ],
-   "figures": {
-    "leaf": 0.5992
+  "gemini": {
+   "turns": {
+    "demo-photosynthesis:t1": {
+     "rag": [
+      [
+       "textbook",
+       0,
+       0.2513
+      ],
+      [
+       "textbook",
+       1,
+       0.2964
+      ],
+      [
+       "textbook",
+       8,
+       0.3241
+      ],
+      [
+       "textbook",
+       6,
+       0.3372
+      ],
+      [
+       "textbook",
+       7,
+       0.3449
+      ]
+     ],
+     "figures": {
+      "photosynthesis": 0.3082
+     },
+     "clips": {
+      "plants:intro": 0.2208
+     }
+    },
+    "demo-photosynthesis:t2": {
+     "rag": [
+      [
+       "textbook",
+       2,
+       0.2568
+      ],
+      [
+       "textbook",
+       1,
+       0.2731
+      ],
+      [
+       "textbook",
+       3,
+       0.2822
+      ],
+      [
+       "textbook",
+       0,
+       0.3074
+      ],
+      [
+       "textbook",
+       8,
+       0.3197
+      ]
+     ],
+     "figures": {
+      "leaf": 0.3037
+     },
+     "clips": {}
+    },
+    "demo-photosynthesis:t3": {
+     "rag": [
+      [
+       "textbook",
+       3,
+       0.2716
+      ]
+     ],
+     "figures": {
+      "stoma": 0.2623
+     },
+     "clips": {
+      "plants:stoma": 0.2901
+     }
+    },
+    "demo-photosynthesis:t4": {
+     "rag": [
+      [
+       "textbook",
+       4,
+       0.2733
+      ],
+      [
+       "textbook",
+       1,
+       0.3185
+      ],
+      [
+       "textbook",
+       0,
+       0.3442
+      ],
+      [
+       "textbook",
+       8,
+       0.3464
+      ],
+      [
+       "textbook",
+       5,
+       0.3479
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "demo-photosynthesis:t5": {
+     "rag": [
+      [
+       "textbook",
+       7,
+       0.2349
+      ],
+      [
+       "textbook",
+       8,
+       0.2976
+      ],
+      [
+       "textbook",
+       9,
+       0.3123
+      ],
+      [
+       "textbook",
+       0,
+       0.3189
+      ],
+      [
+       "textbook",
+       1,
+       0.321
+      ]
+     ],
+     "figures": {
+      "daynight": 0.2391
+     },
+     "clips": {
+      "plants:respiration": 0.2203
+     }
+    },
+    "demo-electric:e1": {
+     "rag": [
+      [
+       "electric-sheet",
+       6,
+       0.3161
+      ],
+      [
+       "electric-sheet",
+       5,
+       0.3373
+      ],
+      [
+       "textbook",
+       13,
+       0.3423
+      ]
+     ],
+     "figures": {},
+     "clips": {
+      "electric:current": 0.2684
+     }
+    },
+    "demo-electric:e2": {
+     "rag": [
+      [
+       "textbook",
+       13,
+       0.2418
+      ],
+      [
+       "electric-sheet",
+       5,
+       0.2845
+      ],
+      [
+       "electric-sheet",
+       6,
+       0.2958
+      ]
+     ],
+     "figures": {
+      "wire_field": 0.2468
+     },
+     "clips": {
+      "electric:field": 0.2312
+     }
+    },
+    "demo-electric:e3": {
+     "rag": [
+      [
+       "textbook",
+       13,
+       0.3439
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "demo-electric:e4": {
+     "rag": [
+      [
+       "electric-sheet",
+       6,
+       0.3001
+      ]
+     ],
+     "figures": {},
+     "clips": {
+      "electric:motor": 0.2444
+     }
+    },
+    "seojun-starch:s1": {
+     "rag": [
+      [
+       "textbook",
+       6,
+       0.2723
+      ],
+      [
+       "textbook",
+       9,
+       0.3207
+      ],
+      [
+       "textbook",
+       1,
+       0.3591
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "seojun-starch:s2": {
+     "rag": [
+      [
+       "textbook",
+       6,
+       0.2814
+      ],
+      [
+       "textbook",
+       1,
+       0.332
+      ],
+      [
+       "textbook",
+       0,
+       0.3458
+      ],
+      [
+       "textbook",
+       8,
+       0.3462
+      ],
+      [
+       "textbook",
+       7,
+       0.3545
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "jiwoo-ohm:j1": {
+     "rag": [
+      [
+       "electric-sheet",
+       3,
+       0.3155
+      ],
+      [
+       "electric-sheet",
+       2,
+       0.3527
+      ],
+      [
+       "electric-sheet",
+       4,
+       0.3556
+      ]
+     ],
+     "figures": {},
+     "clips": {
+      "electric:ohm": 0.2822
+     }
+    },
+    "minseo-symbols:n1": {
+     "rag": [
+      [
+       "matter-notes",
+       2,
+       0.3008
+      ],
+      [
+       "textbook",
+       10,
+       0.3363
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "yerin-circuits:y1": {
+     "rag": [
+      [
+       "textbook",
+       14,
+       0.2339
+      ],
+      [
+       "electric-sheet",
+       4,
+       0.3282
+      ]
+     ],
+     "figures": {
+      "circuit": 0.3046
+     },
+     "clips": {}
+    },
+    "doyun-transpiration:d1": {
+     "rag": [
+      [
+       "textbook",
+       4,
+       0.3259
+      ],
+      [
+       "textbook",
+       6,
+       0.355
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    },
+    "haeun-static:h1": {
+     "rag": [
+      [
+       "electric-sheet",
+       0,
+       0.3478
+      ],
+      [
+       "electric-sheet",
+       1,
+       0.3528
+      ]
+     ],
+     "figures": {},
+     "clips": {}
+    }
    },
-   "clips": {}
-  },
-  "demo-photosynthesis:t3": {
-   "rag": [
-    [
-     "textbook",
-     3,
-     0.5698
-    ]
-   ],
-   "figures": {
-    "stoma": 0.5383
-   },
-   "clips": {
-    "plants:stoma": 0.5972
+   "links": {
+    "molecule-photosynthesis": 0.3461,
+    "atom-current": 0.314
    }
-  },
-  "demo-photosynthesis:t4": {
-   "rag": [
-    [
-     "textbook",
-     4,
-     0.5016
-    ],
-    [
-     "textbook",
-     5,
-     0.5615
-    ]
-   ],
-   "figures": {},
-   "clips": {}
-  },
-  "demo-photosynthesis:t5": {
-   "rag": [
-    [
-     "textbook",
-     7,
-     0.4566
-    ],
-    [
-     "textbook",
-     9,
-     0.5696
-    ]
-   ],
-   "figures": {
-    "daynight": 0.4585
-   },
-   "clips": {
-    "plants:respiration": 0.4373
-   }
-  },
-  "demo-electric:e1": {
-   "rag": [
-    [
-     "textbook",
-     13,
-     0.5028
-    ],
-    [
-     "electric-sheet",
-     5,
-     0.5458
-    ],
-    [
-     "electric-sheet",
-     6,
-     0.5476
-    ]
-   ],
-   "figures": {},
-   "clips": {
-    "electric:current": 0.4342
-   }
-  },
-  "demo-electric:e2": {
-   "rag": [
-    [
-     "textbook",
-     13,
-     0.324
-    ],
-    [
-     "electric-sheet",
-     5,
-     0.4451
-    ],
-    [
-     "electric-sheet",
-     6,
-     0.4943
-    ]
-   ],
-   "figures": {
-    "wire_field": 0.3909
-   },
-   "clips": {
-    "electric:field": 0.3672
-   }
-  },
-  "demo-electric:e3": {
-   "rag": [
-    [
-     "textbook",
-     13,
-     0.5569
-    ],
-    [
-     "electric-sheet",
-     6,
-     0.5789
-    ]
-   ],
-   "figures": {},
-   "clips": {}
-  },
-  "demo-electric:e4": {
-   "rag": [
-    [
-     "electric-sheet",
-     6,
-     0.5288
-    ]
-   ],
-   "figures": {},
-   "clips": {
-    "electric:motor": 0.4761
-   }
-  },
-  "seojun-starch:s1": {
-   "rag": [
-    [
-     "textbook",
-     6,
-     0.5207
-    ],
-    [
-     "textbook",
-     9,
-     0.5825
-    ]
-   ],
-   "figures": {},
-   "clips": {}
-  },
-  "seojun-starch:s2": {
-   "rag": [
-    [
-     "textbook",
-     6,
-     0.4832
-    ],
-    [
-     "textbook",
-     0,
-     0.5603
-    ],
-    [
-     "textbook",
-     1,
-     0.5625
-    ],
-    [
-     "textbook",
-     7,
-     0.5693
-    ],
-    [
-     "textbook",
-     8,
-     0.571
-    ]
-   ],
-   "figures": {},
-   "clips": {}
-  },
-  "jiwoo-ohm:j1": {
-   "rag": [
-    [
-     "electric-sheet",
-     3,
-     0.5041
-    ]
-   ],
-   "figures": {},
-   "clips": {
-    "electric:ohm": 0.4265
-   }
-  },
-  "minseo-symbols:n1": {
-   "rag": [
-    [
-     "matter-notes",
-     2,
-     0.509
-    ],
-    [
-     "textbook",
-     10,
-     0.5207
-    ]
-   ],
-   "figures": {},
-   "clips": {}
-  },
-  "yerin-circuits:y1": {
-   "rag": [
-    [
-     "textbook",
-     14,
-     0.4059
-    ]
-   ],
-   "figures": {
-    "circuit": 0.545
-   },
-   "clips": {}
-  },
-  "doyun-transpiration:d1": {
-   "rag": [],
-   "figures": {},
-   "clips": {}
-  },
-  "haeun-static:h1": {
-   "rag": [],
-   "figures": {},
-   "clips": {}
   }
- },
- "links": {
-  "molecule-photosynthesis": 0.5289,
-  "atom-current": 0.5149
  }
 }

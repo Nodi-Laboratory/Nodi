@@ -33,11 +33,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import httpx
-
 from ..config import get_settings
 from ..db.client import UserClient
-from . import api_keys, app_settings
+from . import app_settings, solar
 
 logger = logging.getLogger("nodi.question_coach")
 settings = get_settings()
@@ -255,26 +253,20 @@ async def analyse(
 
 
 async def _ask(user_text: str, model: str | None) -> str:
+    # 공급자·모델 선택은 solar 한 곳이 정한다(2026-11-17 "모두 gemini로") — 여기서
+    # Upstage를 직접 부르면 Gemini만 설정된 환경에서 코치만 조용히 죽는다.
+    # 모델 이름(기본 solar-pro2)은 Gemini 갈래에서 light 모델로 옮겨진다.
     picked = (model or settings.upstage_chat_model).strip()
-    key = api_keys.upstage_key()  # .env 우선, 없으면 요청 헤더
-    if not key:
-        raise RuntimeError("UPSTAGE_API_KEY 없음")
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        res = await client.post(
-            f"{settings.upstage_base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {key}"},
-            json={
-                "model": picked,
-                "messages": [
-                    {"role": "system", "content": _SYSTEM},
-                    {"role": "user", "content": user_text},
-                ],
-                # 방향 낱말 몇 개면 된다. 길게 두면 모델이 설명을 붙인다.
-                "max_tokens": 160,
-                "temperature": 0.2,
-            },
-        )
-        res.raise_for_status()
-        data = res.json()
-    return data["choices"][0]["message"].get("content") or ""
+    completion = await solar.complete(
+        [
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": user_text},
+        ],
+        # 방향 낱말 몇 개면 된다. 길게 두면 모델이 설명을 붙인다.
+        max_tokens=160,
+        temperature=0.2,
+        model=picked,
+        timeout=20.0,
+    )
+    return completion.message.get("content") or ""
 

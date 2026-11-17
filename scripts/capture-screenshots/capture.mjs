@@ -72,7 +72,7 @@ async function setDummyKeys(page) {
     ([k, p]) => {
       localStorage.setItem(
         k,
-        JSON.stringify({ upstage: "dummy", gemini: "dummy", geminiModel: "gemini-3.5-flash-lite" }),
+        JSON.stringify({ gemini: "dummy", geminiModel: "gemini-3.5-flash-lite" }),
       );
       localStorage.setItem(p, "1");
     },

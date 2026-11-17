@@ -1,6 +1,12 @@
 /**
  * 방문자가 화면에서 넣은 외부 API 키 (공개판 C 분류, 2026-09-27).
  *
+ * ## 키는 Gemini 하나다 (2026-11-17 "모두 gemini로")
+ * 대화·도구 판정·임베딩·OCR/비전이 전부 Gemini 키 하나로 돈다. 방문자가 넣을
+ * 것은 그것뿐이다. Upstage 키는 문서 파싱(파일 **업로드**)에만 남았는데, 그건
+ * 백그라운드 워커가 처리해 헤더 키가 닿지 않으므로 서버 `.env`로만 준다 —
+ * 그래서 입력 UI에는 없다.
+ *
  * ## 규칙
  * - 서버 `.env`에 키가 있으면 이 저장소는 **쓰이지 않는다** — 입력 UI 자체가
  *   안 뜬다(`GET /api/config`가 true를 준다). 서버도 헤더를 무시한다.
@@ -12,6 +18,11 @@
  */
 
 export type ApiKeys = {
+  /**
+   * 옛 저장 JSON(v1)에 있던 칸. 화면에는 더 이상 보이지 않지만, 이미 저장된
+   * 값이 읽기에서 깨지지 않게 형태는 유지하고 헤더에도 그대로 싣는다
+   * (백엔드가 X-Upstage-Key를 아직 받는다 — 해롭지 않다).
+   */
   upstage: string;
   gemini: string;
   geminiModel: string;
@@ -28,12 +39,30 @@ export const GEMINI_VISION_MODELS = [
 export const DEFAULT_GEMINI_MODEL = GEMINI_VISION_MODELS[0].id;
 
 export const KEY_LINKS = {
-  upstage: "https://console.upstage.ai/api-keys",
   gemini: "https://aistudio.google.com/apikey",
 } as const;
 
 const STORAGE_KEY = "nodi.apiKeys.v1";
 const EMPTY: ApiKeys = { upstage: "", gemini: "", geminiModel: DEFAULT_GEMINI_MODEL };
+
+/**
+ * 저장된 JSON 한 덩어리 → ApiKeys. 깨진 필드는 빈 값·기본 모델로 떨군다.
+ * (순수 함수로 뺀 이유: 옛 v1 JSON·알 수 없는 모델 같은 경계 케이스를 localStorage
+ * 없이 테스트하려고.)
+ */
+export function parseStoredKeys(raw: string | null): ApiKeys {
+  if (!raw) return EMPTY;
+  const parsed = JSON.parse(raw) as Partial<ApiKeys> | null;
+  if (!parsed || typeof parsed !== "object") return EMPTY;
+  const model = GEMINI_VISION_MODELS.some((m) => m.id === parsed.geminiModel)
+    ? (parsed.geminiModel as string)
+    : DEFAULT_GEMINI_MODEL;
+  return {
+    upstage: typeof parsed.upstage === "string" ? parsed.upstage : "",
+    gemini: typeof parsed.gemini === "string" ? parsed.gemini : "",
+    geminiModel: model,
+  };
+}
 
 /** 바뀌면 알린다 — 입력 UI를 닫은 순간 채팅 입력창의 "키 필요" 안내가 풀려야 한다. */
 const listeners = new Set<() => void>();
@@ -41,17 +70,7 @@ const listeners = new Set<() => void>();
 export function loadApiKeys(): ApiKeys {
   if (typeof window === "undefined") return EMPTY;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return EMPTY;
-    const parsed = JSON.parse(raw) as Partial<ApiKeys>;
-    const model = GEMINI_VISION_MODELS.some((m) => m.id === parsed.geminiModel)
-      ? (parsed.geminiModel as string)
-      : DEFAULT_GEMINI_MODEL;
-    return {
-      upstage: typeof parsed.upstage === "string" ? parsed.upstage : "",
-      gemini: typeof parsed.gemini === "string" ? parsed.gemini : "",
-      geminiModel: model,
-    };
+    return parseStoredKeys(window.localStorage.getItem(STORAGE_KEY));
   } catch {
     // 사생활 보호 모드 등 저장소를 못 쓰는 브라우저 — 키 없음으로 친다.
     return EMPTY;

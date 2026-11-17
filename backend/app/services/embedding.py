@@ -1,8 +1,9 @@
-"""텍스트 임베딩(Upstage 위임) + 청킹.
+"""텍스트 임베딩(제공자 스위치에 위임) + 청킹.
 
-임베딩은 services/upstage.py가 담당 — 비대칭 모델(질의=embedding-query,
-문서=embedding-passage), 배치 분할·재시도·L2 정규화 포함. 기존 호출부 호환을
-위해 Gemini식 task_type 파라미터를 유지하고 kind로 매핑한다.
+임베딩은 services/upstage.py의 진입점이 `EMBEDDING_PROVIDER`(upstage|gemini)로
+구현을 고른다 — 비대칭(질의=embedding-query/RETRIEVAL_QUERY, 문서=embedding-passage/
+RETRIEVAL_DOCUMENT), 배치 분할·재시도·L2 정규화 포함. 기존 호출부 호환을 위해
+Gemini식 task_type 파라미터를 유지하고 kind로 매핑한다.
 
 벡터는 Postgres가 아니라 Qdrant에 저장한다(migration 0028) —
 과거 vector(768) 컬럼 계약 상수(DB_VECTOR_DIM)와 차원 가드는 폐기. 차원
@@ -32,12 +33,12 @@ async def embed_texts(
     task_type: str = "RETRIEVAL_DOCUMENT",
     concurrency: int | None = None,
 ) -> list[list[float]]:
-    """텍스트 목록 -> L2 정규화된 EMBED_DIM 차원 벡터 목록 (Upstage).
+    """텍스트 목록 -> L2 정규화된 EMBED_DIM 차원 벡터 목록 (설정된 제공자).
 
     RETRIEVAL_QUERY -> kind="query", 그 외(RETRIEVAL_DOCUMENT) -> "passage".
-    질의/문서 임베딩이 같은 비대칭 모델 쌍을 쓰므로 검색 공간이 일치한다.
+    질의/문서 임베딩이 같은 제공자의 비대칭 쌍을 쓰므로 검색 공간이 일치한다.
 
-    D195: 100개를 넘는 입력은 upstage가 조각내 동시에 보낸다. concurrency는
+    D195: 100개를 넘는 입력은 제공자 구현이 조각내 동시에 보낸다. concurrency는
     admin 오버레이 값을 실어 보내는 통로 — 미지정이면 config 기본값.
     """
     if not texts:

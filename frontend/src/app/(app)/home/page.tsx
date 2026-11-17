@@ -340,7 +340,7 @@ export default function HomePage() {
                 {chatLocked && (
                   <AiKeyNotice
                     className="-mt-4"
-                    message="AI 답변을 받으려면 Upstage API 키가 필요해요."
+                    message="AI 답변을 받으려면 Gemini API 키가 필요해요."
                   />
                 )}
 

@@ -5,8 +5,9 @@
 1. `.env`에 키가 있으면 **그 키만** 쓴다. 헤더로 온 키는 무시한다 — 운영자가
    키를 넣어 둔 서버에서 방문자가 자기 키로 바꿔 칠 이유가 없다.
 2. `.env`가 비어 있으면 브라우저가 요청마다 헤더로 실어 보낸 키를 쓴다.
-   - `X-Upstage-Key`  대화 생성·질의 임베딩·질문 코치
-   - `X-Gemini-Key`   비전(도판 캡션·손글씨·펜 표시 해석)
+   - `X-Upstage-Key`  질의 임베딩 · 대화 생성(Gemini 키가 없을 때의 폴백)
+   - `X-Gemini-Key`   비전(도판 캡션·손글씨·펜 표시 해석) + 대화 생성·질문 코치
+                      (2026-11-17 "모두 gemini로" — 우선순위는 solar.resolve_route)
    - `X-Gemini-Model` 비전 모델 선택(허용 목록 안에서만)
 3. 헤더 키는 **이 요청의 수명 동안 메모리(ContextVar)에만** 있다. DB·파일·로그
    어디에도 쓰지 않는다. 요청이 끝나면 미들웨어가 되돌린다.
@@ -58,6 +59,11 @@ def upstage_env_configured() -> bool:
 
 def gemini_env_configured() -> bool:
     return bool(settings.gemini_api_key.strip())
+
+
+def chat_env_configured() -> bool:
+    """대화 생성이 .env 키만으로 돌 수 있는가 — Gemini 또는 Upstage 어느 쪽이든."""
+    return gemini_env_configured() or upstage_env_configured()
 
 
 def upload_enabled() -> bool:

@@ -3,7 +3,8 @@
 DB 없이 도는 검사만 둔다. 지키는 것은 셋이다:
 
   · 벡터 파일이 **지금 원고와 맞는가** — 글을 고치고 `build_demo_assets --embed`를
-    안 돌리면 시드는 그 벡터를 건너뛰고, 검색이 조용히 빈손이 된다.
+    안 돌리면 시드는 그 벡터를 건너뛰고, 검색이 조용히 빈손이 된다. 임베딩 제공자마다
+    파일이 따로(Upstage·Gemini)라 **둘 다** 지킨다.
   · 원고가 화면이 읽는 형식을 지키는가 — 개념 카드 봉투·분류 태그.
   · 시드가 기대는 파일(그림·PDF·manifest)이 전부 있는가.
 """
@@ -12,16 +13,38 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from app.cli import build_parser
+from app.config import Settings, gate_defaults
 from app.seed_demo import content as c
 from app.seed_demo import vectors as v
 from app.services import crosslink
 
+PROVIDERS = ("upstage", "gemini")
+# 파일 머리가 적는 모델 — 런타임 모델과 같아야 시드가 올린다(seed_demo._vectors_for_runtime).
+_MODELS = {
+    "upstage": Settings.model_fields["upstage_embedding_passage_model"].default,
+    "gemini": Settings.model_fields["gemini_embedding_model"].default,
+}
 
-def test_every_point_has_a_fresh_1024d_vector() -> None:
-    stored = v.load_vectors()
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_vector_file_header_names_its_provider(provider: str) -> None:
+    """파일이 자기 제공자·모델·차원을 적는다 — 시드가 런타임 설정과 대조하는 근거."""
+    got = v.vector_set(provider)
+    name = v.VECTORS_FILES[provider].name
+    assert got, f"{name}이 없다 — build_demo_assets --embed --provider {provider}"
+    assert got["provider"] == provider
+    assert got["model"] == _MODELS[provider]
+    assert got["dim"] == v.DIM
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_every_point_has_a_fresh_1024d_vector(provider: str) -> None:
+    stored = v.load_vectors(provider)
     specs = list(v.specs())
-    assert stored, "assets/vectors.json.gz가 없다 — build_demo_assets --embed"
+    assert stored, f"{v.VECTORS_FILES[provider].name}이 없다 — build_demo_assets --embed"
     missing = [s.point_id for s in specs if s.point_id not in stored]
     stale = [
         s.point_id for s in specs
@@ -105,8 +128,15 @@ def test_references_resolve() -> None:
         assert fs.owner == ts.owner
 
 
-def test_manifest_covers_turns_figures_and_links() -> None:
-    m = v.load_manifest()
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_manifest_covers_turns_figures_and_links(provider: str) -> None:
+    """제공자마다 검색 결과·연결 거리가 따로 담기고, **그 제공자의 게이트**를 넘지 않는다.
+
+    시드가 붙인 도판·클립·링크가 게이트를 넘으면 시드가 "실제로는 안 뜰 것"을 뜬 것처럼
+    보여 주는 셈이다(Upstage 0.60 게이트와 Gemini 0.36 게이트가 다르다).
+    """
+    m = v.load_manifest(provider)
+    gates = gate_defaults(provider)
     assert set(m["figure_bbox"]) == set(c.FIGURES)
     for s in c.SESSIONS:
         if s.space != "class":
@@ -117,8 +147,16 @@ def test_manifest_covers_turns_figures_and_links() -> None:
             assert set(got["clips"]) == set(t.clips)
             for fk, seq, dist in got["rag"]:
                 assert 0 <= seq < len(c.FILE_BY_KEY[fk].chunks())
-                assert 0.0 <= dist <= 0.60
+                assert 0.0 <= dist <= gates["class_material_rag_max_distance"]
+            assert all(
+                d <= gates["figure_retrieve_max_distance"] for d in got["figures"].values()
+            )
+            assert all(
+                d <= gates["lecture_retrieve_max_distance"] for d in got["clips"].values()
+            )
     assert set(m["links"]) == {lk.key for lk in c.LINKS}
+    for key, dist in m["links"].items():
+        assert gates["crosslink_min_distance"] <= dist <= gates["crosslink_max_distance"], key
 
 
 def test_assets_exist() -> None:

@@ -155,6 +155,7 @@ services:
       UPSTAGE_API_KEY: ${UPSTAGE_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_VISION_MODEL: ${GEMINI_VISION_MODEL:-gemini-3.5-flash-lite}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gemini}
       SEED_DEMO: ${SEED_DEMO:-false}
       # 브라우저는 frontend와 같은 출처로만 들어온다. 직접 붙는 경우를 위해 둔다.
       CORS_ORIGINS: '["http://localhost:${APP_PORT:-3000}"]'

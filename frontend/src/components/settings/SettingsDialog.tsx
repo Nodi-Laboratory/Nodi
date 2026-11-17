@@ -138,15 +138,14 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           {nameMsg && <p className="mt-2 text-xs text-fg-muted">{nameMsg}</p>}
         </section>
 
-        {(ai.needsUpstageInput || ai.needsGeminiInput) && (
+        {ai.needsGeminiInput && (
           <>
             <div className="h-px bg-accent-border/40" />
             <section>
               <h3 className="text-sm font-semibold text-fg">AI API 키</h3>
               <p className="mt-0.5 text-xs text-fg-muted">
-                서버에 키가 없어 이 브라우저에서 직접 입력한 키를 씁니다.
-                {" "}대화: {ai.chatReady ? "사용 가능" : "키 필요"}
-                {" · "}손글씨 인식: {ai.visionReady ? "사용 가능" : "키 필요"}
+                서버에 Gemini 키가 없어 이 브라우저에서 직접 입력한 키를 씁니다.
+                {" "}AI 기능: {ai.chatReady ? "사용 가능" : "키 필요"}
               </p>
               <button
                 type="button"

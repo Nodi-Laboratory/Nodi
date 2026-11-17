@@ -7,12 +7,22 @@
 -- 값은 구 마이그레이션 0022·0029·0030·0036의 시드를 그대로 옮긴 것이다
 -- (스키마 덤프는 마이그레이션의 INSERT를 포함하지 않아 별도로 챙긴다).
 -- 코드의 config 기본값과 어긋나면 안 된다 — 바꿀 때 app/config.py도 함께 본다.
+--
+-- ⚠️ **거리 게이트 7개는 값이 `null`이다 — "임베딩 제공자의 기본값을 따른다"는 뜻.**
+-- (class_material_rag · figure_retrieve · lecture_retrieve · lecture_atom ·
+-- atom_rag · crosslink_min · crosslink_max)
+-- 거리 분포가 임베딩 모델마다 달라서(Upstage 0.60 ↔ Gemini 0.36 …) 숫자를 여기
+-- 박으면 EMBEDDING_PROVIDER=gemini로 띄운 새 DB가 Upstage 게이트를 물려받아
+-- 게이트가 아무것도 못 거른다. 행은 두어 콘솔에 그대로 뜨고(DB 행 있음), 비어
+-- 있으면 런타임은 config의 제공자별 기본값(config.GEMINI_GATE_DEFAULTS)을 쓴다.
+-- 관리자가 값을 넣으면 그 값이 이긴다(D62) — 콘솔의 "기본값으로" 버튼은 현재
+-- 제공자의 기본값을 써 넣는다.
 
 insert into public.app_settings (key, value) values
     -- RAG 검색
     ('rag_top_k',                       '5'),
     ('class_material_rag_enabled',      'true'),
-    ('class_material_rag_max_distance', '0.60'),
+    ('class_material_rag_max_distance', 'null'),
     -- 청킹
     ('chunk_size_chars',                '1200'),
     ('chunk_overlap_chars',             '150'),
@@ -27,7 +37,7 @@ insert into public.app_settings (key, value) values
     ('session_context_max_chars',       '150000'),
     -- 교과서 figure (D86~D88, D103)
     ('figure_pipeline_enabled',         'true'),
-    ('figure_retrieve_max_distance',    '0.60'),
+    ('figure_retrieve_max_distance',    'null'),
     ('figure_judge_concurrency',        '4'),
     -- ReAct 스킬 루프 (D109)
     ('react_enabled',                   'true'),
@@ -36,7 +46,7 @@ insert into public.app_settings (key, value) values
     ('atom_rag_enabled',                'false'),
     ('atom_questions_per_chunk',        '3'),
     ('atom_top_k',                      '5'),
-    ('atom_rag_max_distance',           '0.45'),
+    ('atom_rag_max_distance',           'null'),
     ('atom_gen_concurrency',            '4'),
     ('rag_query_rewrite_enabled',       'false'),
     -- (D134: figure_caption_generate_enabled 노브는 제거 — 캡션은 생성 단독)
@@ -44,13 +54,13 @@ insert into public.app_settings (key, value) values
     ('semantic_chunking_max_chars',     '120000'),
     -- 강의 클립 추천 (D149)
     ('lecture_pipeline_enabled',        'true'),
-    ('lecture_retrieve_max_distance',   '0.60'),
+    ('lecture_retrieve_max_distance',   'null'),
     -- D207 카드 밀어내기
     ('card_min_gap',                    '48'),
     ('card_push_strength',              '100'),
     ('card_push_speed_ms',              '260'),
     ('lecture_atom_enabled',            'true'),
-    ('lecture_atom_max_distance',       '0.45'),
+    ('lecture_atom_max_distance',       'null'),
     ('lecture_atoms_per_clip',          '4'),
     ('lecture_atom_concurrency',        '4'),
     -- 교차 세션 개념 연결 (D171)
@@ -63,8 +73,8 @@ insert into public.app_settings (key, value) values
     -- 옛 천장 0.72는 **남남을 통과시켰다**("광합성↔시의 운율" 0.693).
     -- 지금 값은 각 구간 사이 빈 곳의 가운데다.
     ('crosslink_enabled',               'true'),
-    ('crosslink_min_distance',          '0.42'),
-    ('crosslink_max_distance',          '0.66'),
+    ('crosslink_min_distance',          'null'),
+    ('crosslink_max_distance',          'null'),
     ('crosslink_top_k',                 '8'),
     -- 관련성 판정에 쓰는 모델 (D182). 배지 하나에 대화 생성과 같은 모델을
     -- 쓸 이유가 없다. 비우면 전역 채팅 모델을 쓴다.

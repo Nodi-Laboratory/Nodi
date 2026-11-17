@@ -9,6 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/config.py -> parents[0]=app, [1]=backend, [2]=repo root
@@ -16,6 +17,41 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # 설정은 backend 폴더 내부의 .env를 읽는다(루트 .env 아님). 전체 설정(Postgres·
 # Upstage·Qdrant·JUDGE 등)이 backend/.env에 있다.
 BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
+
+# ── 거리 게이트의 제공자별 기본값 (2026-11-17, 임베딩 Gemini 전환) ───────────────
+# 게이트 숫자는 **임베딩 모델의 거리 분포에 묶여 있다.** 아래 필드 기본값(0.60 등)은
+# Upstage embedding-query/passage 실측이고, Gemini(gemini-embedding-001, 1024d)는
+# 분포가 통째로 낮고 좁아 같은 숫자를 쓰면 게이트가 아무것도 거르지 못한다
+# (Upstage 0.60 → Gemini에서는 인사말·무관 질의까지 전부 통과).
+# `embedding_provider="gemini"`일 때 **명시하지 않은** 게이트만 아래 값으로 바뀐다
+# (env·.env로 정한 값, 그리고 admin 오버레이 행은 그대로 이긴다 — D62).
+#
+# 실측(2026-11-17, 같은 시드 코퍼스 + 질의 76개, 질의↔passage top-1 거리).
+# 온토픽 = 코퍼스에 답이 있는 질문 50개 · 무관 = 인사·잡담·타 과목 25개(인사말 6 포함):
+#                     Upstage 온토픽   무관(인사말)         Gemini 온토픽   무관(인사말)
+#   학급 자료 청크     0.32~0.69   0.69~0.86 (0.80~)    0.20~0.35   0.33~0.51 (0.39~)
+#   강의 클립(직접)    0.37~0.81   0.76~0.86 (0.82~)    0.22~0.48   0.37~0.52 (0.38~)
+#   교과서 도판        0.39~0.86   0.79~0.91 (0.87~)    0.24~0.49   0.39~0.57 (0.39~)
+#   원자(질문↔질문)    0.28~0.85   0.71~0.92 (0.84~)    0.15~0.44   0.29~0.47 (0.37~)
+#   교차 연결(카드↔카드, 손으로 쓴 쌍 20 + 시드 카드):
+#     Upstage(2026-08-06 실측) 중복 0.22~0.35 · 연결 0.50~0.62 · 남남 0.69~0.77
+#     Gemini                   중복 0.18~0.25 · 연결 0.31~0.39 · 남남 0.46~0.51
+# 도판·클립은 온토픽 질문 중 해당 자료가 있는 것만 붙으므로 위 "온토픽" 칸의 상단은
+# 자료가 없는 질문이다 — 시드가 실제로 붙인 도판 6·클립 7은 Gemini에서 전부 0.31 이하다.
+# 게이트는 "온토픽이 거의 다 들어오고 무관은 다 막히는" 자리다. 청크: 0.36에서 온토픽
+# 50/50 통과·무관 24/25 차단(Upstage 0.60은 46/50·25/25). 인사말 최소 0.39 · 온토픽
+# 최대 0.35 사이라 **여유가 Upstage보다 훨씬 좁다**(0.60 게이트 위 0.09에 무관 최소
+# 0.69가 있었다) — 모델의 성질이다. gemini-embedding-2도 같은 지표로 나아지지 않았다
+# (핵심 온토픽 최대와 인사말 최소의 간격 0.032, 001은 0.043).
+GEMINI_GATE_DEFAULTS: dict[str, float] = {
+    "class_material_rag_max_distance": 0.36,  # Upstage 0.60
+    "figure_retrieve_max_distance": 0.36,     # Upstage 0.60 (자료 게이트와 같은 스케일, D73)
+    "lecture_retrieve_max_distance": 0.36,    # Upstage 0.60
+    "lecture_atom_max_distance": 0.25,        # Upstage 0.45 — 직접보다 엄격(온토픽 ~30%·무관 0%)
+    "atom_rag_max_distance": 0.25,            # Upstage 0.45 — 같은 종류(생성 질문) 매칭
+    "crosslink_min_distance": 0.27,           # Upstage 0.42 — 중복 ≤0.25 / 연결 ≥0.31 사이
+    "crosslink_max_distance": 0.43,           # Upstage 0.66 — 연결 ≤0.39 / 남남 ≥0.46 사이
+}
 
 
 class Settings(BaseSettings):
@@ -78,6 +114,18 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_vision_model: str = "gemini-3.5-flash-lite"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    # 대화 생성·도구 판단·소형 LLM 작업도 Gemini로 간다(사용자 결정 2026-11-17
+    # "모두 gemini로"). 키(env 또는 요청 헤더)가 있으면 Gemini, 없으면 위 Upstage
+    # 경로 그대로 — 대회 운영 서버는 Gemini 키가 없어 Upstage로 계속 돈다
+    # (solar.resolve_route 참조). Pro 계열은 쓰지 않는다(지연·비용, 사용자 지시).
+    # 엔드포인트는 Google의 OpenAI 호환 층이다 — gemini_base_url(네이티브 비전)과
+    # 경로가 달라 따로 둔다.
+    gemini_openai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    gemini_chat_model: str = "gemini-3.5-flash"        # 생성 + 도구 판단
+    gemini_light_model: str = "gemini-3.5-flash-lite"  # 소형 작업(코치·연결 판정 등)
+    # 사고(thinking) 강도 — 사고 모델이라 기본은 지연을 줄이려 minimal이다.
+    # 허용: minimal/low/medium/high ("none"은 flash-lite가 거절한다).
+    gemini_reasoning_effort: str = "minimal"
     upstage_chat_model: str = "solar-pro3"
     upstage_embedding_query_model: str = "embedding-query"
     upstage_embedding_passage_model: str = "embedding-passage"
@@ -107,6 +155,16 @@ class Settings(BaseSettings):
 
     # 임베딩은 Upstage embedding-passage/query + Qdrant로 완전 이전됨
     # (D80: 구 Gemini 임베딩 모델·차원 설정 키 제거).
+    #
+    # 2026-11-17 "모두 gemini로": 공개 배포는 임베딩도 Gemini다(문서 파싱만
+    # Upstage). **제공자는 키 유무가 아니라 이 설정이 정한다** — 색인과 질의의
+    # 제공자가 갈리면 두 벡터가 다른 공간이라 검색이 오류 없이 빈손이 된다.
+    # 기본값 "upstage"라 이미 Upstage 벡터가 든 대회 운영 서버는 그대로다.
+    # env EMBEDDING_PROVIDER = "upstage" | "gemini". **바꾸면 Qdrant의 기존
+    # 벡터와 공간이 달라지므로 전량 재임베딩(또는 빈 Qdrant)이 전제다.**
+    # 거리 게이트는 제공자마다 분포가 달라 제공자별 기본값을 쓴다 — 아래 gates 참조.
+    embedding_provider: str = "upstage"
+    gemini_embedding_model: str = "gemini-embedding-001"
     # D195: 잡 하나가 맡는 청크 수. 이 안에서 요청 크기(Upstage 상한 100)로
     # 다시 쪼개 **동시에** 보내므로, 잡을 잘게 나눌 이유가 사라졌다. 64였을 때는
     # 잡 하나 = 요청 하나였고, 잡은 폴 주기(5초)·워커 동시성(3)에 묶여 있어
@@ -365,6 +423,29 @@ class Settings(BaseSettings):
     def sign_secret(self) -> str:
         """파일 signed URL 서명 키 — 미지정이면 jwt_secret을 공용한다."""
         return self.storage_sign_secret or self.jwt_secret
+
+    @model_validator(mode="after")
+    def _provider_gate_defaults(self) -> Settings:
+        """Gemini 임베딩이면 **명시하지 않은** 거리 게이트를 Gemini 기본값으로.
+
+        `model_fields_set`에는 env·.env로 정한 키가 들어 있다 — 운영자가 명시한 값은
+        건드리지 않는다. 필드 기본값을 바꾸는 방식이라 `settings.<gate>`를 읽는 모든
+        곳(검색·콘솔의 "기본값" 표시·리셋 버튼)이 한 번에 제공자에 맞는다.
+        (런타임에 `embedding_provider`를 바꾸는 테스트는 이 검증을 다시 타지 않는다.)
+        """
+        if (self.embedding_provider or "").strip().lower() == "gemini":
+            for key, value in GEMINI_GATE_DEFAULTS.items():
+                if key not in self.model_fields_set:
+                    setattr(self, key, value)
+        return self
+
+
+def gate_defaults(provider: str) -> dict[str, float]:
+    """제공자의 거리 게이트 기본값(env 덮어쓰기 전). 빌드 스크립트·테스트가 쓴다."""
+    base = {k: Settings.model_fields[k].default for k in GEMINI_GATE_DEFAULTS}
+    if (provider or "").strip().lower() == "gemini":
+        base.update(GEMINI_GATE_DEFAULTS)
+    return base
 
 
 @lru_cache

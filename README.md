@@ -6,7 +6,7 @@
 
 **English** | [한국어](README.ko.md)
 
-[![Powered by Upstage](https://img.shields.io/badge/Powered%20by-Upstage%20Solar-7B61FF?style=for-the-badge)](https://www.upstage.ai)
+[![Powered by Gemini](https://img.shields.io/badge/Powered%20by-Google%20Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev)
 
 ---
 
@@ -21,14 +21,14 @@
 ## ✨ Features
 
 ### 🗂️ Concept Cards on an Infinite Canvas
-- Answers stream over SSE from Upstage `solar-pro3` in a fixed card format (`@concept: title | tag`), parsed into cards on the canvas
+- Answers stream over SSE from Google Gemini (`gemini-3.5-flash`) in a fixed card format (`@concept: title | tag`), parsed into cards on the canvas
 - Cards are laid out in one column per tag; each tag is a conversation tree linked by `parent_item_id`
 - The viewport, pen and shapes come from Excalidraw; cards are an overlay that students can drag, edit and re-ask from
 - Before answering, a tool-calling step picks from 11 skills (class material search, figure search, lecture clips, notes, session files, …)
 
 ### 🏫 Class Workspaces and RAG
 - Teachers create a class with a join code and upload materials and textbooks (PDF, images, TXT/MD)
-- Uploads go through Upstage Document Parse → 1,200-char chunks (150 overlap) → `embedding-passage` (1024-d) → Qdrant
+- Uploads go through Upstage Document Parse → 1,200-char chunks (150 overlap) → Gemini document embeddings (1024-d) → Qdrant
 - Queries use `embedding-query`; chunks within cosine distance 0.60 are added to the prompt
 - Qdrant holds only ids; chunk text is re-read from Postgres under the caller's permissions
 
@@ -60,8 +60,8 @@
 
 ### Prerequisites
 - [Docker](https://docs.docker.com/get-docker/) with Docker Compose
-- (Optional) [Upstage API key](https://console.upstage.ai/api-keys) — AI answers, search, file uploads
-- (Optional) [Gemini API key](https://aistudio.google.com/apikey) — handwriting recognition, figure captions
+- (Optional) [Gemini API key](https://aistudio.google.com/apikey) — all AI features: answers, search, handwriting, figure captions
+- (Optional) [Upstage API key](https://console.upstage.ai/api-keys) — only for file uploads (PDF document parsing)
 
 ### Run
 ```bash
@@ -83,10 +83,10 @@ Open [http://localhost:3000](http://localhost:3000). The first run builds the im
 ### API Keys
 Without keys, you can log in and browse every screen with the demo data. Features that need a key are disabled with a notice.
 
-- **In `.env`** — set `UPSTAGE_API_KEY` / `GEMINI_API_KEY` (and optionally `GEMINI_VISION_MODEL`) and restart. The server uses these keys for everyone and the key input is hidden.
-- **In the app** — leave them empty and enter keys in the dialog shown on first visit, or later under **Settings → AI API keys**. Keys are stored only in your browser's localStorage and sent with each request as a header; the server does not store or log them.
+- **In `.env`** — set `GEMINI_API_KEY` (and `UPSTAGE_API_KEY` if you need uploads) and restart. The server uses these keys for everyone and the key input is hidden.
+- **In the app** — leave them empty and enter your Gemini key in the dialog shown on first visit, or later under **Settings → AI API keys**. Keys are stored only in your browser's localStorage and sent with each request as a header; the server does not store or log them.
 - File uploads run in a background worker, so they only work with `UPSTAGE_API_KEY` in `.env`.
-- Gemini models you can choose: `gemini-3.5-flash-lite` (default), `gemini-3.1-flash-lite`, `gemini-3.5-flash`, `gemini-3.6-flash`.
+- Chat uses `gemini-3.5-flash`, small tasks `gemini-3.5-flash-lite`, embeddings `gemini-embedding-001`. The vision model (handwriting, captions) can be set to `gemini-3.5-flash-lite` (default), `gemini-3.1-flash-lite`, `gemini-3.5-flash` or `gemini-3.6-flash`.
 
 ---
 
@@ -102,7 +102,7 @@ Without keys, you can log in and browse every screen with the demo data. Feature
 | **Backend** | Python 3.12, FastAPI, asyncpg, APScheduler |
 | **Database** | PostgreSQL 16 (row-level security) |
 | **Vector Search** | Qdrant (1024-d, cosine) |
-| **AI** | Upstage `solar-pro3` (chat, tool calling), `embedding-query` / `embedding-passage`, Document Parse · Google Gemini (vision) |
+| **AI** | Google Gemini (chat with tool calling, embeddings, vision/OCR) · Upstage Document Parse (uploads only) |
 | **Auth** | bcrypt, PyJWT (httpOnly cookie) |
 | **Testing** | pytest, Vitest, Playwright |
 | **Infra** | Docker Compose |
@@ -130,7 +130,7 @@ Nodi/
 ├── 📂 backend/
 │   ├── 📂 app/
 │   │   ├── 📂 routers/            # REST + SSE endpoints under /api
-│   │   ├── 📂 services/           # Chat, RAG, Upstage, Gemini, Qdrant, files
+│   │   ├── 📂 services/           # Chat, RAG, Gemini, Upstage (parsing), Qdrant, files
 │   │   │   └── 📂 worker/         # Background ingest jobs (parse, embed, figures, lectures)
 │   │   ├── 📂 ai/                 # Tool-calling orchestrator and skills
 │   │   ├── 📂 auth/               # JWT cookie auth, role guards

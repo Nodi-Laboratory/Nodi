@@ -63,7 +63,7 @@ export function MaterialsTab({ classId }: { classId: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
   // 클릭한 버튼의 kind 기억 — hidden input 1개를 두 업로드 버튼이 공유한다.
   const pendingKindRef = useRef<"class_material" | "textbook">("class_material");
-  // 공개판: 업로드는 워커가 처리해 서버 .env의 Upstage 키가 있어야 한다.
+  // 공개판: 업로드는 워커가 문서 파싱(Upstage)을 해서 서버 .env의 UPSTAGE_API_KEY가 있어야 한다(앱에 넣는 Gemini 키는 워커에 안 닿는다).
   const ai = useAiReadiness();
   const uploadLocked = ai.loaded && !ai.uploadEnabled;
   const [uploading, setUploading] = useState(false);
@@ -167,9 +167,9 @@ export function MaterialsTab({ classId }: { classId: string }) {
         <div className="flex items-start gap-1.5 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
           <span>
-            자료 업로드는 서버 <code>.env</code>에 <code>UPSTAGE_API_KEY</code>가 있어야
-            동작합니다(문서 파싱·임베딩이 백그라운드에서 돌아 화면에서 넣은 키를 쓸 수 없습니다).
-            이미 올라간 자료는 그대로 볼 수 있습니다.
+            자료 업로드는 서버 <code>.env</code>에 문서 파싱용 키(<code>UPSTAGE_API_KEY</code>)가
+            있어야 동작합니다. 파싱이 백그라운드에서 돌아, 앱에서 입력한 Gemini 키로는
+            업로드할 수 없습니다. 이미 올라간 자료는 그대로 볼 수 있습니다.
           </span>
         </div>
       )}

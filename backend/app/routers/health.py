@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ..config import get_settings
-from ..services import api_keys, figure_judge, ocr
+from ..services import api_keys, figure_judge, ocr, solar
 
 router = APIRouter(tags=["health"])
 settings = get_settings()
@@ -74,12 +74,31 @@ async def config_report() -> dict:
         "configured": bool(settings.jwt_secret),
     }
 
-    # D108: 대화 생성도 Upstage로 옮겨져 키가 하나다. 그래도 블록은 둘로
-    # 나눠 둔다 — 무엇이 안 되는지(생성인지 임베딩인지)가 진단에서 갈린다.
+    # 대화 생성은 Gemini 키가 .env에 있으면 Gemini, 없으면 Upstage(D108)다 —
+    # 2026-11-17 "모두 gemini로", 우선순위는 solar.resolve_route. 여기는 **배포가
+    # 정한 것**(.env)만 본다: 헤더 키는 요청마다 달라 서버 진단에 담지 않는다.
+    # 그래도 블록은 임베딩(upstage)과 나눠 둔다 — 무엇이 안 되는지(생성인지
+    # 임베딩인지)가 진단에서 갈린다. 모델명은 비밀이 아니고 키 값은 안 싣는다.
+    if api_keys.gemini_env_configured():
+        chat_provider = "gemini"
+        chat_model = solar.gemini_model_for(None)
+        chat_base = settings.gemini_openai_base_url
+    elif api_keys.upstage_env_configured():
+        chat_provider = "upstage"
+        chat_model = settings.upstage_chat_model
+        chat_base = settings.upstage_base_url
+    else:
+        chat_provider = None
+        chat_model = settings.upstage_chat_model  # 폴백이 될 모델 — 아직 키가 없다
+        chat_base = settings.upstage_base_url
     chat = {
-        "api_key_set": bool(settings.upstage_api_key),
-        "model": settings.upstage_chat_model,
-        "base_url": settings.upstage_base_url,
+        "provider": chat_provider,
+        "api_key_set": api_keys.chat_env_configured(),
+        "model": chat_model,
+        "light_model": solar.gemini_model_for("solar-pro2") if chat_provider == "gemini" else None,
+        "base_url": chat_base,
+        # 폴백 가능 여부 — Gemini가 주력이어도 Upstage 키가 있으면 임베딩·파싱은 그쪽이다.
+        "upstage_fallback": api_keys.upstage_env_configured(),
     }
     chat["configured"] = chat["api_key_set"]
 

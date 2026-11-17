@@ -55,6 +55,15 @@ settings = get_settings()
 KST = timezone(timedelta(hours=9))
 
 
+def _provider() -> str:
+    """런타임 임베딩 제공자(정규화만 — 잘못된 값이어도 시드 자체는 죽이지 않는다).
+
+    DB에 남는 거리·검색 결과는 이 제공자의 manifest 칸에서 읽는다. 알 수 없는 값이면
+    벡터 적재 쪽(`_upsert_vectors`)이 경고하고 건너뛴다.
+    """
+    return (settings.embedding_provider or vec.DEFAULT_PROVIDER).strip().lower()
+
+
 def _j(value: Any) -> str:
     """jsonb 파라미터. SQL 쪽에서 `$n::text::jsonb`로 받는다.
 
@@ -358,8 +367,8 @@ async def _seed_lectures(conn, clock: _Clock) -> None:
 
 
 def _turn_retrieval(s: c.Session, t: c.Turn) -> dict[str, Any]:
-    """빌드 때 실제 임베딩으로 잰 검색 결과(manifest). 없으면 빈 값."""
-    return (vec.load_manifest().get("turns") or {}).get(f"{s.key}:{t.key}") or {}
+    """빌드 때 실제 임베딩으로 잰 검색 결과(manifest, 런타임 제공자 칸). 없으면 빈 값."""
+    return (vec.load_manifest(_provider()).get("turns") or {}).get(f"{s.key}:{t.key}") or {}
 
 
 def _rag_chunks(s: c.Session, t: c.Turn) -> list[dict[str, Any]]:
@@ -584,11 +593,13 @@ def _skill_traces(s: c.Session, t: c.Turn, chunks: list[dict], figures: list[dic
 
 async def _seed_links(conn, clock: _Clock) -> None:
     """교차 연결(D171) + 판정 로그(D172). 워커가 만들었을 행을 그대로 넣는다."""
-    manifest = vec.load_manifest()
+    manifest = vec.load_manifest(_provider())
     dists = manifest.get("links") or {}
     demo = c.ACCOUNT_BY_KEY["demo"].id
-    knobs = {"enabled": True, "lo": 0.42, "hi": 0.66, "top_k": 8, "always_on": False,
-             "model": "solar-pro2"}
+    # 띠는 런타임 제공자의 기본값이다(config.py — 제공자마다 거리 분포가 다르다).
+    knobs = {"enabled": True, "lo": settings.crosslink_min_distance,
+             "hi": settings.crosslink_max_distance, "top_k": settings.crosslink_top_k,
+             "always_on": False, "model": "solar-pro2"}
     for link in c.LINKS:
         fs = c.SESSION_BY_KEY[link.from_ref[0]]
         ts = c.SESSION_BY_KEY[link.to_ref[0]]
@@ -638,13 +649,65 @@ async def _seed_db() -> None:
 # ---------------------------------------------------------------------------
 # Qdrant
 # ---------------------------------------------------------------------------
+def _vectors_for_runtime() -> dict[str, dict] | None:
+    """런타임 제공자와 **맞는** 벡터 점들. 맞는 파일이 없으면 None(경고를 남긴다).
+
+    ⚠️ 다른 제공자의 벡터를 올리지 않는다. 색인은 Upstage 공간인데 질의가 Gemini
+    공간이면(또는 반대) 코사인이 의미를 잃고, 오류 없이 검색만 빈손이 된다. 그래서
+    파일 이름뿐 아니라 파일 머리의 제공자·모델·차원까지 런타임 설정과 대조한다.
+    경고만 하고 시드는 성공으로 끝낸다 — 벡터가 없어도 화면은 뜬다(RAG 비차단).
+    """
+    from ..services import upstage
+
+    try:
+        provider = upstage.embedding_provider()
+    except RuntimeError as exc:
+        logger.warning("임베딩 제공자 설정이 잘못돼 벡터를 올리지 않는다 — %s", exc)
+        print(f"  경고: 벡터를 올리지 않는다 — {exc}")
+        return None
+    got = vec.vector_set(provider)
+    if not got:
+        msg = (
+            f"EMBEDDING_PROVIDER={provider}용 벡터 파일이 없다"
+            f"({vec.VECTORS_FILES[provider].name}) — 검색은 빈손이 된다. "
+            f"build_demo_assets --embed --provider {provider}"
+        )
+        logger.warning(msg)
+        print(f"  경고: {msg}")
+        return None
+    runtime_model = (
+        settings.gemini_embedding_model if provider == "gemini"
+        else settings.upstage_embedding_passage_model
+    )
+    problems = []
+    if got["provider"] != provider:
+        problems.append(f"제공자 {got['provider']} ≠ {provider}")
+    if (got["model"] or "") != runtime_model:
+        problems.append(f"모델 {got['model']} ≠ {runtime_model}")
+    if got["dim"] != vec.DIM:
+        problems.append(f"차원 {got['dim']} ≠ {vec.DIM}")
+    if problems:
+        msg = (
+            "벡터 파일의 머리가 런타임 임베딩 설정과 다르다("
+            + ", ".join(problems)
+            + ") — 다른 공간의 벡터를 올리지 않고 건너뛴다. 모델을 바꿨다면 "
+            f"build_demo_assets --embed --provider {provider}로 다시 만든다."
+        )
+        logger.warning(msg)
+        print(f"  경고: {msg}")
+        return None
+    return got["points"]
+
+
 async def _upsert_vectors() -> int:
-    """벡터 파일을 Qdrant에 올린다. 올린 포인트 수를 돌려준다. **예외를 던진다.**"""
+    """벡터 파일을 Qdrant에 올린다. 올린 포인트 수를 돌려준다. **예외를 던진다.**
+
+    제공자가 안 맞으면 0건을 돌려준다(예외 아님 — 재시도해도 같은 결과다).
+    """
     from ..services import qdrant_store
 
-    stored = vec.load_vectors()
+    stored = _vectors_for_runtime()
     if not stored:
-        logger.warning("벡터 파일이 없다(%s) — 검색은 빈손이 된다", vec.VECTORS_FILE.name)
         return 0
     by_col: dict[str, list[dict]] = {}
     stale = 0
@@ -681,7 +744,8 @@ async def _load_vectors_best_effort(attempts: int = 5, wait_s: float = 3.0) -> N
     for i in range(1, attempts + 1):
         try:
             n = await _upsert_vectors()
-            print(f"  Qdrant 벡터 {n}건 적재")
+            if n:
+                print(f"  Qdrant 벡터 {n}건 적재")
             return
         except Exception as exc:  # noqa: BLE001 - 벡터가 없어도 화면은 뜬다
             if i < attempts:

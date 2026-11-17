@@ -1,4 +1,8 @@
-"""Upstage solar 채팅 클라이언트 — 개념 카드 스트리밍 생성.
+"""채팅 클라이언트 — 개념 카드 스트리밍 생성 (Gemini 우선, Upstage solar 폴백).
+
+모듈 이름이 solar인 것은 역사다(호출부가 많아 안 바꾼다). 2026-11-17 사용자
+결정("모두 gemini로")으로 **Gemini 키가 있으면 Gemini**, 없으면 아래 D108의
+Upstage 경로 그대로 간다 — `resolve_route` 참조.
 
 D108: 대화 생성이 EXAONE(Friendli)에서 Upstage solar로 옮겨졌다. 임베딩·문서
 파싱이 이미 Upstage라 벤더가 하나로 줄고, 실측에서 왕복 지연이 2.73s → 0.78s로
@@ -134,20 +138,221 @@ def extract_used_tags(nodes: list[dict], cap: int = 40) -> list[str]:
     return seen
 
 
-def _require_config() -> tuple[str, str, str]:
-    """(url, model, api_key) 해석 — 미설정이면 503.
+# ---------------------------------------------------------------------------
+# 공급자 선택 (2026-11-17 "모두 gemini로")
+#
+# ## 우선순위 — 호출마다 정한다
+#
+#   1. `api_keys.gemini_key()`가 비어 있지 않으면 **Gemini**. 그 키는 .env가
+#      먼저고, .env가 비면 요청 헤더(X-Gemini-Key)다 — 비전과 같은 규칙이다.
+#   2. 아니면 `api_keys.upstage_key()`(.env 먼저, 없으면 X-Upstage-Key)로
+#      **Upstage** — 예전 동작 그대로다.
+#   3. 둘 다 없으면 503.
+#
+# 대회 운영 서버는 Gemini 키가 없다(해외 모델 규정) — 그 서버가 계속 Upstage로
+# 도는 것이 이 폴백의 존재 이유다. 그래서 Upstage 갈래는 **바꾸지 않는다**.
+# 업로드 워커처럼 요청 헤더가 없는 곳은 .env 키만 보이므로 자연히 .env 기준이다.
+# ---------------------------------------------------------------------------
 
-    Upstage는 단일 베이스 URL에 OpenAI 호환 `/chat/completions`를 제공한다.
-    EXAONE 시절의 serverless/dedicated 분기는 사라졌다(D108).
+#: Gemini 모델 이름 허용 패턴 — 이름이 JSON 본문에만 들어가지만(URL 경로 아님)
+#: 관리자 오버레이·헤더 같은 문자열이 그대로 흘러가지 않도록 여기서 거른다.
+_GEMINI_MODEL_RE = re.compile(r"^gemini-[a-z0-9.\-]+$")
+_GEMINI_CHAT_FALLBACK = "gemini-3.5-flash"
+_GEMINI_LIGHT_FALLBACK = "gemini-3.5-flash-lite"
+#: 소형 작업(질문 코치·연결 판정)에 쓰던 Upstage 모델 이름 — Gemini에서는 light로.
+_LIGHT_SOLAR = "solar-pro2"
+#: compat 층이 받는 reasoning_effort. "none"은 flash-lite가 400으로 거절한다
+#: (실측 2026-11-17) — 허용 목록에서 뺀다.
+_REASONING_EFFORTS = ("minimal", "low", "medium", "high")
+
+
+@dataclass(frozen=True)
+class Route:
+    """이번 호출이 어디로 어떤 모델로 가는가. 키는 repr에서 뺀다(로그·예외 방어)."""
+
+    provider: str  # "gemini" | "upstage"
+    url: str
+    model: str
+    key: str = field(repr=False)
+
+    @property
+    def label(self) -> str:
+        return "Gemini" if self.provider == "gemini" else "Upstage"
+
+
+def _safe_gemini_name(name: str | None, fallback: str) -> str:
+    n = (name or "").strip()
+    return n if _GEMINI_MODEL_RE.match(n) else fallback
+
+
+def gemini_model_for(requested: str | None, *, base: str | None = None) -> str:
+    """호출부가 요청한 모델 이름을 Gemini 모델로 옮긴다 — 매핑은 여기 하나뿐이다.
+
+    - `gemini-…` 이름: 허용 패턴이면 그대로(관리자가 직접 고른 값 존중)
+    - `solar-pro2`: 소형 작업용 이름 → light 모델
+    - 그 밖(None·`solar-pro3`·`solar-mini` 등): 대화 모델
+
+    허용 패턴 밖의 이름은 조용히 대화 모델로 떨어진다 — 임의 문자열이 업스트림으로
+    나가지 않는 것이 목적이다.
     """
+    chat = _safe_gemini_name(base or settings.gemini_chat_model, _GEMINI_CHAT_FALLBACK)
+    light = _safe_gemini_name(settings.gemini_light_model, _GEMINI_LIGHT_FALLBACK)
+    name = (requested or "").strip()
+    if name.startswith("gemini"):
+        return name if _GEMINI_MODEL_RE.match(name) else chat
+    if name == _LIGHT_SOLAR:
+        return light
+    return chat
+
+
+def active_provider() -> str | None:
+    """지금 요청 문맥에서 쓰일 공급자. 둘 다 없으면 None. (진단·표시용)"""
+    if api_keys.gemini_key():
+        return "gemini"
+    if api_keys.upstage_key():
+        return "upstage"
+    return None
+
+
+def active_chat_model(requested: str | None = None) -> str:
+    """지금 문맥에서 **실제로 나갈** 모델 이름. 키가 없으면 Upstage 설정값을 보인다."""
+    if active_provider() == "gemini":
+        return gemini_model_for(requested)
+    return _upstage_model_for(requested)
+
+
+def _upstage_model_for(requested: str | None) -> str:
+    n = (requested or "").strip()
+    # Gemini 이름이 오버레이에 남아 있어도 Upstage에는 보내지 않는다(400 방지).
+    if not n or n.startswith("gemini"):
+        return settings.upstage_chat_model
+    return n
+
+
+def resolve_route(model: str | None = None) -> Route:
+    """(공급자, URL, 모델, 키) 해석 — 둘 다 미설정이면 503. 우선순위는 위 주석."""
+    gkey = api_keys.gemini_key()
+    if gkey:
+        base = settings.gemini_openai_base_url.rstrip("/")
+        return Route("gemini", f"{base}/chat/completions", gemini_model_for(model), gkey)
     key = api_keys.upstage_key()  # .env 우선, 없으면 요청 헤더
     if not key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="UPSTAGE_API_KEY is not configured.",
+            detail="GEMINI_API_KEY or UPSTAGE_API_KEY is not configured.",
         )
     base = settings.upstage_base_url.rstrip("/")
-    return f"{base}/chat/completions", settings.upstage_chat_model, key
+    return Route("upstage", f"{base}/chat/completions", _upstage_model_for(model), key)
+
+
+#: Gemini 판단 단계(tools 동반) 출력 상한 — 병렬 도구 3개의 인자가 들어갈 만큼.
+_GEMINI_JUDGE_MAX_TOKENS = 192
+
+#: 모델별로 **거절당한** 사고 강도 기록 — 같은 400을 호출마다 겪지 않게 기억한다.
+#: 값은 그 모델에 쓸 강도(None이면 필드 자체를 뺀다).
+_EFFORT_OVERRIDE: dict[str, str | None] = {}
+
+
+def _reasoning_effort() -> str:
+    eff = (settings.gemini_reasoning_effort or "").strip().lower()
+    return eff if eff in _REASONING_EFFORTS else "minimal"
+
+
+def _apply_effort(payload: dict[str, Any], route: Route) -> None:
+    """Gemini 호출의 사고 강도를 payload에 얹는다 (compat 층 `reasoning_effort`).
+
+    사고 모델이라 아무것도 안 주면 기본 강도로 생각하느라 첫 글자까지 수 초가
+    늘고, 생각 토큰이 max_tokens를 먹는다(실측 2026-11-17: gemini-3.5-flash 판단
+    2차 호출 기본 6.7s → minimal 1.5s). 추론 텍스트는 compat 응답에 실리지 않는다
+    (include_thoughts를 안 켠다) — 누출은 호출부가 content만 읽는 것으로 막는다.
+    """
+    if route.model in _EFFORT_OVERRIDE:
+        eff = _EFFORT_OVERRIDE[route.model]
+    else:
+        eff = _reasoning_effort()
+    if eff:
+        payload["reasoning_effort"] = eff
+    else:
+        payload.pop("reasoning_effort", None)
+
+
+def _downgrade_effort(route: Route, payload: dict[str, Any], status_code: int, body: str) -> bool:
+    """사고 강도를 모델이 거절했으면(400 "Thinking level … not supported") 한 단계
+    낮춰 다시 보낼 수 있게 payload를 고친다. 고쳤으면 True.
+
+    실측 2026-11-17: `minimal`은 3.5-flash·flash-lite·3.6-flash가 받지만 3.7-flash는
+    "Thinking level MINIMAL is not supported"로 400이다(`none`은 flash-lite가 거절).
+    모델마다 다르므로 관리자가 모델을 바꿔도 죽지 않게 minimal → low → (필드 생략)
+    순으로 물러난다. 이 400은 본문 처리 전에 오므로 재시도해도 이중 과금이 없다.
+    """
+    cur = payload.get("reasoning_effort")
+    if route.provider != "gemini" or status_code != 400 or not cur:
+        return False
+    if "thinking level" not in body.lower() and "reasoning" not in body.lower():
+        return False
+    nxt = "low" if cur == "minimal" else None
+    _EFFORT_OVERRIDE[route.model] = nxt
+    logger.warning("%s가 사고 강도 %s를 거절 — %s로 물러난다", route.model, cur, nxt or "생략")
+    _apply_effort(payload, route)
+    return True
+
+
+#: thought_signature 검증을 건너뛰게 하는 공식 더미값(실측 2026-11-17: 둘 다 200).
+_DUMMY_SIGNATURE = "skip_thought_signature_validator"
+
+
+#: 도구 결과를 받은 직후 판단 호출 끝에 붙이는 한 줄 — 위 `_GEMINI_JUDGE_MAX_TOKENS`와
+#: 짝이다. 상한은 낭비의 **크기**를 자르고, 이 줄은 낭비를 **없앤다**.
+_JUDGE_AFTER_TOOL_HINT = (
+    "도구 결과를 받았다. 더 부를 도구가 있으면 부르고, 없으면 '완료' 한 단어만 출력한다. "
+    "답을 쓰지 마라 — 이 텍스트는 학생에게 가지 않는다."
+)
+
+
+def _gemini_messages(
+    messages: list[dict[str, Any]], *, judging: bool = False
+) -> list[dict[str, Any]]:
+    """Gemini로 보낼 messages 정리 — tool_calls의 thought_signature 보장.
+
+    ## 왜 필요한가 (실측 2026-11-17, gemini-3.5-flash / flash-lite)
+
+    Gemini 3는 함수 호출을 돌려줄 때 `tool_calls[i].extra_content.google
+    .thought_signature`를 싣고, **다음 요청에서 그 assistant 메시지를 되돌릴 때
+    같은 값이 없으면 400**이다("Function call is missing a thought_signature").
+    오케스트레이터는 모델이 준 tool_calls를 **그대로** 되돌려 보내므로 서명은
+    자연히 살아 있다(`extra_content`를 지우는 코드가 없다) — 이 함수는 그 전제가
+    깨졌을 때(히스토리를 재구성하며 필드를 잃는 등)를 위한 **안전망**이다.
+
+    서명이 하나도 없는 tool_calls 메시지의 첫 호출에만 더미를 얹는다. 병렬 호출은
+    첫 호출에만 서명이 오므로 나머지는 건드리지 않는다. 입력은 바꾸지 않는다.
+
+    `judging`(도구 판단 호출)이고 마지막이 도구 결과면 "답을 쓰지 마라" 한 줄을 끝에
+    붙인다(사본에만, user 역할).
+    """
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        calls = m.get("tool_calls") if m.get("role") == "assistant" else None
+        if not calls or any(
+            ((c.get("extra_content") or {}).get("google") or {}).get("thought_signature")
+            for c in calls
+        ):
+            out.append(m)
+            continue
+        fixed = [dict(c) for c in calls]
+        fixed[0]["extra_content"] = {"google": {"thought_signature": _DUMMY_SIGNATURE}}
+        out.append({**m, "tool_calls": fixed})
+    if judging and out and out[-1].get("role") == "tool":
+        # 실측 2026-11-17: 이 줄이 없으면 Gemini는 도구 결과를 받은 판단 호출에서
+        # 버려질 답을 188~512토큰 통째로 쓴다(호출당 3~9초). ⚠️ **user 역할이어야
+        # 먹는다** — 같은 문장을 system으로 붙였더니 여전히 188토큰을 썼다(compat
+        # 층이 system을 앞으로 끌어올리는 듯하다). user로 붙이자 2토큰("완료"), 1.3초.
+        out.append({"role": "user", "content": _JUDGE_AFTER_TOOL_HINT})
+    return out
+
+
+def _scrub(text: str, key: str) -> str:
+    """에러 본문을 로그에 남기기 전에 키가 섞였으면 지운다(업스트림이 되돌려 줄 수 있다)."""
+    return text.replace(key, "***") if key else text
 
 
 # ---------------------------------------------------------------------------
@@ -310,46 +515,60 @@ async def stream_answer(
     "델타 문자열"을 기대하고, 형을 바꾸면 라우터·테스트가 다 흔들린다.
     usage는 마지막 청크로 한 번 오는 곁다리 정보라 싱크가 더 맞는다.
     """
-    url, model, key = _require_config()
+    route = resolve_route()
     temperature, max_out = await _gen_params()
-    payload = {
-        "model": model,
+    payload: dict[str, Any] = {
+        "model": route.model,
         "messages": _build_messages(system_prompt, history, question, tag_hint),
         "stream": True,
         "temperature": temperature,
         "max_tokens": max_out,
     }
+    if route.provider == "gemini":
+        _apply_effort(payload, route)
     if usage_sink is not None:
         # 실측(2026-07-28): 이 옵션이 **없으면 스트리밍 응답에 usage가 아예
         # 없다**. 있으면 마지막 청크에 실려 온다(400 아님 — 확인함).
         payload["stream_options"] = {"include_usage": True}
 
     async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
-        async with client.stream("POST", url, headers=_headers(key), json=payload) as resp:
-            if resp.status_code != 200:
-                body = (await resp.aread()).decode("utf-8", "replace")
-                logger.error("Upstage chat %s: %s", resp.status_code, body[:500])
-                raise RuntimeError(f"Upstage chat {resp.status_code}")
-            async for line in resp.aiter_lines():
-                line = line.strip()
-                if not line.startswith("data:"):  # SSE 주석·빈 줄
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    return
-                try:
-                    obj = json.loads(data)
-                except json.JSONDecodeError:
-                    continue  # 부분/비JSON keep-alive 청크 무시
-                # usage 청크는 choices가 비어 있다 — choices 검사보다 먼저 본다.
-                if usage_sink is not None and obj.get("usage"):
-                    usage_sink.update(usage_of(obj["usage"]))
-                choices = obj.get("choices") or []
-                if not choices:
-                    continue
-                delta = (choices[0].get("delta") or {}).get("content")
-                if delta:
-                    yield delta
+        for _attempt in range(3):  # 사고 강도 거절 시 한두 번 물러나며 재시도
+            async with client.stream(
+                "POST", route.url, headers=_headers(route.key), json=payload
+            ) as resp:
+                if resp.status_code != 200:
+                    body = (await resp.aread()).decode("utf-8", "replace")
+                    if _downgrade_effort(route, payload, resp.status_code, body):
+                        continue
+                    logger.error(
+                        "%s chat %s: %s", route.label, resp.status_code,
+                        _scrub(body, route.key)[:500],
+                    )
+                    raise RuntimeError(f"{route.label} chat {resp.status_code}")
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line.startswith("data:"):  # SSE 주석·빈 줄
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        return
+                    try:
+                        obj = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue  # 부분/비JSON keep-alive 청크 무시
+                    # usage 청크는 choices가 비어 있다 — choices 검사보다 먼저 본다.
+                    if usage_sink is not None and obj.get("usage"):
+                        usage_sink.update(usage_of(obj["usage"]))
+                    choices = obj.get("choices") or []
+                    if not choices:
+                        continue
+                    # ⚠️ **`content`만 읽는다.** 사고 모델은 델타에 `reasoning_content`·
+                    # `extra_content`(thought_signature)를 실을 수 있다 — 그걸 답에
+                    # 섞으면 추론이 학생 화면과 저장 답(canvas_items.body)에 샌다.
+                    delta = (choices[0].get("delta") or {}).get("content")
+                    if delta:
+                        yield delta
+                return
 
 
 async def complete(
@@ -358,6 +577,8 @@ async def complete(
     tools: list[dict[str, Any]] | None = None,
     max_tokens: int | None = None,
     model: str | None = None,  # D149: 원자화만 solar-pro3로. None=전역 채팅 모델.
+    temperature: float | None = None,  # None=admin 오버레이/config 값
+    timeout: float | None = None,  # None=기본 60초 읽기 타임아웃
 ) -> Completion:
     """비스트리밍 1회 호출 — ReAct 루프의 도구 판단 단계용(D109).
 
@@ -370,40 +591,76 @@ async def complete(
 
     `model`을 주면 그 호출만 해당 모델로 나간다(D149 — 강의 원자 생성이
     solar-pro3를 쓰되 전역 채팅 모델은 건드리지 않기 위함). None이면 전역
-    모델을 그대로 써 기존 호출부 동작이 불변이다.
+    모델을 그대로 써 기존 호출부 동작이 불변이다. Gemini 갈래에서는 이 이름을
+    `gemini_model_for`가 Gemini 모델로 옮긴다(호출부는 solar 이름을 그대로 넘겨도 된다).
+
+    ⚠️ message는 **가공 없이 그대로** 돌려준다. Gemini는 `tool_calls[i].extra_content`
+    (thought_signature)를 다음 요청에 되돌려 받아야 하고, 호출부가 tool_calls를
+    통째로 히스토리에 넣는 것이 그 계약을 지키는 가장 단순한 길이다.
     """
-    url, default_model, key = _require_config()
-    temperature, max_out = await _gen_params(max_tokens)
+    route = resolve_route(model)
+    temp, max_out = await _gen_params(max_tokens)
     payload: dict[str, Any] = {
-        "model": model or default_model,
-        "messages": messages,
-        "temperature": temperature,
+        "model": route.model,
+        "messages": (
+            _gemini_messages(messages, judging=bool(tools))
+            if route.provider == "gemini"
+            else messages
+        ),
+        "temperature": temperature if temperature is not None else temp,
         "max_tokens": max_out,
     }
+    if route.provider == "gemini":
+        _apply_effort(payload, route)
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
+        if route.provider == "gemini":
+            # 판단 단계의 쓸모 있는 출력은 도구 이름+인자뿐이다(수십 토큰). 그런데
+            # Gemini는 도구 결과를 받은 2차 판단에서 **버려질 답을 통째로 쓴다**
+            # (실측 2026-11-17: flash·3.6-flash가 max_tokens 512를 꽉 채워 호출당
+            # 3~9초). 그 텍스트는 학생에게 안 가므로 상한을 낮춰 낭비를 자른다.
+            # 잘려도 tool_calls가 비어 있을 뿐이라 "도구 불필요"로 정상 처리된다.
+            payload["max_tokens"] = min(payload["max_tokens"], _GEMINI_JUDGE_MAX_TOKENS)
 
-    async with httpx.AsyncClient(timeout=_CALL_TIMEOUT) as client:
-        resp = await client.post(url, headers=_headers(key), json=payload)
+    call_timeout = (
+        httpx.Timeout(connect=10.0, read=timeout, write=10.0, pool=10.0)
+        if timeout
+        else _CALL_TIMEOUT
+    )
+    async with httpx.AsyncClient(timeout=call_timeout) as client:
+        resp = await client.post(route.url, headers=_headers(route.key), json=payload)
+        for _attempt in range(2):  # 사고 강도 거절 시 물러나며 재시도(위 _downgrade_effort)
+            if resp.status_code == 200 or not _downgrade_effort(
+                route, payload, resp.status_code, resp.text
+            ):
+                break
+            resp = await client.post(route.url, headers=_headers(route.key), json=payload)
         if resp.status_code != 200:
-            logger.error("Upstage chat %s: %s", resp.status_code, resp.text[:500])
-            raise RuntimeError(f"Upstage chat {resp.status_code}")
+            logger.error(
+                "%s chat %s: %s", route.label, resp.status_code,
+                _scrub(resp.text, route.key)[:500],
+            )
+            raise RuntimeError(f"{route.label} chat {resp.status_code}")
         body = resp.json()
         choices = body.get("choices") or []
         if not choices:
-            raise RuntimeError("Upstage chat: 빈 choices")
+            raise RuntimeError(f"{route.label} chat: 빈 choices")
         choice = choices[0]
         # D112: max_tokens에 걸려 잘리면 `tool_calls`의 arguments JSON이 중간에서
         # 끊긴다. 호출부는 파싱 실패를 빈 인자로 처리하므로 **조용히 엉뚱한
         # 도구 호출**이 된다(검색어 없는 검색 등). 잘렸다는 사실을 로그로 남겨
         # 원인 추적이 가능하게 한다 — 상한을 올릴지 판단하는 근거가 된다.
-        if choice.get("finish_reason") == "length":
+        msg_out = choice.get("message") or {}
+        # tools를 줬는데 tool_calls 없이 잘렸다면 버려질 텍스트가 잘린 것뿐이다 —
+        # 경고할 일이 아니다(위 Gemini 상한).
+        benign = bool(tools) and not msg_out.get("tool_calls")
+        if choice.get("finish_reason") == "length" and not benign:
             logger.warning(
                 "판단 응답이 max_tokens(%s)에서 잘렸다 — 도구 인자가 불완전할 수 있다",
                 payload["max_tokens"],
             )
         return Completion(
-            message=choice.get("message") or {},
+            message=msg_out,
             usage=usage_of(body.get("usage")),
         )

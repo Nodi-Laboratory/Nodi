@@ -1,5 +1,11 @@
 """Upstage API 클라이언트 — 임베딩(1024d) + 문서 파싱(Document Parse).
 
+[2026-11-17] 임베딩은 제공자 전환 가능: `embed_texts`/`embed_query`/`embed_passages`는
+`settings.embedding_provider`("upstage" 기본 | "gemini")로 갈린다 — Gemini 구현은
+services/gemini_embed.py. 호출부가 이 모듈 이름을 그대로 쓰도록 진입점을 여기에
+남겼다. 문서 파싱은 제공자와 무관하게 Upstage다(Gemini에 대응 API가 없다).
+아래 임베딩 설명은 Upstage 경로 기준이다.
+
 임베딩은 비대칭 모델: 질의는 `embedding-query`, 문서는 `embedding-passage`
 (혼용 시 검색 품질 저하 — 반드시 kind로 구분). 기본 출력은 4096차원이지만
 `dimensions` 파라미터로 1024를 요청한다(D106 — 근거는 EMBED_DIM 주석).
@@ -21,7 +27,7 @@ import math
 import httpx
 
 from ..config import get_settings
-from . import api_keys
+from . import api_keys, gemini_embed
 
 logger = logging.getLogger("nodi.upstage")
 settings = get_settings()
@@ -164,10 +170,10 @@ def _model_for(kind: str) -> str:
     raise ValueError(f"unknown embedding kind: {kind!r} (expected 'query'|'passage')")
 
 
-async def embed_texts(
+async def _upstage_embed_texts(
     texts: list[str], *, kind: str = "passage", concurrency: int | None = None
 ) -> list[list[float]]:
-    """텍스트 목록 -> L2 정규화된 EMBED_DIM 차원 벡터 목록.
+    """텍스트 목록 -> L2 정규화된 EMBED_DIM 차원 벡터 목록 (Upstage 구현).
 
     비대칭 모델이므로 kind를 반드시 구분: 질의="query", 문서="passage".
     배치 <=100(`EMBED_MAX_BATCH`) 단위로 쪼개 **동시에** 보내고(D195), 응답은
@@ -229,13 +235,47 @@ async def embed_texts(
     return [vec for part in parts for vec in part]
 
 
+# 제공자 이름 — 설정값 정규화·검증은 여기 한 곳이다(시드 로더·빌드 스크립트도 쓴다).
+EMBEDDING_PROVIDERS = ("upstage", "gemini")
+
+
+def embedding_provider() -> str:
+    """지금 런타임의 임베딩 제공자("upstage"|"gemini").
+
+    알 수 없는 값은 **upstage로 슬쩍 돌리지 않고 예외**다 — 오타 하나로 색인은
+    Gemini, 질의는 Upstage가 되면 검색이 조용히 빈손이 된다. 호출부(RAG)는 예외를
+    "건너뜀"으로 다루므로 채팅은 막지 않고, 로그에 이유가 남는다.
+    """
+    value = (settings.embedding_provider or "upstage").strip().lower()
+    if value not in EMBEDDING_PROVIDERS:
+        raise RuntimeError(
+            f"EMBEDDING_PROVIDER={settings.embedding_provider!r} — "
+            f"{' | '.join(EMBEDDING_PROVIDERS)} 중 하나여야 한다."
+        )
+    return value
+
+
+async def embed_texts(
+    texts: list[str], *, kind: str = "passage", concurrency: int | None = None
+) -> list[list[float]]:
+    """임베딩 진입점 — `settings.embedding_provider`로 구현을 고른다.
+
+    호출부(워커 · 검색 · crosslink · embedding.py)는 전부 이 이름을 임포트한다 —
+    제공자 전환이 그 8곳을 건드리지 않게 이 함수가 갈림길이다. 계약은 어느 쪽이든
+    같다: L2 정규화된 EMBED_DIM(1024) 차원, 입력 순서 보존, 질의/문서 비대칭.
+    """
+    if embedding_provider() == "gemini":
+        return await gemini_embed.embed_texts(texts, kind=kind, concurrency=concurrency)
+    return await _upstage_embed_texts(texts, kind=kind, concurrency=concurrency)
+
+
 async def embed_query(text: str) -> list[float]:
-    """단일 질의 임베딩 편의 함수 (embedding-query)."""
+    """단일 질의 임베딩 편의 함수 (query: embedding-query / RETRIEVAL_QUERY)."""
     return (await embed_texts([text], kind="query"))[0]
 
 
 async def embed_passages(texts: list[str]) -> list[list[float]]:
-    """여러 문서 임베딩 편의 함수 (embedding-passage). 빈 입력 → []."""
+    """여러 문서 임베딩 편의 함수 (passage: embedding-passage / RETRIEVAL_DOCUMENT). 빈 입력 → []"""
     return await embed_texts(texts, kind="passage")
 
 

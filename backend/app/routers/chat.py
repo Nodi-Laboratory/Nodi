@@ -484,7 +484,9 @@ async def chat_stream(
     tlog = TurnLog(user.id, body.session_id, body.question)
     # D113: 어느 경로로 돌았는지·어떤 모델이었는지를 로그만 보고 알 수 있어야
     # 한다. react_enabled를 나중에 바꾸면 과거 로그의 해석이 달라지기 때문이다.
-    tlog.set_route("react" if react_on else "legacy", settings.upstage_chat_model)
+    # 실제로 나가는 모델을 적는다 — Gemini 키가 있으면 설정값(solar-pro3)이 아니라
+    # Gemini 모델이다. 로그가 거짓이면 모델 비교(실측)가 틀어진다.
+    tlog.set_route("react" if react_on else "legacy", solar.active_chat_model())
     tlog.set_system(system_prompt)
     tlog.set_contexts_structured(
         blocks=context_blocks_list,

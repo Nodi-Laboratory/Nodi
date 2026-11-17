@@ -22,7 +22,7 @@ from typing import Any
 
 from ..config import get_settings
 from ..db.client import UserClient, get_service_client
-from . import app_settings, embedding, figure_search, qdrant_store, rag
+from . import app_settings, embedding, figure_search, qdrant_store, rag, solar
 
 # 노브 카탈로그는 `admin_knobs`가 갖는다(2026-08-07 분리). 이름을 그대로 다시
 # 내보내는 이유: 호출부·테스트가 `admin_console._SPECS`로 참조해 왔고, 그 계약을
@@ -58,13 +58,17 @@ async def settings_view(client: UserClient) -> dict[str, Any]:
         spec = _SPEC_BY_KEY.get(key)
         row = by_key.get(key)
         default = default_for(key)
-        value = row["value"] if row else default
+        # 행 값이 JSON null이면 "코드 기본값을 따른다"는 뜻이다(거리 게이트 — 제공자마다
+        # 기본값이 달라 시드가 숫자를 박지 않는다, db/03_app_settings.sql). 행은 있으니
+        # missing_row가 아니고, 유효값은 기본값이며, 바뀐 것도 아니다.
+        inherits = row is not None and row["value"] is None
+        value = default if (row is None or inherits) else row["value"]
         items.append(
             {
                 "key": key,
                 "value": value,
                 "default": default,
-                "modified": row is not None and row["value"] != default,
+                "modified": row is not None and not inherits and row["value"] != default,
                 "missing_row": row is None,
                 "updated_at": (row or {}).get("updated_at"),
                 "updated_by": (row or {}).get("updated_by"),
@@ -159,7 +163,17 @@ def flow_spec(
                 "비스트리밍 1회. 개념 카드 형식을 **주지 않는다**(형식 지시와 도구 "
                 "지시가 충돌하기 때문). 이 단계의 텍스트는 사용자에게 가지 않는다."
             ),
-            "params": {"max_tokens": 512, "streaming": False, "tools": True},
+            # 콘솔은 **실제로 나갈 공급자·모델**을 말해야 한다 — 설정값(upstage)만
+            # 보이면 Gemini로 도는 서버에서 콘솔이 거짓말이 된다(2026-11-17).
+            # Gemini 갈래는 판단 출력 상한을 solar가 더 낮춘다(_GEMINI_JUDGE_MAX_TOKENS).
+            "params": {
+                "provider": solar.active_provider(),
+                "model": solar.active_chat_model(),
+                "max_tokens": min(512, solar._GEMINI_JUDGE_MAX_TOKENS)
+                if solar.active_provider() == "gemini" else 512,
+                "streaming": False,
+                "tools": True,
+            },
         },
         {
             "id": "tools_needed",
@@ -234,7 +248,8 @@ def flow_spec(
                 "출력은 개념 카드 줄 형식(CHAT:/@concept/@end)."
             ),
             "params": {
-                "model": settings.upstage_chat_model,
+                "provider": solar.active_provider(),
+                "model": solar.active_chat_model(),
                 "temperature": settings.chat_temperature,
                 "max_tokens": settings.chat_max_tokens,
                 "streaming": True,

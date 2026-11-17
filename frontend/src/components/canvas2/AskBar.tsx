@@ -120,8 +120,10 @@ export function AskBar({
   /**
    * 키가 없는 기능만 잠근다 (공개판 C 분류, 2026-09-27).
    *
-   * 대화(Upstage)가 없으면 입력 자체를, 비전(Gemini)이 없으면 펜 쪽만,
-   * 업로드(.env 전용)가 없으면 첨부만 막는다. 캔버스 보기·편집은 그대로다.
+   * Gemini 키(대화·비전 공용, 2026-11-17)가 없으면 입력 자체를 막는다. 펜 쪽
+   * 자물쇠(`penLocked`)는 같은 키라 사실상 `chatLocked`와 함께 걸리지만, 버튼의
+   * 의도("키가 없어 못 읽는다")를 남기려고 따로 둔다. 업로드(.env 전용)가
+   * 없으면 첨부만 막는다. 캔버스 보기·편집은 그대로다.
    */
   const ai = useAiReadiness();
   const chatLocked = ai.loaded && !ai.chatReady;
@@ -253,18 +255,12 @@ export function AskBar({
        */
       className="ui absolute left-1/2 z-50 w-[min(56%,1400px)] min-w-[420px] -translate-x-1/2 max-[1100px]:w-[calc(100%-160px)] max-[900px]:w-[calc(100%-24px)] max-[900px]:min-w-0"
     >
-      {chatLocked ? (
+      {/* 키가 하나라 펜 전용 안내는 따로 없다 — 펜이 잠겼으면 채팅도 잠겼다. */}
+      {chatLocked && (
         <AiKeyNotice
           className="mb-2 w-fit"
-          message="AI 답변을 받으려면 Upstage API 키가 필요해요."
+          message="AI 답변을 받으려면 Gemini API 키가 필요해요."
         />
-      ) : (
-        penLocked && askPen && (
-          <AiKeyNotice
-            className="mb-2 w-fit"
-            message="손글씨 질문을 읽으려면 Gemini API 키가 필요해요."
-          />
-        )
       )}
 
       {showStatus && (

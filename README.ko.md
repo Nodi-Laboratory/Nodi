@@ -6,7 +6,7 @@
 
 [English](README.md) | **한국어**
 
-[![Powered by Upstage](https://img.shields.io/badge/Powered%20by-Upstage%20Solar-7B61FF?style=for-the-badge)](https://www.upstage.ai)
+[![Powered by Gemini](https://img.shields.io/badge/Powered%20by-Google%20Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev)
 
 ---
 
@@ -21,14 +21,14 @@
 ## ✨ Features
 
 ### 🗂️ 무한 캔버스 위의 개념 카드
-- Upstage `solar-pro3`의 답변을 SSE로 받아, 정해진 카드 형식(`@concept: 제목 | 분류`)을 파싱해 캔버스에 카드로 그린다
+- Google Gemini(`gemini-3.5-flash`)의 답변을 SSE로 받아, 정해진 카드 형식(`@concept: 제목 | 분류`)을 파싱해 캔버스에 카드로 그린다
 - 분류(태그)마다 열 하나에 배치하고, 태그 하나가 `parent_item_id`로 이어진 대화 트리가 된다
 - 화면 이동·펜·도형은 Excalidraw가 맡고, 카드는 그 위의 오버레이라 옮기기·수정·다시 질문하기가 된다
 - 답하기 전에 도구 판단 단계가 11개 스킬(학급 자료 검색, 도판 검색, 강의 클립, 필기, 세션 파일 등) 중에서 고른다
 
 ### 🏫 학급 공간과 RAG
 - 선생님이 참여 코드로 학급을 만들고 수업 자료·교과서(PDF, 이미지, TXT/MD)를 올린다
-- 업로드는 Upstage Document Parse → 1,200자 청크(오버랩 150자) → `embedding-passage`(1024차원) → Qdrant 순서로 처리된다
+- 업로드는 Upstage Document Parse → 1,200자 청크(오버랩 150자) → Gemini 문서 임베딩(1024차원) → Qdrant 순서로 처리된다
 - 질의는 `embedding-query`로 임베딩하고, 코사인 거리 0.60 안의 청크를 프롬프트에 넣는다
 - Qdrant에는 id만 두고, 청크 본문은 호출자 권한으로 Postgres에서 다시 읽는다
 
@@ -60,8 +60,8 @@
 
 ### Prerequisites
 - [Docker](https://docs.docker.com/get-docker/)와 Docker Compose
-- (선택) [Upstage API 키](https://console.upstage.ai/api-keys) — AI 답변, 검색, 파일 업로드
-- (선택) [Gemini API 키](https://aistudio.google.com/apikey) — 손글씨 인식, 도판 캡션
+- (선택) [Gemini API 키](https://aistudio.google.com/apikey) — 모든 AI 기능: 답변, 검색, 손글씨, 도판 캡션
+- (선택) [Upstage API 키](https://console.upstage.ai/api-keys) — 파일 업로드(PDF 문서 파싱)에만 필요
 
 ### 실행
 ```bash
@@ -83,10 +83,10 @@ docker compose up
 ### API 키 설정
 키가 없어도 로그인과 데모 데이터로 모든 화면을 둘러볼 수 있다. 키가 필요한 기능만 안내 문구와 함께 비활성화된다.
 
-- **`.env`에 넣기** — `UPSTAGE_API_KEY` / `GEMINI_API_KEY`(필요하면 `GEMINI_VISION_MODEL`도)를 채우고 다시 띄운다. 서버가 모든 사용자에게 이 키를 쓰고, 키 입력 UI는 나타나지 않는다.
+- **`.env`에 넣기** — `GEMINI_API_KEY`(업로드가 필요하면 `UPSTAGE_API_KEY`도)를 채우고 다시 띄운다. 서버가 모든 사용자에게 이 키를 쓰고, 키 입력 UI는 나타나지 않는다.
 - **앱 화면에서 입력** — 비워 두면 첫 진입 때 뜨는 팝업이나 **설정 → AI API 키**에서 입력한다. 키는 브라우저 localStorage에만 저장되고 요청마다 헤더로 전달되며, 서버는 저장하거나 로그에 남기지 않는다.
 - 파일 업로드는 백그라운드 워커가 처리하므로 `.env`의 `UPSTAGE_API_KEY`가 있어야 동작한다.
-- 고를 수 있는 Gemini 모델: `gemini-3.5-flash-lite`(기본), `gemini-3.1-flash-lite`, `gemini-3.5-flash`, `gemini-3.6-flash`.
+- 대화는 `gemini-3.5-flash`, 보조 작업은 `gemini-3.5-flash-lite`, 임베딩은 `gemini-embedding-001`을 쓴다. 비전 모델(손글씨·도판 캡션)은 `gemini-3.5-flash-lite`(기본), `gemini-3.1-flash-lite`, `gemini-3.5-flash`, `gemini-3.6-flash` 중에서 고른다.
 
 ---
 
@@ -102,7 +102,7 @@ docker compose up
 | **Backend** | Python 3.12, FastAPI, asyncpg, APScheduler |
 | **Database** | PostgreSQL 16 (행 수준 보안) |
 | **Vector Search** | Qdrant (1024차원, 코사인) |
-| **AI** | Upstage `solar-pro3`(대화·도구 호출), `embedding-query` / `embedding-passage`, Document Parse · Google Gemini(비전) |
+| **AI** | Google Gemini(대화·도구 호출, 임베딩, 비전/OCR) · Upstage Document Parse(업로드에만) |
 | **Auth** | bcrypt, PyJWT (httpOnly 쿠키) |
 | **Testing** | pytest, Vitest, Playwright |
 | **Infra** | Docker Compose |
@@ -130,7 +130,7 @@ Nodi/
 ├── 📂 backend/
 │   ├── 📂 app/
 │   │   ├── 📂 routers/            # /api 아래 REST + SSE 엔드포인트
-│   │   ├── 📂 services/           # 채팅, RAG, Upstage, Gemini, Qdrant, 파일
+│   │   ├── 📂 services/           # 채팅, RAG, Gemini, Upstage(파싱), Qdrant, 파일
 │   │   │   └── 📂 worker/         # 백그라운드 인제스트 잡(파싱·임베딩·도판·강의)
 │   │   ├── 📂 ai/                 # 도구 호출 오케스트레이터와 스킬
 │   │   ├── 📂 auth/               # JWT 쿠키 인증, 역할 가드

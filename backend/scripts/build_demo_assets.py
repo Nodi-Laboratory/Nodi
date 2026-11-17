@@ -6,7 +6,13 @@
 
     cd backend
     .venv/Scripts/python -m scripts.build_demo_assets            # 그림 + PDF + manifest 배치
-    .venv/Scripts/python -m scripts.build_demo_assets --embed    # + 벡터(키 필요, backend/.env)
+    .venv/Scripts/python -m scripts.build_demo_assets --embed    # + Upstage 벡터(키: backend/.env)
+    .venv/Scripts/python -m scripts.build_demo_assets --embed --provider gemini   # + Gemini 벡터
+
+벡터는 **임베딩 제공자마다 따로** 만든다(`--provider upstage|gemini`, 기본 upstage) —
+`vectors.json.gz`(Upstage) · `vectors.gemini.json.gz`(Gemini). 제공자별 검색 결과·
+연결 거리는 manifest의 `retrieval.<제공자>` 칸에 담기고, 그 제공자의 거리 게이트
+(config.gate_defaults)로 재서 시드가 붙인 도판·클립·연결이 게이트를 넘는지 확인한다.
 
 ## 그림은 전부 여기서 직접 그린다
 
@@ -643,11 +649,20 @@ def _cos_dist(a: list[float], b: list[float]) -> float:
     return 1.0 - sum(x * y for x, y in zip(a, b, strict=True))
 
 
-async def build_vectors(manifest: dict) -> None:
+async def build_vectors(manifest: dict, provider: str = "upstage") -> None:
+    from app.config import gate_defaults, get_settings
     from app.services import upstage
 
+    # 시드·검색이 쓰는 것과 같은 진입점(upstage.embed_*)으로 만든다 — 제공자는 설정으로 고른다.
+    get_settings().embedding_provider = provider
+    gates = gate_defaults(provider)
+    gate = gates["class_material_rag_max_distance"]
+    model = (
+        get_settings().gemini_embedding_model if provider == "gemini"
+        else get_settings().upstage_embedding_passage_model
+    )
     specs = list(v.specs())
-    print(f"passage 임베딩 {len(specs)}건 …")
+    print(f"[{provider}] passage 임베딩 {len(specs)}건 …")
     vecs = await upstage.embed_passages([s.text for s in specs])
     points = {
         s.point_id: {"c": s.collection, "h": v.text_hash(s.text), "v": v.encode(vec)}
@@ -655,16 +670,19 @@ async def build_vectors(manifest: dict) -> None:
     }
     # 이후 계산은 **파일에 들어간 float16 값**으로 한다 — 시드가 올리는 것과 같은 수로.
     by_id = {pid: v.decode(p["v"]) for pid, p in points.items()}
-    with gzip.open(v.VECTORS_FILE, "wt", encoding="utf-8", compresslevel=9) as fh:
+    out = v.VECTORS_FILES[provider]
+    with gzip.open(out, "wt", encoding="utf-8", compresslevel=9) as fh:
+        # 머리의 provider·model·dim을 시드가 런타임 설정과 대조한다(다른 공간의 벡터 적재 방지).
         json.dump({
-            "model": {"passage": "embedding-passage", "dimensions": v.DIM},
+            "provider": provider,
+            "model": model,
             "dim": v.DIM,
             "points": points,
         }, fh, separators=(",", ":"))
-    print(f"  → {v.VECTORS_FILE.name} {v.VECTORS_FILE.stat().st_size / 1024:.0f}KB")
+    print(f"  → {out.name} {out.stat().st_size / 1024:.0f}KB")
 
     # 학급 턴마다: 그 질문으로 실제 검색했으면 무엇이 몇 거리로 나왔을지.
-    # 질의는 embedding-query로 만든다(비대칭 불변식). 결과는 manifest에만 남긴다.
+    # 질의는 query용으로 만든다(비대칭 불변식). 결과는 manifest에만 남긴다.
     class_turns = [(s, t) for s in c.SESSIONS if s.space == "class" for t in s.turns]
     qvecs = await upstage.embed_texts([t.question for _, t in class_turns], kind="query")
     chunk_ids = [(f, seq) for f in c.FILES for seq, _ in enumerate(f.chunks())]
@@ -673,7 +691,7 @@ async def build_vectors(manifest: dict) -> None:
         ranked = sorted(
             ((_cos_dist(q, by_id[c.chunk_id(f.key, seq)]), f.key, seq) for f, seq in chunk_ids)
         )
-        rag = [[fk, seq, round(dist, 4)] for dist, fk, seq in ranked[:5] if dist <= 0.60]
+        rag = [[fk, seq, round(dist, 4)] for dist, fk, seq in ranked[:5] if dist <= gate]
         figs = sorted((_cos_dist(q, by_id[fg.id]), k) for k, fg in c.FIGURES.items())
         clips = sorted(
             (_cos_dist(q, by_id[c.clip_id(vd.key, cl.key)]), f"{vd.key}:{cl.key}")
@@ -686,7 +704,19 @@ async def build_vectors(manifest: dict) -> None:
         print(f"    RAG {[(fk, seq, d_) for fk, seq, d_ in rag[:3]]}")
         print(f"    도판 top {figs[0][1]}({figs[0][0]:.3f}) 지정 {want_f}")
         print(f"    클립 top {clips[0][1]}({clips[0][0]:.3f}) 지정 {want_c}")
-    manifest["turns"] = turns
+    retrieval = manifest.setdefault("retrieval", {}).setdefault(provider, {})
+    retrieval["turns"] = turns
+    # 시드가 붙인 도판·클립이 이 제공자의 게이트를 넘는지 — 넘으면 시드가 거짓말을 한다.
+    over = [
+        f"{key} {name} {dist}"
+        for key, got in turns.items()
+        for name, dist in {**got["figures"], **got["clips"]}.items()
+        if dist > (
+            gates["figure_retrieve_max_distance"] if name in c.FIGURES
+            else gates["lecture_retrieve_max_distance"]
+        )
+    ]
+    print(f"  게이트 초과 도판·클립: {over or '없음'}")
 
     # 교차 연결 거리 — 워커와 같이 새 카드는 query, 과거 카드는 passage로 잰다.
     link_q = []
@@ -696,43 +726,58 @@ async def build_vectors(manifest: dict) -> None:
         title, _, body = c.card_from_answer(t.answer)
         link_q.append(v.concept_embed_text(title, body))
     lq = await upstage.embed_texts(link_q, kind="query")
-    manifest["links"] = {}
+    retrieval["links"] = {}
+    lo, hi = gates["crosslink_min_distance"], gates["crosslink_max_distance"]
     for link, q in zip(c.LINKS, lq, strict=True):
         to_id = c.concept_item_id(*link.to_ref)
         dist = round(_cos_dist(q, by_id[to_id]), 4)
-        manifest["links"][link.key] = dist
-        print(f"· 연결 {link.key}: 거리 {dist}")
+        retrieval["links"][link.key] = dist
+        flag = "" if lo <= dist <= hi else f"  ⚠ 띠 [{lo}, {hi}] 밖"
+        print(f"· 연결 {link.key}: 거리 {dist}{flag}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--embed", action="store_true", help="Upstage로 벡터도 만든다(키 필요)")
+    ap.add_argument("--embed", action="store_true", help="벡터도 만든다(제공자 키 필요)")
+    ap.add_argument(
+        "--provider", choices=("upstage", "gemini"), default="upstage",
+        help="--embed의 임베딩 제공자(기본 upstage). 제공자마다 벡터 파일·manifest 칸이 따로다",
+    )
+    ap.add_argument(
+        "--vectors-only", action="store_true",
+        help="그림·PDF를 다시 그리지 않고 벡터·manifest 검색 칸만 갱신한다(--embed 필요)",
+    )
     args = ap.parse_args()
+    if args.vectors_only and not args.embed:
+        ap.error("--vectors-only는 --embed와 함께 쓴다")
     ASSETS.mkdir(parents=True, exist_ok=True)
 
-    for key, draw in FIGURE_DRAWERS.items():
-        save_png(draw(), c.FIGURES[key].image)
-    save_png(class_avatar(), "class_avatar.png")
-    thumbs = (thumb_leaf, thumb_atom, thumb_magnet)
-    for (name, _), draw in zip(c.CLIP_THUMBNAILS, thumbs, strict=True):
-        save_png(draw(), name)
-    print("그림 저장 완료")
+    manifest = v.load_manifest_raw()  # retrieval(제공자별 칸)을 그대로 보존한다
+    if not args.vectors_only:
+        for key, draw in FIGURE_DRAWERS.items():
+            save_png(draw(), c.FIGURES[key].image)
+        save_png(class_avatar(), "class_avatar.png")
+        thumbs = (thumb_leaf, thumb_atom, thumb_magnet)
+        for (name, _), draw in zip(c.CLIP_THUMBNAILS, thumbs, strict=True):
+            save_png(draw(), name)
+        print("그림 저장 완료")
 
-    manifest = v.load_manifest()
-    fig_boxes: dict[str, list[float]] = {}
-    files_meta: dict[str, dict] = {}
-    for f in c.FILES:
-        fig_no = [0]
-        pages = [render_page(f, p, i, fig_no, fig_boxes) for i, p in enumerate(f.pages, start=1)]
-        pdf = write_pdf(pages, f.name)
-        (ASSETS / f.storage_name).write_bytes(pdf)
-        files_meta[f.key] = {"pages": len(pages), "bytes": len(pdf)}
-        print(f"  {f.storage_name}: {len(pages)}쪽 {len(pdf) / 1024:.0f}KB")
-    manifest["figure_bbox"] = fig_boxes
-    manifest["files"] = files_meta
+        fig_boxes: dict[str, list[float]] = {}
+        files_meta: dict[str, dict] = {}
+        for f in c.FILES:
+            fig_no = [0]
+            pages = [
+                render_page(f, p, i, fig_no, fig_boxes) for i, p in enumerate(f.pages, start=1)
+            ]
+            pdf = write_pdf(pages, f.name)
+            (ASSETS / f.storage_name).write_bytes(pdf)
+            files_meta[f.key] = {"pages": len(pages), "bytes": len(pdf)}
+            print(f"  {f.storage_name}: {len(pages)}쪽 {len(pdf) / 1024:.0f}KB")
+        manifest["figure_bbox"] = fig_boxes
+        manifest["files"] = files_meta
 
     if args.embed:
-        asyncio.run(build_vectors(manifest))
+        asyncio.run(build_vectors(manifest, args.provider))
     v.MANIFEST_FILE.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=1) + "\n",
         encoding="utf-8", newline="\n",  # 윈도우에서도 LF — 저장소 규약(D97)

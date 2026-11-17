@@ -3,7 +3,7 @@
 /**
  * 첫 진입 때 한 번 키 입력을 권한다 (공개판 C 분류, 2026-09-27).
  *
- * 조건: 서버 `.env`에 Upstage 키가 없고, 이 브라우저에도 없고, 전에 권한 적이
+ * 조건: 서버 `.env`에 Gemini 키가 없고, 이 브라우저에도 없고, 전에 권한 적이
  * 없을 때. 닫으면 다시 안 띄운다 — 매번 뜨면 키 없이 둘러보려는 사람을 막는다.
  * 이후에는 입력창의 안내 줄과 설정 화면에서 연다.
  */
@@ -31,7 +31,7 @@ export function ApiKeyFirstRun() {
   // setState를 피한다. React Compiler 규칙).
   if (phase === "pending" && ai.loaded) {
     const should =
-      ai.needsUpstageInput && !loadApiKeys().upstage && !alreadyPrompted();
+      ai.needsGeminiInput && !loadApiKeys().gemini && !alreadyPrompted();
     setPhase(should ? "open" : "done");
   }
 

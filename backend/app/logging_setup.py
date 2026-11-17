@@ -17,7 +17,7 @@ import logging
 import sys
 
 from .config import get_settings
-from .services import api_keys, figure_judge
+from .services import api_keys, figure_judge, solar
 
 logger = logging.getLogger("nodi.startup")
 
@@ -55,8 +55,14 @@ def log_config_summary() -> None:
     logger.info("--- nodi 설정 점검 (environment=%s) ---", s.environment)
     logger.info("  Postgres      : %s (worker=%s)",
                 mark(db_ok), mark(bool(s.database_worker_url)))
-    logger.info("  대화 생성     : %s (%s)", mark(bool(s.upstage_api_key)),
-                s.upstage_chat_model)
+    # 대화 생성: Gemini .env 키가 있으면 Gemini, 없으면 Upstage(solar.resolve_route).
+    # 헤더 키는 요청마다 달라 부팅 요약에 못 담는다 — .env만 본다.
+    if api_keys.gemini_env_configured():
+        logger.info("  대화 생성     : %s (Gemini %s / 소형 %s)", mark(True),
+                    solar.gemini_model_for(None), solar.gemini_model_for("solar-pro2"))
+    else:
+        logger.info("  대화 생성     : %s (Upstage %s)", mark(bool(s.upstage_api_key)),
+                    s.upstage_chat_model)
     logger.info("  Upstage 임베딩: %s", mark(bool(s.upstage_api_key)))
     logger.info("  Qdrant        : %s", s.qdrant_url or "MISSING")
     logger.info("  파일 저장     : %s", s.storage_root)
