@@ -129,6 +129,11 @@ interface Deps {
   getItems: () => readonly CanvasItem[];
   /** 로컬 아이템 목록에 반영한다. */
   upsertLocal: (items: CanvasItem[]) => void;
+  /**
+   * 서버에 아직 없는 부모(복구 카드·로컬 메모)를 먼저 서버에 만든다.
+   * 이어 묻는 답을 저장하기 전에 부른다 — 반환은 서버 행, 실패하면 null.
+   */
+  promoteLegacy: (item: CanvasItem) => Promise<CanvasItem | null>;
   /** 저장된 아이템으로 로컬을 갈아 끼운다(임시 id → 서버 id). */
   onPersisted: (tempIds: string[], saved: CanvasItem[]) => void;
   /** 현재 아이템 수 — seq를 이어 붙이는 데 쓴다. */
@@ -213,6 +218,7 @@ export function useCanvasStream({
   sessionId,
   getItems,
   upsertLocal,
+  promoteLegacy,
   onPersisted,
   nextSeq,
   hasFigure,
@@ -637,8 +643,45 @@ export function useCanvasStream({
       const created = () => made;
       if (!made.length) return [];
 
+      /**
+       * **이어 묻는 부모가 아직 서버에 없으면 먼저 올린다** (2026-11-17).
+       *
+       * 부모가 복구 카드(`legacy-…` — 끊긴 턴을 되살린 것, D220)나 로컬 메모
+       * (`local-note-…`)면 id가 임시라 `toPayload`가 부모를 **null로 바꿔 보낸다.**
+       * 화면에서는 로컬 관계로 선이 그려져 멀쩡해 보이지만 서버에는 뿌리 카드로
+       * 저장돼, 새로고침하면 "카드를 눌러 이어 물었는데 아래에 안 붙는다"가 된다
+       * (실서버 재현: 같은 분류로 답이 나오는데 parent_item_id만 null).
+       *
+       * 같은 턴 안의 임시 부모는 저장 뒤 `relink`가 잇는다. 이쪽은 **이전 턴에서
+       * 온** 부모라 그 길에 안 걸리므로, 저장 전에 올려 진짜 id를 받는다.
+       * 올리기가 실패해도 답은 저장한다(부모만 null — 예전 동작).
+       */
+      const madeIds = new Set(made.map((m) => m.id));
+      const legacyParents = new Map<string, CanvasItem>();
+      for (const m of made) {
+        const pid = m.parentItemId;
+        if (!pid || isRealId(pid) || madeIds.has(pid) || legacyParents.has(pid)) continue;
+        const parent = getItems().find((i) => i.id === pid);
+        if (parent?._legacy) legacyParents.set(pid, parent);
+      }
+      const realParent = new Map<string, string>();
+      if (legacyParents.size) {
+        const rows = await Promise.all([...legacyParents.values()].map((p) => promoteLegacy(p)));
+        [...legacyParents.keys()].forEach((pid, i) => {
+          const row = rows[i];
+          if (row) realParent.set(pid, row.id);
+        });
+      }
+      const toSave = realParent.size
+        ? made.map((m) =>
+            m.parentItemId && realParent.has(m.parentItemId)
+              ? { ...m, parentItemId: realParent.get(m.parentItemId)! }
+              : m,
+          )
+        : made;
+
       // 완료 시 한 번에 저장한다(스트리밍 중 매 토큰 PATCH는 수백 왕복이 된다).
-      const payload: NewItemInput[] = made.map(toPayload);
+      const payload: NewItemInput[] = toSave.map(toPayload);
       try {
         const saved = await createItems(sessionId, payload);
         const tempIds = made.map((i) => i.id);
@@ -725,7 +768,7 @@ export function useCanvasStream({
       return created();
     },
     [
-      sessionId, busy, getItems, upsertLocal, onPersisted, nextSeq,
+      sessionId, busy, getItems, upsertLocal, promoteLegacy, onPersisted, nextSeq,
       hasFigure, hasClip, onSessionGone, dropSpots,
       // D174: 관리자가 바꾸면 다음 턴부터 새 값으로 돈다.
       charsPerFrame, cardsPerTurn,

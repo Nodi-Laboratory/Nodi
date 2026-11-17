@@ -583,7 +583,7 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
 
   // --- 스트림 ----------------------------------------------------------------
 
-  const { upsertLocal, replaceTemp } = store;
+  const { upsertLocal, replaceTemp, promoteLegacy } = store;
 
   // 임시 id로 그려 둔 아이템을 서버가 준 진짜 행으로 갈아 끼운다.
   // 갈아 끼우지 않으면 그 아이템은 영영 로컬 전용이라 편집·삭제가 서버에 안 간다.
@@ -700,6 +700,7 @@ export function CanvasWorkspace({ spaceId, mapOnLoad = false }: Props) {
     getItems,
     onSessionGone: dropSession,
     upsertLocal,
+    promoteLegacy,
     onPersisted,
     nextSeq,
     hasFigure,

@@ -44,6 +44,15 @@ export interface CanvasItemsApi {
   /** 로컬 + 서버. 실패 시 롤백 + 오류 노출. */
   patch: (id: string, patch: ItemPatch, local?: Partial<CanvasItem>) => void;
   /**
+   * 서버에 아직 행이 없는 아이템(복구 카드·로컬 메모)을 **지금** 서버에 만든다.
+   *
+   * 반환은 서버 행(실패하면 null). 이미 만드는 중이면 그 요청을 **그대로 기다린다**
+   * — 행을 두 번 만들면 글이 복제된다(D147). 로컬 화면의 id·부모 참조 교체는
+   * 이 안에서 끝나므로 호출부가 `replaceTemp`를 또 부르면 안 된다(복제된다).
+   * 새 카드를 저장하기 전에 그 부모를 먼저 올릴 때 쓴다(useCanvasStream).
+   */
+  promoteLegacy: (item: CanvasItem) => Promise<CanvasItem | null>;
+  /**
    * 여러 글을 한꺼번에 옮긴다 (D143 재배치).
    *
    * `patch`를 반복해서 부르면 안 된다 — 되돌리기가 **마지막 하나만** 남아,
@@ -148,7 +157,65 @@ export function useCanvasItems(sessionId: string | null): CanvasItemsApi {
    * 두 번째 호출은 로컬만 고치고 지나간다. 첫 요청이 끝날 때 서버 값을
    * 넣으면서 **로컬의 최신 본문·좌표를 지키므로**(아래 .then) 잃는 것이 없다.
    */
-  const promoting = useRef<Set<string>>(new Set());
+  const promotions = useRef<Map<string, Promise<CanvasItem | null>>>(new Map());
+
+  /**
+   * 승격 한 번 — `patch`(첫 편집)와 `promoteLegacy`(이어 묻기 전 부모 저장)가
+   * **같은 요청을 공유한다.** 둘이 따로 만들면, 카드를 끄는 순간 이어 묻기가
+   * 겹칠 때 행이 두 번 생긴다.
+   */
+  const startPromotion = useCallback(
+    (id: string, merged: CanvasItem): Promise<CanvasItem | null> => {
+      const running = promotions.current.get(id);
+      if (running) return running;
+      const req = apiCreate(merged.sessionId, [
+        {
+          kind: merged.kind,
+          source: merged.source,
+          node_id: merged.nodeId,
+          parent_item_id: null,
+          title: merged.title,
+          body: merged.body,
+          tag: merged.tag,
+          x: merged.x,
+          y: merged.y,
+          pinned: merged.pinned,
+          seq: merged.seq,
+          data: merged.data,
+        },
+      ])
+        .then(([saved]) => {
+          if (!saved) return null;
+          // 저장되는 사이 학생이 더 고쳤을 수 있다 — 로컬 본문·위치를 지키고
+          // id와 서버 소유 필드만 갈아 끼운다.
+          setItems((prev) => {
+            const next = prev.map((i) =>
+              i.id === id
+                ? { ...saved, body: i.body, x: i.x, y: i.y, pinned: i.pinned, tag: i.tag }
+                : i,
+            );
+            // **자식의 parentItemId도 함께 갈아야 한다.** 안 하면 이 메모를
+            // 부모로 갖던 AI 응답이 사라진 id를 가리켜 연결선이 조용히
+            // 끊긴다(화면에서 관계가 없어진 것처럼 보인다).
+            return remapParents(next, [id], [saved]);
+          });
+          return saved;
+        })
+        .catch((e: Error) => {
+          setError(`저장하지 못했습니다 — ${e.message}`);
+          return null;
+        })
+        .finally(() => promotions.current.delete(id));
+      promotions.current.set(id, req);
+      return req;
+    },
+    [],
+  );
+
+  const promoteLegacy = useCallback(
+    (item: CanvasItem) => startPromotion(item.id, item),
+    [startPromotion],
+  );
 
   /**
    * 되돌리기 항목을 띄운다. 타이머를 한 곳에서 관리해, 연달아 조작해도
@@ -232,44 +299,10 @@ export function useCanvasItems(sessionId: string | null): CanvasItemsApi {
       // **첫 편집이 곧 마이그레이션이다** — 이때 만든다. 전 세션을 한 번에
       // 옮기면 안 쓰는 세션까지 행이 생긴다.
       if (before._legacy) {
-        // 이미 만드는 중이면 **다시 만들지 않는다** — 두 번 만들면 글이 복제된다.
-        if (promoting.current.has(id)) return;
-        promoting.current.add(id);
+        // 이미 만드는 중이면 그 요청이 로컬 최신값을 지키며 끝난다 — 다시 만들지 않는다.
+        if (promotions.current.has(id)) return;
         const merged = { ...before, ...toLocal(serverPatch), ...localExtra };
-        void apiCreate(before.sessionId, [
-          {
-            kind: merged.kind,
-            source: merged.source,
-            node_id: merged.nodeId,
-            parent_item_id: null,
-            title: merged.title,
-            body: merged.body,
-            tag: merged.tag,
-            x: merged.x,
-            y: merged.y,
-            pinned: merged.pinned,
-            seq: merged.seq,
-            data: merged.data,
-          },
-        ])
-          .then(([saved]) => {
-            if (!saved) return;
-            // 저장되는 사이 학생이 더 고쳤을 수 있다 — 로컬 본문·위치를 지키고
-            // id와 서버 소유 필드만 갈아 끼운다.
-            setItems((prev) => {
-              const next = prev.map((i) =>
-                i.id === id
-                  ? { ...saved, body: i.body, x: i.x, y: i.y, pinned: i.pinned, tag: i.tag }
-                  : i,
-              );
-              // **자식의 parentItemId도 함께 갈아야 한다.** 안 하면 이 메모를
-              // 부모로 갖던 AI 응답이 사라진 id를 가리켜 연결선이 조용히
-              // 끊긴다(화면에서 관계가 없어진 것처럼 보인다).
-              return remapParents(next, [id], [saved]);
-            });
-          })
-          .catch((e: Error) => setError(`저장하지 못했습니다 — ${e.message}`))
-          .finally(() => promoting.current.delete(id));
+        void startPromotion(id, merged);
         return;
       }
 
@@ -305,7 +338,7 @@ export function useCanvasItems(sessionId: string | null): CanvasItemsApi {
         setItems((prev) => prev.map((i) => (i.id === id ? before : i)));
       });
     },
-    [items, showUndo],
+    [items, showUndo, startPromotion],
   );
 
   /**
@@ -611,6 +644,7 @@ export function useCanvasItems(sessionId: string | null): CanvasItemsApi {
     replaceTemp,
     createNote,
     patch,
+    promoteLegacy,
     moveMany,
     tagMany,
     patchMany,
