@@ -137,3 +137,41 @@ def test_cli_parses_seed_demo() -> None:
     args = build_parser().parse_args(["seed-demo", "--if-empty"])
     assert args.if_empty is True
     assert build_parser().parse_args(["seed-demo"]).if_empty is False
+
+
+# --- 공개 서버 안전장치: 관리자 비밀번호 ------------------------------------
+class _NoDb:
+    """DB에 닿으면 실패하는 가짜 연결 — 검사가 DB 접근보다 앞서는지 본다."""
+
+    async def execute(self, *a, **k):  # pragma: no cover - 호출되면 테스트 실패
+        raise AssertionError("비밀번호 검사 전에 DB를 건드렸다")
+
+
+async def test_production_seed_without_admin_password_fails_closed(monkeypatch) -> None:
+    import pytest
+
+    from app import seed_demo as sd
+
+    monkeypatch.setattr(sd.get_settings(), "environment", "production")
+    monkeypatch.delenv("DEMO_ADMIN_PASSWORD", raising=False)
+    with pytest.raises(RuntimeError, match="DEMO_ADMIN_PASSWORD"):
+        await sd._seed_accounts(_NoDb(), sd._Clock())
+
+
+async def test_admin_password_env_gives_admin_its_own_hash(monkeypatch) -> None:
+    from app import seed_demo as sd
+    from app.auth.tokens import verify_password
+
+    monkeypatch.setattr(sd.get_settings(), "environment", "production")
+    monkeypatch.setenv("DEMO_ADMIN_PASSWORD", "not-the-demo-password")
+    rows: dict[str, str] = {}
+
+    class _Rec:
+        async def execute(self, sql, *args):
+            if "insert into public.users" in sql:
+                rows[args[2]] = args[3]  # username -> password_hash
+
+    await sd._seed_accounts(_Rec(), sd._Clock())
+    assert verify_password("not-the-demo-password", rows["admin"])
+    assert not verify_password("demo1234", rows["admin"])
+    assert verify_password("demo1234", rows["demo"])  # 다른 데모 계정은 그대로

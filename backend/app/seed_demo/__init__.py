@@ -168,6 +168,14 @@ async def _seed_accounts(conn, clock: _Clock) -> None:
     # 관리자 콘솔은 모든 사용자의 대화·백업·권한을 만지므로 공개된 demo1234를
     # 그대로 두면 안 된다. 비우면 다른 데모 계정과 같다(로컬 체험).
     admin_pw = os.environ.get("DEMO_ADMIN_PASSWORD", "").strip()
+    if not admin_pw and get_settings().environment == "production":
+        # 닫힌 채로 실패한다 — 운영에서 비밀번호를 빠뜨렸을 때 공개된 demo1234로
+        # admin이 만들어지는 것이 가장 나쁜 결과다. 시드가 죽으면 컨테이너가
+        # 뜨지 않으므로(entrypoint set -e) 빠뜨린 것이 바로 드러난다.
+        raise RuntimeError(
+            "ENVIRONMENT=production에서 데모 시드는 DEMO_ADMIN_PASSWORD가 필요하다 "
+            "(공개된 demo1234로 관리자 계정을 만들 수 없다)."
+        )
     admin_hash = hash_password(admin_pw) if admin_pw else pw
     for a in c.ACCOUNTS:
         joined = clock.days_ago(a.joined_days_ago)
