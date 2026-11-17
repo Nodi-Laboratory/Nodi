@@ -1,0 +1,43 @@
+# Nodi — Qdrant(벡터 검색) 선택 구성 (2026-11-17)
+#
+# compose.hosting.yaml과 **함께** 쓴다(create_app/update_app의 compose_files에
+# 둘 다 넣는다). 지금 배포는 이 파일 없이 compose.hosting.yaml만 쓴다.
+#
+# 왜 따로 뒀나: 호스팅 서버(라즈베리파이)의 커널이 16KB 메모리 페이지를 쓰는데,
+# 공식 Qdrant 이미지의 jemalloc이 4KB만 지원해
+#   `<jemalloc>: Unsupported system page size`
+# 로 기동 즉시 죽는다(실측). 이미지 버전으로는 못 푼다. 이 서비스가 같은 파일에
+# 있으면 죽었다 살아나는 컨테이너 때문에 배포가 매번 "준비되지 않았다"로 실패한다.
+#
+# 앱은 Qdrant 없이 기동한다("RAG는 채팅을 막지 않는다") — 없으면 검색(학급 자료·
+# 도판·강의 클립)·개념 지도 연결선·세션 간 연결 배지만 비어 있다.
+#
+# 쓰는 법: 서버를 4KB 페이지 커널로 부팅한 뒤(config.txt의 kernel=kernel8.img)
+# compose_files를 ["compose.hosting.yaml", "compose.vectors.yaml"]로 바꾸고
+# 다시 배포한다. 데모 벡터는 다음 기동 때 시드가 자동으로 올린다.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.18.0
+    volumes:
+      - ${HOSTING_DATA_DIR:-./data}/qdrant:/qdrant/storage
+    depends_on:
+      init-perms:
+        condition: service_completed_successfully
+    healthcheck:
+      # 이미지에 curl이 없다 — bash /dev/tcp로 /readyz를 친다.
+      test:
+        - CMD-SHELL
+        - >-
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 &&
+          printf "GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 &&
+          head -n1 <&3 | grep -q " 200 "'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  backend:
+    depends_on:
+      qdrant:
+        condition: service_healthy
