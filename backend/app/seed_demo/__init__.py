@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -163,6 +164,11 @@ async def _seed_accounts(conn, clock: _Clock) -> None:
     # bcrypt는 일부러 느리다(~0.2초). 계정 9개가 같은 비밀번호라 한 번만 계산한다 —
     # 솔트가 같아지지만 공개된 데모 비밀번호라 숨길 것이 없다.
     pw = hash_password(c.DEMO_PASSWORD)
+    # 공개 서버에서는 관리자 비밀번호만 따로 정할 수 있다(DEMO_ADMIN_PASSWORD).
+    # 관리자 콘솔은 모든 사용자의 대화·백업·권한을 만지므로 공개된 demo1234를
+    # 그대로 두면 안 된다. 비우면 다른 데모 계정과 같다(로컬 체험).
+    admin_pw = os.environ.get("DEMO_ADMIN_PASSWORD", "").strip()
+    admin_hash = hash_password(admin_pw) if admin_pw else pw
     for a in c.ACCOUNTS:
         joined = clock.days_ago(a.joined_days_ago)
         meta = {"full_name": a.name}
@@ -174,7 +180,8 @@ async def _seed_accounts(conn, clock: _Clock) -> None:
                 (id, email, username, password_hash, raw_user_meta_data, created_at, updated_at)
             values ($1, $2, $3, $4, $5::text::jsonb, $6, $6)
             """,
-            a.id, a.email, a.username, pw, _j(meta), joined,
+            a.id, a.email, a.username, admin_hash if a.role == "admin" else pw,
+            _j(meta), joined,
         )
         # 프로필은 트리거(handle_new_user)가 만들었다. 관리자는 화이트리스트에 막혀
         # student로 떨어져 있으므로 여기서 올린다(cli create-user --role admin과 같다).
@@ -734,6 +741,10 @@ async def run(*, if_empty: bool) -> int:
     await _seed_db()
     n_turns = sum(len(s.turns) for s in c.SESSIONS)
     print(f"데모 데이터 시드 완료 — 계정 {len(c.ACCOUNTS)} · 대화 {len(c.SESSIONS)} · 턴 {n_turns}")
-    print(f"  로그인: demo / teacher / admin  (비밀번호 {c.DEMO_PASSWORD})")
+    if os.environ.get("DEMO_ADMIN_PASSWORD", "").strip():
+        print(f"  로그인: demo / teacher (비밀번호 {c.DEMO_PASSWORD})")
+        print("  admin은 DEMO_ADMIN_PASSWORD로 정한 비밀번호")
+    else:
+        print(f"  로그인: demo / teacher / admin  (비밀번호 {c.DEMO_PASSWORD})")
     await _load_vectors_best_effort()
     return 0

@@ -1,0 +1,171 @@
+# Nodi — TwoMES Hosting 배포용 compose (2026-11-17)
+#
+# 로컬 개발·체험은 docker-compose.yml을 쓴다. 이 파일은 **호스팅 플랫폼 규칙**에
+# 맞춘 별도 정의다(create_app의 compose_files로 이 파일만 지정한다):
+#
+#   - `ports:`로 호스트 포트를 열지 않는다 — 외부 공개는 플랫폼 도메인
+#     (서비스 frontend · 컨테이너 포트 3000)이 맡는다.
+#   - 영구 데이터는 ${HOSTING_DATA_DIR}(앱 전용 저장공간)에 둔다 — 그래야
+#     플랫폼 백업(Postgres 덤프 + 저장공간)에 들어간다.
+#   - 비밀값은 저장소에 없다. 플랫폼 환경변수(set_env)로 넣고, 필수 값은
+#     `${VAR:?...}`라 빠지면 사전 점검이 알려 준다.
+#
+# 필수 환경변수
+#   JWT_SECRET · POSTGRES_PASSWORD · NODI_APP_DB_PASSWORD · NODI_WORKER_DB_PASSWORD
+# 선택
+#   UPSTAGE_API_KEY · GEMINI_API_KEY · GEMINI_VISION_MODEL — 비우면 방문자가 앱
+#     화면에서 직접 입력한다(업로드 기능만 서버 키가 필요하다).
+#   SEED_DEMO=true — 데모 계정·데이터를 처음 한 번 넣는다.
+#   DEMO_ADMIN_PASSWORD — 데모 admin 계정의 비밀번호(공개 서버에서는 반드시 지정).
+
+services:
+  # 데이터 폴더 준비(1회성). 백엔드는 uid 10001로 도는데, 저장공간 폴더는 root
+  # 소유로 만들어져 그대로는 쓸 수 없다. postgres는 자기 entrypoint가 chown한다.
+  init-perms:
+    image: alpine:3.20
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /data/storage /data/qdrant /data/postgres
+        chown -R 10001:10001 /data/storage
+        chmod -R 0777 /data/qdrant
+    volumes:
+      - ${HOSTING_DATA_DIR:-./data}:/data
+    restart: "no"
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 필요}
+      POSTGRES_DB: nodi
+    volumes:
+      # 빈 데이터 디렉터리일 때만 db/0*.sql이 1회 적용된다(공식 이미지 규약).
+      - ./db:/docker-entrypoint-initdb.d:ro
+      - ${HOSTING_DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
+    depends_on:
+      init-perms:
+        condition: service_completed_successfully
+    healthcheck:
+      # TCP(-h 127.0.0.1)로 본다 — 유닉스 소켓은 initdb 도중에도 healthy를 준다.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d nodi"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.0
+    volumes:
+      - ${HOSTING_DATA_DIR:-./data}/qdrant:/qdrant/storage
+    depends_on:
+      init-perms:
+        condition: service_completed_successfully
+    healthcheck:
+      # 이미지에 curl이 없다 — bash /dev/tcp로 /readyz를 친다.
+      test:
+        - CMD-SHELL
+        - >-
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 &&
+          printf "GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 &&
+          head -n1 <&3 | grep -q " 200 "'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODI_APP_DB_PASSWORD: ${NODI_APP_DB_PASSWORD:?NODI_APP_DB_PASSWORD 필요}
+      NODI_WORKER_DB_PASSWORD: ${NODI_WORKER_DB_PASSWORD:?NODI_WORKER_DB_PASSWORD 필요}
+      PGHOST: db
+      PGUSER: postgres
+      PGDATABASE: nodi
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 필요}
+      PGOPTIONS: -c client_min_messages=warning
+    volumes:
+      - ./db:/db:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        psql -v ON_ERROR_STOP=1 -q \
+          -v app_pw="$$NODI_APP_DB_PASSWORD" -v worker_pw="$$NODI_WORKER_DB_PASSWORD" <<'SQL'
+        alter role nodi_app password :'app_pw';
+        alter role nodi_worker password :'worker_pw';
+        SQL
+        echo "[migrate] 역할 비밀번호 설정 완료"
+        n=0
+        for f in $$(ls /db/migrations/*.sql 2>/dev/null | sort); do
+          echo "[migrate] 적용: $$(basename "$$f")"
+          psql -v ON_ERROR_STOP=1 -q -f "$$f" >/dev/null
+          n=$$((n + 1))
+        done
+        echo "[migrate] $$n건 적용 완료"
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+    depends_on:
+      init-perms:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+    environment:
+      # production이면 세션 쿠키에 Secure가 자동으로 붙는다(HTTPS 전용 도메인).
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql://nodi_app:${NODI_APP_DB_PASSWORD:?NODI_APP_DB_PASSWORD 필요}@db:5432/nodi
+      DATABASE_WORKER_URL: postgresql://nodi_worker:${NODI_WORKER_DB_PASSWORD:?NODI_WORKER_DB_PASSWORD 필요}@db:5432/nodi
+      QDRANT_URL: http://qdrant:6333
+      STORAGE_ROOT: /data/storage
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 필요}
+      UPSTAGE_API_KEY: ${UPSTAGE_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_VISION_MODEL: ${GEMINI_VISION_MODEL:-gemini-3.5-flash-lite}
+      SEED_DEMO: ${SEED_DEMO:-false}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-}
+      # 브라우저는 frontend와 같은 출처(/api)로만 들어온다 — CORS는 쓰이지 않는다.
+      CORS_ORIGINS: '["http://localhost:3000"]'
+    volumes:
+      - ${HOSTING_DATA_DIR:-./data}/storage:/data/storage
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # 빌드 시점에 박힌다(frontend/Dockerfile 주석).
+        NEXT_PUBLIC_API_BASE_URL: /api
+        BACKEND_ORIGIN: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # node:alpine에는 busybox wget이 있다. /login은 인증 없이 열리는 페이지.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/login || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
