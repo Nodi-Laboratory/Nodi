@@ -8,7 +8,8 @@
 #   - 영구 데이터는 ${HOSTING_DATA_DIR}(앱 전용 저장공간)에 둔다 — 그래야
 #     플랫폼 백업(Postgres 덤프 + 저장공간)에 들어간다.
 #   - 비밀값은 저장소에 없다. 플랫폼 환경변수(set_env)로 넣고, 필수 값은
-#     `${VAR:?...}`라 빠지면 사전 점검이 알려 준다.
+#     `:?` 문법으로 적어 빠지면 사전 점검이 알려 준다.
+#   - qdrant는 선택 프로필(vectors)이다 — 아래 qdrant 서비스 주석을 볼 것.
 #
 # 필수 환경변수
 #   JWT_SECRET · POSTGRES_PASSWORD · NODI_APP_DB_PASSWORD · NODI_WORKER_DB_PASSWORD
@@ -56,7 +57,17 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # ⚠️ 프로필 `vectors`로 뺐다(2026-11-17). 이 서버(라즈베리파이)의 커널이 16KB
+  # 메모리 페이지를 쓰는데, 공식 Qdrant 이미지의 jemalloc이 4KB만 지원해
+  #   `<jemalloc>: Unsupported system page size` 로 기동 즉시 죽는다(실측).
+  # 이미지 버전으로는 못 푼다 — 서버를 4KB 페이지 커널로 부팅하거나(config.txt의
+  # kernel=kernel8.img), 다른 곳의 Qdrant를 QDRANT_URL로 가리켜야 한다.
+  # 그 전까지는 이 서비스를 띄우지 않는다: 앱은 Qdrant 없이 기동한다("RAG는 채팅을
+  # 막지 않는다" 불변식) — 검색(학급 자료·도판·강의 클립)과 개념 지도의 연결선,
+  # 세션 간 연결 배지만 비어 있다. 풀린 뒤에는 앱 설정의 compose 프로필에 `vectors`를
+  # 넣고 다시 배포한다.
   qdrant:
+    profiles: ["vectors"]
     image: qdrant/qdrant:v1.18.0
     volumes:
       - ${HOSTING_DATA_DIR:-./data}/qdrant:/qdrant/storage
@@ -121,7 +132,9 @@ services:
       migrate:
         condition: service_completed_successfully
       qdrant:
+        # 프로필 vectors가 꺼져 있으면 이 의존은 건너뛴다.
         condition: service_healthy
+        required: false
     environment:
       # production이면 세션 쿠키에 Secure가 자동으로 붙는다(HTTPS 전용 도메인).
       ENVIRONMENT: production
